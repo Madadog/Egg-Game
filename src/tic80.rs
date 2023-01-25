@@ -405,6 +405,7 @@ pub fn ttri(
     }
 }
 
+#[derive(Clone)]
 pub struct MapOptions<'a> {
     pub x: i32,
     pub y: i32,
@@ -414,6 +415,10 @@ pub struct MapOptions<'a> {
     pub sy: i32,
     pub transparent: &'a [u8],
     pub scale: i8,
+}
+
+impl<'a> MapOptions<'a> {
+    pub fn new(x: i32, y: i32, w: i32, h: i32, sx: i32, sy: i32, transparent: &'a [u8], scale: i8) -> Self { Self { x, y, w, h, sx, sy, transparent, scale } }
 }
 
 impl Default for MapOptions<'_> {
@@ -456,6 +461,7 @@ pub fn mset(x: i32, y: i32, value: i32) {
     unsafe { sys::mset(x, y, value) }
 }
 
+#[derive(Debug, Clone)]
 pub enum Flip {
     None,
     Horizontal,
@@ -463,6 +469,7 @@ pub enum Flip {
     Both,
 }
 
+#[derive(Debug, Clone)]
 pub enum Rotate {
     None,
     By90,
@@ -470,6 +477,7 @@ pub enum Rotate {
     By270,
 }
 
+#[derive(Debug, Clone)]
 pub struct SpriteOptions<'a> {
     pub transparent: &'a [u8],
     pub scale: i32,
@@ -523,10 +531,10 @@ pub fn fset(sprite_index: i32, flag: i8, value: bool) {
 // The macros will avoid the allocation if passed a string literal by adding the null terminator at compile time.
 
 pub struct PrintOptions {
-    color: i32,
-    fixed: bool,
-    scale: i32,
-    small_font: bool,
+    pub color: i32,
+    pub fixed: bool,
+    pub scale: i32,
+    pub small_font: bool,
 }
 
 impl Default for PrintOptions {
@@ -581,12 +589,12 @@ macro_rules! print {
 }
 
 pub struct FontOptions<'a> {
-    transparent: &'a [u8],
-    char_width: i8,
-    char_height: i8,
-    fixed: bool,
-    scale: i32,
-    alt_font: bool,
+    pub transparent: &'a [u8],
+    pub char_width: i8,
+    pub char_height: i8,
+    pub fixed: bool,
+    pub scale: i32,
+    pub alt_font: bool,
 }
 
 impl Default for FontOptions<'_> {
