@@ -12,6 +12,7 @@ pub const HEIGHT: i32 = 136;
 // TIC-80 RAM
 
 pub const FRAMEBUFFER: *mut [u8; 16320] = 0x00000 as *mut [u8; 16320];
+pub const HACKBUFFER: *mut [u8; 16319] = 0x00001 as *mut [u8; 16319];
 pub const TILES: *mut [u8; 8192] = 0x04000 as *mut [u8; 8192];
 pub const SPRITES: *mut [u8; 8192] = 0x06000 as *mut [u8; 8192];
 pub const MAP: *mut [u8; 32640] = 0x08000 as *mut [u8; 32640];

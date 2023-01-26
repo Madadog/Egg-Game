@@ -4,22 +4,22 @@ mod rand;
 mod tic_helpers;
 mod map_data;
 mod camera;
-mod position {
-    #[derive(Debug, Clone, Copy)]
-    pub struct Vec2 {
-        pub x: i16,
-        pub y: i16,
-    }
-    impl Vec2 {
-        pub const fn new(x: i16, y: i16) -> Self {
-            Vec2 {x, y}
-        }
-    }
-}
+mod position;
+
+use tic80::*;
+use crate::rand::Pcg32;
+use crate::position::{Vec2, Hitbox};
+use crate::tic_helpers::*;
+use crate::camera::Camera;
+use crate::map_data::*;
+use once_cell::sync::Lazy;
+use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug)]
 pub struct Player {
     pub pos: Vec2,
+    pub local_hitbox: Hitbox,
     pub hp: u8,
     /// coords are (x, y)
     pub dir: (i8, i8),
@@ -30,6 +30,7 @@ impl Player {
     pub const fn const_default() -> Self {
         Self {
             pos: Vec2::new(96, 24),
+            local_hitbox: Hitbox::new(0,8,7,5),
             hp: 3,
             dir: (0, 1),
             walktime: 0,
@@ -44,6 +45,9 @@ impl Player {
         if self.dir.0 > 0 { return (832 + anim, Flip::None, t) } // Right
         return (832 + anim, Flip::Horizontal, t) // Left
     }
+    pub fn hitbox(&self) -> Hitbox {
+        self.local_hitbox.offset(self.pos)
+    }
 }
 impl Default for Player {
     fn default() -> Self { Self::const_default() }
@@ -57,16 +61,6 @@ impl DebugInfo {
         DebugInfo { player_info: false }
     }
 }
-
-use tic80::*;
-use crate::rand::Pcg32;
-use crate::position::Vec2;
-use crate::tic_helpers::*;
-use crate::camera::Camera;
-use crate::map_data::*;
-use once_cell::sync::Lazy;
-use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 static TIME: RwLock<i32> = RwLock::new(0);
 static PLAYER: RwLock<Player> = RwLock::new(Player::const_default());
@@ -114,11 +108,22 @@ pub fn is_paused() -> bool {
 pub fn set_pause(pause: bool) {
     PAUSE.store(pause, Ordering::Relaxed);
 }
+pub fn load_map(map: &MapSet<'static>) {
+    let map1 = &map.maps[0];
+    *camera_mut() = Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
+    *CURRENT_MAP.write().unwrap() = (*map).clone();
+}
 
-#[inline]
 fn step_game() {
     if POS.read().unwrap().len() <= 100 {
         POS.write().unwrap().push((0, 0)); POS.write().unwrap().push((100, 100));
+    }
+    
+    if keyp(28, -1, -1) {
+        load_map(&SUPERMARKET);
+    }
+    if keyp(29, -1, -1) {
+        load_map(&SUPERMARKET_HALL);
     }
 
     let (mut dx, mut dy) = (0, 0);
@@ -148,19 +153,35 @@ fn step_game() {
             player.walking = false;
         };
     }
+    
+    let mut warp_target = None;
+    for warp in CURRENT_MAP.read().unwrap().warps.iter() {
+        if player().hitbox().touches(warp.from) {
+            warp_target = Some(warp.clone());
+            break;
+        }
+    }
+    if let Some(target) = warp_target {
+        player_mut().pos = target.to;
+        if let Some(new_map) = target.map {
+            load_map(new_map);
+        }
+    }
+    
     camera_mut().center_on(player().pos.x+4, player().pos.y+8);
 
     *TIME.write().unwrap() += 1;
 }
 fn draw_game() {
     // draw bg
-    palette_map_reset();
     if time() % 300 > 285 {
         set_border( (rand()%16) as u8);
     }
-    cls(0);
+    palette_map_reset();
+    cls(1);
     blit_segment(4);
-    for layer in CURRENT_MAP.read().unwrap().maps.iter() {
+    for (i, layer)in CURRENT_MAP.read().unwrap().maps.iter().enumerate() {
+        if i == 0 {palette_map_rotate(1)} else {palette_map_rotate(0)}
         let mut layer = layer.clone();
         layer.sx -= cam_x();
         layer.sy -= cam_y();
@@ -185,34 +206,14 @@ fn draw_game() {
         1,
     );
     palette_map_reset();
-    
-    // blit_segment(2);
-    for (i, (x, y)) in POS.write().unwrap().iter_mut().enumerate() {
-        *x += (rand()%9-4) as i16;
-        *y += (rand()%9-4) as i16;
-        *x = (*x).max(-7);
-        *y = (*y).max(-7);
-        palette_map_swap(rand_u8(), rand_u8());
-        //palette_map_rotate(i as u8);
-        spr_outline(
-            513 + (i%3) as i32,
-            *x as i32,
-            *y as i32,
-            SpriteOptions {
-                w: 1,
-                h: 1,
-                transparent: &[0],
-                scale: 1,
-                ..Default::default()
-            },
-            0,
-        );
-    }
+
     // draw fg
     palette_map_reset();
-    print!("HELLO WORLD!", 84, 84, PrintOptions::default());
-    print!(format!("There are {} things.", POS.read().unwrap().len()), 84, 94, PrintOptions::default());
     if debug_info().player_info {
+        for warp in CURRENT_MAP.read().unwrap().warps.iter() {
+            warp.from.draw(11);
+        }
+        print!(format!("There are {} things.", POS.read().unwrap().len()), 84, 94, PrintOptions::default());
         print!(format!("Player: {:#?}", player()), 0, 0,
             PrintOptions {
                 small_font: true,
@@ -227,6 +228,7 @@ fn draw_game() {
                ..Default::default()
                }
         );
+        unsafe {(*FRAMEBUFFER)[1] = 0x12}
     }
 }
 
@@ -234,6 +236,7 @@ fn draw_game() {
 pub fn tic() {
     if keyp(16, -1, -1) {
         set_pause(!is_paused());
+        print!("Paused", 100, 62, PrintOptions {color: 12, ..Default::default()});
     }
     if is_paused() { return }
     if keyp(4, -1, -1) {

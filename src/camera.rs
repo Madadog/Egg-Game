@@ -7,11 +7,9 @@ pub struct Camera {
     pub bounds: CameraBounds,
 }
 impl Camera {
+    pub const fn new(pos: Vec2, bounds: CameraBounds) -> Self { Self { pos, bounds } }
     pub const fn const_default() -> Self {
-        Camera {
-            pos: Vec2::new(0, 0),
-            bounds: CameraBounds::bounded((0, 300), (0, 200)),
-        }
+        Camera::new(Vec2::new(0, 0), CameraBounds::bounded((0, 300), (0, 200)))
     }
     pub fn bound(&self, focus_x: Option<i16>, focus_y: Option<i16>) -> Vec2 {
         self.bounds.bound(
@@ -24,31 +22,24 @@ impl Camera {
     pub fn center_on(&mut self, x: i16, y: i16) {
         self.pos = self.bound(Some(x - WIDTH as i16/2), Some(y - HEIGHT as i16/2));
     }
-    pub const fn from_map_size(w: u8, h: u8, sx: i16, sy: i16) -> Self {
-        // using `as i16` is bad practice, but `.into()` and related methods
-        // do not work in const fn...
+    pub fn from_map_size(w: u8, h: u8, sx: i16, sy: i16) -> Self {
+        // `as` conversions are bad practice...
         let (w, h): (i16, i16) = (w as i16, h as i16);
+        crate::trace!(format!("W: {}, H: {}", w, h), 11);
         let (x_offset, y_offset): (i16, i16) = (
             (crate::WIDTH/2) as i16,
             (crate::HEIGHT/2) as i16,
         );
         let (cx, cy): (i16, i16) = (w*4 + sx - x_offset, h*4 + sy - y_offset);
-        let (cx, cy): (i16, i16) = (cx as i16, cy as i16);
         if w <= 30 && h <= 17 {
             // Area fits inside screen, center and display.
-            Camera {
-                pos: Vec2::new(cx, cy),
-                bounds: CameraBounds::stick(cx, cy),
-            }
+            Camera::new(Vec2::new(cx, cy), CameraBounds::stick(cx, cy))
         } else {
             // Area does not fit inside screen, follow target & add bounds.
-            Camera {
-                pos: Vec2::new(cx, cy),
-                bounds: CameraBounds {
+            Camera::new(Vec2::new(cx, cy), CameraBounds {
                     x_bounds: if w >= 30 { CameraRange::Range(sx, sx+w*8-x_offset) } else { CameraRange::Stick(cx) },
                     y_bounds: if h >= 17 { CameraRange::Range(sy, sy+h*8-y_offset) } else { CameraRange::Stick(cy) },
-                },
-            }
+                })
         }
     }
 }
