@@ -256,9 +256,6 @@ fn draw_game() {
     // draw fg
     palette_map_reset();
     if debug_info().player_info {
-        for i in 0..player_x {
-            circ((100+i*3)%240, (60+i*3)%136, (player_x-i) % 8, (i%16) as u8)
-        }
         for warp in current_map().warps.iter() {
             warp.from
                 .offset_xy(-cam_x() as i16, -cam_y() as i16)
