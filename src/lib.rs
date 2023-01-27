@@ -29,8 +29,8 @@ pub struct Player {
 impl Player {
     pub const fn const_default() -> Self {
         Self {
-            pos: Vec2::new(96, 24),
-            local_hitbox: Hitbox::new(0,8,7,5),
+            pos: Vec2::new(96, 34),
+            local_hitbox: Hitbox::new(0,10,7,4),
             hp: 3,
             dir: (0, 1),
             walktime: 0,
@@ -69,7 +69,7 @@ static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(|| {Pcg32::default()}));
 static PAUSE: AtomicBool = AtomicBool::new(false);
 static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
 static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
-static CURRENT_MAP: RwLock<MapSet> = RwLock::new(SUPERMARKET);
+static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -108,10 +108,13 @@ pub fn is_paused() -> bool {
 pub fn set_pause(pause: bool) {
     PAUSE.store(pause, Ordering::Relaxed);
 }
-pub fn load_map(map: &MapSet<'static>) {
+pub fn current_map<'a>() -> RwLockReadGuard<'a, &'a MapSet<'a>> {
+    CURRENT_MAP.read().unwrap()
+}
+pub fn load_map(map: &'static MapSet<'static>) {
     let map1 = &map.maps[0];
     *camera_mut() = Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
-    *CURRENT_MAP.write().unwrap() = (*map).clone();
+    *CURRENT_MAP.write().unwrap() = map;
 }
 
 fn step_game() {
@@ -139,11 +142,53 @@ fn step_game() {
     if btn(3) {
         dx += 1;
     }
+    let player_hitbox = player().hitbox();
+    let delta_hitbox = player_hitbox.offset_xy(dx, dy);
+    let points_dx = player_hitbox.dx_corners(dx);
+    let points_dy = player_hitbox.dy_corners(dy);
+    let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
+    for layer in current_map().maps.iter() {
+        let layer_hitbox = Hitbox::new(layer.sx as i16, layer.sy as i16,
+                                    layer.w as i16 * 8, layer.h as i16 * 8);
+        if layer_hitbox.touches(delta_hitbox) {
+            if let Some(points_dx) = points_dx {
+                for point in points_dx {
+                    let p_dx = Vec2::new(
+                        (point.x - layer_hitbox.x)/8 + layer.x as i16,
+                        (point.y - layer_hitbox.y)/8 + layer.y as i16
+                    );
+                    let id_x = mget(p_dx.x.into(), p_dx.y.into());
+                    if fget(id_x, 0) {dx=0;}
+                }
+            }
+            if let Some(points_dy) = points_dy {
+                for point in points_dy {
+                    let p_dy = Vec2::new(
+                        (point.x - layer_hitbox.x)/8 + layer.x as i16,
+                        (point.y - layer_hitbox.y)/8 + layer.y as i16
+                    );
+                    let id_y = mget(p_dy.x.into(), p_dy.y.into());
+                    if fget(id_y, 0) {dy=0;}
+                }
+            }
+            if let Some(point_diag) = point_diag {
+                let p_diag = Vec2::new(
+                    (point_diag.x - layer_hitbox.x)/8 + layer.x as i16,
+                    (point_diag.y - layer_hitbox.y)/8 + layer.y as i16
+                );
+                let id_d = mget(p_diag.x.into(), p_diag.y.into());
+                if dx != 0 && dy != 0 && fget(id_d, 0) {
+                    dx=0;
+                    dy=0;
+                }
+            }
+        }
+    }
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
-            player.dir.1 = dy;
-            player.dir.0 = dx;
+            player.dir.1 = dy as i8;
+            player.dir.0 = dx as i8;
             player.pos.x += dx as i16;
             player.pos.y += dy as i16;
             player.walktime = player.walktime.wrapping_add(1);
@@ -155,7 +200,7 @@ fn step_game() {
     }
     
     let mut warp_target = None;
-    for warp in CURRENT_MAP.read().unwrap().warps.iter() {
+    for warp in current_map().warps.iter() {
         if player().hitbox().touches(warp.from) {
             warp_target = Some(warp.clone());
             break;
@@ -172,6 +217,7 @@ fn step_game() {
 
     *TIME.write().unwrap() += 1;
 }
+
 fn draw_game() {
     // draw bg
     if time() % 300 > 285 {
@@ -180,7 +226,7 @@ fn draw_game() {
     palette_map_reset();
     cls(1);
     blit_segment(4);
-    for (i, layer)in CURRENT_MAP.read().unwrap().maps.iter().enumerate() {
+    for (i, layer) in current_map().maps.iter().enumerate() {
         if i == 0 {palette_map_rotate(1)} else {palette_map_rotate(0)}
         let mut layer = layer.clone();
         layer.sx -= cam_x();
@@ -210,8 +256,13 @@ fn draw_game() {
     // draw fg
     palette_map_reset();
     if debug_info().player_info {
-        for warp in CURRENT_MAP.read().unwrap().warps.iter() {
-            warp.from.draw(11);
+        for i in 0..player_x {
+            circ((100+i*3)%240, (60+i*3)%136, (player_x-i) % 8, (i%16) as u8)
+        }
+        for warp in current_map().warps.iter() {
+            warp.from
+                .offset_xy(-cam_x() as i16, -cam_y() as i16)
+                .draw(12);
         }
         print!(format!("There are {} things.", POS.read().unwrap().len()), 84, 94, PrintOptions::default());
         print!(format!("Player: {:#?}", player()), 0, 0,
@@ -221,6 +272,7 @@ fn draw_game() {
                 ..Default::default()
             }
         );
+        player().hitbox().offset_xy(-cam_x() as i16, -cam_y() as i16).draw(12);
         print!(format!("Camera: {:#?}", camera()), 64, 0,
                PrintOptions {
                    small_font: true,
