@@ -75,7 +75,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             scale: 1,
         },
     ],
-    warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),8,4)],
+    warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),8,4),
+             Warp::new_tile(8,4, Some(&SUPERMARKET_HALL),4,4)],
 };
 
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
@@ -109,5 +110,6 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             scale: 1,
         },
     ],
-    warps: &[Warp::new_tile(8,6, Some(&SUPERMARKET),17,4)],
+    warps: &[Warp::new_tile(8,6, Some(&SUPERMARKET),17,4),
+             Warp::new_tile(4,6, Some(&SUPERMARKET),8,4)],
 };
