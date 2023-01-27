@@ -18,3 +18,4 @@ strip = true
 [features]
 # use `--no-default-features` or comment out next line to disable allocator
 default = ["buddy-alloc"]
+void_mget = []
