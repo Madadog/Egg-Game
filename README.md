@@ -11,8 +11,8 @@ To run, just load the game.tic or game-stable.tic file into TIC-80, depending on
 
 |file|TIC-80 Version|
 |---|---|
-|game-stable.tic|1.0|
-|game.tic|>1.0|
+|game-stable.tic|1.0.2164|
+|game.tic|>1.0.2164|
 
 ## TIC80 Stable vs TIC80 Main
 To build for the stable version of TIC80 (currently `1.0.2164`), enable the `void_mget` feature (i.e. `cargo build --release --features void_mget`).
