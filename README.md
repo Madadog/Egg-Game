@@ -1,6 +1,6 @@
 # Egg Game
 
-Simple TIC-80 game project using the Rust / TIC-80 starter template.
+Simple TIC-80 game project using the Rust / TIC-80 starter template. Playable at [http://tic80.com/play?cart=3193](http://tic80.com/play?cart=3193)
 
 Collect the eggs. Hatch mind-stopping prizes! Avoid various hazards along the way.
 
