@@ -1,59 +1,32 @@
 use crate::tic80::*;
 
-/// Ported straight from TIC80's poke4 function.
-/// I hope this is safe.
-unsafe fn rust_poke4(index: i32, value: u8) {
-    // #define POKE_N(P,I,V,A,B,C,D) do        \
-    // {                                       \
-    //     u8* val = (u8*)(P) + ((I) >> (A));  \
-    //     u8 offset = ((I) & (B)) << (C);     \
-    //     *val &= ~((D) << offset);           \
-    //     *val |= ((V) & (D)) << offset;      \
-    // } while(0)
-    /*#define PEEK_N(P,I,A,B,C,D) ( ( ((u8*)(P))[((I) >> (A))] >> ( ((I) & (B)) << (C) ) ) & (D) )
-    
-    inline void tic_tool_poke4(void* addr, u32 index, u8 value)
-    {
-        POKE_N(addr, index, value, 1,1,2,15);
-    }*/
-    
-    // Clamp to TIC80 reserved RAM.
-    let index = index.clamp(0, 98322*2);
-    let val: *mut u8 = (index as usize >> 1) as *mut u8;
-    let offset: u8 = (((index) & (1)) as u8) << (2);
-    unsafe {
-        *val &= !((15) << offset);
-        *val |= ((value) & (15)) << offset;
-    }
-}
-
 pub fn palette_map_swap(from: u8, to: u8) {
     let from: i32 = (from % 16).into();
     assert!(from >= 0);
-    unsafe { rust_poke4(PALETTE_MAP as i32 * 2 + from, to % 16) }
+    unsafe { poke4(PALETTE_MAP as i32 * 2 + from, to % 16) }
 }
 
 pub fn palette_map_set_all(to: u8) {
     for i in 0..=15 {
-        unsafe { rust_poke4(PALETTE_MAP as i32 * 2 + i, to % 16) }
+        unsafe { poke4(PALETTE_MAP as i32 * 2 + i, to % 16) }
     }
 }
 
 pub fn set_palette_map(map: [u8; 16]) {
     for (i, item) in map.into_iter().enumerate() {
-        unsafe { rust_poke4(PALETTE_MAP as i32 * 2 + i as i32, item % 16) }
+        unsafe { poke4(PALETTE_MAP as i32 * 2 + i as i32, item % 16) }
     }
 }
 
 pub fn palette_map_reset() {
     for i in 0..=15 {
-        unsafe { rust_poke4(PALETTE_MAP as i32 * 2 + i, i as u8) }
+        unsafe { poke4(PALETTE_MAP as i32 * 2 + i, i as u8) }
     }
 }
 
 pub fn palette_map_rotate(amount: u8) {
     for i in 0..=15 {
-        unsafe { rust_poke4(PALETTE_MAP as i32 * 2 + i, i as u8 + amount) }
+        unsafe { poke4(PALETTE_MAP as i32 * 2 + i, i as u8 + amount) }
     }
 }
 
