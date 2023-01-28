@@ -236,9 +236,6 @@ fn step_game() {
 
 fn draw_game() {
     // draw bg
-    if time() % 300 > 285 {
-        set_border( (rand()%16) as u8);
-    }
     palette_map_reset();
     cls(1);
     blit_segment(4);
