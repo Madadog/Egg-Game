@@ -481,12 +481,9 @@ pub fn map(opts: MapOptions) {
 
 #[cfg(feature = "void_mget")]
 pub fn mget(x: i32, y: i32) -> i32 {
-    use crate::trace;
     if x < 0 || x >= WIDTH*8 || y < 0 || y >= HEIGHT {return 0};
     let index = y as usize * WIDTH as usize + x as usize;
-    let ret = unsafe { (*MAP)[index].into() };
-    // Removing this trace breaks the whole function. Try it out.
-    trace!(format!("{}",ret),12);
+    let ret: i32 = unsafe { (*MAP)[index].into() };
     ret
 }
 
