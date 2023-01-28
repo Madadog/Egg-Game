@@ -1,9 +1,10 @@
 # Egg Game
 
-Simple TIC-80 game project using the Rust / TIC-80 starter template. Playable at [http://tic80.com/play?cart=3193](http://tic80.com/play?cart=3193)
+Simple TIC-80 game project using the Rust / TIC-80 starter template.
 
 Collect the eggs. Hatch mind-stopping prizes! Avoid various hazards along the way.
 
+Play at [http://tic80.com/play?cart=3193](http://tic80.com/play?cart=3193)
 ![Screenshot](screen.png)
 
 ## Running
@@ -15,11 +16,11 @@ To run, just load the game.tic or game-stable.tic file into TIC-80, depending on
 |game.tic|>1.0.2164|
 
 ## TIC80 Stable vs TIC80 Main
-To build for the stable version of TIC80 (currently `1.0.2164`), enable the `void_mget` feature (i.e. `cargo build --release --features void_mget`).
+This project currently targets version `1.0.2369-dev` of TIC-80, which is not yet stable.
 
-This feature exists because the WASM function signature of `mget()` differs between the stable and main. Support for the stable branch is currently necessary to upload to the TIC80 website.
+To build for the stable version of TIC-80 (currently `1.0.2164`), the `void_mget` feature must be enabled (i.e. `cargo build --release --features void_mget`).
 
-If using a more recent version, the feature should be disabled as it is by default (currently targeting `1.0.2369-dev`).
+This feature is required because the WASM function signature of `mget()` differs between the stable and main. Support for the stable branch is also needed to upload to the TIC-80 website.
 
 ## Building
 To build, first make sure you have installed the `wasm32-unknown-unknown` target using rustup:
