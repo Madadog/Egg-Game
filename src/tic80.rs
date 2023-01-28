@@ -31,6 +31,22 @@ pub const PERSISTENT_RAM: *mut [u8; 1024] = 0x14004 as *mut [u8; 1024];
 pub const SPRITE_FLAGS: *mut [u8; 512] = 0x14404 as *mut [u8; 512];
 pub const SYSTEM_FONT: *mut [u8; 2048] = 0x14604 as *mut [u8; 2048];
 
+// TIC-80 VRAM
+
+/// 16 x 24bit RGB color values
+pub const PALETTE: *mut [u8; 48] = 0x3FC0 as *mut [u8; 48];
+/// 16 x 4-bit color indexes (palette swaps)
+pub const PALETTE_MAP: *mut [u8; 8] = 0x3FF0 as *mut [u8; 8];
+/// 4-bit color value
+pub const BORDER_COLOR: *mut u8 = 0x3FF8 as *mut u8;
+/// horz/vert screen offset [-128...+127]
+pub const SCREEN_OFFSET: *mut [u8; 2] = 0x3FF9 as *mut [u8; 2];
+/// sprite to use for mouse pointer
+pub const MOUSE_CURSOR: *mut u8 = 0x3FFB as *mut u8;
+/// (lo nibble) 4-bit BLIT segment value
+pub const BLIT_SEGMENT: *mut u8 = 0x3FFC as *mut u8;
+
+
 // The functions in the sys module follow the signatures as given in wasm.c.
 // The wrapper functions are designed to be similar to the usual TIC-80 api.
 pub mod sys {
@@ -423,6 +439,12 @@ pub struct MapOptions<'a> {
 
 impl<'a> MapOptions<'a> {
     pub fn new(x: i32, y: i32, w: i32, h: i32, sx: i32, sy: i32, transparent: &'a [u8], scale: i8) -> Self { Self { x, y, w, h, sx, sy, transparent, scale } }
+    /// `MapOptions::new()` function using direct map coordinates (ex, ey) for end point instead of width and height.
+    /// This lets you copy/paste coordinates directly from the map editor.
+    pub fn from_coords(x: i32, y: i32, ex: i32, ey: i32, sx: i32, sy: i32, transparent: &'a [u8], scale: i8) -> Self {
+        assert!(ex > x && ey > y);
+        Self::new(x, y, x - ex, y - ey, sx, sy, transparent, scale)
+    }
 }
 
 impl Default for MapOptions<'_> {
