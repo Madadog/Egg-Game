@@ -12,17 +12,6 @@ pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
     scale: 1,
 };
 
-pub(crate) const FRUIT_STAND: MapOptions = MapOptions {
-    x: 61,
-    y: 29,
-    w: 3,
-    h: 2,
-    transparent: &[0],
-    sx: 2*8,
-    sy: 8*8,
-    scale: 1,
-};
-
 #[derive(Clone)]
 pub struct MapSet<'a> {
     pub maps: &'a [MapOptions<'a>],
@@ -46,7 +35,7 @@ impl<'a> Warp<'a> {
 
 pub static SUPERMARKET: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions {
+        MapOptions {//bg
             x: 60,
             y: 17,
             w: 26,
@@ -54,7 +43,7 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions {
+        MapOptions {//fruit stand
             x: 61,
             y: 29,
             w: 3,
@@ -64,8 +53,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sy: 8*8,
             scale: 1,
         },
-        MapOptions {
-            x: 68,
+        MapOptions {//vending machines
+            x: 70,
             y: 29,
             w: 4,
             h: 5,
@@ -74,24 +63,44 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sy: 4*8,
             scale: 1,
         },
+        MapOptions {//counter
+            x: 60,
+            y: 31,
+            w: 8,
+            h: 3,
+            transparent: &[0],
+            sx: 5*8,
+            sy: 4*8,
+            scale: 1,
+        },
+        MapOptions {//top vending machine
+            x: 68,
+            y: 29,
+            w: 2,
+            h: 3,
+            transparent: &[0],
+            sx: 13*8,
+            sy: 5*4,
+            scale: 1,
+        },
     ],
-    warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),8,4),
-             Warp::new_tile(8,4, Some(&SUPERMARKET_HALL),4,4)],
+    warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),9,4),
+             Warp::new_tile(8,4, Some(&SUPERMARKET_HALL),3,4)],
 };
 
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions {
+        MapOptions {//bg
             x: 86,
             y: 17,
             w: 13,
-            h: 6,
+            h: 7,
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions {
+        MapOptions {//closet
             x: 87,
-            y: 23,
+            y: 24,
             w: 3,
             h: 4,
             transparent: &[0],
@@ -99,9 +108,9 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             sy: 0,
             scale: 1,
         },
-        MapOptions {
+        MapOptions {//diagonal door
             x: 86,
-            y: 23,
+            y: 24,
             w: 1,
             h: 3,
             transparent: &[0],
@@ -110,6 +119,6 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             scale: 1,
         },
     ],
-    warps: &[Warp::new_tile(8,6, Some(&SUPERMARKET),17,4),
-             Warp::new_tile(4,6, Some(&SUPERMARKET),8,4)],
+    warps: &[Warp::new_tile(9,6, Some(&SUPERMARKET),17,4),
+             Warp::new_tile(3,6, Some(&SUPERMARKET),8,4)],
 };
