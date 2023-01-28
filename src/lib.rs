@@ -29,8 +29,8 @@ pub struct Player {
 impl Player {
     pub const fn const_default() -> Self {
         Self {
-            pos: Vec2::new(96, 34),
-            local_hitbox: Hitbox::new(0,10,7,4),
+            pos: Vec2::new(96, 38),
+            local_hitbox: Hitbox::new(0,10,7,5),
             hp: 3,
             dir: (0, 1),
             walktime: 0,
@@ -122,7 +122,7 @@ fn step_game() {
         POS.write().unwrap().push((0, 0)); POS.write().unwrap().push((100, 100));
     }
     
-    if keyp(28, -1, -1) {
+    if keyp(28, -1, -1) || time() == 0 {
         load_map(&SUPERMARKET);
     }
     if keyp(29, -1, -1) {
@@ -142,36 +142,53 @@ fn step_game() {
     if btn(3) {
         dx += 1;
     }
+    
+    if dx != 0 || dy != 0 {
+        player_mut().dir.1 = dy as i8;
+        player_mut().dir.0 = dx as i8;
+    }
     let player_hitbox = player().hitbox();
     let delta_hitbox = player_hitbox.offset_xy(dx, dy);
+    let dx_hitbox = player_hitbox.offset_xy(dx, 0);
+    let dy_hitbox = player_hitbox.offset_xy(0, dy);
     let points_dx = player_hitbox.dx_corners(dx);
     let points_dy = player_hitbox.dy_corners(dy);
-    let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
+    // let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
     for layer in current_map().maps.iter() {
+        trace!(format!("w: {}, h: {}, x: {}, y: {}", layer.w, layer.h, layer.x, layer.y),11);
         let layer_hitbox = Hitbox::new(layer.sx as i16, layer.sy as i16,
                                     layer.w as i16 * 8, layer.h as i16 * 8);
         if layer_hitbox.touches(delta_hitbox) {
             if let Some(points_dx) = points_dx {
-                for point in points_dx {
-                    let p_dx = Vec2::new(
-                        (point.x - layer_hitbox.x)/8 + layer.x as i16,
-                        (point.y - layer_hitbox.y)/8 + layer.y as i16
-                    );
-                    let id_x = mget(p_dx.x.into(), p_dx.y.into());
-                    if fget(id_x, 0) {dx=0;}
+                if layer_hitbox.touches(dx_hitbox) {
+                    for point in points_dx {
+                        let p_dx = Vec2::new(
+                            (point.x - layer_hitbox.x)/8 + layer.x as i16,
+                            (point.y - layer_hitbox.y)/8 + layer.y as i16
+                        );
+                        trace!(format!("{:?}", p_dx), 12);
+                        let id_x = mget(p_dx.x.into(), p_dx.y.into());
+                        if fget(id_x, 0) {dx=0;
+                            trace!("x collision",11);}
+                    }
                 }
             }
             if let Some(points_dy) = points_dy {
                 for point in points_dy {
-                    let p_dy = Vec2::new(
-                        (point.x - layer_hitbox.x)/8 + layer.x as i16,
-                        (point.y - layer_hitbox.y)/8 + layer.y as i16
-                    );
-                    let id_y = mget(p_dy.x.into(), p_dy.y.into());
-                    if fget(id_y, 0) {dy=0;}
+                    if layer_hitbox.touches(dy_hitbox) {
+                        trace!(format!("({} - {})/8 + {}", point.x, layer_hitbox.x, layer.x), 12);
+                        let p_dy = Vec2::new(
+                            (point.x - layer_hitbox.x)/8 + layer.x as i16,
+                            (point.y - layer_hitbox.y)/8 + layer.y as i16
+                        );
+                        trace!(format!("{:?}", p_dy), 12);
+                        let id_y = mget(p_dy.x.into(), p_dy.y.into());
+                        if fget(id_y, 0) {dy=0;
+                            trace!("y collision",11);}
+                    }
                 }
             }
-            if let Some(point_diag) = point_diag {
+            if let Some(point_diag) = player_hitbox.dd_corner(Vec2::new(dx, dy)) {
                 let p_diag = Vec2::new(
                     (point_diag.x - layer_hitbox.x)/8 + layer.x as i16,
                     (point_diag.y - layer_hitbox.y)/8 + layer.y as i16
@@ -180,6 +197,7 @@ fn step_game() {
                 if dx != 0 && dy != 0 && fget(id_d, 0) {
                     dx=0;
                     dy=0;
+                    trace!("diagonal collision",11);
                 }
             }
         }
@@ -187,8 +205,6 @@ fn step_game() {
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
-            player.dir.1 = dy as i8;
-            player.dir.0 = dx as i8;
             player.pos.x += dx as i16;
             player.pos.y += dy as i16;
             player.walktime = player.walktime.wrapping_add(1);
