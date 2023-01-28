@@ -122,7 +122,7 @@ fn step_game() {
         POS.write().unwrap().push((0, 0)); POS.write().unwrap().push((100, 100));
     }
     
-    if keyp(28, -1, -1) || time() == 0 {
+    if keyp(28, -1, -1) {
         load_map(&SUPERMARKET);
     }
     if keyp(29, -1, -1) {
@@ -295,6 +295,11 @@ fn draw_game() {
         );
         unsafe {(*FRAMEBUFFER)[1] = 0x12}
     }
+}
+
+#[export_name = "BOOT"]
+pub fn boot() {
+    load_map(&SUPERMARKET);
 }
 
 #[export_name = "TIC"]
