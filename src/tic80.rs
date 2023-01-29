@@ -12,6 +12,9 @@ pub const HEIGHT: i32 = 136;
 // TIC-80 RAM
 
 pub const FRAMEBUFFER: *mut [u8; 16320] = 0x00000 as *mut [u8; 16320];
+/// Pointers with address 0 are assumed null by the Rust compiler, preventing direct
+/// framebuffer access. We can get around this by using address 1 instead, and using
+/// `pix()` to read/write to the first byte.
 pub const HACKBUFFER: *mut [u8; 16319] = 0x00001 as *mut [u8; 16319];
 pub const TILES: *mut [u8; 8192] = 0x04000 as *mut [u8; 8192];
 pub const SPRITES: *mut [u8; 8192] = 0x06000 as *mut [u8; 8192];
@@ -105,6 +108,7 @@ pub mod sys {
         // These clash with rustc builtins, so they are reimplemented in the wrappers.
         // pub fn memcpy(dest: i32, src: i32, length: i32);
         // pub fn memset(address: i32, value: i32, length: i32);
+        
         #[cfg(feature = "void_mget")]
         pub fn mget(x: i32, y: i32);
         #[cfg(not(feature = "void_mget"))]
