@@ -120,5 +120,25 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new_tile(9,6, Some(&SUPERMARKET),17,4),
-             Warp::new_tile(3,6, Some(&SUPERMARKET),8,4)],
+             Warp::new_tile(3,6, Some(&SUPERMARKET),8,4),
+             Warp::new_tile(4,2, Some(&SUPERMARKET_STOREROOM),2,3)],
+};
+
+pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions {
+            x:86, y:28,
+            w:9, h:6,
+            transparent: &[0],
+            ..DEFAULT_MAP
+        },
+        MapOptions {
+            x:93, y:24,
+            w:5, h:4,
+            transparent: &[0],
+            sx: 2*8,
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
 };
