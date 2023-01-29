@@ -5,6 +5,7 @@ mod tic_helpers;
 mod map_data;
 mod camera;
 mod position;
+mod player;
 
 use tic80::*;
 use crate::rand::Pcg32;
@@ -12,53 +13,18 @@ use crate::position::{Vec2, Hitbox};
 use crate::tic_helpers::*;
 use crate::camera::Camera;
 use crate::map_data::*;
+use crate::player::*;
 use once_cell::sync::Lazy;
 use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug)]
-pub struct Player {
-    pub pos: Vec2,
-    pub local_hitbox: Hitbox,
-    pub hp: u8,
-    /// coords are (x, y)
-    pub dir: (i8, i8),
-    pub walktime: u16,
-    pub walking: bool,
-}
-impl Player {
-    pub const fn const_default() -> Self {
-        Self {
-            pos: Vec2::new(96, 38),
-            local_hitbox: Hitbox::new(0,10,7,5),
-            hp: 3,
-            dir: (0, 1),
-            walktime: 0,
-            walking: false,
-        }
-    }
-    pub fn sprite_index(&self) -> (i32, Flip, i32) {
-        let t = (((self.walktime+19) / 20) % 2) as i32;
-        let anim = if self.walktime > 0 {t + 1} else {0};
-        if self.dir.1 > 0 { return (768 + anim, Flip::None, t) } // Up
-        if self.dir.1 < 0 { return (771 + anim, Flip::None, t) } // Down
-        if self.dir.0 > 0 { return (832 + anim, Flip::None, t) } // Right
-        return (832 + anim, Flip::Horizontal, t) // Left
-    }
-    pub fn hitbox(&self) -> Hitbox {
-        self.local_hitbox.offset(self.pos)
-    }
-}
-impl Default for Player {
-    fn default() -> Self { Self::const_default() }
-}
-
 pub struct DebugInfo {
     player_info: bool,
+    map_info: bool
 }
 impl DebugInfo {
     pub const fn const_default() -> Self {
-        DebugInfo { player_info: false }
+        DebugInfo { player_info: false, map_info: false }
     }
 }
 
@@ -179,7 +145,8 @@ fn step_game() {
                 });
             }
             if let Some(point_diag) = point_diag {
-                if dx != 0 && dy != 0 && layer_collision(point_diag, layer_hitbox, layer.x, layer.y) { dx=0; dy=0; }
+                if dx != 0 && dy != 0
+                && layer_collision(point_diag, layer_hitbox, layer.x, layer.y) { dx=0; dy=0; }
             }
         }
     }
@@ -225,6 +192,9 @@ fn draw_game() {
         let mut layer = layer.clone();
         layer.sx -= cam_x();
         layer.sy -= cam_y();
+        if debug_info().map_info {
+            rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
+        }
         map(layer);
     }
     // draw sprites from least to greatest y
@@ -249,12 +219,15 @@ fn draw_game() {
 
     // draw fg
     palette_map_reset();
-    if debug_info().player_info {
+    if debug_info().map_info {
         for warp in current_map().warps.iter() {
             warp.from
-                .offset_xy(-cam_x() as i16, -cam_y() as i16)
-                .draw(12);
+            .offset_xy(-cam_x() as i16, -cam_y() as i16)
+            .draw(12);
         }
+        player().hitbox().offset_xy(-cam_x() as i16, -cam_y() as i16).draw(12);
+    }
+    if debug_info().player_info {
         print!(format!("There are {} things.", POS.read().unwrap().len()), 84, 94, PrintOptions::default());
         print!(format!("Player: {:#?}", player()), 0, 0,
             PrintOptions {
@@ -263,7 +236,6 @@ fn draw_game() {
                 ..Default::default()
             }
         );
-        player().hitbox().offset_xy(-cam_x() as i16, -cam_y() as i16).draw(12);
         print!(format!("Camera: {:#?}", camera()), 64, 0,
                PrintOptions {
                    small_font: true,
@@ -290,6 +262,10 @@ pub fn tic() {
     if keyp(4, -1, -1) {
         let p = debug_info().player_info;
         debug_info_mut().player_info = !p;
+    }
+    if keyp(13, -1, -1) {
+        let p = debug_info().map_info;
+        debug_info_mut().map_info = !p;
     }
     step_game();
     draw_game();
