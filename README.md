@@ -5,6 +5,7 @@ Simple TIC-80 game project using the Rust / TIC-80 starter template.
 Collect the eggs. Hatch mind-stopping prizes! Avoid various hazards along the way.
 
 Play at [http://tic80.com/play?cart=3193](http://tic80.com/play?cart=3193)
+
 ![Screenshot](screen.png)
 
 ## Running
