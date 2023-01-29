@@ -147,3 +147,24 @@ impl Hitbox {
         crate::rectb(self.x.into(), self.y.into(), self.w.into(), self.h.into(), colour);
     }
 }
+
+pub fn touches_tile(id: usize, point: Vec2) -> bool {
+    use crate::SPRITE_FLAGS;
+    let id = id % 512;
+    let point = Vec2::new(point.x % 8, point.y % 8);
+    let flags = unsafe { (*SPRITE_FLAGS)[id] };
+    // Tile flag corresponds to collision type
+    match flags {
+        0 => false, // Walkable
+        1 => true, // Solid
+        2 => point.x + point.y <= 7, // Top-left ramp
+        3 => point.x >= point.y, // Top-right ramp
+        4 => point.x + point.y >= 7, // Bottom-right ramp
+        5 => point.x <= point.y, // Bottom-left ramp
+        6 => point.y <= 4, // Top half
+        7 => point.y >= 4, // Bottom half
+        8 => point.x >= 4, // Left half
+        9 => point.x <= 4, // Right half
+        _ => false
+    }
+}

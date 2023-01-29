@@ -9,7 +9,7 @@ mod player;
 
 use tic80::*;
 use crate::rand::Pcg32;
-use crate::position::{Vec2, Hitbox};
+use crate::position::{Vec2, Hitbox, touches_tile};
 use crate::tic_helpers::*;
 use crate::camera::Camera;
 use crate::map_data::*;
@@ -118,6 +118,7 @@ fn step_game() {
     let points_dx = player_hitbox.dx_corners(dx);
     let points_dy = player_hitbox.dy_corners(dy);
     let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
+    let mut diagonal_collision = false;
     let layer_collision = |point: Vec2, layer_hitbox: Hitbox, layer_x: i32, layer_y: i32| {
         if layer_hitbox.touches_point(point) {
             let map_point = Vec2::new(
@@ -125,7 +126,7 @@ fn step_game() {
                                     (point.y - layer_hitbox.y)/8 + layer_y as i16
             );
             let id = mget(map_point.x.into(), map_point.y.into());
-            fget(id, 0)
+            touches_tile(id as usize, Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y))
         } else {
             false
         }
@@ -136,20 +137,22 @@ fn step_game() {
         if layer_hitbox.touches(delta_hitbox) {
             if let Some(points_dx) = points_dx {
                 points_dx.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dx=0; }
+                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dx=0; trace!(format!("X_Collision {:?}", point),11);}
+                    
                 });
             };
             if let Some(points_dy) = points_dy {
                 points_dy.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dy=0; }
+                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dy=0; trace!(format!("Y_Collision {:?}", point),11);}
+                    
                 });
             }
             if let Some(point_diag) = point_diag {
-                if dx != 0 && dy != 0
-                && layer_collision(point_diag, layer_hitbox, layer.x, layer.y) { dx=0; dy=0; }
+                if layer_collision(point_diag, layer_hitbox, layer.x, layer.y) { diagonal_collision=true; }
             }
         }
     }
+    if diagonal_collision && dx != 0 && dy != 0 { dx=0; dy=0; }
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
