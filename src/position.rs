@@ -128,15 +128,15 @@ impl Hitbox {
             let offset = self.offset(d);
             if d.y.is_positive() {
                 if d.x.is_positive() {
-                    Some(offset.corners()[1])
-                } else {
-                    Some(offset.corners()[0])
-                }
-            } else {
-                if d.x.is_positive() {
                     Some(offset.corners()[3])
                 } else {
                     Some(offset.corners()[2])
+                }
+            } else {
+                if d.x.is_positive() {
+                    Some(offset.corners()[1])
+                } else {
+                    Some(offset.corners()[0])
                 }
             }
         } else {
