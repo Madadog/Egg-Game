@@ -1,11 +1,13 @@
 pub mod alloc;
 mod tic80;
-mod rand;
 mod tic_helpers;
+mod rand;
 mod map_data;
 mod camera;
 mod position;
 mod player;
+mod interact;
+mod animation;
 
 use tic80::*;
 use crate::rand::Pcg32;
@@ -219,6 +221,18 @@ fn draw_game() {
         1,
     );
     palette_map_reset();
+    
+    for item in current_map().interactables.iter() {
+        if let Some(anim) = &item.sprite {
+            spr_outline(
+                anim.current_frame().id.into(),
+                anim.current_frame().pos.x as i32 + item.hitbox.x as i32 - cam_x(),
+                anim.current_frame().pos.y as i32 + item.hitbox.y as i32 - cam_y(),
+                anim.current_frame().options.clone(),
+                1,
+            );
+        }
+    }
 
     // draw fg
     palette_map_reset();

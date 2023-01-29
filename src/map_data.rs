@@ -1,5 +1,7 @@
-use crate::MapOptions;
+use crate::{MapOptions, SpriteOptions};
 use crate::position::{Hitbox, Vec2};
+use crate::interact::{Interactable, Interaction};
+use crate::animation::*;
 
 pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
     x: 60,
@@ -11,11 +13,17 @@ pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
     sy: 0,
     scale: 1,
 };
+pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
+    maps: &[],
+    warps: &[],
+    interactables: &[],
+};
 
 #[derive(Clone)]
 pub struct MapSet<'a> {
     pub maps: &'a [MapOptions<'a>],
     pub warps: &'a [Warp<'a>],
+    pub interactables: &'a [Interactable<'a>],
 }
 
 #[derive(Clone)]
@@ -86,6 +94,7 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
     ],
     warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),9,4),
              Warp::new_tile(8,4, Some(&SUPERMARKET_HALL),3,4)],
+    ..DEFAULT_MAP_SET
 };
 
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
@@ -122,6 +131,7 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     warps: &[Warp::new_tile(9,6, Some(&SUPERMARKET),17,4),
              Warp::new_tile(3,6, Some(&SUPERMARKET),8,4),
              Warp::new_tile(4,2, Some(&SUPERMARKET_STOREROOM),2,3)],
+    ..DEFAULT_MAP_SET
 };
 
 pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
@@ -141,4 +151,14 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
+    interactables: &[Interactable {
+        hitbox: Hitbox::new(53, 29, 8, 8),
+        interaction: Interaction::Text("It's floating."),
+        sprite: Some(Animation {
+            frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
+                      AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
+            ..Animation::const_default()
+        }),
+    }],
+    ..DEFAULT_MAP_SET
 };

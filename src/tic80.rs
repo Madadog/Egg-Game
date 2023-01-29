@@ -525,7 +525,24 @@ pub struct SpriteOptions<'a> {
     pub w: i32,
     pub h: i32,
 }
-
+impl<'a> SpriteOptions<'a> {
+    pub const fn const_default() -> Self {
+        Self {
+            transparent: &[],
+            scale: 1,
+            flip: Flip::None,
+            rotate: Rotate::None,
+            w: 1,
+            h: 1,
+        }
+    }
+    pub const fn transparent_zero() -> Self {
+        Self {
+            transparent: &[0],
+            ..Self::const_default()
+        }
+    }
+}
 impl Default for SpriteOptions<'_> {
     fn default() -> Self {
         Self {
