@@ -76,7 +76,7 @@ pub fn screen_offset(horizontal: u8, vertical: u8) {
 /// 1110 1bpp FG Page 2
 /// 1111 1bpp FG Page 3
 pub fn blit_segment(value: u8) {
-    unsafe { poke(0x3FFC, value) }
+    unsafe { *BLIT_SEGMENT = value }
 }
 
 pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
