@@ -32,7 +32,7 @@ impl DebugInfo {
 
 static TIME: RwLock<i32> = RwLock::new(0);
 static PLAYER: RwLock<Player> = RwLock::new(Player::const_default());
-static POS: RwLock<Vec<(i16, i16)>> = RwLock::new(Vec::new());
+static ANIMATIONS: RwLock<Vec<(u16, usize)>> = RwLock::new(Vec::new());
 static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(|| {Pcg32::default()}));
 static PAUSE: AtomicBool = AtomicBool::new(false);
 static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
@@ -83,11 +83,26 @@ pub fn load_map(map: &'static MapSet<'static>) {
     let map1 = &map.maps[0];
     *camera_mut() = Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
     *CURRENT_MAP.write().unwrap() = map;
+    
+    ANIMATIONS.write().unwrap().clear();
+    for _ in map.interactables {
+        ANIMATIONS.write().unwrap().push((0, 0));
+    }
 }
 
 fn step_game() {
-    if POS.read().unwrap().len() <= 100 {
-        POS.write().unwrap().push((0, 0)); POS.write().unwrap().push((100, 100));
+    for (anim, interact) in ANIMATIONS.write().unwrap().iter_mut()
+                .zip(current_map().interactables.iter()) {
+        if let Some(sprite) = &interact.sprite {
+            anim.0 += 1;//timer
+            if anim.0 > sprite.frames[anim.1].length {
+                anim.0 = 0;
+                anim.1 += 1;//index
+                if anim.1 >= sprite.frames.len() {
+                    anim.1 = 0;
+                }
+            }
+        }
     }
     
     if keyp(28, -1, -1) {
@@ -222,13 +237,14 @@ fn draw_game() {
     );
     palette_map_reset();
     
-    for item in current_map().interactables.iter() {
+    for (item, time) in current_map().interactables.iter()
+                        .zip(ANIMATIONS.read().unwrap().iter()) {
         if let Some(anim) = &item.sprite {
             spr_outline(
-                anim.current_frame().id.into(),
-                anim.current_frame().pos.x as i32 + item.hitbox.x as i32 - cam_x(),
-                anim.current_frame().pos.y as i32 + item.hitbox.y as i32 - cam_y(),
-                anim.current_frame().options.clone(),
+                anim.frames[time.1].id.into(),
+                anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - cam_x(),
+                anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - cam_y(),
+                anim.frames[time.1].options.clone(),
                 1,
             );
         }
@@ -245,7 +261,6 @@ fn draw_game() {
         player().hitbox().offset_xy(-cam_x() as i16, -cam_y() as i16).draw(12);
     }
     if debug_info().player_info {
-        print!(format!("There are {} things.", POS.read().unwrap().len()), 84, 94, PrintOptions::default());
         print!(format!("Player: {:#?}", player()), 0, 0,
             PrintOptions {
                 small_font: true,

@@ -152,7 +152,7 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     ],
     warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
     interactables: &[Interactable {
-        hitbox: Hitbox::new(53, 29, 8, 8),
+        hitbox: Hitbox::new(53, 28, 8, 8),
         interaction: Interaction::Text("It's floating."),
         sprite: Some(Animation {
             frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
