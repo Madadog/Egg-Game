@@ -167,13 +167,13 @@ fn step_game() {
         if layer_hitbox.touches(delta_hitbox) {
             if let Some(points_dx) = points_dx {
                 points_dx.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dx=0; trace!(format!("X_Collision {:?}", point),11);}
+                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dx=0; }
                     
                 });
             };
             if let Some(points_dy) = points_dy {
                 points_dy.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dy=0; trace!(format!("Y_Collision {:?}", point),11);}
+                    if layer_collision(point, layer_hitbox, layer.x, layer.y) { dy=0; }
                     
                 });
             }
