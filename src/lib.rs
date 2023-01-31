@@ -16,6 +16,7 @@ use crate::tic_helpers::*;
 use crate::camera::Camera;
 use crate::map_data::*;
 use crate::player::*;
+use crate::interact::Interaction;
 use once_cell::sync::Lazy;
 use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,7 @@ static PAUSE: AtomicBool = AtomicBool::new(false);
 static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
 static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
 static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
+static DIALOGUE: RwLock<Option<&str>> = RwLock::new(None);
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -92,7 +94,7 @@ pub fn load_map(map: &'static MapSet<'static>) {
 
 fn step_game() {
     for (anim, interact) in ANIMATIONS.write().unwrap().iter_mut()
-                .zip(current_map().interactables.iter()) {
+                            .zip(current_map().interactables.iter()) {
         if let Some(sprite) = &interact.sprite {
             anim.0 += 1;//timer
             if anim.0 > sprite.frames[anim.1].length {
@@ -104,7 +106,7 @@ fn step_game() {
             }
         }
     }
-    
+        
     if keyp(28, -1, -1) {
         load_map(&SUPERMARKET);
     }
@@ -112,26 +114,37 @@ fn step_game() {
         load_map(&SUPERMARKET_HALL);
     }
 
+    // Get keyboard inputs
     let (mut dx, mut dy) = (0, 0);
-    if btn(0) {
-        dy -= 1;
-    }
-    if btn(1) {
-        dy += 1;
-    }
-    if btn(2) {
-        dx -= 1;
-    }
-    if btn(3) {
-        dx += 1;
+    let mut interact = false;
+    let mut close_dialogue = false;
+    if btn(0) { dy -= 1; }
+    if btn(1) { dy += 1; }
+    if btn(2) { dx -= 1; }
+    if btn(3) { dx += 1; }
+    if btnp(4, 0, -1) { 
+        interact = true;
+        if matches!(*DIALOGUE.write().unwrap(), Some(_)) {
+            close_dialogue = true;
+            *DIALOGUE.write().unwrap() = None;
+        }
     }
     
+    // Player position + intended movement
+    let player_hitbox = player().hitbox();
+    let delta_hitbox = player_hitbox.offset_xy(dx, dy);
+    let interact_hitbox = player_hitbox.offset_xy(
+        player().dir.0.into(),
+        player().dir.1.into()
+    );
+    
+    // Face direction
     if dx != 0 || dy != 0 {
         player_mut().dir.1 = dy as i8;
         player_mut().dir.0 = dx as i8;
     }
-    let player_hitbox = player().hitbox();
-    let delta_hitbox = player_hitbox.offset_xy(dx, dy);
+    
+    // Collide
     let points_dx = player_hitbox.dx_corners(dx);
     let points_dy = player_hitbox.dy_corners(dy);
     let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
@@ -170,6 +183,7 @@ fn step_game() {
         }
     }
     if diagonal_collision && dx != 0 && dy != 0 { dx=0; dy=0; }
+    // Apply motion
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
@@ -194,6 +208,18 @@ fn step_game() {
         player_mut().pos = target.to;
         if let Some(new_map) = target.map {
             load_map(new_map);
+        }
+    } else if interact {
+        for item in current_map().interactables.iter() {
+            if interact_hitbox.touches(item.hitbox) && !close_dialogue {
+                match &item.interaction {
+                    Interaction::Text(x) => {
+                        trace!(x, 12);
+                        *DIALOGUE.write().unwrap() = Some(x);
+                    },
+                    x => {trace!(format!("{:?}", x), 12);},
+                }
+            }
         }
     }
     
@@ -252,6 +278,16 @@ fn draw_game() {
 
     // draw fg
     palette_map_reset();
+    if let Some(text) = *DIALOGUE.read().unwrap() {
+        let w = 200;
+        let h = 40;
+        rect((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 2);
+        rectb((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 3);
+        print!(text, (WIDTH - w)/2+2, (HEIGHT - h) - 4 + 2, PrintOptions {
+            color: 12,
+            ..Default::default()
+        });
+    }
     if debug_info().map_info {
         for warp in current_map().warps.iter() {
             warp.from
@@ -259,6 +295,9 @@ fn draw_game() {
             .draw(12);
         }
         player().hitbox().offset_xy(-cam_x() as i16, -cam_y() as i16).draw(12);
+        for item in current_map().interactables.iter() {
+            item.hitbox.offset_xy(-cam_x() as i16, -cam_y() as i16).draw(14);
+        }
     }
     if debug_info().player_info {
         print!(format!("Player: {:#?}", player()), 0, 0,

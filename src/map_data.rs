@@ -152,13 +152,18 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     ],
     warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
     interactables: &[Interactable {
-        hitbox: Hitbox::new(53, 28, 8, 8),
+        hitbox: Hitbox::new(53, 28, 8, 10),
         interaction: Interaction::Text("It's floating."),
         sprite: Some(Animation {
             frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
                       AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
             ..Animation::const_default()
         }),
+    },
+    Interactable {
+        hitbox: Hitbox::new(16, 0, 5*8, 4*7),
+        interaction: Interaction::Text("They're all out of Keratin Krunch."),
+        sprite: None,
     }],
     ..DEFAULT_MAP_SET
 };

@@ -1,6 +1,7 @@
 use crate::{Hitbox, SpriteOptions};
 use crate::animation::*;
 
+#[derive(Debug)]
 pub enum Interaction<'a> {
     Text(&'a str),
 }
