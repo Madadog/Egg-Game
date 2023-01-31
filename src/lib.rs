@@ -8,6 +8,7 @@ mod position;
 mod player;
 mod interact;
 mod animation;
+mod dialogue;
 
 use tic80::*;
 use crate::rand::Pcg32;
@@ -17,6 +18,7 @@ use crate::camera::Camera;
 use crate::map_data::*;
 use crate::player::*;
 use crate::interact::Interaction;
+use crate::dialogue::Dialogue;
 use once_cell::sync::Lazy;
 use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,7 +41,7 @@ static PAUSE: AtomicBool = AtomicBool::new(false);
 static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
 static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
 static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
-static DIALOGUE: RwLock<Option<&str>> = RwLock::new(None);
+static DIALOGUE: RwLock<Dialogue> = RwLock::new(Dialogue::const_default());
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -113,20 +115,35 @@ fn step_game() {
     if keyp(29, -1, -1) {
         load_map(&SUPERMARKET_HALL);
     }
+    {
+        let fixed = DIALOGUE.read().unwrap().fixed;
+        let small_text = DIALOGUE.read().unwrap().small_text;
+        if keyp(30, -1, -1) {
+            DIALOGUE.write().unwrap().set_options(!fixed, small_text);
+        }
+        if keyp(31, -1, -1) {
+            DIALOGUE.write().unwrap().set_options(fixed, !small_text);
+        }
+    }
 
     // Get keyboard inputs
     let (mut dx, mut dy) = (0, 0);
     let mut interact = false;
-    let mut close_dialogue = false;
-    if btn(0) { dy -= 1; }
-    if btn(1) { dy += 1; }
-    if btn(2) { dx -= 1; }
-    if btn(3) { dx += 1; }
-    if btnp(4, 0, -1) { 
+    if matches!(DIALOGUE.write().unwrap().text, None) {
+        if btn(0) { dy -= 1; }
+        if btn(1) { dy += 1; }
+        if btn(2) { dx -= 1; }
+        if btn(3) { dx += 1; }
+    } else {
+        DIALOGUE.write().unwrap().tick(1);
+        if btn(4) { DIALOGUE.write().unwrap().tick(2); }
+        if btnp(5, 0, -1) { DIALOGUE.write().unwrap().skip(); }
+    }
+    if btnp(4, 0, -1) && DIALOGUE.read().unwrap().is_done() { 
         interact = true;
-        if matches!(*DIALOGUE.write().unwrap(), Some(_)) {
-            close_dialogue = true;
-            *DIALOGUE.write().unwrap() = None;
+        if matches!(DIALOGUE.write().unwrap().text, Some(_)) {
+            interact = false;
+            DIALOGUE.write().unwrap().close();
         }
     }
     
@@ -168,7 +185,6 @@ fn step_game() {
             if let Some(points_dx) = points_dx {
                 points_dx.into_iter().for_each(|point| {
                     if layer_collision(point, layer_hitbox, layer.x, layer.y) { dx=0; }
-                    
                 });
             };
             if let Some(points_dy) = points_dy {
@@ -211,11 +227,11 @@ fn step_game() {
         }
     } else if interact {
         for item in current_map().interactables.iter() {
-            if interact_hitbox.touches(item.hitbox) && !close_dialogue {
+            if interact_hitbox.touches(item.hitbox) {
                 match &item.interaction {
                     Interaction::Text(x) => {
                         trace!(x, 12);
-                        *DIALOGUE.write().unwrap() = Some(x);
+                        DIALOGUE.write().unwrap().set_text(x);
                     },
                     x => {trace!(format!("{:?}", x), 12);},
                 }
@@ -278,15 +294,22 @@ fn draw_game() {
 
     // draw fg
     palette_map_reset();
-    if let Some(text) = *DIALOGUE.read().unwrap() {
-        let w = 200;
-        let h = 40;
-        rect((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 2);
-        rectb((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 3);
-        print!(text, (WIDTH - w)/2+2, (HEIGHT - h) - 4 + 2, PrintOptions {
-            color: 12,
-            ..Default::default()
-        });
+    {
+        let print_timer = DIALOGUE.read().unwrap().timer;
+        let font_fixed = DIALOGUE.read().unwrap().fixed;
+        let small_font = DIALOGUE.read().unwrap().small_text;
+        if let Some(text) = &DIALOGUE.read().unwrap().text {
+            let w = 200;
+            let h = 24;
+            rect((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 2);
+            rectb((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 3);
+            print_alloc(&text[..(print_timer)], (WIDTH - w)/2+3, (HEIGHT - h) - 4 + 3, PrintOptions {
+                color: 12,
+                small_font,
+                fixed: font_fixed,
+                ..Default::default()
+            });
+        }
     }
     if debug_info().map_info {
         for warp in current_map().warps.iter() {
