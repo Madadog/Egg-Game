@@ -9,6 +9,7 @@ mod player;
 mod interact;
 mod animation;
 mod dialogue;
+mod dialogue_data;
 
 use tic80::*;
 use crate::rand::Pcg32;
@@ -215,7 +216,8 @@ fn step_game() {
     
     let mut warp_target = None;
     for warp in current_map().warps.iter() {
-        if player().hitbox().touches(warp.from) {
+        if player().hitbox().touches(warp.from)
+        || (interact && interact_hitbox.touches(warp.from)) {
             warp_target = Some(warp.clone());
             break;
         }
