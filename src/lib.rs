@@ -182,7 +182,7 @@ fn step_game() {
             }
         }
     }
-    if diagonal_collision && dx != 0 && dy != 0 { dx=0; dy=0; }
+    if diagonal_collision && dx != 0 && dy != 0 { dx=0; }
     // Apply motion
     {
         let mut player = player_mut();
