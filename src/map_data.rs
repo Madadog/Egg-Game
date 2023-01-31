@@ -2,6 +2,7 @@ use crate::{MapOptions, SpriteOptions};
 use crate::position::{Hitbox, Vec2};
 use crate::interact::{Interactable, Interaction};
 use crate::animation::*;
+use crate::dialogue_data::*;
 
 pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
     x: 60,
@@ -97,37 +98,37 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(13*8, 5*4, 8*2, 8*3),
-            interaction: Interaction::Text("There's no money in the coin return slot."),
+            interaction: Interaction::Text(SM_COIN_RETURN),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(2*8, 8*8, 8*3, 8*2),
-            interaction: Interaction::Text("\"Reduced-Price Produce: Fresh out of season.\""),
+            interaction: Interaction::Text(SM_FRUIT_BASKET),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(4*8, 5*8, 8, 20),
-            interaction: Interaction::Text("It's yellow outside."),
+            interaction: Interaction::Text(SM_MAIN_WINDOW),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(19*8, 5*8, 8, 15),
-            interaction: Interaction::Text("If you blow on the glass, it fogs up, revealing all the fingerprints left by prior employees."),
+            interaction: Interaction::Text(SM_FRIDGE_1),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(20*8, 6*8, 8, 15),
-            interaction: Interaction::Text("A note on the front says \"Out of Order\", followed by a smiley face. A sickening contrast."),
+            interaction: Interaction::Text(SM_FRIDGE_2),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(21*8, 7*8, 8, 16),
-            interaction: Interaction::Text("The blurb reads \"It's SodaTime!\". The machine is filled to the brim with cans of motor oil."),
+            interaction: Interaction::Text(SM_VENDING_MACHINE),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(11*8, 10*8, 3*8, 8),
-            interaction: Interaction::Text("Looks like the creator didn't put too much effort into this part of the map."),
+            interaction: Interaction::Text(CONSTRUCTION_1),
             sprite: None,
         },
     ],
@@ -171,22 +172,22 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(11*8, 4*8, 8, 8),
-            interaction: Interaction::Text("This is an emergency exit. It's not an emergency right now. Ergo, you cannot use the emergency exit."),
+            interaction: Interaction::Text(EMERGENCY_EXIT),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(8*8, 3*8, 8, 8),
-            interaction: Interaction::Text("Looks like it's still under construction."),
+            interaction: Interaction::Text(CONSTRUCTION_2),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(11*4, 0, 2*8, 7*4),
-            interaction: Interaction::Text("There's a single bottle of floor cleaner. Not a mop in sight, though."),
+            interaction: Interaction::Text(SM_HALL_SHELF),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(1*8, 3*8, 12, 16),
-            interaction: Interaction::Text("Looks like this window has been recently painted over."),
+            interaction: Interaction::Text(SM_HALL_WINDOW),
             sprite: None,
         },
     ],
@@ -212,7 +213,7 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
     interactables: &[Interactable {
         hitbox: Hitbox::new(53, 28, 8, 10),
-        interaction: Interaction::Text("It's floating."),
+        interaction: Interaction::Text(EGG_1),
         sprite: Some(Animation {
             frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
                       AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
@@ -221,7 +222,7 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     },
     Interactable {
         hitbox: Hitbox::new(16, 0, 5*8, 4*7),
-        interaction: Interaction::Text("They're all out of Keratin Krunch."),
+        interaction: Interaction::Text(SM_STOREROOM_SHELF),
         sprite: None,
     }],
     ..DEFAULT_MAP_SET
