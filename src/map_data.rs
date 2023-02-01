@@ -227,3 +227,25 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     }],
     ..DEFAULT_MAP_SET
 };
+
+pub static TEST_PEN: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions {
+            x:53, y:17,
+            w:7, h:9,
+            transparent: &[],
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new_tile(3,8, Some(&SUPERMARKET),10,4)],
+    interactables: &[Interactable {
+        hitbox: Hitbox::new(5*8, 1*8, 8, 10),
+        interaction: Interaction::Text(EGG_1),
+        sprite: Some(Animation {
+            frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
+                     AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
+                     ..Animation::const_default()
+        }),
+    }],
+    ..DEFAULT_MAP_SET
+};
