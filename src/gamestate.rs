@@ -59,7 +59,6 @@ pub fn step_walkaround() {
             }
         }
         
-        unsafe {trace!(format!("{:b},{:b},{:b},{:b}",(*GAMEPADS)[0],(*GAMEPADS)[1],(*GAMEPADS)[2],(*GAMEPADS)[3]), 12);}
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
@@ -74,7 +73,6 @@ pub fn step_walkaround() {
             if mem_btnp(5, 0, -1) { DIALOGUE.write().unwrap().skip(); }
         }
         if mem_btnp(4, -1, -1) && DIALOGUE.read().unwrap().is_done() {
-            trace!("mem_btnp(4)",12);
             interact = true;
             if matches!(DIALOGUE.write().unwrap().text, Some(_)) {
                 interact = false;
@@ -278,8 +276,19 @@ pub fn draw_walkaround() {
 
 pub fn draw_popup() {
     cls(1);
-    print_raw("Arrow keys: Move around.\nZ: Interact.\nX: Skip text.\n\nRemember to sleep regularly.",
-              4,
+    let string = crate::dialogue_data::INSTRUCTIONS;
+    rectb(7,15,226,100,3);
+    rect(7,15,226,100,2);
+    print_raw(string,
+              11,
+              21,
+              PrintOptions {
+                  color: 0,
+              ..Default::default()
+              }
+    );
+    print_raw(string,
+              10,
               20,
               PrintOptions {
                   color: 12,
