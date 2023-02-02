@@ -43,13 +43,14 @@ static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
 static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
 static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
 static DIALOGUE: RwLock<Dialogue> = RwLock::new(Dialogue::const_default());
-static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Popup);
+static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
 static GAMEPAD_HELPER: RwLock<[u8; 4]> = RwLock::new([0; 4]);
-
+static MAINMENU: RwLock<usize> = RwLock::new(0);
+static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 
 // REMINDER: Heap maxes at 8192 u32.
 
-pub fn time() -> i32 {
+pub fn frames() -> i32 {
     *TIME.read().unwrap()
 }
 pub fn player_mut<'a>() -> RwLockWriteGuard<'a, Player> {
@@ -111,7 +112,7 @@ pub fn mem_btnp(id: u8, hold: i8, repeat: i8) -> bool {
     let id = id % 8;
     let buttons = unsafe {(*GAMEPADS)[controller]};
     let previous = GAMEPAD_HELPER.read().unwrap()[controller];
-    buttons != previous && (1 << id) & buttons != 0
+    (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
 }
 pub fn step_gamepad_helper() {
     let buttons = unsafe {*GAMEPADS};
@@ -125,6 +126,8 @@ pub fn boot() {
 
 #[export_name = "TIC"]
 pub fn tic() {
+    *TIME.write().unwrap() += 1;
+    
     if keyp(16, -1, -1) {
         set_pause(!is_paused());
         print!("Paused", 100, 62, PrintOptions {color: 12, ..Default::default()});

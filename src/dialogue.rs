@@ -39,11 +39,20 @@ impl Dialogue {
             *text = fit_paragraph(text, 196, self.fixed, self.small_text);
         }
     }
+    pub fn toggle_small_text(&mut self) {self.small_text = !self.small_text}
+    pub fn toggle_fixed(&mut self) {self.fixed = !self.fixed}
+    pub fn get_options(&self) -> PrintOptions {
+        PrintOptions {
+            fixed: self.fixed,
+            small_text: self.small_text,
+            ..Default::default()
+        }
+    }
 }
 
 use crate::trace;
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
-    let width = print_alloc(string, 250, 200, PrintOptions {fixed, small_font, ..Default::default()});
+    let width = print_alloc(string, 250, 200, PrintOptions {fixed, small_text: small_font, ..Default::default()});
     trace!(format!("{}", width), 12);
     width
 }

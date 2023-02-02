@@ -586,11 +586,12 @@ pub fn fset(sprite_index: i32, flag: i8, value: bool) {
 // The *_alloc functions can handle any AsRef<str> type, but require the overhead of allocation.
 // The macros will avoid the allocation if passed a string literal by adding the null terminator at compile time.
 
+#[derive(Clone)]
 pub struct PrintOptions {
     pub color: i32,
     pub fixed: bool,
     pub scale: i32,
-    pub small_font: bool,
+    pub small_text: bool,
 }
 
 impl Default for PrintOptions {
@@ -599,7 +600,7 @@ impl Default for PrintOptions {
             color: 15,
             fixed: false,
             scale: 1,
-            small_font: false,
+            small_text: false,
         }
     }
 }
@@ -613,7 +614,7 @@ pub fn print_raw(text: &str, x: i32, y: i32, opts: PrintOptions) -> i32 {
             opts.color,
             opts.fixed,
             opts.scale,
-            opts.small_font,
+            opts.small_text,
         )
     }
 }
@@ -628,7 +629,7 @@ pub fn print_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) ->
             opts.color,
             opts.fixed,
             opts.scale,
-            opts.small_font,
+            opts.small_text,
         )
     }
 }

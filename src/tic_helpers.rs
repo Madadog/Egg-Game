@@ -38,22 +38,76 @@ pub fn get_palette_map() -> [u8; 16] {
     palette_map
 }
 
-pub fn palette(index: u8, rgb: [u8; 3]) {
+pub fn set_palette_colour(index: u8, rgb: [u8; 3]) {
     let index: usize = (index % 16).into();
     for (i, colour) in rgb.into_iter().enumerate() {
-        unsafe { (*PALETTE)[index + i] = colour}
+        unsafe { (*PALETTE)[index * 3 + i] = colour}
     }
+}
+
+pub fn set_palette(colours: [[u8; 3]; 16]) {
+    for (i, colour) in colours.iter().enumerate() {
+        set_palette_colour(i as u8, *colour);
+    }
+}
+
+pub fn get_palette() -> [[u8; 3];16] {
+    let mut palette = [[0; 3];16];
+    for (from, to) in palette.iter_mut().flatten().zip(unsafe {(*PALETTE).iter()}) {
+        *from = *to;
+    }
+    palette
+}
+
+/// Lerps between 2 colour palettes. `amount` is an interpolation amount, ranging from `0..=256`.
+pub fn fade_palette(from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
+    let amount = amount.min(256);
+    for (index, (colour1, colour2)) in from.iter().zip(to.iter()).enumerate() {
+        let mut rgb = [0; 3];
+        for (j, (component1, component2)) in colour1.iter().zip(colour2.iter()).enumerate() {
+            rgb[j] = ((*component1 as u16 * (256-amount) + *component2 as u16 * amount) >> 8) as u8;
+        }
+        set_palette_colour(index as u8, rgb);
+    }
+}
+pub fn fade_palette_colour(index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
+    let amount = amount.min(256);
+    let index: usize = (index % 16).into();
+    let mut rgb = [0; 3];
+    for (j, (component1, component2)) in from.iter().zip(to.iter()).enumerate() {
+        rgb[j] = ((*component1 as u16 * (256-amount) + *component2 as u16 * amount) >> 8) as u8;
+    }
+    crate::trace!(format!("{:?}",rgb),11);
+    set_palette_colour(index as u8, rgb);
 }
 
 pub fn set_border(colour: u8) {
     unsafe { *BORDER_COLOR = colour }
 }
 
-pub fn screen_offset(horizontal: u8, vertical: u8) {
+pub fn screen_offset(horizontal: i8, vertical: i8) {
     unsafe {
-        (*SCREEN_OFFSET)[0] = horizontal;
-        (*SCREEN_OFFSET)[1] = vertical;
+        (*SCREEN_OFFSET)[0] = horizontal as u8;
+        (*SCREEN_OFFSET)[1] = vertical as u8;
     }
+}
+
+pub fn draw_ovr<T: Fn()>(draw: T) {
+    unsafe {vbank(1);}
+    draw();
+    unsafe {vbank(0);}
+}
+
+pub fn get_pmem(address: usize) -> u8 {
+    let address = address.min(1023);
+    unsafe {
+        (*PERSISTENT_RAM)[address]
+    }
+}
+
+pub fn set_pmem(address: usize, value: u8) {
+    let address = address.min(1023);
+    unsafe { (*PERSISTENT_RAM)[address] = value}
 }
 
 /// 0000 SYS GFX
@@ -88,6 +142,11 @@ pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outli
     spr(id, x, y - 1, sprite_options.clone());
     set_palette_map(old_map);
     spr(id, x, y, sprite_options);
+}
+
+pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
+    let string_width = print_raw(string, 999, 999, options.clone());
+    print_raw(string, x-string_width/2, y, options);
 }
 
 pub const SWEETIE_16: [[u8; 3]; 16] = [

@@ -1,31 +1,66 @@
 use crate::{ANIMATIONS, DIALOGUE, TIME};
-use crate::{current_map, load_map, player, player_mut, camera, camera_mut};
+use crate::{current_map, load_map, player, player_mut, camera, camera_mut, rand};
 use crate::position::{Hitbox, Vec2, touches_tile};
 use crate::tic80::*;
 use crate::map_data::*;
 use crate::interact::Interaction;
 use crate::{trace, print};
 
-use crate::tic_helpers::{palette_map_reset, palette_map_rotate, blit_segment, spr_outline};
-use crate::{cam_x, cam_y, debug_info, mem_btn, mem_btnp};
+use crate::tic_helpers::{palette_map_reset, palette_map_rotate, blit_segment, spr_outline, draw_ovr, SWEETIE_16, fade_palette, set_palette, set_palette_colour, screen_offset, get_pmem, set_pmem, print_raw_centered, get_palette, fade_palette_colour};
+use crate::{cam_x, cam_y, debug_info, mem_btn, mem_btnp, frames};
 
 pub enum GameState {
-    Popup,
+    Instructions,
     Walkaround,
+    Animation(u16),
+    MainMenu,
+    Options,
 }
 impl GameState {
     pub fn run(&mut self) {
         match self {
-            Self::Popup => {
+            Self::Instructions => {
                 if mem_btn(0) || mem_btn(1) || mem_btn(2) || mem_btn(3) || mem_btn(4) || mem_btn(5) {
-                    *self = Self::Walkaround;
+                    if get_pmem(0) == 0 {
+                        *self = Self::Animation(0);
+                    } else {
+                        *self = Self::Walkaround;
+                    }
                 }
-                draw_popup();
+                draw_instructions();
             },
             Self::Walkaround => {
                 step_walkaround();
                 draw_walkaround();
             },
+            Self::Animation(x) => {
+                if get_pmem(0) != 0 {
+                    *self = Self::MainMenu;
+                    return
+                };
+                // if mem_btnp(5, 0, 0) {*x += 1000;}
+                if mem_btn(4) {*x += 1;}
+                if draw_animation(*x) {
+                    *x += 1;
+                } else {
+                    *self = Self::MainMenu;
+                }
+            }
+            Self::MainMenu => {
+                match step_main_menu() {
+                    Some(MainMenuOption::Play) => *self = Self::Walkaround,
+                    Some(MainMenuOption::Options) => *self = Self::Options,
+                    None => {}
+                };
+                draw_main_menu();
+            }
+            Self::Options => {
+                if step_options() {
+                    draw_options();
+                } else {
+                    *self = Self::MainMenu;
+                }
+            }
         }
     }
 }
@@ -174,8 +209,6 @@ pub fn step_walkaround() {
         }
         
         camera_mut().center_on(player().pos.x+4, player().pos.y+8);
-        
-        *TIME.write().unwrap() += 1;
 }
 
 pub fn draw_walkaround() {
@@ -239,7 +272,7 @@ pub fn draw_walkaround() {
                 rectb((WIDTH - w)/2, (HEIGHT - h) - 4, w, h, 3);
                 print_alloc(&text[..(print_timer)], (WIDTH - w)/2+3, (HEIGHT - h) - 4 + 3, PrintOptions {
                     color: 12,
-                    small_font,
+                    small_text: small_font,
                     fixed: font_fixed,
                     ..Default::default()
                 });
@@ -259,14 +292,14 @@ pub fn draw_walkaround() {
         if debug_info().player_info {
             print!(format!("Player: {:#?}", player()), 0, 0,
                    PrintOptions {
-                       small_font: true,
+                       small_text: true,
                    color: 11,
                    ..Default::default()
                    }
             );
             print!(format!("Camera: {:#?}", camera()), 64, 0,
                    PrintOptions {
-                       small_font: true,
+                       small_text: true,
                    color: 11,
                    ..Default::default()
                    }
@@ -274,11 +307,11 @@ pub fn draw_walkaround() {
         }
 }
 
-pub fn draw_popup() {
-    cls(1);
+pub fn draw_instructions() {
+    cls(0);
     let string = crate::dialogue_data::INSTRUCTIONS;
-    rectb(7,15,226,100,3);
-    rect(7,15,226,100,2);
+    rect(7,15,226,100,1);
+    rectb(7,15,226,100,2);
     print_raw(string,
               11,
               21,
@@ -295,4 +328,260 @@ pub fn draw_popup() {
               ..Default::default()
               }
     );
+}
+
+pub fn draw_animation(t: u16) -> bool {
+    let steps: &[u16] = &[0, 1, 700, 760];
+    let index = steps.iter().position(|&x| x >= t);
+    let local_time = index.and_then(|x| Some(t - steps[x.saturating_sub(1)]));
+    match index {
+        Some(0) => {
+            cls(0);
+            set_palette([[0; 3]; 16]);
+            // fade_palette(SWEETIE_16, [[0; 3]; 16], 256/50 * t);
+            true
+        }
+        Some(1) => {
+            music(3, MusicOptions::default());
+            draw_ovr(|| {
+                set_palette([[0; 3]; 16]);
+                circb(90, 38, 4, 4);
+                circb(90, 36, 3, 4);
+                circ(90, 38, 3, 12);
+                circ(90, 36, 2, 12);
+                for _ in 0..420 {
+                    pix(rand() as i32 % 240,
+                        rand() as i32 % 136,
+                        12,)
+                }
+            });
+            true
+        },
+        Some(2) => {
+            let local_time = local_time.unwrap();
+            let max_time = 700.0 - 60.0;
+            fade_palette([[0; 3]; 16], SWEETIE_16, local_time*2);
+            draw_ovr(|| {
+                fade_palette([[0; 3]; 16], SWEETIE_16, local_time*2);
+                let t = ((local_time as f32 /max_time)).powf(0.02);
+                let size = 200.0 / (max_time + 1.0 - t * max_time).powi(2).max(1.0);
+                let t = size as i32;
+                set_palette_colour(15, [0x0F;3]);
+                circ(120, 68, t, 15);
+                circb(120, 68, t, 2);
+                if local_time > 400 {
+                    if local_time < 450 {
+                        if local_time % 3 == 0 {
+                            screen_offset((rand()%2 - 1) as i8, (rand()%2 - 1) as i8);
+                        }
+                    } else {
+                        screen_offset((rand()%2 - 1) as i8, (rand()%2 - 1) as i8);
+                    }
+                }
+            });
+            true
+        },
+        Some(3) => {
+            screen_offset(0, 0);
+            fade_palette_colour(15, [0x0F;3], [26, 28, 44], local_time.unwrap()*10);
+            cls(15);
+            draw_ovr(|| {
+                use crate::dialogue_data::GAME_TITLE;
+                cls(0);
+                fade_palette([[0x0F; 3]; 16], SWEETIE_16, local_time.unwrap()*10);
+                let text_width = print_raw(GAME_TITLE, 999, 999, PrintOptions {scale: 1, ..Default::default()});
+                print_raw_centered(GAME_TITLE, 120, 73, PrintOptions {
+                    scale: 1,
+                    color: 2,
+                    ..Default::default()
+                });
+                rect(120-text_width/2, 69, text_width-1, 2, 2);
+                
+                blit_segment(8);
+                spr(1086, 120-8, 50+(t as i32/30%2), SpriteOptions {
+                    transparent: &[0],
+                    scale: 1,
+                    w: 2,
+                    h: 2,
+                    ..Default::default()
+                });
+                blit_segment(4);
+            });
+            true
+        },
+        _ => {
+            music(-1, MusicOptions {
+                frame: 1, ..Default::default()
+            });
+            set_pmem(0, 1);
+            screen_offset(0, 0);
+            set_palette(SWEETIE_16);
+            draw_ovr(|| cls(0));
+            false
+        }
+    }
+}
+
+enum MainMenuOption {
+    Play,
+    Options,
+}
+
+fn step_main_menu() -> Option<MainMenuOption> {
+    use crate::MAINMENU;
+    let old_index = *MAINMENU.read().unwrap();
+    
+    let mouse_pos = Vec2::new(mouse().x, mouse().y);
+    let mut clicked = false;
+    for i in 0..2 {
+        if Hitbox::new(0, 88+8*i, 240, 8).touches_point(mouse_pos) {
+            *MAINMENU.write().unwrap() = i as usize;
+            clicked = mouse().left;
+        }
+    }
+    if mem_btnp(0, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
+    }
+    if mem_btnp(1, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(1);
+    }
+    
+    let menu_index = *MAINMENU.read().unwrap();
+    if mem_btnp(4, -1, -1) || clicked {
+        match menu_index {
+            0 => {return Some(MainMenuOption::Play);},
+            1 => {
+                *MAINMENU.write().unwrap() = 0;
+                return Some(MainMenuOption::Options);
+            },
+            _ => {},
+        };
+    }
+    None
+}
+
+pub fn draw_main_menu() {
+    cls(0);
+    use crate::MAINMENU;
+    use crate::dialogue_data::{GAME_TITLE, MENU_OPTIONS, MENU_PLAY};
+    let title_width = print_raw(GAME_TITLE, 999, 999, PrintOptions {scale: 1, ..Default::default()});
+    print_raw_centered(GAME_TITLE, 120, 73, PrintOptions {
+        scale: 1,
+        color: 2,
+        ..Default::default()
+    });
+    
+    rect(120-title_width/2, 69, title_width-1, 2, 2);
+    
+    blit_segment(8);
+    spr(1086, 120-8, 50+((frames() as i32/30)%2), SpriteOptions {
+        transparent: &[0],
+        scale: 1,
+        w: 2,
+        h: 2,
+        ..Default::default()
+    });
+    blit_segment(4);
+    
+    let strings = [MENU_PLAY, MENU_OPTIONS];
+    for (i, string) in (0..2).zip(strings) {
+        let current_option = i as usize == *MAINMENU.read().unwrap();
+        let color = if current_option {4} else {3};
+        if current_option {
+            rect(0,88+i*8-1,240,8,1);
+            print_raw_centered(&format!("{}", string), 120, 88+i*8, PrintOptions {
+                color,
+                ..DIALOGUE.read().unwrap().get_options()
+            });
+        } else {
+            print_raw_centered(string, 120, 88+i*8, PrintOptions {
+                color,
+                ..DIALOGUE.read().unwrap().get_options()
+            });
+        }
+    }
+}
+
+fn step_options() -> bool {
+    use crate::{MAINMENU, RESET_PROTECTOR};
+    let old_index = *MAINMENU.read().unwrap();
+    
+    let mouse_pos = Vec2::new(mouse().x, mouse().y);
+    let mut clicked = false;
+    for i in 0..4 {
+        if Hitbox::new(0, 40+8*i, 240, 8).touches_point(mouse_pos) {
+            *MAINMENU.write().unwrap() = i as usize;
+            clicked = mouse().left;
+        }
+    }
+    if mem_btnp(0, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
+    }
+    if mem_btnp(1, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(3);
+    }
+    
+    let menu_index = *MAINMENU.read().unwrap();
+    if menu_index != 3 {*RESET_PROTECTOR.write().unwrap() = 0;};
+    if mem_btnp(4, -1, -1) || clicked {
+        match menu_index {
+            0 => {return false},
+            1 => {DIALOGUE.write().unwrap().toggle_small_text();},
+            2 => {DIALOGUE.write().unwrap().toggle_fixed()},
+            3 => {
+                if *RESET_PROTECTOR.read().unwrap() == 0 {
+                    *RESET_PROTECTOR.write().unwrap() += 1;
+                } else {
+                    *RESET_PROTECTOR.write().unwrap() = 0;
+                    unsafe {
+                        for byte in (*PERSISTENT_RAM).iter_mut() {
+                            *byte = 0;
+                        }
+                    }
+                    return false;
+                };
+            },
+            _ => {},
+        };
+    }
+    true
+}
+
+pub fn draw_options() {
+    cls(0);
+    use crate::{MAINMENU, RESET_PROTECTOR};
+    use crate::dialogue_data::{MENU_BACK,OPTIONS_FONT_SIZE,OPTIONS_FONT_FIXED,OPTIONS_RESET,OPTIONS_RESET_SURE,
+        OPTIONS_LOSE_DATA
+    };
+    blit_segment(4);
+    let list_start = 40;
+    let reset_string = if *RESET_PROTECTOR.read().unwrap() == 0 {
+        OPTIONS_RESET
+    } else {
+        OPTIONS_RESET_SURE
+    };
+    let strings = [MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_FONT_FIXED, reset_string];
+    let current_option = *MAINMENU.read().unwrap();
+    if current_option == 3 {
+        rect(60, 10, 120, 11, 2);
+        print_raw_centered(OPTIONS_LOSE_DATA, 120, 13, PrintOptions {
+            color: 12,
+            ..DIALOGUE.read().unwrap().get_options()
+        });
+    }
+    for (i, string) in strings.iter().enumerate() {
+        let color = if i as usize == current_option {4} else {3};
+        if i as usize == current_option {
+            rect(0,list_start+i as i32*8-1,240,8,1);
+            print_raw_centered(&format!("{}", string), 120, list_start+i as i32*8, PrintOptions {
+                color,
+                ..DIALOGUE.read().unwrap().get_options()
+            });
+        } else {
+            print_raw_centered(string, 120, list_start+i as i32*8, PrintOptions {
+                color,
+                ..DIALOGUE.read().unwrap().get_options()
+            });
+        }
+    }
 }
