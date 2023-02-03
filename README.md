@@ -59,3 +59,22 @@ It is highly recommended that you run `wasm-opt` on the output `cart.wasm` file,
 wasm-opt -Os target/wasm32-unknown-unknown/release/cart.wasm -o cart.wasm
 ```
 This will create a new, smaller `cart.wasm` file in the working directory.
+
+# Repo Layout
+
+|File|Description|
+|---|---|
+|`src/alloc.rs`|Memory allocation (from the original TIC-80 Rust template) (and, before that, from the WASM4 Rust template).|
+|`src/animation.rs`|Small helper structs for animating sprite indexes and positions.|
+|`src/camera.rs`|Different camera behaviours and logic to automatically pick based on map layout.|
+|`src/dialogue.rs`|Drawing text character-by-character, automatically adding line-breaks.|
+|`src/dialogue_data.rs`|All text-strings used in game.|
+|`src/gamestate.rs`|Logic for switching between game menus and gameplay.|
+|`src/interact.rs`|Struct for interactable map objects.|
+|`src/lib.rs`|Main file. Defines the `TIC()` and `BOOT()` functions run by TIC-80.|
+|`src/map_data.rs`|Defines each game "area" and the locations of interactable objects.|
+|`src/player.rs`|Player struct and animation helper functions.|
+|`src/position.rs`|Vec2 and Hitbox types used for collision detection.|
+|`src/rand.rs`|PCG32 RNG from Rust Rand crate.|
+|`src/tic80.rs`|TIC-80 WASM function bindings and memory addresses. From the original TIC-80 Rust template.|
+|`src/tic_helpers.rs`|Miscellaneous helper functions for interacting with TIC-80 memory.|
