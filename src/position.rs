@@ -145,12 +145,10 @@ impl Hitbox {
                 } else {
                     Some(offset.corners()[2])
                 }
+            } else if d.x.is_positive() {
+                Some(offset.corners()[1])
             } else {
-                if d.x.is_positive() {
-                    Some(offset.corners()[1])
-                } else {
-                    Some(offset.corners()[0])
-                }
+                Some(offset.corners()[0])
             }
         } else {
             None
