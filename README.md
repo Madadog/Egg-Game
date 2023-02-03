@@ -9,12 +9,12 @@ Play at [http://tic80.com/play?cart=3193](http://tic80.com/play?cart=3193)
 ![Screenshot](screen.png)
 
 ## Running
-To run, just load the game.tic or game-stable.tic file into TIC-80, depending on your TIC-80 version.
+To run, just load game.wasmp or game-stable.tic (from GitHub releases) into TIC-80, depending on your TIC-80 version.
 
 |file|TIC-80 Version|
 |---|---|
 |game-stable.tic|1.0.2164|
-|game.tic|>1.0.2164|
+|game.wasmp|>1.0.2164 (TIC-80 PRO required to load "text-based" carts)|
 
 ## TIC80 Stable vs TIC80 Main
 This project currently targets version `1.0.2369-dev` of TIC-80, which is not yet stable.
