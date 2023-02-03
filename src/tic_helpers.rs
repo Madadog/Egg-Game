@@ -77,7 +77,6 @@ pub fn fade_palette_colour(index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
     for (j, (component1, component2)) in from.iter().zip(to.iter()).enumerate() {
         rgb[j] = ((*component1 as u16 * (256-amount) + *component2 as u16 * amount) >> 8) as u8;
     }
-    crate::trace!(format!("{:?}",rgb),11);
     set_palette_colour(index as u8, rgb);
 }
 
@@ -148,6 +147,7 @@ pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
     print_raw(string, x-string_width/2, y, options);
 }
+pub const MOUSE_INPUT_DEFAULT: MouseInput = MouseInput{x:0,y:0,scroll_x:0,scroll_y:0,left:false,middle:false,right:false};
 
 pub const SWEETIE_16: [[u8; 3]; 16] = [
     [26, 28, 44],// #1a1c2c

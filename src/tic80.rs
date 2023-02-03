@@ -53,7 +53,7 @@ pub const BLIT_SEGMENT: *mut u8 = 0x3FFC as *mut u8;
 // The functions in the sys module follow the signatures as given in wasm.c.
 // The wrapper functions are designed to be similar to the usual TIC-80 api.
 pub mod sys {
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     #[repr(C)]
     pub struct MouseInput {
         pub x: i16,

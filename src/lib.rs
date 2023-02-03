@@ -20,6 +20,7 @@ use crate::map_data::*;
 use crate::player::*;
 use crate::dialogue::Dialogue;
 use crate::gamestate::GameState;
+use crate::tic_helpers::MOUSE_INPUT_DEFAULT;
 use once_cell::sync::Lazy;
 use std::sync::{RwLock, RwLockWriteGuard, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,6 +46,7 @@ static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
 static DIALOGUE: RwLock<Dialogue> = RwLock::new(Dialogue::const_default());
 static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
 static GAMEPAD_HELPER: RwLock<[u8; 4]> = RwLock::new([0; 4]);
+static MOUSE_HELPER: RwLock<MouseInput> = RwLock::new(MOUSE_INPUT_DEFAULT);
 static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 
@@ -114,9 +116,30 @@ pub fn mem_btnp(id: u8, hold: i8, repeat: i8) -> bool {
     let previous = GAMEPAD_HELPER.read().unwrap()[controller];
     (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
 }
+pub fn any_btnp() -> bool {
+    let buttons = unsafe {*GAMEPADS};
+    let previous = *GAMEPAD_HELPER.read().unwrap();
+    buttons != previous
+}
 pub fn step_gamepad_helper() {
     let buttons = unsafe {*GAMEPADS};
     *GAMEPAD_HELPER.write().unwrap() = buttons;
+}
+pub fn step_mouse_helper() {
+    let input = mouse();
+    *MOUSE_HELPER.write().unwrap() = input;
+}
+pub fn mouse_delta() -> MouseInput {
+    let old = MOUSE_HELPER.read().unwrap().clone();
+    let new = mouse();
+    MouseInput {
+        x: new.x - old.x,
+        y: new.y - old.y,
+        left: new.left && !old.left,
+        middle: new.middle && !old.middle,
+        right: new.right && !old.right,
+        ..new
+    }
 }
 
 #[export_name = "BOOT"]
@@ -144,4 +167,5 @@ pub fn tic() {
     
     run_gamestate();
     step_gamepad_helper();
+    step_mouse_helper();
 }

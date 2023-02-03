@@ -6,11 +6,11 @@ use crate::map_data::*;
 use crate::interact::Interaction;
 use crate::{trace, print};
 
-use crate::tic_helpers::{palette_map_reset, palette_map_rotate, blit_segment, spr_outline, draw_ovr, SWEETIE_16, fade_palette, set_palette, set_palette_colour, screen_offset, get_pmem, set_pmem, print_raw_centered, get_palette, fade_palette_colour};
-use crate::{cam_x, cam_y, debug_info, mem_btn, mem_btnp, frames};
+use crate::tic_helpers::{palette_map_reset, palette_map_rotate, blit_segment, spr_outline, draw_ovr, SWEETIE_16, fade_palette, set_palette, set_palette_colour, screen_offset, get_pmem, set_pmem, print_raw_centered, fade_palette_colour};
+use crate::{cam_x, cam_y, debug_info, mem_btn, mem_btnp, frames, mouse_delta, any_btnp};
 
 pub enum GameState {
-    Instructions,
+    Instructions(u16),
     Walkaround,
     Animation(u16),
     MainMenu,
@@ -19,13 +19,10 @@ pub enum GameState {
 impl GameState {
     pub fn run(&mut self) {
         match self {
-            Self::Instructions => {
-                if mem_btn(0) || mem_btn(1) || mem_btn(2) || mem_btn(3) || mem_btn(4) || mem_btn(5) {
-                    if get_pmem(0) == 0 {
-                        *self = Self::Animation(0);
-                    } else {
-                        *self = Self::Walkaround;
-                    }
+            Self::Instructions(i) => {
+                *i += 1;
+                if *i > 60 && any_btnp() {
+                    *self = Self::Walkaround;
                 }
                 draw_instructions();
             },
@@ -38,7 +35,6 @@ impl GameState {
                     *self = Self::MainMenu;
                     return
                 };
-                // if mem_btnp(5, 0, 0) {*x += 1000;}
                 if mem_btn(4) {*x += 1;}
                 if draw_animation(*x) {
                     *x += 1;
@@ -48,7 +44,7 @@ impl GameState {
             }
             Self::MainMenu => {
                 match step_main_menu() {
-                    Some(MainMenuOption::Play) => *self = Self::Walkaround,
+                    Some(MainMenuOption::Play) => *self = Self::Instructions(0),
                     Some(MainMenuOption::Options) => *self = Self::Options,
                     None => {}
                 };
@@ -386,26 +382,9 @@ pub fn draw_animation(t: u16) -> bool {
             fade_palette_colour(15, [0x0F;3], [26, 28, 44], local_time.unwrap()*10);
             cls(15);
             draw_ovr(|| {
-                use crate::dialogue_data::GAME_TITLE;
                 cls(0);
                 fade_palette([[0x0F; 3]; 16], SWEETIE_16, local_time.unwrap()*10);
-                let text_width = print_raw(GAME_TITLE, 999, 999, PrintOptions {scale: 1, ..Default::default()});
-                print_raw_centered(GAME_TITLE, 120, 73, PrintOptions {
-                    scale: 1,
-                    color: 2,
-                    ..Default::default()
-                });
-                rect(120-text_width/2, 69, text_width-1, 2, 2);
-                
-                blit_segment(8);
-                spr(1086, 120-8, 50+(t as i32/30%2), SpriteOptions {
-                    transparent: &[0],
-                    scale: 1,
-                    w: 2,
-                    h: 2,
-                    ..Default::default()
-                });
-                blit_segment(4);
+                draw_title(120, 50)
             });
             true
         },
@@ -416,6 +395,8 @@ pub fn draw_animation(t: u16) -> bool {
             set_pmem(0, 1);
             screen_offset(0, 0);
             set_palette(SWEETIE_16);
+            cls(0);
+            draw_title(120, 50);
             draw_ovr(|| cls(0));
             false
         }
@@ -428,32 +409,13 @@ enum MainMenuOption {
 }
 
 fn step_main_menu() -> Option<MainMenuOption> {
-    use crate::MAINMENU;
-    let old_index = *MAINMENU.read().unwrap();
-    
-    let mouse_pos = Vec2::new(mouse().x, mouse().y);
-    let mut clicked = false;
-    for i in 0..2 {
-        if Hitbox::new(0, 88+8*i, 240, 8).touches_point(mouse_pos) {
-            *MAINMENU.write().unwrap() = i as usize;
-            clicked = mouse().left;
-        }
-    }
-    if mem_btnp(0, -1, -1) {
-        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
-    }
-    if mem_btnp(1, -1, -1) {
-        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(1);
-    }
-    
-    let menu_index = *MAINMENU.read().unwrap();
+    use crate::MAINMENU;    
+    let (menu_index, clicked) = step_menu(2, 88);
     if mem_btnp(4, -1, -1) || clicked {
+        *MAINMENU.write().unwrap() = 0;
         match menu_index {
-            0 => {return Some(MainMenuOption::Play);},
-            1 => {
-                *MAINMENU.write().unwrap() = 0;
-                return Some(MainMenuOption::Options);
-            },
+            0 => return Some(MainMenuOption::Play),
+            1 => return Some(MainMenuOption::Options),
             _ => {},
         };
     }
@@ -461,20 +423,66 @@ fn step_main_menu() -> Option<MainMenuOption> {
 }
 
 pub fn draw_main_menu() {
-    cls(0);
     use crate::MAINMENU;
-    use crate::dialogue_data::{GAME_TITLE, MENU_OPTIONS, MENU_PLAY};
+    use crate::dialogue_data::{MENU_OPTIONS, MENU_PLAY};
+    cls(0);
+    
+    draw_title(120, 50);
+    
+    let strings = [MENU_PLAY, MENU_OPTIONS];
+    let current_option = *MAINMENU.read().unwrap();
+    draw_menu(&strings, 120, 88, current_option);
+}
+
+pub fn draw_menu(entries: &[&str], x: i32, y: i32, current_option: usize) {
+    for (i, string) in entries.iter().enumerate() {
+        let color = if i == current_option {4} else {3};
+        if i == current_option {
+            rect(0,y+i as i32*8-1,240,8,1);
+        }
+        print_raw_centered(string, x, y+i as i32*8, PrintOptions {
+            color,
+            ..DIALOGUE.read().unwrap().get_options()
+        });
+    }
+}
+
+pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
+    use crate::MAINMENU;
+    let old_index = *MAINMENU.read().unwrap();
+    
+    let mouse_pos = Vec2::new(mouse().x, mouse().y);
+    let mouse_delta = mouse_delta();
+    let mut clicked = false;
+    for i in 0..entries {
+        if Hitbox::new(0, y+8*i as i16, 240, 8).touches_point(mouse_pos) {
+            *MAINMENU.write().unwrap() = i as usize;
+            clicked = mouse_delta.left;
+        }
+    }
+    if mem_btnp(0, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
+    }
+    if mem_btnp(1, -1, -1) {
+        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(entries-1);
+    }
+    
+    (*MAINMENU.read().unwrap(), clicked)
+}
+
+pub fn draw_title(x: i32, y: i32) {
+    use crate::dialogue_data::GAME_TITLE;
     let title_width = print_raw(GAME_TITLE, 999, 999, PrintOptions {scale: 1, ..Default::default()});
-    print_raw_centered(GAME_TITLE, 120, 73, PrintOptions {
+    print_raw_centered(GAME_TITLE, x, y+23, PrintOptions {
         scale: 1,
         color: 2,
         ..Default::default()
     });
     
-    rect(120-title_width/2, 69, title_width-1, 2, 2);
+    rect(120-title_width/2, y+19, title_width-1, 2, 2);
     
     blit_segment(8);
-    spr(1086, 120-8, 50+((frames() as i32/30)%2), SpriteOptions {
+    spr(1086, 120-8, y+((frames() as i32/30)%2), SpriteOptions {
         transparent: &[0],
         scale: 1,
         w: 2,
@@ -482,46 +490,11 @@ pub fn draw_main_menu() {
         ..Default::default()
     });
     blit_segment(4);
-    
-    let strings = [MENU_PLAY, MENU_OPTIONS];
-    for (i, string) in (0..2).zip(strings) {
-        let current_option = i as usize == *MAINMENU.read().unwrap();
-        let color = if current_option {4} else {3};
-        if current_option {
-            rect(0,88+i*8-1,240,8,1);
-            print_raw_centered(&format!("{}", string), 120, 88+i*8, PrintOptions {
-                color,
-                ..DIALOGUE.read().unwrap().get_options()
-            });
-        } else {
-            print_raw_centered(string, 120, 88+i*8, PrintOptions {
-                color,
-                ..DIALOGUE.read().unwrap().get_options()
-            });
-        }
-    }
 }
 
 fn step_options() -> bool {
-    use crate::{MAINMENU, RESET_PROTECTOR};
-    let old_index = *MAINMENU.read().unwrap();
-    
-    let mouse_pos = Vec2::new(mouse().x, mouse().y);
-    let mut clicked = false;
-    for i in 0..4 {
-        if Hitbox::new(0, 40+8*i, 240, 8).touches_point(mouse_pos) {
-            *MAINMENU.write().unwrap() = i as usize;
-            clicked = mouse().left;
-        }
-    }
-    if mem_btnp(0, -1, -1) {
-        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
-    }
-    if mem_btnp(1, -1, -1) {
-        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(3);
-    }
-    
-    let menu_index = *MAINMENU.read().unwrap();
+    use crate::RESET_PROTECTOR;
+    let (menu_index, clicked) = step_menu(4, 40);
     if menu_index != 3 {*RESET_PROTECTOR.write().unwrap() = 0;};
     if mem_btnp(4, -1, -1) || clicked {
         match menu_index {
@@ -532,6 +505,7 @@ fn step_options() -> bool {
                 if *RESET_PROTECTOR.read().unwrap() == 0 {
                     *RESET_PROTECTOR.write().unwrap() += 1;
                 } else {
+                    *crate::MAINMENU.write().unwrap() = 0;
                     *RESET_PROTECTOR.write().unwrap() = 0;
                     unsafe {
                         for byte in (*PERSISTENT_RAM).iter_mut() {
@@ -553,8 +527,6 @@ pub fn draw_options() {
     use crate::dialogue_data::{MENU_BACK,OPTIONS_FONT_SIZE,OPTIONS_FONT_FIXED,OPTIONS_RESET,OPTIONS_RESET_SURE,
         OPTIONS_LOSE_DATA
     };
-    blit_segment(4);
-    let list_start = 40;
     let reset_string = if *RESET_PROTECTOR.read().unwrap() == 0 {
         OPTIONS_RESET
     } else {
@@ -569,19 +541,5 @@ pub fn draw_options() {
             ..DIALOGUE.read().unwrap().get_options()
         });
     }
-    for (i, string) in strings.iter().enumerate() {
-        let color = if i as usize == current_option {4} else {3};
-        if i as usize == current_option {
-            rect(0,list_start+i as i32*8-1,240,8,1);
-            print_raw_centered(&format!("{}", string), 120, list_start+i as i32*8, PrintOptions {
-                color,
-                ..DIALOGUE.read().unwrap().get_options()
-            });
-        } else {
-            print_raw_centered(string, 120, list_start+i as i32*8, PrintOptions {
-                color,
-                ..DIALOGUE.read().unwrap().get_options()
-            });
-        }
-    }
+    draw_menu(&strings, 120, 40, current_option);
 }
