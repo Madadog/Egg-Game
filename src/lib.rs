@@ -133,7 +133,7 @@ pub fn mem_btn(id: u8) -> bool {
     let buttons = unsafe { (*GAMEPADS)[controller] };
     (1 << id) & buttons != 0
 }
-pub fn mem_btnp(id: u8, hold: i8, repeat: i8) -> bool {
+pub fn mem_btnp(id: u8) -> bool {
     let controller: usize = (id / 8).min(3).into();
     let id = id % 8;
     let buttons = unsafe { (*GAMEPADS)[controller] };

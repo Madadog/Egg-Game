@@ -143,11 +143,11 @@ pub fn step_walkaround() {
         if mem_btn(4) {
             DIALOGUE.write().unwrap().tick(2);
         }
-        if mem_btnp(5, 0, -1) {
+        if mem_btnp(5) {
             DIALOGUE.write().unwrap().skip();
         }
     }
-    if mem_btnp(4, -1, -1) && DIALOGUE.read().unwrap().is_done() {
+    if mem_btnp(4) && DIALOGUE.read().unwrap().is_done() {
         interact = true;
         if matches!(DIALOGUE.write().unwrap().text, Some(_)) {
             interact = false;
@@ -495,7 +495,7 @@ enum MainMenuOption {
 fn step_main_menu() -> Option<MainMenuOption> {
     use crate::MAINMENU;
     let (menu_index, clicked) = step_menu(2, 88);
-    if mem_btnp(4, -1, -1) || clicked {
+    if mem_btnp(4) || clicked {
         *MAINMENU.write().unwrap() = 0;
         match menu_index {
             0 => return Some(MainMenuOption::Play),
@@ -549,10 +549,10 @@ pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
             clicked = mouse_delta.left;
         }
     }
-    if mem_btnp(0, -1, -1) {
+    if mem_btnp(0) {
         *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
     }
-    if mem_btnp(1, -1, -1) {
+    if mem_btnp(1) {
         *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(entries - 1);
     }
 
@@ -605,7 +605,7 @@ fn step_options() -> bool {
     if menu_index != 3 {
         *RESET_PROTECTOR.write().unwrap() = 0;
     };
-    if mem_btnp(4, -1, -1) || clicked {
+    if mem_btnp(4) || clicked {
         match menu_index {
             0 => return false,
             1 => {
