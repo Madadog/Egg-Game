@@ -545,8 +545,10 @@ pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
     let mut clicked = false;
     for i in 0..entries {
         if Hitbox::new(0, y + 8 * i as i16, 240, 8).touches_point(mouse_pos) {
-            *MAINMENU.write().unwrap() = i;
             clicked = mouse_delta.left;
+            if mouse_delta.x != 0 || mouse_delta.y != 0 || clicked {
+                *MAINMENU.write().unwrap() = i;
+            }
         }
     }
     if mem_btnp(0) {
