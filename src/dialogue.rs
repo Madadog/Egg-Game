@@ -89,7 +89,7 @@ pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
             ..Default::default()
         },
     );
-    trace!(format!("{}", width), 12);
+    trace!(format!("{width}"), 12);
     width
 }
 
@@ -108,18 +108,18 @@ pub fn fit_string(
 ) -> (String, usize) {
     let len = string.split_inclusive(' ').skip(start_word).count();
     let mut line_length = 0;
-    trace!(format!("len: {}", len), 12);
+    trace!(format!("len: {len}"), 12);
     for i in 1..=len {
-        let taken = &take_words(&string, i, start_word);
+        let taken = &take_words(string, i, start_word);
         if print_width(taken, fixed, small_font) as usize > wrap_width {
             break;
         } else {
             line_length = i
         };
-        trace!(format!("{}", taken), 12);
-        trace!(format!("line length: {}", line_length), 12);
+        trace!(format!("{taken}"), 12);
+        trace!(format!("line length: {line_length}"), 12);
     }
-    (take_words(&string, line_length, start_word), line_length)
+    (take_words(string, line_length, start_word), line_length)
 }
 
 pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {
@@ -127,9 +127,9 @@ pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: b
     let mut paragraph = String::new();
     let mut skip = 0;
     while skip < len {
-        let (string, x) = fit_string(&string, wrap_width, skip, fixed, small_font);
+        let (string, x) = fit_string(string, wrap_width, skip, fixed, small_font);
         skip += x;
-        trace!(format!("Skip: {}", skip), 12);
+        trace!(format!("Skip: {skip}"), 12);
         paragraph.push_str(&string);
         paragraph.push('\n');
         if x == 0 {

@@ -222,8 +222,8 @@ pub fn step_walkaround() {
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
-            player.pos.x += dx as i16;
-            player.pos.y += dy as i16;
+            player.pos.x += dx;
+            player.pos.y += dy;
             player.walktime = player.walktime.wrapping_add(1);
             player.walking = true;
         } else {
@@ -254,7 +254,7 @@ pub fn step_walkaround() {
                         DIALOGUE.write().unwrap().set_text(x);
                     }
                     x => {
-                        trace!(format!("{:?}", x), 12);
+                        trace!(format!("{x:?}"), 12);
                     }
                 }
             }
@@ -411,7 +411,7 @@ pub fn draw_instructions() {
 pub fn draw_animation(t: u16) -> bool {
     let steps: &[u16] = &[0, 1, 700, 760];
     let index = steps.iter().position(|&x| x >= t);
-    let local_time = index.and_then(|x| Some(t - steps[x.saturating_sub(1)]));
+    let local_time = index.map(|x| t - steps[x.saturating_sub(1)]);
     match index {
         Some(0) => {
             cls(0);
@@ -545,7 +545,7 @@ pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
     let mut clicked = false;
     for i in 0..entries {
         if Hitbox::new(0, y + 8 * i as i16, 240, 8).touches_point(mouse_pos) {
-            *MAINMENU.write().unwrap() = i as usize;
+            *MAINMENU.write().unwrap() = i;
             clicked = mouse_delta.left;
         }
     }
@@ -587,7 +587,7 @@ pub fn draw_title(x: i32, y: i32) {
     spr(
         1086,
         120 - 8,
-        y + ((frames() as i32 / 30) % 2),
+        y + ((frames() / 30) % 2),
         SpriteOptions {
             transparent: &[0],
             scale: 1,

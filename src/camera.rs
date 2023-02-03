@@ -23,9 +23,8 @@ impl Camera {
         self.pos = self.bound(Some(x - WIDTH as i16/2), Some(y - HEIGHT as i16/2));
     }
     pub fn from_map_size(w: u8, h: u8, sx: i16, sy: i16) -> Self {
-        // `as` conversions are bad practice...
-        let (w, h): (i16, i16) = (w as i16, h as i16);
-        crate::trace!(format!("W: {}, H: {}", w, h), 11);
+        let (w, h): (i16, i16) = (w.into(), h.into());
+        crate::trace!(format!("W: {w}, H: {h}"), 11);
         let (x_offset, y_offset): (i16, i16) = (
             (crate::WIDTH/2) as i16,
             (crate::HEIGHT/2) as i16,

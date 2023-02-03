@@ -41,15 +41,14 @@ impl Player {
         let t = (((self.walktime + 19) / 20) % 2) as i32;
         let anim = if self.walktime > 0 { t + 1 } else { 0 };
         if self.dir.1 > 0 {
-            return (768 + anim, Flip::None, t);
-        } // Up
-        if self.dir.1 < 0 {
-            return (771 + anim, Flip::None, t);
-        } // Down
-        if self.dir.0 > 0 {
-            return (832 + anim, Flip::None, t);
-        } // Right
-        return (832 + anim, Flip::Horizontal, t); // Left
+            (768 + anim, Flip::None, t) // Up
+        } else if self.dir.1 < 0 {
+            (771 + anim, Flip::None, t) // Down
+        } else if self.dir.0 > 0 {
+            (832 + anim, Flip::None, t) // Right
+        } else {
+            (832 + anim, Flip::Horizontal, t) // Left
+        }
     }
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)

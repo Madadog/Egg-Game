@@ -226,7 +226,7 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(1 * 8, 3 * 8, 12, 16),
+            hitbox: Hitbox::new(8, 3 * 8, 12, 16),
             interaction: Interaction::Text(SM_HALL_WINDOW),
             sprite: None,
         },
@@ -287,7 +287,7 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
     }],
     warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
-        hitbox: Hitbox::new(5 * 8, 1 * 8, 8, 10),
+        hitbox: Hitbox::new(5 * 8, 8, 8, 10),
         interaction: Interaction::Text(EGG_1),
         sprite: Some(Animation {
             frames: &[

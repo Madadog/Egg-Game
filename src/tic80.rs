@@ -484,21 +484,6 @@ impl<'a> MapOptions<'a> {
             scale,
         }
     }
-    /// `MapOptions::new()` function using direct map coordinates (ex, ey) for end point instead of width and height.
-    /// This lets you copy/paste coordinates directly from the map editor.
-    pub const fn from_coords(
-        x: i32,
-        y: i32,
-        ex: i32,
-        ey: i32,
-        sx: i32,
-        sy: i32,
-        transparent: &'a [u8],
-        scale: i8,
-    ) -> Self {
-        assert!(ex > x && ey > y);
-        Self::new(x, y, ex - x, ey - y, sx, sy, transparent, scale)
-    }
 }
 
 impl Default for MapOptions<'_> {
