@@ -1,8 +1,24 @@
-use crate::{MapOptions, SpriteOptions};
-use crate::position::{Hitbox, Vec2};
-use crate::interact::{Interactable, Interaction};
+// Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
+//
+// This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+//
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with
+// this program. If not, see <https://www.gnu.org/licenses/>.
+
 use crate::animation::*;
 use crate::dialogue_data::*;
+use crate::interact::{Interactable, Interaction};
+use crate::position::{Hitbox, Vec2};
+use crate::{MapOptions, SpriteOptions};
 
 pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
     x: 60,
@@ -35,16 +51,29 @@ pub struct Warp<'a> {
 }
 
 impl<'a> Warp<'a> {
-    pub const fn new(from: Hitbox, map: Option<&'a MapSet<'a>>, to: Vec2) -> Self { Self { from, map, to } }
+    pub const fn new(from: Hitbox, map: Option<&'a MapSet<'a>>, to: Vec2) -> Self {
+        Self { from, map, to }
+    }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
-    pub const fn new_tile(tx1: i16, ty1: i16, map: Option<&'a MapSet<'a>>, tx2: i16, ty2: i16) -> Self {
-        Self::new(Hitbox::new(tx1*8, ty1*8, 8, 8), map, Vec2::new(tx2*8, ty2*8))
+    pub const fn new_tile(
+        tx1: i16,
+        ty1: i16,
+        map: Option<&'a MapSet<'a>>,
+        tx2: i16,
+        ty2: i16,
+    ) -> Self {
+        Self::new(
+            Hitbox::new(tx1 * 8, ty1 * 8, 8, 8),
+            map,
+            Vec2::new(tx2 * 8, ty2 * 8),
+        )
     }
 }
 
 pub static SUPERMARKET: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions {//bg
+        MapOptions {
+            //bg
             x: 60,
             y: 17,
             w: 26,
@@ -52,82 +81,88 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions {//fruit stand
+        MapOptions {
+            //fruit stand
             x: 61,
             y: 29,
             w: 3,
             h: 2,
             transparent: &[0],
-            sx: 2*8,
-            sy: 8*8,
+            sx: 2 * 8,
+            sy: 8 * 8,
             scale: 1,
         },
-        MapOptions {//vending machines
+        MapOptions {
+            //vending machines
             x: 70,
             y: 29,
             w: 4,
             h: 5,
             transparent: &[0],
-            sx: 19*8,
-            sy: 4*8,
+            sx: 19 * 8,
+            sy: 4 * 8,
             scale: 1,
         },
-        MapOptions {//counter
+        MapOptions {
+            //counter
             x: 60,
             y: 31,
             w: 8,
             h: 3,
             transparent: &[0],
-            sx: 5*8,
-            sy: 4*8,
+            sx: 5 * 8,
+            sy: 4 * 8,
             scale: 1,
         },
-        MapOptions {//top vending machine
+        MapOptions {
+            //top vending machine
             x: 68,
             y: 29,
             w: 2,
             h: 3,
             transparent: &[0],
-            sx: 13*8,
-            sy: 5*4,
+            sx: 13 * 8,
+            sy: 5 * 4,
             scale: 1,
         },
     ],
-    warps: &[Warp::new_tile(17,4, Some(&SUPERMARKET_HALL),9,4),
-             Warp::new_tile(8,4, Some(&SUPERMARKET_HALL),3,4)],
+    warps: &[
+        Warp::new_tile(17, 4, Some(&SUPERMARKET_HALL), 9, 4),
+        Warp::new_tile(8, 4, Some(&SUPERMARKET_HALL), 3, 4),
+    ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(13*8, 5*4, 8*2, 8*3),
+            hitbox: Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3),
             interaction: Interaction::Text(SM_COIN_RETURN),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(2*8, 8*8, 8*3, 8*2),
+            hitbox: Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2),
             interaction: Interaction::Text(SM_FRUIT_BASKET),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(4*8, 5*8, 8, 20),
+            hitbox: Hitbox::new(4 * 8, 5 * 8, 8, 20),
             interaction: Interaction::Text(SM_MAIN_WINDOW),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(19*8, 5*8, 8, 15),
+            hitbox: Hitbox::new(19 * 8, 5 * 8, 8, 15),
             interaction: Interaction::Text(SM_FRIDGE_1),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(20*8, 6*8, 8, 15),
+            hitbox: Hitbox::new(20 * 8, 6 * 8, 8, 15),
             interaction: Interaction::Text(SM_FRIDGE_2),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(21*8, 7*8, 8, 16),
+            hitbox: Hitbox::new(21 * 8, 7 * 8, 8, 16),
             interaction: Interaction::Text(SM_VENDING_MACHINE),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(11*8, 10*8, 3*8, 8),
+            hitbox: Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8),
             interaction: Interaction::Text(CONSTRUCTION_1),
             sprite: None,
         },
@@ -137,7 +172,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
 
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions {//bg
+        MapOptions {
+            //bg
             x: 86,
             y: 17,
             w: 13,
@@ -145,48 +181,52 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions {//closet
+        MapOptions {
+            //closet
             x: 87,
             y: 24,
             w: 3,
             h: 4,
             transparent: &[0],
-            sx: 5*8,
+            sx: 5 * 8,
             sy: 0,
             scale: 1,
         },
-        MapOptions {//diagonal door
+        MapOptions {
+            //diagonal door
             x: 86,
             y: 24,
             w: 1,
             h: 3,
             transparent: &[0],
-            sx: 11*8,
-            sy: 2*8,
+            sx: 11 * 8,
+            sy: 2 * 8,
             scale: 1,
         },
     ],
-    warps: &[Warp::new_tile(9,6, Some(&SUPERMARKET),17,4),
-             Warp::new_tile(3,6, Some(&SUPERMARKET),8,4),
-             Warp::new_tile(4,2, Some(&SUPERMARKET_STOREROOM),2,3)],
+    warps: &[
+        Warp::new_tile(9, 6, Some(&SUPERMARKET), 17, 4),
+        Warp::new_tile(3, 6, Some(&SUPERMARKET), 8, 4),
+        Warp::new_tile(4, 2, Some(&SUPERMARKET_STOREROOM), 2, 3),
+    ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(11*8, 4*8, 8, 8),
+            hitbox: Hitbox::new(11 * 8, 4 * 8, 8, 8),
             interaction: Interaction::Text(EMERGENCY_EXIT),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(8*8, 3*8, 8, 8),
+            hitbox: Hitbox::new(8 * 8, 3 * 8, 8, 8),
             interaction: Interaction::Text(CONSTRUCTION_2),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(11*4, 0, 2*8, 7*4),
+            hitbox: Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4),
             interaction: Interaction::Text(SM_HALL_SHELF),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(1*8, 3*8, 12, 16),
+            hitbox: Hitbox::new(1 * 8, 3 * 8, 12, 16),
             interaction: Interaction::Text(SM_HALL_WINDOW),
             sprite: None,
         },
@@ -197,54 +237,64 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
 pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     maps: &[
         MapOptions {
-            x:86, y:28,
-            w:9, h:6,
+            x: 86,
+            y: 28,
+            w: 9,
+            h: 6,
             transparent: &[0],
             ..DEFAULT_MAP
         },
         MapOptions {
-            x:93, y:24,
-            w:5, h:4,
+            x: 93,
+            y: 24,
+            w: 5,
+            h: 4,
             transparent: &[0],
-            sx: 2*8,
+            sx: 2 * 8,
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new_tile(2,5, Some(&SUPERMARKET_HALL),4,2)],
-    interactables: &[Interactable {
-        hitbox: Hitbox::new(53, 28, 8, 10),
-        interaction: Interaction::Text(EGG_1),
-        sprite: Some(Animation {
-            frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
-                      AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
-            ..Animation::const_default()
-        }),
-    },
-    Interactable {
-        hitbox: Hitbox::new(16, 0, 5*8, 4*7),
-        interaction: Interaction::Text(SM_STOREROOM_SHELF),
-        sprite: None,
-    }],
+    warps: &[Warp::new_tile(2, 5, Some(&SUPERMARKET_HALL), 4, 2)],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(53, 28, 8, 10),
+            interaction: Interaction::Text(EGG_1),
+            sprite: Some(Animation {
+                frames: &[
+                    AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
+                    AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+                ],
+                ..Animation::const_default()
+            }),
+        },
+        Interactable {
+            hitbox: Hitbox::new(16, 0, 5 * 8, 4 * 7),
+            interaction: Interaction::Text(SM_STOREROOM_SHELF),
+            sprite: None,
+        },
+    ],
     ..DEFAULT_MAP_SET
 };
 
 pub static TEST_PEN: MapSet<'static> = MapSet {
-    maps: &[
-        MapOptions {
-            x:53, y:17,
-            w:7, h:9,
-            transparent: &[],
-            ..DEFAULT_MAP
-        },
-    ],
-    warps: &[Warp::new_tile(3,8, Some(&SUPERMARKET),10,4)],
+    maps: &[MapOptions {
+        x: 53,
+        y: 17,
+        w: 7,
+        h: 9,
+        transparent: &[],
+        ..DEFAULT_MAP
+    }],
+    warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
-        hitbox: Hitbox::new(5*8, 1*8, 8, 10),
+        hitbox: Hitbox::new(5 * 8, 1 * 8, 8, 10),
         interaction: Interaction::Text(EGG_1),
         sprite: Some(Animation {
-            frames: &[AnimFrame::new(Vec2::new(0,0), 524, 30, SpriteOptions::transparent_zero()),
-                     AnimFrame::new(Vec2::new(0,-1), 524, 30, SpriteOptions::transparent_zero()),],
-                     ..Animation::const_default()
+            frames: &[
+                AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
+                AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+            ],
+            ..Animation::const_default()
         }),
     }],
     ..DEFAULT_MAP_SET

@@ -1,4 +1,20 @@
-use crate::{Vec2, SpriteOptions};
+// Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
+//
+// This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+//
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with
+// this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crate::{SpriteOptions, Vec2};
 
 pub struct AnimFrame<'a> {
     pub pos: Vec2,
@@ -7,7 +23,14 @@ pub struct AnimFrame<'a> {
     pub options: SpriteOptions<'a>,
 }
 impl<'a> AnimFrame<'a> {
-    pub const fn new(pos: Vec2, id: u16, length: u16, options: SpriteOptions<'a>) -> Self { Self { pos, id, length, options } }
+    pub const fn new(pos: Vec2, id: u16, length: u16, options: SpriteOptions<'a>) -> Self {
+        Self {
+            pos,
+            id,
+            length,
+            options,
+        }
+    }
     pub fn const_default() -> Self {
         Self {
             pos: Vec2::new(0, 0),
@@ -25,7 +48,11 @@ pub struct Animation<'a> {
 }
 impl<'a> Animation<'a> {
     pub const fn const_default() -> Self {
-        Self { tick: 0, index: 0, frames: &[] }
+        Self {
+            tick: 0,
+            index: 0,
+            frames: &[],
+        }
     }
     pub fn current_frame(&self) -> &AnimFrame<'a> {
         &self.frames[self.index]
@@ -33,7 +60,9 @@ impl<'a> Animation<'a> {
     pub fn advance(&mut self) {
         if self.tick >= self.current_frame().length {
             self.index += 1;
-            if self.index == self.frames.len() { self.index = 0; }
+            if self.index == self.frames.len() {
+                self.index = 0;
+            }
             self.tick = 0;
         } else {
             self.tick += 1;

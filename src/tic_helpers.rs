@@ -1,3 +1,19 @@
+// Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
+// 
+// This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
+// 
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+// 
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License along with
+// this program. If not, see <https://www.gnu.org/licenses/>.
+
 use crate::tic80::*;
 
 pub fn palette_map_swap(from: u8, to: u8) {
@@ -41,7 +57,7 @@ pub fn get_palette_map() -> [u8; 16] {
 pub fn set_palette_colour(index: u8, rgb: [u8; 3]) {
     let index: usize = (index % 16).into();
     for (i, colour) in rgb.into_iter().enumerate() {
-        unsafe { (*PALETTE)[index * 3 + i] = colour}
+        unsafe { (*PALETTE)[index * 3 + i] = colour }
     }
 }
 
@@ -51,9 +67,13 @@ pub fn set_palette(colours: [[u8; 3]; 16]) {
     }
 }
 
-pub fn get_palette() -> [[u8; 3];16] {
-    let mut palette = [[0; 3];16];
-    for (from, to) in palette.iter_mut().flatten().zip(unsafe {(*PALETTE).iter()}) {
+pub fn get_palette() -> [[u8; 3]; 16] {
+    let mut palette = [[0; 3]; 16];
+    for (from, to) in palette
+        .iter_mut()
+        .flatten()
+        .zip(unsafe { (*PALETTE).iter() })
+    {
         *from = *to;
     }
     palette
@@ -65,7 +85,8 @@ pub fn fade_palette(from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
     for (index, (colour1, colour2)) in from.iter().zip(to.iter()).enumerate() {
         let mut rgb = [0; 3];
         for (j, (component1, component2)) in colour1.iter().zip(colour2.iter()).enumerate() {
-            rgb[j] = ((*component1 as u16 * (256-amount) + *component2 as u16 * amount) >> 8) as u8;
+            rgb[j] =
+                ((*component1 as u16 * (256 - amount) + *component2 as u16 * amount) >> 8) as u8;
         }
         set_palette_colour(index as u8, rgb);
     }
@@ -75,7 +96,7 @@ pub fn fade_palette_colour(index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
     let index: usize = (index % 16).into();
     let mut rgb = [0; 3];
     for (j, (component1, component2)) in from.iter().zip(to.iter()).enumerate() {
-        rgb[j] = ((*component1 as u16 * (256-amount) + *component2 as u16 * amount) >> 8) as u8;
+        rgb[j] = ((*component1 as u16 * (256 - amount) + *component2 as u16 * amount) >> 8) as u8;
     }
     set_palette_colour(index as u8, rgb);
 }
@@ -92,23 +113,27 @@ pub fn screen_offset(horizontal: i8, vertical: i8) {
 }
 
 pub fn draw_ovr<T: Fn()>(draw: T) {
-    unsafe {vbank(1);}
+    unsafe {
+        vbank(1);
+    }
     draw();
-    unsafe {vbank(0);}
+    unsafe {
+        vbank(0);
+    }
 }
 
 pub fn get_pmem(address: usize) -> u8 {
     let address = address.min(1023);
-    unsafe {
-        (*PERSISTENT_RAM)[address]
-    }
+    unsafe { (*PERSISTENT_RAM)[address] }
 }
 
 pub fn set_pmem(address: usize, value: u8) {
     let address = address.min(1023);
-    unsafe { (*PERSISTENT_RAM)[address] = value}
+    unsafe { (*PERSISTENT_RAM)[address] = value }
 }
 
+/// Valid values:
+///
 /// 0000 SYS GFX
 /// 0001 FONT
 ///
@@ -145,25 +170,33 @@ pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outli
 
 pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
-    print_raw(string, x-string_width/2, y, options);
+    print_raw(string, x - string_width / 2, y, options);
 }
-pub const MOUSE_INPUT_DEFAULT: MouseInput = MouseInput{x:0,y:0,scroll_x:0,scroll_y:0,left:false,middle:false,right:false};
+pub const MOUSE_INPUT_DEFAULT: MouseInput = MouseInput {
+    x: 0,
+    y: 0,
+    scroll_x: 0,
+    scroll_y: 0,
+    left: false,
+    middle: false,
+    right: false,
+};
 
 pub const SWEETIE_16: [[u8; 3]; 16] = [
-    [26, 28, 44],// #1a1c2c
-    [93, 39, 93],// #5d275d
-    [177, 62, 83],// #b13e53
-    [239, 125, 87],// #ef7d57
-    [255, 205, 117],// #ffcd75
-    [167, 240, 112],// #a7f070
-    [56, 183, 100],// #38b764
-    [37, 113, 121],// #257179
-    [41, 54, 111],// #29366f
-    [59, 93, 201],// #3b5dc9
-    [65, 166, 246],// #41a6f6
-    [115, 239, 247],// #73eff7
-    [244, 244, 244],// #f4f4f4
-    [148, 176, 194],// #94b0c2
-    [86, 108, 134],// #566c86
-    [51, 60, 87],// #333c57
+    [26, 28, 44],    // #1a1c2c
+    [93, 39, 93],    // #5d275d
+    [177, 62, 83],   // #b13e53
+    [239, 125, 87],  // #ef7d57
+    [255, 205, 117], // #ffcd75
+    [167, 240, 112], // #a7f070
+    [56, 183, 100],  // #38b764
+    [37, 113, 121],  // #257179
+    [41, 54, 111],   // #29366f
+    [59, 93, 201],   // #3b5dc9
+    [65, 166, 246],  // #41a6f6
+    [115, 239, 247], // #73eff7
+    [244, 244, 244], // #f4f4f4
+    [148, 176, 194], // #94b0c2
+    [86, 108, 134],  // #566c86
+    [51, 60, 87],    // #333c57
 ];

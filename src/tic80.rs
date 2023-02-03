@@ -1,3 +1,25 @@
+// MIT License
+
+// Copyright (c) 2017 Vadim Grigoruk @nesbox // grigoruk@gmail.com
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 // Because this isn't in a separate crate, we have to allow unused code to silence the warnings.
 #![allow(dead_code, unused_macros)]
 
@@ -48,7 +70,6 @@ pub const SCREEN_OFFSET: *mut [u8; 2] = 0x3FF9 as *mut [u8; 2];
 pub const MOUSE_CURSOR: *mut u8 = 0x3FFB as *mut u8;
 /// (lo nibble) 4-bit BLIT segment value
 pub const BLIT_SEGMENT: *mut u8 = 0x3FFC as *mut u8;
-
 
 // The functions in the sys module follow the signatures as given in wasm.c.
 // The wrapper functions are designed to be similar to the usual TIC-80 api.
@@ -108,7 +129,7 @@ pub mod sys {
         // These clash with rustc builtins, so they are reimplemented in the wrappers.
         // pub fn memcpy(dest: i32, src: i32, length: i32);
         // pub fn memset(address: i32, value: i32, length: i32);
-        
+
         #[cfg(feature = "void_mget")]
         pub fn mget(x: i32, y: i32);
         #[cfg(not(feature = "void_mget"))]
@@ -442,12 +463,41 @@ pub struct MapOptions<'a> {
 }
 
 impl<'a> MapOptions<'a> {
-    pub const fn new(x: i32, y: i32, w: i32, h: i32, sx: i32, sy: i32, transparent: &'a [u8], scale: i8) -> Self { Self { x, y, w, h, sx, sy, transparent, scale } }
+    pub const fn new(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        sx: i32,
+        sy: i32,
+        transparent: &'a [u8],
+        scale: i8,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            w,
+            h,
+            sx,
+            sy,
+            transparent,
+            scale,
+        }
+    }
     /// `MapOptions::new()` function using direct map coordinates (ex, ey) for end point instead of width and height.
     /// This lets you copy/paste coordinates directly from the map editor.
-    pub const fn from_coords(x: i32, y: i32, ex: i32, ey: i32, sx: i32, sy: i32, transparent: &'a [u8], scale: i8) -> Self {
+    pub const fn from_coords(
+        x: i32,
+        y: i32,
+        ex: i32,
+        ey: i32,
+        sx: i32,
+        sy: i32,
+        transparent: &'a [u8],
+        scale: i8,
+    ) -> Self {
         assert!(ex > x && ey > y);
-        Self::new(x, y, ex-x, ey-y, sx, sy, transparent, scale)
+        Self::new(x, y, ex - x, ey - y, sx, sy, transparent, scale)
     }
 }
 
@@ -485,7 +535,9 @@ pub fn map(opts: MapOptions) {
 
 #[cfg(feature = "void_mget")]
 pub fn mget(x: i32, y: i32) -> i32 {
-    if x < 0 || x >= WIDTH*8 || y < 0 || y >= HEIGHT {return 0};
+    if x < 0 || x >= WIDTH * 8 || y < 0 || y >= HEIGHT {
+        return 0;
+    };
     let index = y as usize * WIDTH as usize + x as usize;
     let ret: i32 = unsafe { (*MAP)[index].into() };
     ret

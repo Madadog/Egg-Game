@@ -3,8 +3,8 @@
 -- author:  Madadog
 -- desc:    Collect eggs and hatch.
 -- site:    https://github.com/madadog/egg-game
--- license: MIT License
--- version: 0.0.2
+-- license: GPL-3.0 License
+-- version: 0.0.3
 -- <TILES>
 -- 001:1111111111111111111111111111111111111111111111111111111111111111
 -- 002:1111111112222221121111211211112112111121121111211222222111111111
