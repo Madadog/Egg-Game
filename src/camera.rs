@@ -1,5 +1,5 @@
 use crate::Vec2;
-use crate::{WIDTH, HEIGHT};
+use crate::{WIDTH, HEIGHT, trace};
 
 #[derive(Debug)]
 pub struct Camera {
@@ -24,10 +24,10 @@ impl Camera {
     }
     pub fn from_map_size(w: u8, h: u8, sx: i16, sy: i16) -> Self {
         let (w, h): (i16, i16) = (w.into(), h.into());
-        crate::trace!(format!("W: {w}, H: {h}"), 11);
+        trace!(format!("W: {w}, H: {h}"), 11);
         let (x_offset, y_offset): (i16, i16) = (
-            (crate::WIDTH/2) as i16,
-            (crate::HEIGHT/2) as i16,
+            (WIDTH/2) as i16,
+            (HEIGHT/2) as i16,
         );
         let (cx, cy): (i16, i16) = (w*4 + sx - x_offset, h*4 + sy - y_offset);
         if w <= 30 && h <= 17 {
