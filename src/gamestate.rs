@@ -111,6 +111,9 @@ pub fn step_walkaround() {
     if keyp(30, -1, -1) {
         load_map(&TEST_PEN);
     }
+    if keyp(31, -1, -1) {
+        load_map(&BEDROOM);
+    }
     {
         let fixed = DIALOGUE.read().unwrap().fixed;
         let small_text = DIALOGUE.read().unwrap().small_text;
@@ -153,6 +156,7 @@ pub fn step_walkaround() {
             interact = false;
             DIALOGUE.write().unwrap().close();
         }
+        trace!("Attempting interact...",11);
     }
 
     // Player position + intended movement
@@ -250,7 +254,7 @@ pub fn step_walkaround() {
             if interact_hitbox.touches(item.hitbox) {
                 match &item.interaction {
                     Interaction::Text(x) => {
-                        trace!(x, 12);
+                        trace!(format!("{x:?}"), 12);
                         DIALOGUE.write().unwrap().set_text(x);
                     }
                     x => {
@@ -267,11 +271,12 @@ pub fn step_walkaround() {
 pub fn draw_walkaround() {
     // draw bg
     palette_map_reset();
-    cls(1);
+    cls(*crate::BG_COLOUR.read().unwrap());
     blit_segment(4);
+    let palette_map_rotation = current_map().palette_rotation;
     for (i, layer) in current_map().maps.iter().enumerate() {
-        if i == 0 {
-            palette_map_rotate(1)
+        if let Some(amount) = palette_map_rotation.get(i) {
+            palette_map_rotate(*amount)
         } else {
             palette_map_rotate(0)
         }

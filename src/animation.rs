@@ -16,6 +16,7 @@
 
 use crate::{SpriteOptions, Vec2};
 
+#[derive(Debug)]
 pub struct AnimFrame<'a> {
     pub pos: Vec2,
     pub id: u16,
@@ -41,6 +42,7 @@ impl<'a> AnimFrame<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Animation<'a> {
     pub tick: u16,
     pub index: usize,

@@ -22,6 +22,7 @@ pub enum Interaction<'a> {
     Text(&'a str),
 }
 
+#[derive(Debug)]
 pub struct Interactable<'a> {
     pub hitbox: Hitbox,
     pub interaction: Interaction<'a>,

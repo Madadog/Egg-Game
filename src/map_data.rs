@@ -34,6 +34,8 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     maps: &[],
     warps: &[],
     interactables: &[],
+    bg_colour: 0,
+    palette_rotation: &[],
 };
 
 #[derive(Clone)]
@@ -41,6 +43,8 @@ pub struct MapSet<'a> {
     pub maps: &'a [MapOptions<'a>],
     pub warps: &'a [Warp<'a>],
     pub interactables: &'a [Interactable<'a>],
+    pub bg_colour: u8,
+    pub palette_rotation: &'a [u8],
 }
 
 #[derive(Clone)]
@@ -167,6 +171,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
+    palette_rotation: &[1],
+    bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
 
@@ -231,6 +237,8 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
+    palette_rotation: &[1],
+    bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
 
@@ -273,18 +281,22 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
+    palette_rotation: &[1],
+    bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
 
 pub static TEST_PEN: MapSet<'static> = MapSet {
-    maps: &[MapOptions {
-        x: 53,
-        y: 17,
-        w: 7,
-        h: 9,
-        transparent: &[],
-        ..DEFAULT_MAP
-    }],
+    maps: &[
+        MapOptions {
+            x: 53,
+            y: 17,
+            w: 7,
+            h: 9,
+            transparent: &[],
+            ..DEFAULT_MAP
+        },
+    ],
     warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
@@ -297,5 +309,64 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
             ..Animation::const_default()
         }),
     }],
+    palette_rotation: &[1],
+    bg_colour: 1,
+    ..DEFAULT_MAP_SET
+};
+
+pub static BEDROOM: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //room
+            x: 30,
+            y: 0,
+            w: 21,
+            h: 10,
+            transparent: &[],
+            ..DEFAULT_MAP
+        },
+        MapOptions { //trolley
+            x: 30,
+            y: 10,
+            w: 3,
+            h: 2,
+            transparent: &[0],
+            sx: 101,
+            sy: 22,
+            ..DEFAULT_MAP
+        },
+        MapOptions { //mattress
+            x: 37,
+            y: 10,
+            w: 3,
+            h: 2,
+            transparent: &[0],
+            sx: 38,
+            sy: 27,
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new_tile(17, 6, Some(&SUPERMARKET), 10, 4)],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(38, 27, 3*8, 2*8),
+            interaction: Interaction::Text(BEDROOM_MATTRESS),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(2*8, 4*8, 2*8, 4*8),
+            interaction: Interaction::Text(BEDROOM_CLOSET),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(101, 22, 3*8, 2*8),
+            interaction: Interaction::Text(BEDROOM_TROLLEY),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(10*8, 3*8, 8, 8),
+            interaction: Interaction::Text(BEDROOM_WINDOW),
+            sprite: None,
+        },
+    ],
     ..DEFAULT_MAP_SET
 };

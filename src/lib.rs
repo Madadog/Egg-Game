@@ -68,6 +68,7 @@ static GAMEPAD_HELPER: RwLock<[u8; 4]> = RwLock::new([0; 4]);
 static MOUSE_HELPER: RwLock<MouseInput> = RwLock::new(MOUSE_INPUT_DEFAULT);
 static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
+static BG_COLOUR: RwLock<u8> = RwLock::new(0);
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -118,6 +119,7 @@ pub fn load_map(map: &'static MapSet<'static>) {
     *camera_mut() =
         Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
     *CURRENT_MAP.write().unwrap() = map;
+    *BG_COLOUR.write().unwrap() = map.bg_colour;
 
     ANIMATIONS.write().unwrap().clear();
     for _ in map.interactables {
@@ -168,7 +170,7 @@ pub fn mouse_delta() -> MouseInput {
 
 #[export_name = "BOOT"]
 pub fn boot() {
-    load_map(&SUPERMARKET);
+    load_map(&BEDROOM);
 }
 
 #[export_name = "TIC"]
