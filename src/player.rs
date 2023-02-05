@@ -29,7 +29,7 @@ pub struct Player {
 impl Player {
     pub const fn const_default() -> Self {
         Self {
-            pos: Vec2::new(96, 38),
+            pos: Vec2::new(61, 23),
             local_hitbox: Hitbox::new(0, 10, 7, 5),
             hp: 3,
             dir: (0, 1),

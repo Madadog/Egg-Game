@@ -345,7 +345,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new_tile(17, 6, Some(&SUPERMARKET), 10, 4)],
+    warps: &[Warp::new_tile(17, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(38, 27, 3*8, 2*8),
@@ -365,6 +365,59 @@ pub static BEDROOM: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(10*8, 3*8, 8, 8),
             interaction: Interaction::Text(BEDROOM_WINDOW),
+            sprite: None,
+        },
+    ],
+    ..DEFAULT_MAP_SET
+};
+
+pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //room
+            x: 51,
+            y: 0,
+            w: 16,
+            h: 9,
+            transparent: &[],
+            ..DEFAULT_MAP
+        },
+        MapOptions { //left door
+            x: 41,
+            y: 10,
+            w: 1,
+            h: 3,
+            transparent: &[0],
+            sx: 0,
+            sy: 7,
+            ..DEFAULT_MAP
+        },
+        MapOptions { //right door
+            x: 40,
+            y: 10,
+            w: 1,
+            h: 3,
+            transparent: &[0],
+            sx: 120,
+            sy: 7,
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new(Hitbox::new(1,3*8,8,8),Some(&BEDROOM),Vec2::new(16*8,5*8)),
+             Warp::new(Hitbox::new(7*8,9*8,2*8,8),Some(&SUPERMARKET),Vec2::new(10*8,7*8))],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(2*8, 2*8, 3*8, 8),
+            interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(13*8, 2*8, 8, 8),
+            interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW2),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(15*8, 3*8, 8, 8),
+            interaction: Interaction::Text(HOUSE_STAIRWELL_DOOR),
             sprite: None,
         },
     ],
