@@ -41,7 +41,8 @@ impl GameState {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if *i > 60 && any_btnp() {
+                if (*i > 60 || get_pmem(0) != 0)
+                && any_btnp() {
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
@@ -55,9 +56,8 @@ impl GameState {
                     *self = Self::MainMenu;
                     return;
                 };
-                if mem_btn(4) {
-                    *x += 1;
-                }
+                if mem_btn(4) { *x += 1; }
+                if mem_btn(5) { *x += 1000; }
                 if draw_animation(*x) {
                     *x += 1;
                 } else {
