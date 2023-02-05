@@ -29,7 +29,7 @@ pub struct Player {
 impl Player {
     pub const fn const_default() -> Self {
         Self {
-            pos: Vec2::new(61, 23),
+            pos: Vec2::new(62, 23),
             local_hitbox: Hitbox::new(0, 10, 7, 5),
             hp: 3,
             dir: (0, 1),
@@ -38,16 +38,25 @@ impl Player {
         }
     }
     pub fn sprite_index(&self) -> (i32, Flip, i32) {
-        let t = (((self.walktime + 19) / 20) % 2) as i32;
-        let anim = if self.walktime > 0 { t + 1 } else { 0 };
+        let timer = (self.walktime + 19) / 20;
+        let y_offset = (timer % 2) as i32;
+        let sprite_offset = if self.walktime > 0 { y_offset + 1 } else { 0 };
         if self.dir.1 > 0 {
-            (768 + anim, Flip::None, t) // Up
+            (768 + sprite_offset, Flip::None, y_offset) // Up
         } else if self.dir.1 < 0 {
-            (771 + anim, Flip::None, t) // Down
-        } else if self.dir.0 > 0 {
-            (832 + anim, Flip::None, t) // Right
+            (771 + sprite_offset, Flip::None, y_offset) // Down
         } else {
-            (832 + anim, Flip::Horizontal, t) // Left
+            let flip = if self.dir.0 > 0 {
+                Flip::None
+            } else {
+                Flip::Horizontal
+            };
+            let index = match timer % 4 {
+                0 | 2 => 832,
+                1 => 833,
+                _ => 834,
+            };
+            (index, flip, y_offset) // Left
         }
     }
     pub fn hitbox(&self) -> Hitbox {
