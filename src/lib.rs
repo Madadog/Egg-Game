@@ -145,7 +145,11 @@ pub fn mem_btnp(id: u8) -> bool {
 pub fn any_btnp() -> bool {
     let buttons = unsafe { *GAMEPADS };
     let previous = *GAMEPAD_HELPER.read().unwrap();
-    buttons != previous
+    let mut flag = false;
+    for (b0, b1) in previous.iter().zip(buttons.iter()) {
+        flag |= b0.count_ones() < b1.count_ones();
+    }
+    flag
 }
 pub fn step_gamepad_helper() {
     let buttons = unsafe { *GAMEPADS };
