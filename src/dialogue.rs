@@ -38,7 +38,7 @@ impl Dialogue {
         }
     }
     pub fn set_text(&mut self, string: &str) {
-        self.text = Some(fit_paragraph(string, 194, self.fixed, self.small_text));
+        self.text = Some(fit_paragraph(string, 195, self.fixed, self.small_text));
         self.timer = 0;
     }
     pub fn close(&mut self) {

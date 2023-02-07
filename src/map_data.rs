@@ -403,11 +403,16 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new(Hitbox::new(1,3*8,8,8),Some(&BEDROOM),Vec2::new(16*8,5*8)),
-             Warp::new(Hitbox::new(7*8,9*8,2*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(10*8,4*8))],
+             Warp::new(Hitbox::new(7*8,9*8,2*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(21*4,4*8))],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(2*8, 2*8, 3*8, 8),
+            hitbox: Hitbox::new(2*8, 2*8, 8, 8),
             interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(7*8, 4*8, 2*8, 8),
+            interaction: Interaction::Text(HOUSE_STAIRWELL_PAINTING),
             sprite: None,
         },
         Interactable {
@@ -455,21 +460,21 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(10*8,4*8,2*8,8),Some(&HOUSE_STAIRWELL),Vec2::new(7*8,7*8)),
+    warps: &[Warp::new(Hitbox::new(10*8,4*8,2*8,8),Some(&HOUSE_STAIRWELL),Vec2::new(15*4,7*8)),
     Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8))],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(12*8, 7*8, 3*8, 4*8),
+            hitbox: Hitbox::new(12*8, 7*8, 3*8, 3*8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(15*8, 9*8-1, 2*8, 3*8),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV),
+            interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(5*8, 7*8, 8, 8),
+            hitbox: Hitbox::new(5*8, 6*8, 2*8, 2*8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_WINDOW),
             sprite: None,
         },

@@ -30,7 +30,7 @@ pub struct Interactable<'a> {
 }
 
 impl<'a> Interactable<'a> {
-    pub fn new(
+    pub const fn new(
         hitbox: Hitbox,
         interaction: Interaction<'a>,
         sprite: Option<Animation<'a>>,
