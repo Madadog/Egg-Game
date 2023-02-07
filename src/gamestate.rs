@@ -289,10 +289,10 @@ pub fn draw_walkaround() {
         map(layer);
     }
     // draw sprites from least to greatest y
-    palette_map_rotate(1);
+    let mut sprites: Vec<(i32, i32, i32, SpriteOptions, u8, u8)> = Vec::new();
     let player_sprite = player().sprite_index();
     let (player_x, player_y): (i32, i32) = (player().pos.x.into(), player().pos.y.into());
-    spr_outline(
+    sprites.push((
         player_sprite.0,
         player_x - cam_x(),
         player_y - player_sprite.2 - cam_y(),
@@ -305,8 +305,8 @@ pub fn draw_walkaround() {
             ..Default::default()
         },
         1,
-    );
-    palette_map_reset();
+        1,
+    ));
 
     for (item, time) in current_map()
         .interactables
@@ -314,14 +314,28 @@ pub fn draw_walkaround() {
         .zip(ANIMATIONS.read().unwrap().iter())
     {
         if let Some(anim) = &item.sprite {
-            spr_outline(
+            sprites.push((
                 anim.frames[time.1].id.into(),
                 anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - cam_x(),
                 anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - cam_y(),
                 anim.frames[time.1].options.clone(),
                 1,
-            );
+                0,
+            ));
         }
+    }
+    sprites.sort_by(|a, b| (a.2+a.3.h*8)
+        .partial_cmp(&(b.2+b.3.h*8)).unwrap());
+    
+    for options in sprites {
+        palette_map_rotate(options.5);
+        spr_outline(
+            options.0,
+            options.1,
+            options.2,
+            options.3,
+            options.4,
+        );
     }
 
     // draw fg
