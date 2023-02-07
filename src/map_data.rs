@@ -133,6 +133,7 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
     warps: &[
         Warp::new_tile(17, 4, Some(&SUPERMARKET_HALL), 9, 4),
         Warp::new_tile(8, 4, Some(&SUPERMARKET_HALL), 3, 4),
+        Warp::new(Hitbox::new(11*8,11*8,3*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(4*8,9*8)),
     ],
     interactables: &[
         Interactable {
@@ -293,7 +294,6 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
             y: 17,
             w: 7,
             h: 9,
-            transparent: &[],
             ..DEFAULT_MAP
         },
     ],
@@ -321,7 +321,6 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             y: 0,
             w: 21,
             h: 10,
-            transparent: &[],
             ..DEFAULT_MAP
         },
         MapOptions { //trolley
@@ -378,7 +377,6 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             y: 0,
             w: 16,
             h: 9,
-            transparent: &[],
             ..DEFAULT_MAP
         },
         MapOptions { //left door
@@ -436,7 +434,6 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             y: 0,
             w: 23,
             h: 13,
-            transparent: &[],
             ..DEFAULT_MAP
         },
         MapOptions { //couch
@@ -445,7 +442,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             w: 4,
             h: 3,
             transparent: &[0],
-            sx: 12*8,
+            sx: 12*8+2,
             sy: 7*8,
             ..DEFAULT_MAP
         },
@@ -455,13 +452,15 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             w: 2,
             h: 3,
             transparent: &[0],
-            sx: 15*8,
+            sx: 15*8+2,
             sy: 9*8-1,
             ..DEFAULT_MAP
         },
     ],
     warps: &[Warp::new(Hitbox::new(10*8,4*8,2*8,8),Some(&HOUSE_STAIRWELL),Vec2::new(15*4,7*8)),
-    Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8))],
+    Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8)),
+    Warp::new(Hitbox::new(14*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(7*4,7*8)),
+    ],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(12*8, 7*8, 3*8, 3*8),
@@ -484,12 +483,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(14*8, 6*8, 8, 8),
-            interaction: Interaction::Text(CONSTRUCTION_2),
-            sprite: None,
-        },
-        Interactable {
-            hitbox: Hitbox::new(12*8+7, 7*8, 8, 8),
+            hitbox: Hitbox::new(12*8+9, 7*8, 8, 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: Some(Animation {
                 frames: &[
@@ -500,6 +494,48 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
                 ],
                 ..Animation::const_default()
             }),
+        },
+    ],
+    ..DEFAULT_MAP_SET
+};
+pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //room
+            x: 90,
+            y: 0,
+            w: 13,
+            h: 10,
+            transparent: &[],
+            ..DEFAULT_MAP
+        },
+        MapOptions { //microwave
+            x: 37,
+            y: 12,
+            w: 2,
+            h: 1,
+            sx: 7*8+6,
+            sy: 4*8-3,
+            transparent: &[0],
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new(Hitbox::new(2*8,8*8+7,4*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(14*8,5*8)),
+    Warp::new(Hitbox::new(11*8,4*8,8,3*8),Some(&SUPERMARKET),Vec2::new(14*8,5*8))],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(2*8, 4*8, 2*8, 2*8),
+            interaction: Interaction::Text(HOUSE_KITCHEN_CUPBOARD),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(5*8, 4*8, 5*4, 2*8),
+            interaction: Interaction::Text(HOUSE_KITCHEN_SINK),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(16*4, 4*8, 2*8, 2*8),
+            interaction: Interaction::Text(HOUSE_KITCHEN_MICROWAVE),
+            sprite: None,
         },
     ],
     ..DEFAULT_MAP_SET
