@@ -106,13 +106,20 @@ pub fn step_walkaround() {
         load_map(&SUPERMARKET);
     }
     if keyp(29, -1, -1) {
-        load_map(&SUPERMARKET_HALL);
+        load_map(&WILDERNESS);
     }
     if keyp(30, -1, -1) {
         load_map(&TEST_PEN);
     }
     if keyp(31, -1, -1) {
         load_map(&BEDROOM);
+    }
+    
+    if keyp(33, -1, -1) {
+        set_palette(crate::tic_helpers::SWEETIE_16);
+    }
+    if keyp(34, -1, -1) {
+        set_palette(crate::tic_helpers::NIGHT_16);
     }
     {
         let fixed = DIALOGUE.read().unwrap().fixed;
@@ -340,6 +347,20 @@ pub fn draw_walkaround() {
 
     // draw fg
     palette_map_reset();
+    for (i, layer) in current_map().fg_maps.iter().enumerate() {
+        if let Some(amount) = palette_map_rotation.get(i) {
+            palette_map_rotate(*amount)
+        } else {
+            palette_map_rotate(0)
+        }
+        let mut layer = layer.clone();
+        layer.sx -= cam_x();
+        layer.sy -= cam_y();
+        if debug_info().map_info {
+            rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
+        }
+        map(layer);
+    }
     {
         let print_timer = DIALOGUE.read().unwrap().timer;
         let font_fixed = DIALOGUE.read().unwrap().fixed;

@@ -35,7 +35,7 @@ use crate::map_data::*;
 use crate::player::*;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
-use crate::tic_helpers::MOUSE_INPUT_DEFAULT;
+use crate::tic_helpers::{MOUSE_INPUT_DEFAULT, SyncHelper};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -69,6 +69,7 @@ static MOUSE_HELPER: RwLock<MouseInput> = RwLock::new(MOUSE_INPUT_DEFAULT);
 static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 static BG_COLOUR: RwLock<u8> = RwLock::new(0);
+static SYNC_HELPER: RwLock<SyncHelper> = RwLock::new(SyncHelper::new());
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -120,6 +121,16 @@ pub fn load_map(map: &'static MapSet<'static>) {
         Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
     *CURRENT_MAP.write().unwrap() = map;
     *BG_COLOUR.write().unwrap() = map.bg_colour;
+    if let Some(track) = map.music_track {
+        music(track as i32, MusicOptions::default());
+    };
+    if map.bank != SYNC_HELPER.read().unwrap().last_bank() {
+        let x = SYNC_HELPER.write().unwrap().sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
+        if x.is_err() {
+            let bank = map.bank;
+            trace!(format!("COULD NOT SYNC TO BANK {bank}"),12);
+        }
+    }
 
     ANIMATIONS.write().unwrap().clear();
     for _ in map.interactables {
@@ -179,6 +190,7 @@ pub fn boot() {
 
 #[export_name = "TIC"]
 pub fn tic() {
+    SYNC_HELPER.write().unwrap().step();
     *TIME.write().unwrap() += 1;
 
     if keyp(16, -1, -1) {

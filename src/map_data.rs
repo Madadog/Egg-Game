@@ -32,19 +32,25 @@ pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
 };
 pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     maps: &[],
+    fg_maps: &[],
     warps: &[],
     interactables: &[],
     bg_colour: 0,
     palette_rotation: &[],
+    music_track: None,
+    bank: 0,
 };
 
 #[derive(Clone)]
 pub struct MapSet<'a> {
     pub maps: &'a [MapOptions<'a>],
+    pub fg_maps: &'a [MapOptions<'a>],
     pub warps: &'a [Warp<'a>],
     pub interactables: &'a [Interactable<'a>],
     pub bg_colour: u8,
     pub palette_rotation: &'a [u8],
+    pub music_track: Option<u8>,
+    pub bank: u8,
 }
 
 #[derive(Clone)]
@@ -505,7 +511,6 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
             y: 0,
             w: 13,
             h: 10,
-            transparent: &[],
             ..DEFAULT_MAP
         },
         MapOptions { //microwave
@@ -520,7 +525,7 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new(Hitbox::new(2*8,8*8+7,4*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(14*8,5*8)),
-    Warp::new(Hitbox::new(11*8,4*8,8,3*8),Some(&SUPERMARKET),Vec2::new(14*8,5*8))],
+    Warp::new(Hitbox::new(11*8,4*8,8,3*8),Some(&BACKYARD),Vec2::new(15*8,5*8))],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(2*8, 4*8, 2*8, 2*8),
@@ -538,5 +543,47 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
+    ..DEFAULT_MAP_SET
+};
+
+pub static BACKYARD: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //room
+            x: 120,
+            y: 0,
+            ..DEFAULT_MAP
+        },
+    ],
+    warps: &[Warp::new(Hitbox::new(15*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(10*8,5*8)),
+             Warp::new(Hitbox::new(12*8,16*8,4*8,8),Some(&WILDERNESS),Vec2::new(5*8,17*8*2))],
+    interactables: &[],
+    ..DEFAULT_MAP_SET
+};
+
+pub static WILDERNESS: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //ground
+            x: 120,
+            y: 68,
+            w: 30*4,
+            h: 17*4,
+            transparent: &[0],
+            ..DEFAULT_MAP
+        },
+    ],
+    fg_maps: &[
+        MapOptions { //foreground
+            x: 120,
+            y: 0,
+            w: 30*4,
+            h: 17*4,
+            transparent: &[0],
+            ..DEFAULT_MAP
+        }
+    ],
+    bg_colour: 3,
+    warps: &[Warp::new(Hitbox::new(6*8,36*8,8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
+    interactables: &[],
+    bank: 1,
     ..DEFAULT_MAP_SET
 };

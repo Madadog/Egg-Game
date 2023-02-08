@@ -182,6 +182,42 @@ pub const MOUSE_INPUT_DEFAULT: MouseInput = MouseInput {
     right: false,
 };
 
+pub struct SyncHelper {
+    synced: bool,
+    last_bank: u8,
+}
+
+impl SyncHelper {
+    pub const fn new() -> Self {
+        SyncHelper { synced: false, last_bank: 0 }
+    }
+    pub fn step(&mut self) {
+        self.synced = false;
+    }
+    /// Sync can only be called once per frame. Returns result to indicate failure or success.
+    /// Mask lets you switch out sections of cart data:
+    /// * all     = 0    -- 0
+    /// * tiles   = 1<<0 -- 1
+    /// * sprites = 1<<1 -- 2
+    /// * map     = 1<<2 -- 4
+    /// * sfx     = 1<<3 -- 8
+    /// * music   = 1<<4 -- 16
+    /// * palette = 1<<5 -- 32
+    /// * flags   = 1<<6 -- 64
+    /// * screen  = 1<<7 -- 128 (as of 0.90)
+    pub fn sync(&mut self, mask: i32, bank: u8) -> Result<(), ()> {
+        if self.synced {Err(())}
+        else {
+            self.synced = true;
+            self.last_bank = bank;
+            unsafe { sync(mask, bank, false) };
+            Ok(())
+        }
+    }
+    pub fn is_synced(&self) -> bool {self.synced}
+    pub fn last_bank(&self) -> u8 {self.last_bank}
+}
+
 pub const SWEETIE_16: [[u8; 3]; 16] = [
     [26, 28, 44],    // #1a1c2c
     [93, 39, 93],    // #5d275d
@@ -199,4 +235,22 @@ pub const SWEETIE_16: [[u8; 3]; 16] = [
     [148, 176, 194], // #94b0c2
     [86, 108, 134],  // #566c86
     [51, 60, 87],    // #333c57
+];
+pub const NIGHT_16: [[u8; 3]; 16] = [
+    [10, 10, 10],    // #0a0a0a
+    [26, 28, 44],    // #1a1c2c
+    [41, 54, 111],   // #29366f
+    [59, 93, 201],   // #3b5dc9
+    [65, 166, 246],  // #41a6f6
+    [115, 239, 247], // #73eff7
+    [167, 240, 112], // #a7f070
+    [56, 183, 100],  // #38b764
+    [37, 113, 121],  // #257179
+    [41, 54, 111],   // #29366f
+    [59, 93, 201],   // #3b5dc9
+    [65, 166, 246],  // #41a6f6
+    [244, 244, 244], // #f4f4f4
+    [115, 239, 247], // #73eff7
+    [148, 176, 194], // #94b0c2
+    [86, 108, 134],  // #566c86
 ];
