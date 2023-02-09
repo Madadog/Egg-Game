@@ -165,7 +165,13 @@ pub fn step_walkaround() {
         }
         trace!("Attempting interact...",11);
     }
-
+    let noclip = if key(63) && key(64) {
+        dy *= 3;
+        dx *= 4;
+        true
+    } else {
+        false
+    };
     // Player position + intended movement
     let player_hitbox = player().hitbox();
     let delta_hitbox = player_hitbox.offset_xy(dx, dy);
@@ -183,7 +189,7 @@ pub fn step_walkaround() {
     let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
     let mut diagonal_collision = false;
     let layer_collision = |point: Vec2, layer_hitbox: Hitbox, layer_x: i32, layer_y: i32| {
-        if layer_hitbox.touches_point(point) {
+        if layer_hitbox.touches_point(point) && !noclip {
             let map_point = Vec2::new(
                 (point.x - layer_hitbox.x) / 8 + layer_x as i16,
                 (point.y - layer_hitbox.y) / 8 + layer_y as i16,
