@@ -582,7 +582,7 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
         }
     ],
     bg_colour: 3,
-    warps: &[Warp::new(Hitbox::new(6*8,36*8,8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
+    warps: &[Warp::new(Hitbox::new(6*8,36*8,8,8),Some(&BACKYARD),Vec2::new(13*8,9*8))],
     interactables: &[],
     bank: 1,
     ..DEFAULT_MAP_SET
