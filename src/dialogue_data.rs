@@ -47,6 +47,48 @@ pub static HOUSE_KITCHEN_SINK: &str = "The unholy king of tacky windows. Words f
 pub static HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
 pub static UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
 pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.";
+pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
+    "bb_grin",
+    "Hey sis, let's play \"stick our fingers in the anthill!\"",
+    "y_disgust",
+    "... Wow, uh,,,,,,",
+    "y_judgy",
+    "... Maybe, let's not????",
+    "bb_joy",
+    "Whoever keeps their finger the longest wins~~!!!",
+    "y_joy",
+    "You're on~!!!",
+    "y_sober",
+    "Ok, but seriously, how long have you been playing?",
+    "bb_grin",
+    "I've been here *all* morning...... Heh, it kinda stings, actually!",
+    "y_worry",
+    "... You're bleeding... and we don't have any more PlasterAids...",
+    "bb_grin",
+    "I'll be right as rain, don't you sweat, sister... Juuuust as soon as I get all these ants off me...",
+    "y_worry",
+    "They're in your sleeves...",
+    "bb_worry",
+    "They're in my socks!",
+    "y_horror",
+    "Bro, stand still, please!",
+    "bb_horror",
+    "Please, get them off!!!",
+    "y_horror",
+    "I'm trying hard!",
+    "bb_horror",
+    "Not hard enough!",
+    "y_horror",
+    "I've got the hose!",
+    "bb_horror",
+    "Now that's the stuff!",
+];
+pub static ITEM_FF_NAME: &str = "French Gry";
+pub static ITEM_FF_DESC: &str = "A thinly-sliced fried potato snack, shaped like a guy. Looking at it makes you feel vaguely ill.";
+pub static ITEM_CHEGG_NAME: &str = "Mystery Egg";
+pub static ITEM_CHEGG_DESC: &str = "There's something inside.";
+pub static ITEM_LM_NAME: &str = "Little Man";
+pub static ITEM_LM_DESC: &str = "\"Hurry up, would 'ya? I got places to be!\"";
 pub static SM_COIN_RETURN: &str = "There's no money in the coin return slot.";
 pub static SM_FRUIT_BASKET: &str = "They're not fresh.";
 pub static SM_MAIN_WINDOW: &str = "It's yellow outside.";

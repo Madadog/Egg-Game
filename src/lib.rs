@@ -23,6 +23,7 @@ mod gamestate;
 mod interact;
 mod map_data;
 mod player;
+mod inventory;
 mod position;
 mod rand;
 mod tic80;
@@ -33,6 +34,7 @@ use crate::dialogue::Dialogue;
 use crate::gamestate::GameState;
 use crate::map_data::*;
 use crate::player::*;
+use crate::inventory::InventoryUi;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
 use crate::tic_helpers::{MOUSE_INPUT_DEFAULT, SyncHelper};
@@ -70,6 +72,7 @@ static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 static BG_COLOUR: RwLock<u8> = RwLock::new(0);
 static SYNC_HELPER: RwLock<SyncHelper> = RwLock::new(SyncHelper::new());
+static INVENTORY: RwLock<InventoryUi> = RwLock::new(InventoryUi::new());
 
 // REMINDER: Heap maxes at 8192 u32.
 
@@ -218,6 +221,7 @@ pub fn tic() {
     }
 
     run_gamestate();
+    
     step_gamepad_helper();
     step_mouse_helper();
 }

@@ -15,7 +15,8 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::interact::Interaction;
-use crate::map_data::*;
+use crate::{map_data::*, INVENTORY};
+use crate::inventory::InventoryUiState;
 use crate::position::{touches_tile, Hitbox, Vec2};
 use crate::tic80::*;
 use crate::{camera, camera_mut, current_map, load_map, player, player_mut, rand};
@@ -35,6 +36,7 @@ pub enum GameState {
     Animation(u16),
     MainMenu,
     Options,
+    Inventory,
 }
 impl GameState {
     pub fn run(&mut self) {
@@ -48,8 +50,11 @@ impl GameState {
                 draw_instructions();
             }
             Self::Walkaround => {
-                step_walkaround();
+                let next = step_walkaround();
                 draw_walkaround();
+                if let Some(state) = next {
+                    *self = state;
+                }
             }
             Self::Animation(x) => {
                 if get_pmem(0) != 0 {
@@ -79,11 +84,19 @@ impl GameState {
                     *self = Self::MainMenu;
                 }
             }
+            Self::Inventory => {
+                INVENTORY.write().unwrap().step();
+                if matches!(INVENTORY.read().unwrap().state, InventoryUiState::Close) {
+                    *self = Self::Walkaround;
+                } else {
+                    INVENTORY.read().unwrap().draw();
+                }
+            }
         }
     }
 }
 
-pub fn step_walkaround() {
+pub fn step_walkaround() -> Option<GameState> {
     for (anim, interact) in ANIMATIONS
         .write()
         .unwrap()
@@ -147,6 +160,10 @@ pub fn step_walkaround() {
         }
         if mem_btn(3) {
             dx += 1;
+        }
+        if mem_btnp(5) {
+            INVENTORY.write().unwrap().open();
+            return Some(GameState::Inventory)
         }
     } else {
         DIALOGUE.write().unwrap().tick(1);
@@ -279,6 +296,7 @@ pub fn step_walkaround() {
     }
 
     camera_mut().center_on(player().pos.x + 4, player().pos.y + 8);
+    None
 }
 
 pub fn draw_walkaround() {
