@@ -469,12 +469,12 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
     ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(12*8, 7*8, 3*8, 3*8),
+            hitbox: Hitbox::new(12*8+2, 7*8, 3*8, 3*8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(15*8, 9*8-1, 2*8, 3*8),
+            hitbox: Hitbox::new(15*8+2, 9*8-1, 2*8, 3*8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
@@ -556,7 +556,23 @@ pub static BACKYARD: MapSet<'static> = MapSet {
     ],
     warps: &[Warp::new(Hitbox::new(15*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(10*8,5*8)),
              Warp::new(Hitbox::new(12*8,16*8+7,4*8,8),Some(&WILDERNESS),Vec2::new(5*8,17*8*2))],
-    interactables: &[],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(9*8, 5*8, 2*8, 2*8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_BASEMENT),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(20*8, 8*8, 1*8, 2*8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_SHED),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(21*8, 13*8, 1*8, 1*8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_DOGHOUSE),
+            sprite: None,
+        },
+    ],
     ..DEFAULT_MAP_SET
 };
 
