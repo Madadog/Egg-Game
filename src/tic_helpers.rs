@@ -168,6 +168,11 @@ pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outli
     spr(id, x, y, sprite_options);
 }
 
+pub fn rect_outline(x: i32, y: i32, w: i32, h: i32, fill: u8, outline: u8) {
+    rect(x, y, w, h, fill);
+    rectb(x, y, w, h, outline);
+}
+
 pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
     print_raw(string, x - string_width / 2, y, options);
