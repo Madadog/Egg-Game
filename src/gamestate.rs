@@ -25,7 +25,7 @@ use crate::{ANIMATIONS, DIALOGUE};
 use crate::tic_helpers::{
     blit_segment, draw_ovr, fade_palette, fade_palette_colour, get_pmem, palette_map_reset,
     palette_map_rotate, print_raw_centered, screen_offset, set_palette, set_palette_colour,
-    set_pmem, spr_outline, SWEETIE_16,
+    set_pmem, spr_outline, SWEETIE_16, rect_outline,
 };
 use crate::{any_btnp, cam_x, cam_y, debug_info, frames, mem_btn, mem_btnp, mouse_delta};
 
@@ -374,8 +374,7 @@ pub fn draw_walkaround() {
         if let Some(text) = &DIALOGUE.read().unwrap().text {
             let w = 200;
             let h = 24;
-            rect((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 2);
-            rectb((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 3);
+            rect_outline((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 2, 3);
             print_alloc(
                 &text[..(print_timer)],
                 (WIDTH - w) / 2 + 3,
@@ -432,8 +431,7 @@ pub fn draw_walkaround() {
 pub fn draw_instructions() {
     cls(0);
     let string = crate::dialogue_data::INSTRUCTIONS;
-    rect(7, 15, 226, 100, 1);
-    rectb(7, 15, 226, 100, 2);
+    rect_outline(7, 15, 226, 100, 1, 2);
     print_raw(
         string,
         11,
