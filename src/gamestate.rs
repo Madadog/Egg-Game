@@ -651,8 +651,8 @@ pub fn draw_title(x: i32, y: i32) {
 
 fn step_options() -> bool {
     use crate::RESET_PROTECTOR;
-    let (menu_index, clicked) = step_menu(4, 40);
-    if menu_index != 3 {
+    let (menu_index, clicked) = step_menu(3, 40);
+    if menu_index != 2 {
         *RESET_PROTECTOR.write().unwrap() = 0;
     };
     if mem_btnp(4) || clicked {
@@ -661,8 +661,7 @@ fn step_options() -> bool {
             1 => {
                 DIALOGUE.write().unwrap().toggle_small_text();
             }
-            2 => DIALOGUE.write().unwrap().toggle_fixed(),
-            3 => {
+            2 => {
                 if *RESET_PROTECTOR.read().unwrap() == 0 {
                     *RESET_PROTECTOR.write().unwrap() += 1;
                 } else {
@@ -685,7 +684,7 @@ fn step_options() -> bool {
 pub fn draw_options() {
     cls(0);
     use crate::dialogue_data::{
-        MENU_BACK, OPTIONS_FONT_FIXED, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET,
+        MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET,
         OPTIONS_RESET_SURE,
     };
     use crate::{MAINMENU, RESET_PROTECTOR};
@@ -697,11 +696,10 @@ pub fn draw_options() {
     let strings = [
         MENU_BACK,
         OPTIONS_FONT_SIZE,
-        OPTIONS_FONT_FIXED,
         reset_string,
     ];
     let current_option = *MAINMENU.read().unwrap();
-    if current_option == 3 {
+    if current_option == 2 {
         rect(60, 10, 120, 11, 2);
         print_raw_centered(
             OPTIONS_LOSE_DATA,
