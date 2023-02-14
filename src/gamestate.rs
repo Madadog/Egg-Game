@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::dialogue::draw_dialogue_box;
 use crate::interact::Interaction;
 use crate::{map_data::*, INVENTORY};
 use crate::inventory::InventoryUiState;
@@ -385,26 +386,8 @@ pub fn draw_walkaround() {
         }
         map(layer);
     }
-    {
-        let print_timer = DIALOGUE.read().unwrap().timer;
-        let font_fixed = DIALOGUE.read().unwrap().fixed;
-        let small_font = DIALOGUE.read().unwrap().small_text;
-        if let Some(text) = &DIALOGUE.read().unwrap().text {
-            let w = 200;
-            let h = 24;
-            rect_outline((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 2, 3);
-            print_alloc(
-                &text[..(print_timer)],
-                (WIDTH - w) / 2 + 3,
-                (HEIGHT - h) - 4 + 3,
-                PrintOptions {
-                    color: 12,
-                    small_text: small_font,
-                    fixed: font_fixed,
-                    ..Default::default()
-                },
-            );
-        }
+    if let Some(string) = &DIALOGUE.read().unwrap().text {
+        draw_dialogue_box(string, true);
     }
     if debug_info().map_info {
         for warp in current_map().warps.iter() {

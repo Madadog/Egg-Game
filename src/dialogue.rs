@@ -21,6 +21,7 @@ pub struct Dialogue {
     pub timer: usize,
     pub fixed: bool,
     pub small_text: bool,
+    pub width: usize,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
@@ -29,6 +30,7 @@ impl Dialogue {
             timer: 0,
             fixed: false,
             small_text: false,
+            width: 200,
         }
     }
     pub fn is_done(&self) -> bool {
@@ -38,8 +40,14 @@ impl Dialogue {
         }
     }
     pub fn set_text(&mut self, string: &str) {
-        self.text = Some(fit_paragraph(string, 195, self.fixed, self.small_text));
+        self.text = Some(self.fit_text(string));
         self.timer = 0;
+    }
+    pub fn fit_text(&self, string: &str) -> String {
+        fit_paragraph(string, self.wrap_width(), self.fixed, self.small_text)
+    } 
+    pub fn wrap_width(&self) -> usize {
+        self.width-3
     }
     pub fn close(&mut self) {
         self.text = None;
@@ -58,8 +66,9 @@ impl Dialogue {
     pub fn set_options(&mut self, fixed: bool, small_text: bool) {
         self.fixed = fixed;
         self.small_text = small_text;
+        let wrap_width = self.wrap_width();
         if let Some(text) = &mut self.text {
-            *text = fit_paragraph(text, 196, self.fixed, self.small_text);
+            *text = fit_paragraph(text, wrap_width, self.fixed, self.small_text);
         }
     }
     pub fn toggle_small_text(&mut self) {
@@ -77,7 +86,29 @@ impl Dialogue {
     }
 }
 
-use crate::trace;
+pub fn draw_dialogue_box(string: &str, timer: bool) {
+    use crate::{DIALOGUE, WIDTH, HEIGHT};
+    use crate::tic_helpers::rect_outline;
+
+    let print_timer = DIALOGUE.read().unwrap().timer;
+    let font_fixed = DIALOGUE.read().unwrap().fixed;
+    let small_font = DIALOGUE.read().unwrap().small_text;
+    let w = DIALOGUE.read().unwrap().width as i32;
+    let h = 24;
+    rect_outline((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 2, 3);
+    print_alloc(
+        if timer {&string[..(print_timer)]} else {&string},
+        (WIDTH - w) / 2 + 3,
+        (HEIGHT - h) - 4 + 3,
+        PrintOptions {
+            color: 12,
+            small_text: small_font,
+            fixed: font_fixed,
+            ..Default::default()
+        },
+    );
+}
+
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
     let width = print_alloc(
         string,
@@ -89,7 +120,6 @@ pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
             ..Default::default()
         },
     );
-    trace!(format!("{width}"), 12);
     width
 }
 
@@ -108,7 +138,6 @@ pub fn fit_string(
 ) -> (String, usize) {
     let len = string.split_inclusive(' ').skip(start_word).count();
     let mut line_length = 0;
-    trace!(format!("len: {len}"), 12);
     for i in 1..=len {
         let taken = &take_words(string, i, start_word);
         if print_width(taken, fixed, small_font) as usize > wrap_width {
@@ -116,8 +145,6 @@ pub fn fit_string(
         } else {
             line_length = i
         };
-        trace!(format!("{taken}"), 12);
-        trace!(format!("line length: {line_length}"), 12);
     }
     (take_words(string, line_length, start_word), line_length)
 }
@@ -129,7 +156,6 @@ pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: b
     while skip < len {
         let (string, x) = fit_string(string, wrap_width, skip, fixed, small_font);
         skip += x;
-        trace!(format!("Skip: {skip}"), 12);
         paragraph.push_str(&string);
         paragraph.push('\n');
         if x == 0 {
