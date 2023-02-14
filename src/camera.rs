@@ -36,8 +36,8 @@ impl Camera {
         } else {
             // Area does not fit inside screen, follow target & add bounds.
             Camera::new(Vec2::new(cx, cy), CameraBounds {
-                    x_bounds: if w >= 30 { CameraRange::Range(sx, sx+w*8-x_offset) } else { CameraRange::Stick(cx) },
-                    y_bounds: if h >= 17 { CameraRange::Range(sy, sy+h*8-y_offset) } else { CameraRange::Stick(cy) },
+                    x_bounds: if w >= 30 { CameraRange::Range(sx, sx+w*8-WIDTH as i16) } else { CameraRange::Stick(cx) },
+                    y_bounds: if h >= 17 { CameraRange::Range(sy, sy+h*8-HEIGHT as i16) } else { CameraRange::Stick(cy) },
                 })
         }
     }
