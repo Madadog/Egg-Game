@@ -23,7 +23,6 @@ pub struct Inventory<'a> {
 impl<'a> Inventory<'a> {
     pub fn new() -> Self {
         Self {
-            // items: [None; 8],
             items: [Some(&ITEM_FF), Some(&ITEM_LM), Some(&ITEM_CHEGG), None, None, None, None, None],
             unlocks: [false; 4],
         }
@@ -136,7 +135,6 @@ impl<'a> InventoryUi<'a> {
         use crate::tic_helpers::{rect_outline, spr_outline};
         let side_column = 32;
         let column_margin = 2;
-        // let main_width = WIDTH - 53 - side_column - column_margin;
         let scale = 2;
         let item_slot_size = scale*8+5;
         let main_width = item_slot_size*4+5;
@@ -212,31 +210,6 @@ impl<'a> InventoryUi<'a> {
             }
             _ => {}
         };
-        // draw items slot
-        // rect_outline(x_offset + side_column + column_margin,y_offset, main_width, total_height, main_colour, main_colour+1);
-        // for (i, item) in (0..).zip(self.inventory.items.iter()) {
-        //     let (sx, sy) = (
-        //         x_offset + side_column + column_margin + 3 + (i%4)*item_slot_size,
-        //         y_offset + 3 + (i/4)*item_slot_size,
-        //     );
-        //     let (colour, outline_colour) = if let Some(index) = item_index {
-        //         if i == index as i32 {(0, 12)} else {(0, main_colour+1)}
-        //     } else { (0, main_colour+1) };
-        //     rect_outline(sx, sy, item_slot_size-1, item_slot_size-1, colour, outline_colour);
-        //     if let Some(id) = item {
-        //         if let Some(old_item) = old_item {
-        //             if i as usize == old_item.0 {continue}
-        //         }
-        //         if old_item.is_none() && item_index.is_some() && i == item_index.unwrap() as i32 {
-        //             spr_outline(*id, sx+2, sy+2, SpriteOptions {scale, transparent: &[0], ..Default::default()}, 12);
-        //         } else {
-        //             spr(*id, sx+2, sy+2, SpriteOptions {scale, transparent: &[0], ..Default::default()});
-        //         }
-        //     };
-        //     if old_item.is_some() && item_index.is_some() && i == item_index.unwrap() as i32 {
-        //         spr_outline(old_item.unwrap().1, sx+2, sy-9, SpriteOptions {scale, transparent: &[0], ..Default::default()}, 12);
-        //     }
-        // }
     }
     pub fn step(&mut self) {
         use crate::mem_btnp;
