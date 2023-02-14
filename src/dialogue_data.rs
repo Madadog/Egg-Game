@@ -30,9 +30,9 @@ pub static BEDROOM_MATTRESS: &str = "You can't get to sleep.";
 pub static BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
 pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
 pub static BEDROOM_WINDOW: &str = "It's a beautiful day... \n            \n... Outside.";
-pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering morning sun shines hopefully over the large traffic jam near your home.";
+pub static HOUSE_STAIRWELL_WINDOW: &str = "The sonorous shadows flee as dawn stretches its golden fingers. The light scatters off the hills.";
 pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
-pub static HOUSE_STAIRWELL_PAINTING: &str = "It's not as good as the window.";
+pub static HOUSE_STAIRWELL_PAINTING: &str = "The poorly rendered shadows flee in every direction as if running from the canvas instead of the sun.";
 pub static HOUSE_STAIRWELL_DOOR: &str = "You shouldn't go in there.";
 pub static HOUSE_LIVING_ROOM_COUCH: &str = "He's busy.";
 pub static HOUSE_LIVING_ROOM_TV_1: &str = "It's a cartoon of some sort. The protagonist is still charging up his main attack.";
@@ -51,6 +51,7 @@ pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the g
 pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
 pub static HOUSE_BACKYARD_SHED: &str = "The shed: where power tools go to die. The door won't budge.";
 pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
+pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
 pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
     "bb_grin",
     "Hey sis, let's play \"stick our fingers in the anthill!\"",
