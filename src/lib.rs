@@ -72,7 +72,7 @@ static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 static BG_COLOUR: RwLock<u8> = RwLock::new(0);
 static SYNC_HELPER: RwLock<SyncHelper> = RwLock::new(SyncHelper::new());
-static INVENTORY: RwLock<InventoryUi> = RwLock::new(InventoryUi::new());
+static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| InventoryUi::new()));
 
 // REMINDER: Heap maxes at 8192 u32.
 

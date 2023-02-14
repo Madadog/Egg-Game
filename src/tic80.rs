@@ -630,6 +630,9 @@ pub struct PrintOptions {
     pub scale: i32,
     pub small_text: bool,
 }
+impl PrintOptions {
+    pub fn with_color(self, color: i32) -> Self { Self {color, ..self} }
+}
 
 impl Default for PrintOptions {
     fn default() -> Self {

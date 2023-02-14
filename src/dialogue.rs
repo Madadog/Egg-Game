@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{print_alloc, PrintOptions};
+use crate::{print_alloc, PrintOptions, tic80::SpriteOptions};
 
 pub struct Dialogue {
     pub text: Option<String>,
@@ -86,7 +86,7 @@ impl Dialogue {
     }
 }
 
-pub fn draw_dialogue_box(string: &str, timer: bool) {
+pub fn draw_dialogue_box_with_offset(string: &str, timer: bool, x: i32, y: i32, height: i32) {
     use crate::{DIALOGUE, WIDTH, HEIGHT};
     use crate::tic_helpers::rect_outline;
 
@@ -95,11 +95,11 @@ pub fn draw_dialogue_box(string: &str, timer: bool) {
     let small_font = DIALOGUE.read().unwrap().small_text;
     let w = DIALOGUE.read().unwrap().width as i32;
     let h = 24;
-    rect_outline((WIDTH - w) / 2, (HEIGHT - h) - 4, w, h, 2, 3);
+    rect_outline((WIDTH - w) / 2 + x, (HEIGHT - h) - 4 + y, w, h+height, 2, 3);
     print_alloc(
         if timer {&string[..(print_timer)]} else {&string},
-        (WIDTH - w) / 2 + 3,
-        (HEIGHT - h) - 4 + 3,
+        (WIDTH - w) / 2 + 3 + x,
+        (HEIGHT - h) - 4 + 3 + y,
         PrintOptions {
             color: 12,
             small_text: small_font,
@@ -107,6 +107,21 @@ pub fn draw_dialogue_box(string: &str, timer: bool) {
             ..Default::default()
         },
     );
+}
+
+pub fn draw_dialogue_box(string: &str, timer: bool) {
+    draw_dialogue_box_with_offset(string, timer, 0, 0, 0)
+}
+
+pub fn draw_dialogue_portrait(string: &str, timer: bool, portrait: i32) {
+    use crate::{DIALOGUE, WIDTH, HEIGHT, spr};
+    use crate::tic_helpers::rect_outline;
+
+    let w = DIALOGUE.read().unwrap().width as i32;
+    let h = 24;
+    draw_dialogue_box_with_offset(string, timer, 14, -2, 4);
+    rect_outline((WIDTH - w) / 2-13, (HEIGHT - h) - 6, h+4, h+4, 0, 3);
+    spr(portrait, (WIDTH - w) / 2-13+2, (HEIGHT - h) - 6+2, SpriteOptions {scale: 3, transparent: &[0], ..Default::default()});
 }
 
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
