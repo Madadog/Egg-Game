@@ -432,6 +432,7 @@ pub fn draw_walkaround() {
 pub fn draw_instructions() {
     cls(0);
     let string = crate::dialogue_data::INSTRUCTIONS;
+    let small_text = DIALOGUE.read().unwrap().small_text;
     rect_outline(7, 15, 226, 100, 1, 2);
     print_raw(
         string,
@@ -439,6 +440,7 @@ pub fn draw_instructions() {
         21,
         PrintOptions {
             color: 0,
+            small_text,
             ..Default::default()
         },
     );
@@ -448,6 +450,7 @@ pub fn draw_instructions() {
         20,
         PrintOptions {
             color: 12,
+            small_text,
             ..Default::default()
         },
     );
