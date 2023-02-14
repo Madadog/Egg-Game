@@ -555,7 +555,7 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new(Hitbox::new(15*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(10*8,5*8)),
-             Warp::new(Hitbox::new(12*8,16*8,4*8,8),Some(&WILDERNESS),Vec2::new(5*8,17*8*2))],
+             Warp::new(Hitbox::new(12*8,16*8+7,4*8,8),Some(&WILDERNESS),Vec2::new(5*8,17*8*2))],
     interactables: &[],
     ..DEFAULT_MAP_SET
 };
@@ -582,7 +582,7 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
         }
     ],
     bg_colour: 3,
-    warps: &[Warp::new(Hitbox::new(6*8,36*8,8,8),Some(&BACKYARD),Vec2::new(13*8,9*8))],
+    warps: &[Warp::new(Hitbox::new(6*8,32*8,8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
     interactables: &[],
     bank: 1,
     ..DEFAULT_MAP_SET
