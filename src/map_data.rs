@@ -555,7 +555,7 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new(Hitbox::new(15*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(10*8,5*8)),
-             Warp::new(Hitbox::new(12*8,16*8+7,4*8,8),Some(&WILDERNESS),Vec2::new(5*8,17*8*2))],
+             Warp::new(Hitbox::new(12*8,16*8+7,4*8,8),Some(&WILDERNESS),Vec2::new(7*8+3,60*8))],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(9*8, 5*8, 2*8, 2*8),
@@ -572,6 +572,11 @@ pub static BACKYARD: MapSet<'static> = MapSet {
             interaction: Interaction::Text(HOUSE_BACKYARD_DOGHOUSE),
             sprite: None,
         },
+        Interactable {
+            hitbox: Hitbox::new(5*8, 0, 1*8, 16*8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_STORMDRAIN),
+            sprite: None,
+        },
     ],
     ..DEFAULT_MAP_SET
 };
@@ -586,6 +591,26 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
+        MapOptions { //left barrier
+            x: 120,
+            y: 78,
+            w: 1,
+            h: 22,
+            transparent: &[0],
+            sx: -8,
+            sy: 37*8,
+            ..DEFAULT_MAP
+        },
+        MapOptions { //bottom barrier
+            x: 120,
+            y: 72,
+            w: 23,
+            h: 1,
+            transparent: &[0],
+            sx: 17*8,
+            sy: 68*8,
+            ..DEFAULT_MAP
+        },
     ],
     fg_maps: &[
         MapOptions { //foreground
@@ -598,7 +623,7 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
         }
     ],
     bg_colour: 3,
-    warps: &[Warp::new(Hitbox::new(6*8,32*8,8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
+    warps: &[Warp::new(Hitbox::new(7*8,63*8+4,2*8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
     interactables: &[],
     bank: 1,
     ..DEFAULT_MAP_SET
