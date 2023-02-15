@@ -180,8 +180,8 @@ pub fn touches_tile(id: usize, point: Vec2) -> bool {
         5 => point.x <= point.y,            // Bottom-left ramp
         6 => point.y <= 3,                  // Top half
         7 => point.y >= 3,                  // Bottom half
-        8 => point.x >= 3,                  // Left half
-        9 => point.x <= 3,                  // Right half
+        8 => point.x >= 3,                  // Right half
+        9 => point.x <= 3,                  // Left half
         10 => point.y <= 3 && point.x >= 3, // Top-right corner
         11 => point.y <= 3 && point.x <= 3, // Top-left corner
         12 => point.y >= 3 && point.x >= 3, // Bottom-right corner
