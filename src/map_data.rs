@@ -577,6 +577,17 @@ pub static BACKYARD: MapSet<'static> = MapSet {
             interaction: Interaction::Text(HOUSE_BACKYARD_STORMDRAIN),
             sprite: None,
         },
+        Interactable {
+            hitbox: Hitbox::new(3, 2*8, 8, 8),
+            interaction: Interaction::Text(DEFAULT),
+            sprite: Some(Animation {
+                frames: &[
+                    AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
+                    AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
+                ],
+                ..Animation::const_default()
+            }),
+        },
     ],
     ..DEFAULT_MAP_SET
 };
