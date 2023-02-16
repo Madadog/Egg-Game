@@ -51,7 +51,7 @@ pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the g
 pub static DOG_OBTAINED: &str = "Dog has joined the party!";
 pub static DOG_RELINQUISHED: &str = "Dog has left the party.";
 pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
-pub static HOUSE_BACKYARD_SHED: &str = "The shed: where power tools go to die. The door won't budge.";
+pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could definitely open it with some of the POWER TOOLS inside... Oh wait.";
 pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
 pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
 pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
@@ -105,7 +105,7 @@ pub static EMERGENCY_EXIT: &str =
     "This is an emergency exit. It's not an emergency right now. Ergo, you cannot use the exit.";
 pub static SM_HALL_SHELF: &str =
     "There's a single bottle of floor cleaner. And no mop.";
-pub static SM_HALL_WINDOW: &str = "Looks like this window has been recently painted over.";
+pub static SM_HALL_WINDOW: &str = "Looks like this window has recently been painted yellow.";
 pub static EGG_1: &str = "It's floating.";
 pub static SM_STOREROOM_SHELF: &str = "They're all out of Keratin Krunch.";
 pub static SM_TITLE: &str = "S____MAR__T";
