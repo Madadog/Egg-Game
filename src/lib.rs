@@ -131,7 +131,7 @@ pub fn load_map(map: &'static MapSet<'static>) {
         let x = SYNC_HELPER.write().unwrap().sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
         if x.is_err() {
             let bank = map.bank;
-            trace!(format!("COULD NOT SYNC TO BANK {bank}"),12);
+            trace!(format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),12);
         }
     }
 
