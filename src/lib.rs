@@ -58,7 +58,7 @@ impl DebugInfo {
 
 static TIME: RwLock<i32> = RwLock::new(0);
 static PLAYER: RwLock<Player> = RwLock::new(Player::const_default());
-static ANIMATIONS: RwLock<Vec<(u16, usize)>> = RwLock::new(Vec::new());
+static MAP_ANIMATIONS: RwLock<Vec<(u16, usize)>> = RwLock::new(Vec::new());
 static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
 static PAUSE: AtomicBool = AtomicBool::new(false);
 static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
@@ -135,9 +135,9 @@ pub fn load_map(map: &'static MapSet<'static>) {
         }
     }
 
-    ANIMATIONS.write().unwrap().clear();
+    MAP_ANIMATIONS.write().unwrap().clear();
     for _ in map.interactables {
-        ANIMATIONS.write().unwrap().push((0, 0));
+        MAP_ANIMATIONS.write().unwrap().push((0, 0));
     }
 }
 pub fn run_gamestate() {

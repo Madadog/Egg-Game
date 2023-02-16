@@ -22,7 +22,7 @@ use crate::position::{touches_tile, Hitbox, Vec2};
 use crate::tic80::*;
 use crate::{camera, camera_mut, current_map, load_map, player, player_mut, rand};
 use crate::{print, trace};
-use crate::{ANIMATIONS, DIALOGUE};
+use crate::{MAP_ANIMATIONS, DIALOGUE};
 
 use crate::tic_helpers::{
     blit_segment, draw_ovr, fade_palette, fade_palette_colour, get_pmem, palette_map_reset,
@@ -98,7 +98,7 @@ impl GameState {
 }
 
 pub fn step_walkaround() -> Option<GameState> {
-    for (anim, interact) in ANIMATIONS
+    for (anim, interact) in MAP_ANIMATIONS
         .write()
         .unwrap()
         .iter_mut()
@@ -343,7 +343,7 @@ pub fn draw_walkaround() {
     for (item, time) in current_map()
         .interactables
         .iter()
-        .zip(ANIMATIONS.read().unwrap().iter())
+        .zip(MAP_ANIMATIONS.read().unwrap().iter())
     {
         if let Some(anim) = &item.sprite {
             sprites.push((
