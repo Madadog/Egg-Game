@@ -16,7 +16,8 @@
 
 use crate::dialogue::draw_dialogue_box;
 use crate::interact::Interaction;
-use crate::{map_data::*, INVENTORY};
+use crate::player::CompanionTrail;
+use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS};
 use crate::inventory::InventoryUiState;
 use crate::position::{touches_tile, Hitbox, Vec2};
 use crate::tic80::*;
@@ -257,11 +258,16 @@ pub fn step_walkaround() -> Option<GameState> {
     {
         let mut player = player_mut();
         if dx != 0 || dy != 0 {
+            COMPANION_TRAIL.write().unwrap().push(
+                Vec2::new(player.pos.x, player.pos.y),
+                (player.dir.0, player.dir.1)
+            );
             player.pos.x += dx;
             player.pos.y += dy;
             player.walktime = player.walktime.wrapping_add(1);
             player.walking = true;
         } else {
+            COMPANION_TRAIL.write().unwrap().stop();
             player.walktime = 0;
             player.walking = false;
         };
@@ -277,6 +283,7 @@ pub fn step_walkaround() -> Option<GameState> {
     }
     if let Some(target) = warp_target {
         player_mut().pos = target.to;
+        COMPANION_TRAIL.write().unwrap().fill(player().pos, player().dir);
         if let Some(new_map) = target.map {
             load_map(new_map);
         }
@@ -287,10 +294,16 @@ pub fn step_walkaround() -> Option<GameState> {
                     Interaction::Text(x) => {
                         trace!(format!("{x:?}"), 12);
                         DIALOGUE.write().unwrap().set_text(x);
-                    }
+                    },
+                    Interaction::Func(x) => {
+                        trace!(format!("{x:?}"), 12);
+                        if let Some(dialogue) = x.execute() {
+                            DIALOGUE.write().unwrap().set_text(dialogue);
+                        };
+                    },
                     x => {
                         trace!(format!("{x:?}"), 12);
-                    }
+                    },
                 }
             }
         }
@@ -356,6 +369,28 @@ pub fn draw_walkaround() {
             ));
         }
     }
+    // let x = COMPANIONS.read().unwrap().get(0).clone().unwrap();
+    // if let Some(companion) = x
+    // {
+    //     let (position, direction) = COMPANION_TRAIL.read().unwrap().oldest();
+    //     let params = companion.spr_params(
+    //         position, direction);
+    //     sprites.push(params);
+    // }
+    let x = COMPANIONS.read().unwrap();
+    for (i, companion) in x.companions.iter().enumerate() {
+        if let Some(companion) = companion {
+            let (position, direction) = if i == 0 {
+                COMPANION_TRAIL.read().unwrap().oldest()
+            } else {
+                COMPANION_TRAIL.read().unwrap().mid()
+            };
+            let walktime = COMPANION_TRAIL.read().unwrap().walktime();
+            let params = companion.spr_params(position, direction, walktime);
+            sprites.push(params);
+        }
+    }
+
     sprites.sort_by(|a, b| (a.2+a.3.h*8)
         .partial_cmp(&(b.2+b.3.h*8)).unwrap());
     

@@ -16,6 +16,7 @@
 
 use crate::animation::*;
 use crate::dialogue_data::*;
+use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
 use crate::position::{Hitbox, Vec2};
 use crate::{MapOptions, SpriteOptions};
@@ -569,7 +570,7 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         },
         Interactable {
             hitbox: Hitbox::new(21*8, 13*8, 1*8, 1*8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_DOGHOUSE),
+            interaction: Interaction::Func(InteractFn::ToggleDog),
             sprite: None,
         },
         Interactable {
