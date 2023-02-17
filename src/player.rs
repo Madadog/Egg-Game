@@ -62,10 +62,121 @@ impl Player {
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
     }
+    pub fn walk(&mut self, mut dx: i16, mut dy: i16, noclip: bool) -> (i16, i16) {
+        use crate::current_map;
+        use crate::map::layer_collides;
+        use crate::trace;
+
+        if dx == 0 && dy == 0 { return (dx, dy) };
+        
+        // Face direction
+        self.dir.1 = dy as i8;
+        self.dir.0 = dx as i8;
+        
+        if noclip { return (dx, dy) };
+        
+        // Player position + intended movement
+        let player_hitbox = self.hitbox();
+        let delta_hitbox = player_hitbox.offset_xy(-1, -1).grow(2, 2);
+
+        // Collide
+        let points_dx = player_hitbox.dx_corners(dx);
+        let points_dx_up = player_hitbox.offset_xy(0, -1).dx_corners(dx);
+        let points_dx_down = player_hitbox.offset_xy(0, 1).dx_corners(dx);
+        let (mut dx_collision_x, mut dx_collision_up, mut dx_collision_down) = (false, false, false);
+        let points_dy = player_hitbox.dy_corners(dy);
+        let points_dy_left = player_hitbox.offset_xy(-1, 0).dy_corners(dy);
+        let points_dy_right = player_hitbox.offset_xy(1, 0).dy_corners(dy);
+        let (mut dy_collision_y, mut dy_collision_left, mut dy_collision_right) = (false, false, false);
+        let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
+        let mut diagonal_collision = false;
+        for layer in current_map().maps.iter() {
+            let layer_hitbox = Hitbox::new(
+                layer.sx as i16,
+                layer.sy as i16,
+                layer.w as i16 * 8,
+                layer.h as i16 * 8,
+            );
+            if !layer_hitbox.touches(delta_hitbox) { continue }
+            [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
+                [points_dx, points_dx_up, points_dx_down],
+                layer_hitbox,
+                layer.x,
+                layer.y,
+                [dx_collision_x, dx_collision_up, dx_collision_down],
+            );
+            [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
+                [points_dy, points_dy_left, points_dy_right],
+                layer_hitbox,
+                layer.x,
+                layer.y,
+                [dy_collision_y, dy_collision_left, dy_collision_right],
+            );
+            if let Some(point_diag) = point_diag {
+                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y) {
+                    diagonal_collision = true;
+                }
+            }
+        }
+        trace!(format!("{dx_collision_x:?}, {dx_collision_up:?}, {dx_collision_down:?}"),12);
+        alt_dir(dx_collision_x, dx_collision_down, dx_collision_up, &mut dx, &mut dy);
+        alt_dir(dy_collision_y, dy_collision_right, dy_collision_left, &mut dy, &mut dx);
+        if diagonal_collision && dx != 0 && dy != 0 {
+            dx = 0;
+        }
+
+        (dx, dy)
+    }
+    pub fn apply_motion(&mut self, dx: i16, dy: i16) {
+        use crate::COMPANION_TRAIL;
+
+        // Apply motion
+        if dx == 0 && dy == 0 {
+            COMPANION_TRAIL.write().unwrap().stop();
+            self.walktime = 0;
+            self.walking = false;
+            return;
+        }
+
+        COMPANION_TRAIL.write().unwrap().push(
+            Vec2::new(self.pos.x, self.pos.y),
+            (self.dir.0, self.dir.1)
+        );
+        self.pos.x += dx;
+        self.pos.y += dy;
+        self.walktime = self.walktime.wrapping_add(1);
+        self.walking = true;
+    }
 }
 impl Default for Player {
     fn default() -> Self {
         Self::const_default()
+    }
+}
+fn test_many_points(p: [Option<[Vec2; 2]>; 3], layer_hitbox: Hitbox, layer_x: i32, layer_y: i32, mut flags: [bool; 3]) -> [bool; 3] {
+    use crate::map::layer_collides;
+    for (i, points) in p.iter().enumerate() {
+        if let Some(points) = points {
+            points.into_iter().for_each(|point| {
+                if layer_collides(*point, layer_hitbox, layer_x, layer_y) {
+                    flags[i] = true;
+                }
+            });
+        };
+    }
+    flags
+}
+fn alt_dir(main: bool, plus: bool, minus: bool, main_axis: &mut i16, sec_axis: &mut i16) {
+    if *sec_axis == 0 && main {
+        if !plus {
+            *sec_axis = 1;
+        } else if !minus {
+            *sec_axis = -1;
+        } else {
+            *main_axis = 0;
+        }
+    } else if main {
+        *main_axis = 0;
     }
 }
 
