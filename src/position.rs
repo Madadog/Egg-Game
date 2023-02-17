@@ -87,6 +87,13 @@ impl Hitbox {
     pub fn offset(&self, delta: Vec2) -> Self {
         self.offset_xy(delta.x, delta.y)
     }
+    pub fn grow(&self, w: i16, h: i16) -> Self {
+        Self {
+            w: self.w + w,
+            h: self.h + h,
+            ..*self
+        }
+    }
     /// Returns corner points in the order `[Top Left, Top Right, Bottom Left, Bottom Right]`
     pub fn corners(&self) -> [Vec2; 4] {
         [

@@ -193,66 +193,95 @@ pub fn step_walkaround() -> Option<GameState> {
     };
     // Player position + intended movement
     let player_hitbox = player().hitbox();
-    let delta_hitbox = player_hitbox.offset_xy(dx, dy);
+    let delta_hitbox = player_hitbox.offset_xy(-1, -1).grow(2, 2);
     let interact_hitbox = player_hitbox.offset_xy(player().dir.0.into(), player().dir.1.into());
 
     // Face direction
     if dx != 0 || dy != 0 {
         player_mut().dir.1 = dy as i8;
         player_mut().dir.0 = dx as i8;
-    }
-
-    // Collide
-    let points_dx = player_hitbox.dx_corners(dx);
-    let points_dy = player_hitbox.dy_corners(dy);
-    let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
-    let mut diagonal_collision = false;
-    let layer_collision = |point: Vec2, layer_hitbox: Hitbox, layer_x: i32, layer_y: i32| {
-        if layer_hitbox.touches_point(point) && !noclip {
-            let map_point = Vec2::new(
-                (point.x - layer_hitbox.x) / 8 + layer_x as i16,
-                (point.y - layer_hitbox.y) / 8 + layer_y as i16,
-            );
-            let id = mget(map_point.x.into(), map_point.y.into());
-            touches_tile(
-                id as usize,
-                Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
-            )
-        } else {
-            false
-        }
-    };
-    for layer in current_map().maps.iter() {
-        let layer_hitbox = Hitbox::new(
-            layer.sx as i16,
-            layer.sy as i16,
-            layer.w as i16 * 8,
-            layer.h as i16 * 8,
-        );
-        if layer_hitbox.touches(delta_hitbox) {
-            if let Some(points_dx) = points_dx {
-                points_dx.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) {
-                        dx = 0;
-                    }
-                });
-            };
-            if let Some(points_dy) = points_dy {
-                points_dy.into_iter().for_each(|point| {
-                    if layer_collision(point, layer_hitbox, layer.x, layer.y) {
-                        dy = 0;
-                    }
-                });
+        
+        // Collide
+        let points_dx = player_hitbox.dx_corners(dx);
+        let points_dx_up = player_hitbox.offset_xy(0, -1).dx_corners(dx);
+        let points_dx_down = player_hitbox.offset_xy(0, 1).dx_corners(dx);
+        let (mut dx_collision_x, mut dx_collision_up, mut dx_collision_down) = ([false; 2], false, false);
+        let points_dy = player_hitbox.dy_corners(dy);
+        let mut dy_collision_y = false;
+        let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
+        let mut diagonal_collision = false;
+        let layer_collision = |point: Vec2, layer_hitbox: Hitbox, layer_x: i32, layer_y: i32| {
+            if layer_hitbox.touches_point(point) && !noclip {
+                let map_point = Vec2::new(
+                    (point.x - layer_hitbox.x) / 8 + layer_x as i16,
+                    (point.y - layer_hitbox.y) / 8 + layer_y as i16,
+                );
+                let id = mget(map_point.x.into(), map_point.y.into());
+                touches_tile(
+                    id as usize,
+                    Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
+                )
+            } else {
+                false
             }
-            if let Some(point_diag) = point_diag {
-                if layer_collision(point_diag, layer_hitbox, layer.x, layer.y) {
-                    diagonal_collision = true;
+        };
+        for layer in current_map().maps.iter() {
+            let layer_hitbox = Hitbox::new(
+                layer.sx as i16,
+                layer.sy as i16,
+                layer.w as i16 * 8,
+                layer.h as i16 * 8,
+            );
+            if layer_hitbox.touches(delta_hitbox) {
+                if let Some(points_dx) = points_dx {
+                    points_dx.into_iter().enumerate().for_each(|(i, point)| {
+                        if layer_collision(point, layer_hitbox, layer.x, layer.y) {
+                            dx_collision_x[i] = true;
+                        }
+                    });
+                    points_dx_up.unwrap().into_iter().for_each(|point| {
+                        if layer_collision(point, layer_hitbox, layer.x, layer.y) {
+                            dx_collision_up = true;
+                        }
+                    });
+                    points_dx_down.unwrap().into_iter().for_each(|point| {
+                        if layer_collision(point, layer_hitbox, layer.x, layer.y) {
+                            dx_collision_down = true;
+                        }
+                    });
+                };
+                if let Some(points_dy) = points_dy {
+                    points_dy.into_iter().for_each(|point| {
+                        if layer_collision(point, layer_hitbox, layer.x, layer.y) {
+                            dy_collision_y = true;
+                        }
+                    });
+                }
+                if let Some(point_diag) = point_diag {
+                    if layer_collision(point_diag, layer_hitbox, layer.x, layer.y) {
+                        diagonal_collision = true;
+                    }
                 }
             }
         }
-    }
-    if diagonal_collision && dx != 0 && dy != 0 {
-        dx = 0;
+        trace!(format!("{dx_collision_x:?}, {dx_collision_up:?}, {dx_collision_down:?}"),12);
+        if dy_collision_y {
+            dy = 0;
+        }
+        if dx != 0 && dy == 0 {
+            if dx_collision_x[0] && !dx_collision_down {
+                dy = 1;
+            } else if dx_collision_x[1] && !dx_collision_up {
+                dy = -1;
+            } else if dx_collision_x.contains(&true) {
+                dx = 0
+            }
+        } else if dx_collision_x.contains(&true) {
+            dx = 0;
+        }
+        if diagonal_collision && dx != 0 && dy != 0 {
+            dx = 0;
+        }
     }
     // Apply motion
     {
