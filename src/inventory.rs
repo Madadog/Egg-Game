@@ -199,12 +199,12 @@ impl<'a> InventoryUi<'a> {
                     spr_outline(selected_item.sprite, sx+2, sy+2-4, SpriteOptions {scale, transparent: &[0], ..Default::default()}, 12);
                     rect_outline(7 , 98, 70, 9, 2, 3);
                     print!(selected_item.name, 9, 100, PrintOptions::default().with_color(12));
-                    draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(selected_item.desc), false, selected_item.sprite);
+                    draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(selected_item.desc), false, selected_item.sprite, 3, 1, 1);
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
                         rect_outline(7, 98, 70, 9, 2, 3);
                         print!(item.name, 9, 100, PrintOptions::default().with_color(12));
-                        draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(item.desc), false, item.sprite);
+                        draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(item.desc), false, item.sprite, 3, 1, 1);
                     }
                 }
             }

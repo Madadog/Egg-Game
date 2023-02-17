@@ -113,7 +113,7 @@ pub fn draw_dialogue_box(string: &str, timer: bool) {
     draw_dialogue_box_with_offset(string, timer, 0, 0, 0)
 }
 
-pub fn draw_dialogue_portrait(string: &str, timer: bool, portrait: i32) {
+pub fn draw_dialogue_portrait(string: &str, timer: bool, portrait: i32, scale: i32, sw: i32, sh: i32) {
     use crate::{DIALOGUE, WIDTH, HEIGHT, spr};
     use crate::tic_helpers::rect_outline;
 
@@ -121,7 +121,7 @@ pub fn draw_dialogue_portrait(string: &str, timer: bool, portrait: i32) {
     let h = 24;
     draw_dialogue_box_with_offset(string, timer, 14, -2, 4);
     rect_outline((WIDTH - w) / 2-13, (HEIGHT - h) - 6, h+4, h+4, 0, 3);
-    spr(portrait, (WIDTH - w) / 2-13+2, (HEIGHT - h) - 6+2, SpriteOptions {scale: 3, transparent: &[0], ..Default::default()});
+    spr(portrait, (WIDTH - w) / 2-13+2, (HEIGHT - h) - 6+2, SpriteOptions {scale, transparent: &[0], w: sw, h: sh, ..Default::default()});
 }
 
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
