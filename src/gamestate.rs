@@ -203,8 +203,8 @@ pub fn step_walkaround() -> Option<GameState> {
         
         // Collide
         let points_dx = player_hitbox.dx_corners(dx);
-        let points_dx_up = player_hitbox.offset_xy(0, -1).dx_corners(dx);
-        let points_dx_down = player_hitbox.offset_xy(0, 1).dx_corners(dx);
+        let points_dx_up = player_hitbox.offset_xy(0, -1).top_corners();
+        let points_dx_down = player_hitbox.offset_xy(0, 1).bottom_corners();
         let (mut dx_collision_x, mut dx_collision_up, mut dx_collision_down) = ([false; 2], false, false);
         let points_dy = player_hitbox.dy_corners(dy);
         let mut dy_collision_y = false;
@@ -239,12 +239,12 @@ pub fn step_walkaround() -> Option<GameState> {
                             dx_collision_x[i] = true;
                         }
                     });
-                    points_dx_up.unwrap().into_iter().for_each(|point| {
+                    points_dx_up.into_iter().for_each(|point| {
                         if layer_collision(point, layer_hitbox, layer.x, layer.y) {
                             dx_collision_up = true;
                         }
                     });
-                    points_dx_down.unwrap().into_iter().for_each(|point| {
+                    points_dx_down.into_iter().for_each(|point| {
                         if layer_collision(point, layer_hitbox, layer.x, layer.y) {
                             dx_collision_down = true;
                         }
@@ -265,19 +265,17 @@ pub fn step_walkaround() -> Option<GameState> {
             }
         }
         trace!(format!("{dx_collision_x:?}, {dx_collision_up:?}, {dx_collision_down:?}"),12);
-        if dy_collision_y {
-            dy = 0;
-        }
         if dx != 0 && dy == 0 {
-            if dx_collision_x[0] && !dx_collision_down {
+            if dx_collision_x[0] && dx_collision_x[1] {
+                dx = 0;
+            } else if dx_collision_x[0] && !dx_collision_down {
                 dy = 1;
             } else if dx_collision_x[1] && !dx_collision_up {
                 dy = -1;
-            } else if dx_collision_x.contains(&true) {
-                dx = 0
-            }
-        } else if dx_collision_x.contains(&true) {
-            dx = 0;
+            } else if dx_collision_x.contains(&true) {dx=0;}
+        } else if dx_collision_x.contains(&true) {dx=0;}
+        if dy_collision_y {
+            dy = 0;
         }
         if diagonal_collision && dx != 0 && dy != 0 {
             dx = 0;
