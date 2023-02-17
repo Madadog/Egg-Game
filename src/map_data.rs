@@ -18,6 +18,8 @@ use crate::animation::*;
 use crate::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
+use crate::map::MapSet;
+use crate::map::Warp;
 use crate::position::{Hitbox, Vec2};
 use crate::{MapOptions, SpriteOptions};
 
@@ -41,45 +43,6 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     music_track: None,
     bank: 0,
 };
-
-#[derive(Clone)]
-pub struct MapSet<'a> {
-    pub maps: &'a [MapOptions<'a>],
-    pub fg_maps: &'a [MapOptions<'a>],
-    pub warps: &'a [Warp<'a>],
-    pub interactables: &'a [Interactable<'a>],
-    pub bg_colour: u8,
-    pub palette_rotation: &'a [u8],
-    pub music_track: Option<u8>,
-    pub bank: u8,
-}
-
-#[derive(Clone)]
-pub struct Warp<'a> {
-    pub from: Hitbox,
-    pub map: Option<&'a MapSet<'a>>,
-    pub to: Vec2,
-}
-
-impl<'a> Warp<'a> {
-    pub const fn new(from: Hitbox, map: Option<&'a MapSet<'a>>, to: Vec2) -> Self {
-        Self { from, map, to }
-    }
-    /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
-    pub const fn new_tile(
-        tx1: i16,
-        ty1: i16,
-        map: Option<&'a MapSet<'a>>,
-        tx2: i16,
-        ty2: i16,
-    ) -> Self {
-        Self::new(
-            Hitbox::new(tx1 * 8, ty1 * 8, 8, 8),
-            map,
-            Vec2::new(tx2 * 8, ty2 * 8),
-        )
-    }
-}
 
 pub static SUPERMARKET: MapSet<'static> = MapSet {
     maps: &[
@@ -638,5 +601,52 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
     warps: &[Warp::new(Hitbox::new(7*8,63*8+4,2*8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
     interactables: &[],
     bank: 1,
+    ..DEFAULT_MAP_SET
+};
+const VENDING_MACHINE_MAP: MapOptions = MapOptions {
+    x: 120,
+    y: 65,
+    w: 1,
+    h: 3,
+    sx: 0,
+    sy: 0,
+    ..DEFAULT_MAP
+};
+pub static DISPLACEMENT_TEST_MAP: MapSet<'static> = MapSet {
+    maps: &[
+        MapOptions { //ground
+            x: 120,
+            y: 68,
+            w: 30*4,
+            h: 17*4,
+            transparent: &[0],
+            ..DEFAULT_MAP
+        },
+        MapOptions { sx: 0, sy: 0, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 1*16, sy: 1, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 2*16, sy: 2, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 3*16, sy: 3, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 4*16, sy: 4, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 5*16, sy: 5, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 6*16, sy: 6, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 7*16, sy: 7, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 8*16, sy: 8, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 9*16, sy: 9, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 10*16, sy: 10, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 11*16, sy: 11, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 12*16, sy: 12, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 13*16, sy: 13, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 14*16, sy: 14, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 15*16, sy: 15, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 16*16, sy: 16, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 17*16, sy: 17, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 18*16, sy: 18, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 19*16, sy: 19, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 20*16, sy: 20, ..VENDING_MACHINE_MAP },
+        MapOptions { sx: 21*16, sy: 21, ..VENDING_MACHINE_MAP },
+    ],
+    bg_colour: 0,
+    warps: &[Warp::new(Hitbox::new(7*8,63*8+4,2*8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
+    interactables: &[],
     ..DEFAULT_MAP_SET
 };
