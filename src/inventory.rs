@@ -1,4 +1,4 @@
-use crate::{dialogue_data::*, dialogue::{draw_dialogue_box, draw_dialogue_portrait}, tic_helpers::print_raw_centered};
+use crate::{dialogue_data::*, dialogue::{draw_dialogue_portrait}, tic_helpers::print_raw_centered};
 
 static ITEM_FF: InventoryItem = InventoryItem {sprite: 513, name: ITEM_FF_NAME, desc: ITEM_FF_DESC};
 static ITEM_LM: InventoryItem = InventoryItem {sprite: 514, name: ITEM_LM_NAME, desc: ITEM_LM_DESC};
