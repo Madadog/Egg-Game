@@ -160,6 +160,7 @@ pub fn mem_btnp(id: u8) -> bool {
     let previous = GAMEPAD_HELPER.read().unwrap()[controller];
     (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
 }
+/// Returns true if any button was pressed. Ignores button releases.
 pub fn any_btnp() -> bool {
     let buttons = unsafe { *GAMEPADS };
     let previous = *GAMEPAD_HELPER.read().unwrap();
@@ -168,6 +169,12 @@ pub fn any_btnp() -> bool {
         flag |= b0.count_ones() < b1.count_ones();
     }
     flag
+}
+/// Returns true if any button was pressed or released
+pub fn any_btnpr() -> bool {
+    let buttons = unsafe { *GAMEPADS };
+    let previous = *GAMEPAD_HELPER.read().unwrap();
+    buttons != previous
 }
 pub fn step_gamepad_helper() {
     let buttons = unsafe { *GAMEPADS };
