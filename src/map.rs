@@ -18,11 +18,12 @@ pub struct Warp<'a> {
     pub from: Hitbox,
     pub map: Option<&'a MapSet<'a>>,
     pub to: Vec2,
+    pub flip: Axis,
 }
 
 impl<'a> Warp<'a> {
     pub const fn new(from: Hitbox, map: Option<&'a MapSet<'a>>, to: Vec2) -> Self {
-        Self { from, map, to }
+        Self { from, map, to, flip: Axis::None }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
     pub const fn new_tile(
@@ -37,6 +38,31 @@ impl<'a> Warp<'a> {
             map,
             Vec2::new(tx2 * 8, ty2 * 8),
         )
+    }
+    pub const fn with_flip(self, flip: Axis) -> Self {
+        Self {flip, ..self}
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Axis {
+    None,
+    X,
+    Y,
+    Both,
+}
+impl Axis {
+    pub fn x(&self) -> bool {
+        match self {
+            Self::Both | Self::X => true,
+            _ => false,
+        }
+    }
+    pub fn y(&self) -> bool {
+        match self {
+            Self::Both | Self::Y => true,
+            _ => false,
+        }
     }
 }
 

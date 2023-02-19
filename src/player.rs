@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{Flip, Hitbox, Vec2, tic80::SpriteOptions, cam_x, cam_y};
+use crate::{Flip, Hitbox, Vec2, tic80::SpriteOptions, cam_x, cam_y, map::Axis};
 
 #[derive(Debug)]
 pub struct Player {
@@ -25,6 +25,7 @@ pub struct Player {
     pub pos: Vec2,
     pub walking: bool,
     pub walktime: u16,
+    pub flip_controls: Axis,
 }
 impl Player {
     pub const fn const_default() -> Self {
@@ -35,6 +36,7 @@ impl Player {
             dir: (0, 1),
             walktime: 0,
             walking: false,
+            flip_controls: Axis::None,
         }
     }
     pub fn sprite_index(&self) -> (i32, Flip, i32) {
@@ -65,9 +67,15 @@ impl Player {
     pub fn walk(&mut self, mut dx: i16, mut dy: i16, noclip: bool) -> (i16, i16) {
         use crate::current_map;
         use crate::map::layer_collides;
-        use crate::trace;
 
         if dx == 0 && dy == 0 { return (dx, dy) };
+
+        match self.flip_controls {
+            Axis::None => {},
+            Axis::X => dx *= -1,
+            Axis::Y => dy *= -1,
+            Axis::Both => { dx *= -1; dy *= -1 },
+        }
         
         // Face direction
         self.dir.1 = dy as i8;
