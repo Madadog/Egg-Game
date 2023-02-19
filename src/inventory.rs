@@ -1,4 +1,4 @@
-use crate::{dialogue_data::*, dialogue::{draw_dialogue_portrait}, tic_helpers::print_raw_centered};
+use crate::{dialogue_data::*, dialogue::{draw_dialogue_portrait}, tic_helpers::{print_raw_centered, get_blit_segment, blit_segment, spr_blit_segment}};
 
 static ITEM_FF: InventoryItem = InventoryItem {sprite: 513, name: ITEM_FF_NAME, desc: ITEM_FF_DESC};
 static ITEM_LM: InventoryItem = InventoryItem {sprite: 514, name: ITEM_LM_NAME, desc: ITEM_LM_DESC};
@@ -73,17 +73,20 @@ impl<'a> InventoryUiState<'a> {
     }
     pub fn arrows(&mut self, dx: i32, dy: i32) {
         match self {
-            Self::PageSelect(x) => {
-                *x = (*x+dy%2).clamp(0, 1);
+            Self::PageSelect(i) => {
+                *i = (*i+dy%2).clamp(0, 1);
                 if dx == 1 {self.change()};
             },
-            Self::Items(x, _) => {
-                if (*x == 0 || *x == 4) && dx == -1 {self.back(); return};
-                let dx = if *x == 3 {dx.min(0)} else {dx};
-                let new = *x as i32 + dx + dy * 4;
-                if new >= 0 && new < 8 { *x = new as usize; };
+            Self::Items(i, _) => {
+                if (*i == 0 || *i == 4) && dx == -1 {self.back(); return};
+                let dx = if *i == 3 {dx.min(0)} else {dx};
+                let new = *i as i32 + dx + dy * 4;
+                if new >= 0 && new < 8 { *i = new as usize; };
             },
-            Self::Eggs(x) => {if *x == 0 && dx == -1 {self.back(); return};},
+            Self::Eggs(i) => {
+                if *i == 0 && dx == -1 {self.back(); return};
+                *i = (*i as i32 + dx).clamp(0, 3) as usize;
+            },
             _ => (),
         }
     }
@@ -177,6 +180,7 @@ impl<'a> InventoryUi<'a> {
                         y_offset + 3 + (i/4)*item_slot_size,
                     );
                     rect_outline(sx, sy, item_slot_size-1, item_slot_size-1, 0, main_colour+1);
+                    spr_blit_segment(1086, sx+2, sy+2, SpriteOptions {transparent: &[0], w: 2, h: 2, ..Default::default()}, 8);
                 }
             },
             _ => (),
@@ -207,6 +211,13 @@ impl<'a> InventoryUi<'a> {
                         draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(item.desc), false, item.sprite, 3, 1, 1);
                     }
                 }
+            }
+            InventoryUiState::Eggs(current_index) => {
+                let (sx, sy) = (
+                    x_offset + side_column + column_margin + 3 + (*current_index as i32%4)*item_slot_size,
+                    y_offset + 3,
+                );
+                rectb(sx, sy, item_slot_size-1, item_slot_size-1, 12);
             }
             _ => {}
         };
