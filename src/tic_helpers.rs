@@ -156,6 +156,15 @@ pub fn set_pmem(address: usize, value: u8) {
 pub fn blit_segment(value: u8) {
     unsafe { *BLIT_SEGMENT = value }
 }
+pub fn get_blit_segment() -> u8 {
+    unsafe { *BLIT_SEGMENT }
+}
+pub fn spr_blit_segment(id: i32, x: i32, y: i32, opts: SpriteOptions, blit_seg: u8) {
+    let old = get_blit_segment();
+    blit_segment(blit_seg);
+    spr(id, x, y, opts);
+    blit_segment(old);
+}
 
 pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
     let old_map = get_palette_map();
