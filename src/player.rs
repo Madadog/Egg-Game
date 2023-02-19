@@ -118,11 +118,11 @@ impl Player {
                 }
             }
         }
-        trace!(format!("{dx_collision_x:?}, {dx_collision_up:?}, {dx_collision_down:?}"),12);
         alt_dir(dx_collision_x, dx_collision_down, dx_collision_up, &mut dx, &mut dy);
         alt_dir(dy_collision_y, dy_collision_right, dy_collision_left, &mut dy, &mut dx);
         if diagonal_collision && dx != 0 && dy != 0 {
             dx = 0;
+            dy = 0;
         }
 
         (dx, dy)
