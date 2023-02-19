@@ -16,7 +16,8 @@
 
 use crate::dialogue::draw_dialogue_box;
 use crate::interact::Interaction;
-use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS};
+use crate::map::Axis;
+use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS, any_btnpr};
 use crate::inventory::InventoryUiState;
 use crate::position::{Hitbox, Vec2};
 use crate::tic80::*;
@@ -186,6 +187,7 @@ pub fn step_walkaround() -> Option<GameState> {
         }
         trace!("Attempting interact...",11);
     }
+    if any_btnpr() { player_mut().flip_controls = Axis::None }
     let noclip = if key(63) && key(64) {
         dy *= 3;
         dx *= 4;
@@ -210,6 +212,7 @@ pub fn step_walkaround() -> Option<GameState> {
     }
     if let Some(target) = warp_target {
         player_mut().pos = target.to;
+        player_mut().flip_controls = target.flip;
         COMPANION_TRAIL.write().unwrap().fill(player().pos, player().dir);
         if let Some(new_map) = target.map {
             load_map(new_map);
