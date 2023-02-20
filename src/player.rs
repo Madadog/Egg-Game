@@ -190,7 +190,7 @@ pub enum Companion {
     Dog,
 }
 impl Companion {
-    pub fn spr_params(&self, position: Vec2, direction: (i8, i8), walktime: u8, camera: &Camera) -> (i32, i32, i32, SpriteOptions, u8, u8) {
+    pub fn spr_params(&self, position: Vec2, direction: (i8, i8), walktime: u8, camera: &Camera) -> (i32, i32, i32, SpriteOptions, Option<u8>, u8) {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -212,9 +212,9 @@ impl Companion {
                     h: 2,
                     flip,
                     ..SpriteOptions::transparent_zero()
-                }, 1, 1)
+                }, Some(1), 1)
             },
-            _ => (0, 0, 0, SpriteOptions::default(), 0, 0),
+            _ => (0, 0, 0, SpriteOptions::default(), None, 0),
         }
     }
 }

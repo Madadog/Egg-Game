@@ -22,6 +22,8 @@ pub struct AnimFrame<'a> {
     pub id: u16,
     pub length: u16,
     pub options: SpriteOptions<'a>,
+    pub outline: Option<u8>,
+    pub palette_rotate: u8,
 }
 impl<'a> AnimFrame<'a> {
     pub const fn new(pos: Vec2, id: u16, length: u16, options: SpriteOptions<'a>) -> Self {
@@ -30,6 +32,14 @@ impl<'a> AnimFrame<'a> {
             id,
             length,
             options,
+            outline: Some(1),
+            palette_rotate: 0,
+        }
+    }
+    pub const fn with_outline(self, outline: Option<u8>) -> Self {
+        Self {
+            outline,
+            ..self
         }
     }
     pub fn const_default() -> Self {
@@ -38,6 +48,8 @@ impl<'a> AnimFrame<'a> {
             id: 0,
             length: 1,
             options: SpriteOptions::transparent_zero(),
+            outline: Some(1),
+            palette_rotate: 0,
         }
     }
 }

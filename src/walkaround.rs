@@ -237,7 +237,7 @@ impl<'a> Game for WalkaroundState<'a> {
             map(layer);
         }
         // draw sprites from least to greatest y
-        let mut sprites: Vec<(i32, i32, i32, SpriteOptions, u8, u8)> = Vec::new();
+        let mut sprites: Vec<(i32, i32, i32, SpriteOptions, Option<u8>, u8)> = Vec::new();
         let player_sprite = self.player.sprite_index();
         let (player_x, player_y): (i32, i32) = (self.player.pos.x.into(), self.player.pos.y.into());
         sprites.push((
@@ -252,7 +252,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 flip: player_sprite.1,
                 ..Default::default()
             },
-            1,
+            Some(1),
             1,
         ));
 
@@ -267,8 +267,8 @@ impl<'a> Game for WalkaroundState<'a> {
                     anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - self.cam_x(),
                     anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - self.cam_y(),
                     anim.frames[time.1].options.clone(),
-                    1,
-                    0,
+                    anim.frames[time.1].outline,
+                    anim.frames[time.1].palette_rotate,
                 ));
             }
         }
@@ -290,13 +290,22 @@ impl<'a> Game for WalkaroundState<'a> {
         
         for options in sprites {
             palette_map_rotate(options.5);
-            spr_outline(
-                options.0,
-                options.1,
-                options.2,
-                options.3,
-                options.4,
-            );
+            if let Some(outline) = options.4 {
+                spr_outline(
+                    options.0,
+                    options.1,
+                    options.2,
+                    options.3,
+                    outline,
+                );
+            } else {
+                spr(
+                    options.0,
+                    options.1,
+                    options.2,
+                    options.3,
+                );
+            }
         }
 
         // draw fg
