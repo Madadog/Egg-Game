@@ -14,8 +14,6 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::RwLock;
-
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::inventory::{InventoryUiState, INVENTORY};
 use crate::position::{Hitbox, Vec2};
@@ -101,12 +99,6 @@ pub trait Game {
     }
     fn draw(&self);
 }
-
-pub fn step_walkaround() -> Option<GameState> {
-    None
-}
-
-pub fn draw_walkaround() {}
 
 pub fn draw_instructions() {
     cls(0);
@@ -213,8 +205,6 @@ pub fn draw_animation(t: u16) -> bool {
         }
     }
 }
-
-static MENU_STATE: RwLock<MenuState> = RwLock::new(MenuState::new());
 
 pub struct MenuState {
     index: usize,
