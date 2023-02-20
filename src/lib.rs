@@ -30,6 +30,7 @@ mod rand;
 mod tic80;
 mod tic_helpers;
 mod input_manager;
+mod walkaround;
 
 use crate::camera::Camera;
 use crate::dialogue::Dialogue;
@@ -40,8 +41,10 @@ use crate::inventory::InventoryUi;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
 use crate::tic_helpers::{SyncHelper};
+use gamestate::MenuState;
 use map::MapSet;
 use once_cell::sync::Lazy;
+use walkaround::WalkaroundState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tic80::*;
@@ -59,52 +62,25 @@ impl DebugInfo {
     }
 }
 
+static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
 static TIME: RwLock<i32> = RwLock::new(0);
-static PLAYER: RwLock<Player> = RwLock::new(Player::const_default());
-static MAP_ANIMATIONS: RwLock<Vec<(u16, usize)>> = RwLock::new(Vec::new());
-static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
 static PAUSE: AtomicBool = AtomicBool::new(false);
-static CAMERA: RwLock<Camera> = RwLock::new(Camera::const_default());
+static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
 static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
-static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
-static DIALOGUE: RwLock<Dialogue> = RwLock::new(Dialogue::const_default());
 static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
-static MAINMENU: RwLock<usize> = RwLock::new(0);
-static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 static BG_COLOUR: RwLock<u8> = RwLock::new(0);
 static SYNC_HELPER: RwLock<SyncHelper> = RwLock::new(SyncHelper::new());
-static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| InventoryUi::new()));
-static COMPANION_TRAIL: RwLock<CompanionTrail> = RwLock::new(CompanionTrail::new());
-static COMPANIONS: RwLock<CompanionList> = RwLock::new(CompanionList::new());
 
 // REMINDER: Heap maxes at 8192 u32.
 
 pub fn frames() -> i32 {
     *TIME.read().unwrap()
 }
-pub fn player_mut<'a>() -> RwLockWriteGuard<'a, Player> {
-    PLAYER.write().unwrap()
-}
-pub fn player<'a>() -> RwLockReadGuard<'a, Player> {
-    PLAYER.read().unwrap()
-}
 pub fn debug_info_mut<'a>() -> RwLockWriteGuard<'a, DebugInfo> {
     DEBUG_INFO.write().unwrap()
 }
 pub fn debug_info<'a>() -> RwLockReadGuard<'a, DebugInfo> {
     DEBUG_INFO.read().unwrap()
-}
-pub fn camera_mut<'a>() -> RwLockWriteGuard<'a, Camera> {
-    CAMERA.write().unwrap()
-}
-pub fn camera<'a>() -> RwLockReadGuard<'a, Camera> {
-    CAMERA.read().unwrap()
-}
-pub fn cam_x() -> i32 {
-    i32::from(camera().pos.x)
-}
-pub fn cam_y() -> i32 {
-    i32::from(camera().pos.y)
 }
 pub fn rand() -> u32 {
     RNG.write().unwrap().next_u32()
@@ -118,38 +94,14 @@ pub fn is_paused() -> bool {
 pub fn set_pause(pause: bool) {
     PAUSE.store(pause, Ordering::Relaxed);
 }
-pub fn current_map<'a>() -> RwLockReadGuard<'a, &'a MapSet<'a>> {
-    CURRENT_MAP.read().unwrap()
-}
-pub fn load_map(map: &'static MapSet<'static>) {
-    let map1 = &map.maps[0];
-    *camera_mut() =
-        Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
-    *CURRENT_MAP.write().unwrap() = map;
-    *BG_COLOUR.write().unwrap() = map.bg_colour;
-    if let Some(track) = map.music_track {
-        music(track as i32, MusicOptions::default());
-    };
-    if map.bank != SYNC_HELPER.read().unwrap().last_bank() {
-        let x = SYNC_HELPER.write().unwrap().sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
-        if x.is_err() {
-            let bank = map.bank;
-            trace!(format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),12);
-        }
-    }
 
-    MAP_ANIMATIONS.write().unwrap().clear();
-    for _ in map.interactables {
-        MAP_ANIMATIONS.write().unwrap().push((0, 0));
-    }
-}
 pub fn run_gamestate() {
     GAMESTATE.write().unwrap().run();
 }
 
 #[export_name = "BOOT"]
 pub fn boot() {
-    load_map(&BEDROOM);
+    WALKAROUND_STATE.write().unwrap().load_map(&BEDROOM);
 }
 
 #[export_name = "TIC"]

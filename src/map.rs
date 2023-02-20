@@ -5,7 +5,7 @@ use crate::{position::{Vec2, Hitbox, touches_tile}, tic80::{mget, MapOptions}, i
 pub struct MapSet<'a> {
     pub maps: &'a [MapOptions<'a>],
     pub fg_maps: &'a [MapOptions<'a>],
-    pub warps: &'a [Warp<'a>],
+    pub warps: &'a [Warp],
     pub interactables: &'a [Interactable<'a>],
     pub bg_colour: u8,
     pub palette_rotation: &'a [u8],
@@ -14,22 +14,22 @@ pub struct MapSet<'a> {
 }
 
 #[derive(Clone)]
-pub struct Warp<'a> {
+pub struct Warp {
     pub from: Hitbox,
-    pub map: Option<&'a MapSet<'a>>,
+    pub map: Option<&'static MapSet<'static>>,
     pub to: Vec2,
     pub flip: Axis,
 }
 
-impl<'a> Warp<'a> {
-    pub const fn new(from: Hitbox, map: Option<&'a MapSet<'a>>, to: Vec2) -> Self {
+impl Warp {
+    pub const fn new(from: Hitbox, map: Option<&'static MapSet<'static>>, to: Vec2) -> Self {
         Self { from, map, to, flip: Axis::None }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
     pub const fn new_tile(
         tx1: i16,
         ty1: i16,
-        map: Option<&'a MapSet<'a>>,
+        map: Option<&'static MapSet<'static>>,
         tx2: i16,
         ty2: i16,
     ) -> Self {
@@ -41,6 +41,9 @@ impl<'a> Warp<'a> {
     }
     pub const fn with_flip(self, flip: Axis) -> Self {
         Self {flip, ..self}
+    }
+    pub fn map(&'static self) -> Option<&'static MapSet<'static>> {
+        self.map
     }
 }
 

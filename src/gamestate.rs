@@ -14,31 +14,25 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::dialogue::draw_dialogue_box;
-use crate::interact::Interaction;
-use crate::map::Axis;
-use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS};
-use crate::inventory::InventoryUiState;
-use crate::position::{Hitbox, Vec2};
-use crate::tic80::*;
-use crate::{camera, camera_mut, current_map, load_map, player, player_mut, rand};
-use crate::{print, trace};
-use crate::{MAP_ANIMATIONS, DIALOGUE};
+use std::sync::RwLock;
 
-use crate::tic_helpers::{
-    blit_segment, draw_ovr, fade_palette, fade_palette_colour, get_pmem, palette_map_reset,
-    palette_map_rotate, print_raw_centered, screen_offset, set_palette, set_palette_colour,
-    set_pmem, spr_outline, SWEETIE_16, rect_outline,
-};
-use crate::{cam_x, cam_y, debug_info, frames};
-use crate::input_manager::{any_btnp, any_btnpr, mem_btn, mem_btnp, mouse_delta};
+use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::inventory::{InventoryUiState, INVENTORY};
+use crate::position::{Hitbox, Vec2};
+use crate::{tic80::*, WALKAROUND_STATE};
+use crate::rand;
+
+use crate::tic_helpers::*;
+
+use crate::frames;
+use crate::input_manager::{any_btnp, mem_btn, mem_btnp, mouse_delta};
 
 pub enum GameState {
     Instructions(u16),
     Walkaround,
     Animation(u16),
-    MainMenu,
-    Options,
+    MainMenu(MenuState),
+    Options(MenuState),
     Inventory,
 }
 impl GameState {
@@ -53,15 +47,15 @@ impl GameState {
                 draw_instructions();
             }
             Self::Walkaround => {
-                let next = step_walkaround();
-                draw_walkaround();
+                let next = WALKAROUND_STATE.write().unwrap().step();
+                WALKAROUND_STATE.read().unwrap().draw();
                 if let Some(state) = next {
                     *self = state;
                 }
             }
             Self::Animation(x) => {
                 if get_pmem(0) != 0 {
-                    *self = Self::MainMenu;
+                    *self = Self::MainMenu(MenuState::new());
                     return;
                 };
                 if mem_btn(4) { *x += 1; }
@@ -69,22 +63,21 @@ impl GameState {
                 if draw_animation(*x) {
                     *x += 1;
                 } else {
-                    *self = Self::MainMenu;
+                    *self = Self::MainMenu(MenuState::new());
                 }
             }
-            Self::MainMenu => {
-                match step_main_menu() {
+            Self::MainMenu(state) => {
+                match state.step_main_menu() {
                     Some(MainMenuOption::Play) => *self = Self::Instructions(0),
-                    Some(MainMenuOption::Options) => *self = Self::Options,
-                    None => {}
+                    Some(MainMenuOption::Options) => *self = Self::Options(MenuState::new()),
+                    None => { state.draw_main_menu() }
                 };
-                draw_main_menu();
             }
-            Self::Options => {
-                if step_options() {
-                    draw_options();
+            Self::Options(state) => {
+                if state.step_options() {
+                    state.draw_options();
                 } else {
-                    *self = Self::MainMenu;
+                    *self = Self::MainMenu(MenuState::new());
                 }
             }
             Self::Inventory => {
@@ -99,306 +92,23 @@ impl GameState {
     }
 }
 
+pub trait Game {
+    fn step(&mut self) -> Option<GameState> { None }
+    fn draw(&self);
+}
+
 pub fn step_walkaround() -> Option<GameState> {
-    for (anim, interact) in MAP_ANIMATIONS
-        .write()
-        .unwrap()
-        .iter_mut()
-        .zip(current_map().interactables.iter())
-    {
-        if let Some(sprite) = &interact.sprite {
-            anim.0 += 1; //timer
-            if anim.0 > sprite.frames[anim.1].length {
-                anim.0 = 0;
-                anim.1 += 1; //index
-                if anim.1 >= sprite.frames.len() {
-                    anim.1 = 0;
-                }
-            }
-        }
-    }
-
-    if keyp(28, -1, -1) {
-        load_map(&SUPERMARKET);
-    }
-    if keyp(29, -1, -1) {
-        load_map(&WILDERNESS);
-    }
-    if keyp(30, -1, -1) {
-        load_map(&TEST_PEN);
-    }
-    if keyp(31, -1, -1) {
-        load_map(&BEDROOM);
-    }
-    if keyp(32, -1, -1) {
-        load_map(&DISPLACEMENT_TEST_MAP);
-    }
-    
-    if keyp(33, -1, -1) {
-        set_palette(crate::tic_helpers::SWEETIE_16);
-    }
-    if keyp(34, -1, -1) {
-        set_palette(crate::tic_helpers::NIGHT_16);
-    }
-    {
-        let fixed = DIALOGUE.read().unwrap().fixed;
-        let small_text = DIALOGUE.read().unwrap().small_text;
-        if keyp(35, -1, -1) {
-            DIALOGUE.write().unwrap().set_options(!fixed, small_text);
-        }
-        if keyp(36, -1, -1) {
-            DIALOGUE.write().unwrap().set_options(fixed, !small_text);
-        }
-    }
-
-    // Get keyboard inputs
-    let (mut dx, mut dy) = (0, 0);
-    let mut interact = false;
-    if matches!(DIALOGUE.write().unwrap().text, None) {
-        if mem_btn(0) {
-            dy -= 1;
-        }
-        if mem_btn(1) {
-            dy += 1;
-        }
-        if mem_btn(2) {
-            dx -= 1;
-        }
-        if mem_btn(3) {
-            dx += 1;
-        }
-        if mem_btnp(5) {
-            INVENTORY.write().unwrap().open();
-            return Some(GameState::Inventory)
-        }
-    } else {
-        DIALOGUE.write().unwrap().tick(1);
-        if mem_btn(4) {
-            DIALOGUE.write().unwrap().tick(2);
-        }
-        if mem_btnp(5) {
-            DIALOGUE.write().unwrap().skip();
-        }
-    }
-    if mem_btnp(4) && DIALOGUE.read().unwrap().is_done() {
-        interact = true;
-        if matches!(DIALOGUE.write().unwrap().text, Some(_)) {
-            interact = false;
-            DIALOGUE.write().unwrap().close();
-        }
-        trace!("Attempting interact...",11);
-    }
-    if any_btnpr() { player_mut().flip_controls = Axis::None }
-    let noclip = if key(63) && key(64) {
-        dy *= 3;
-        dx *= 4;
-        true
-    } else {
-        false
-    };
-    
-    let (dx, dy) = player_mut().walk(dx, dy, noclip);
-    player_mut().apply_motion(dx, dy);
-
-    // Set after player.dir has updated
-    let interact_hitbox = player().hitbox().offset_xy(player().dir.0.into(), player().dir.1.into());
-
-    let mut warp_target = None;
-    for warp in current_map().warps.iter() {
-        if player().hitbox().touches(warp.from) || (interact && interact_hitbox.touches(warp.from))
-        {
-            warp_target = Some(warp.clone());
-            break;
-        }
-    }
-    if let Some(target) = warp_target {
-        player_mut().pos = target.to;
-        player_mut().flip_controls = target.flip;
-        COMPANION_TRAIL.write().unwrap().fill(player().pos, player().dir);
-        if let Some(new_map) = target.map {
-            load_map(new_map);
-        }
-    } else if interact {
-        for item in current_map().interactables.iter() {
-            if interact_hitbox.touches(item.hitbox) {
-                match &item.interaction {
-                    Interaction::Text(x) => {
-                        trace!(format!("{x:?}"), 12);
-                        DIALOGUE.write().unwrap().set_text(x);
-                    },
-                    Interaction::Func(x) => {
-                        trace!(format!("{x:?}"), 12);
-                        if let Some(dialogue) = x.execute() {
-                            DIALOGUE.write().unwrap().set_text(dialogue);
-                        };
-                    },
-                    x => {
-                        trace!(format!("{x:?}"), 12);
-                    },
-                }
-            }
-        }
-    }
-
-    camera_mut().center_on(player().pos.x + 4, player().pos.y + 8);
     None
 }
 
 pub fn draw_walkaround() {
-    // draw bg
-    palette_map_reset();
-    cls(*crate::BG_COLOUR.read().unwrap());
-    blit_segment(4);
-    let palette_map_rotation = current_map().palette_rotation;
-    for (i, layer) in current_map().maps.iter().enumerate() {
-        if let Some(amount) = palette_map_rotation.get(i) {
-            palette_map_rotate(*amount)
-        } else {
-            palette_map_rotate(0)
-        }
-        let mut layer = layer.clone();
-        layer.sx -= cam_x();
-        layer.sy -= cam_y();
-        if debug_info().map_info {
-            rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
-        }
-        map(layer);
-    }
-    // draw sprites from least to greatest y
-    let mut sprites: Vec<(i32, i32, i32, SpriteOptions, u8, u8)> = Vec::new();
-    let player_sprite = player().sprite_index();
-    let (player_x, player_y): (i32, i32) = (player().pos.x.into(), player().pos.y.into());
-    sprites.push((
-        player_sprite.0,
-        player_x - cam_x(),
-        player_y - player_sprite.2 - cam_y(),
-        SpriteOptions {
-            w: 1,
-            h: 2,
-            transparent: &[0],
-            scale: 1,
-            flip: player_sprite.1,
-            ..Default::default()
-        },
-        1,
-        1,
-    ));
 
-    for (item, time) in current_map()
-        .interactables
-        .iter()
-        .zip(MAP_ANIMATIONS.read().unwrap().iter())
-    {
-        if let Some(anim) = &item.sprite {
-            sprites.push((
-                anim.frames[time.1].id.into(),
-                anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - cam_x(),
-                anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - cam_y(),
-                anim.frames[time.1].options.clone(),
-                1,
-                0,
-            ));
-        }
-    }
-    // let x = COMPANIONS.read().unwrap().get(0).clone().unwrap();
-    // if let Some(companion) = x
-    // {
-    //     let (position, direction) = COMPANION_TRAIL.read().unwrap().oldest();
-    //     let params = companion.spr_params(
-    //         position, direction);
-    //     sprites.push(params);
-    // }
-    let x = COMPANIONS.read().unwrap();
-    for (i, companion) in x.companions.iter().enumerate() {
-        if let Some(companion) = companion {
-            let (position, direction) = if i == 0 {
-                COMPANION_TRAIL.read().unwrap().oldest()
-            } else {
-                COMPANION_TRAIL.read().unwrap().mid()
-            };
-            let walktime = COMPANION_TRAIL.read().unwrap().walktime();
-            let params = companion.spr_params(position, direction, walktime);
-            sprites.push(params);
-        }
-    }
-
-    sprites.sort_by(|a, b| (a.2+a.3.h*8)
-        .partial_cmp(&(b.2+b.3.h*8)).unwrap());
-    
-    for options in sprites {
-        palette_map_rotate(options.5);
-        spr_outline(
-            options.0,
-            options.1,
-            options.2,
-            options.3,
-            options.4,
-        );
-    }
-
-    // draw fg
-    palette_map_reset();
-    for (i, layer) in current_map().fg_maps.iter().enumerate() {
-        if let Some(amount) = palette_map_rotation.get(i) {
-            palette_map_rotate(*amount)
-        } else {
-            palette_map_rotate(0)
-        }
-        let mut layer = layer.clone();
-        layer.sx -= cam_x();
-        layer.sy -= cam_y();
-        if debug_info().map_info {
-            rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
-        }
-        map(layer);
-    }
-    if let Some(string) = &DIALOGUE.read().unwrap().text {
-        draw_dialogue_box(string, true);
-    }
-    if debug_info().map_info {
-        for warp in current_map().warps.iter() {
-            warp.from
-                .offset_xy(-cam_x() as i16, -cam_y() as i16)
-                .draw(12);
-        }
-        player()
-            .hitbox()
-            .offset_xy(-cam_x() as i16, -cam_y() as i16)
-            .draw(12);
-        for item in current_map().interactables.iter() {
-            item.hitbox
-                .offset_xy(-cam_x() as i16, -cam_y() as i16)
-                .draw(14);
-        }
-    }
-    if debug_info().player_info {
-        print!(
-            format!("Player: {:#?}", player()),
-            0,
-            0,
-            PrintOptions {
-                small_text: true,
-                color: 11,
-                ..Default::default()
-            }
-        );
-        print!(
-            format!("Camera: {:#?}", camera()),
-            64,
-            0,
-            PrintOptions {
-                small_text: true,
-                color: 11,
-                ..Default::default()
-            }
-        );
-    }
 }
 
 pub fn draw_instructions() {
     cls(0);
     let string = crate::dialogue_data::INSTRUCTIONS;
-    let small_text = DIALOGUE.read().unwrap().small_text;
+    let small_text = DIALOGUE_OPTIONS.small_text();
     rect_outline(7, 15, 226, 100, 1, 2);
     print_raw(
         string,
@@ -501,36 +211,108 @@ pub fn draw_animation(t: u16) -> bool {
     }
 }
 
-enum MainMenuOption {
+
+static MENU_STATE: RwLock<MenuState> = RwLock::new(MenuState::new());
+
+pub struct MenuState {
+    index: usize,
+    reset_protector: usize,
+}
+impl MenuState {
+    pub const fn new() -> Self {
+        Self { index: 0, reset_protector: 0 }
+    }
+    pub fn step_main_menu(&mut self) -> Option<MainMenuOption> {
+        let (menu_index, clicked) = step_menu(2, 88, &mut self.index);
+        if mem_btnp(4) || clicked {
+            self.index = 0;
+            match menu_index {
+                0 => return Some(MainMenuOption::Play),
+                1 => return Some(MainMenuOption::Options),
+                _ => {}
+            };
+        }
+        None
+    }
+    pub fn draw_main_menu(&self) {
+        use crate::dialogue_data::{MENU_OPTIONS, MENU_PLAY};
+        cls(0);
+    
+        draw_title(120, 50);
+    
+        let strings = [MENU_PLAY, MENU_OPTIONS];
+        let current_option = self.index;
+        draw_menu(&strings, 120, 88, current_option);
+    }
+    fn step_options(&mut self) -> bool {
+        let (menu_index, clicked) = step_menu(3, 40, &mut self.index);
+        if menu_index != 2 {
+            self.reset_protector = 0;
+        };
+        if mem_btnp(4) || clicked {
+            match menu_index {
+                0 => return false,
+                1 => {
+                    DIALOGUE_OPTIONS.toggle_small_text();
+                }
+                2 => {
+                    if self.reset_protector == 0 {
+                        self.reset_protector += 1;
+                    } else {
+                        self.index = 0;
+                        self.reset_protector = 0;
+                        unsafe {
+                            for byte in (*PERSISTENT_RAM).iter_mut() {
+                                *byte = 0;
+                            }
+                        }
+                        return false;
+                    };
+                }
+                _ => {}
+            };
+        }
+        true
+    }
+    
+    pub fn draw_options(&self) {
+        cls(0);
+        use crate::dialogue_data::{
+            MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET,
+            OPTIONS_RESET_SURE,
+        };
+        let reset_string = if self.reset_protector == 0 {
+            OPTIONS_RESET
+        } else {
+            OPTIONS_RESET_SURE
+        };
+        let strings = [
+            MENU_BACK,
+            OPTIONS_FONT_SIZE,
+            reset_string,
+        ];
+        let current_option = self.index;
+        if current_option == 2 {
+            rect(60, 10, 120, 11, 2);
+            print_raw_centered(
+                OPTIONS_LOSE_DATA,
+                120,
+                13,
+                PrintOptions {
+                    color: 12,
+                    ..DIALOGUE_OPTIONS.get_options()
+                },
+            );
+        }
+        draw_menu(&strings, 120, 40, current_option);
+    }    
+}
+
+pub enum MainMenuOption {
     Play,
     Options,
 }
 
-fn step_main_menu() -> Option<MainMenuOption> {
-    use crate::MAINMENU;
-    let (menu_index, clicked) = step_menu(2, 88);
-    if mem_btnp(4) || clicked {
-        *MAINMENU.write().unwrap() = 0;
-        match menu_index {
-            0 => return Some(MainMenuOption::Play),
-            1 => return Some(MainMenuOption::Options),
-            _ => {}
-        };
-    }
-    None
-}
-
-pub fn draw_main_menu() {
-    use crate::dialogue_data::{MENU_OPTIONS, MENU_PLAY};
-    use crate::MAINMENU;
-    cls(0);
-
-    draw_title(120, 50);
-
-    let strings = [MENU_PLAY, MENU_OPTIONS];
-    let current_option = *MAINMENU.read().unwrap();
-    draw_menu(&strings, 120, 88, current_option);
-}
 
 pub fn draw_menu(entries: &[&str], x: i32, y: i32, current_option: usize) {
     for (i, string) in entries.iter().enumerate() {
@@ -544,15 +326,14 @@ pub fn draw_menu(entries: &[&str], x: i32, y: i32, current_option: usize) {
             y + i as i32 * 8,
             PrintOptions {
                 color,
-                ..DIALOGUE.read().unwrap().get_options()
+                ..DIALOGUE_OPTIONS.get_options()
             },
         );
     }
 }
 
-pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
-    use crate::MAINMENU;
-    let old_index = *MAINMENU.read().unwrap();
+pub fn step_menu(entries: usize, y: i16, index: &mut usize) -> (usize, bool) {
+    let old_index = *index;
 
     let mouse_pos = Vec2::new(mouse().x, mouse().y);
     let mouse_delta = mouse_delta();
@@ -561,18 +342,18 @@ pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
         if Hitbox::new(0, y + 8 * i as i16, 240, 8).touches_point(mouse_pos) {
             clicked = mouse_delta.left;
             if mouse_delta.x != 0 || mouse_delta.y != 0 || clicked {
-                *MAINMENU.write().unwrap() = i;
+                *index = i;
             }
         }
     }
     if mem_btnp(0) {
-        *MAINMENU.write().unwrap() = old_index.saturating_sub(1);
+        *index = old_index.saturating_sub(1);
     }
     if mem_btnp(1) {
-        *MAINMENU.write().unwrap() = old_index.saturating_add(1).min(entries - 1);
+        *index = old_index.saturating_add(1).min(entries - 1);
     }
 
-    (*MAINMENU.read().unwrap(), clicked)
+    (*index, clicked)
 }
 
 pub fn draw_title(x: i32, y: i32) {
@@ -624,69 +405,4 @@ pub fn draw_title(x: i32, y: i32) {
         },
     );
     blit_segment(4);
-}
-
-fn step_options() -> bool {
-    use crate::RESET_PROTECTOR;
-    let (menu_index, clicked) = step_menu(3, 40);
-    if menu_index != 2 {
-        *RESET_PROTECTOR.write().unwrap() = 0;
-    };
-    if mem_btnp(4) || clicked {
-        match menu_index {
-            0 => return false,
-            1 => {
-                DIALOGUE.write().unwrap().toggle_small_text();
-            }
-            2 => {
-                if *RESET_PROTECTOR.read().unwrap() == 0 {
-                    *RESET_PROTECTOR.write().unwrap() += 1;
-                } else {
-                    *crate::MAINMENU.write().unwrap() = 0;
-                    *RESET_PROTECTOR.write().unwrap() = 0;
-                    unsafe {
-                        for byte in (*PERSISTENT_RAM).iter_mut() {
-                            *byte = 0;
-                        }
-                    }
-                    return false;
-                };
-            }
-            _ => {}
-        };
-    }
-    true
-}
-
-pub fn draw_options() {
-    cls(0);
-    use crate::dialogue_data::{
-        MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET,
-        OPTIONS_RESET_SURE,
-    };
-    use crate::{MAINMENU, RESET_PROTECTOR};
-    let reset_string = if *RESET_PROTECTOR.read().unwrap() == 0 {
-        OPTIONS_RESET
-    } else {
-        OPTIONS_RESET_SURE
-    };
-    let strings = [
-        MENU_BACK,
-        OPTIONS_FONT_SIZE,
-        reset_string,
-    ];
-    let current_option = *MAINMENU.read().unwrap();
-    if current_option == 2 {
-        rect(60, 10, 120, 11, 2);
-        print_raw_centered(
-            OPTIONS_LOSE_DATA,
-            120,
-            13,
-            PrintOptions {
-                color: 12,
-                ..DIALOGUE.read().unwrap().get_options()
-            },
-        );
-    }
-    draw_menu(&strings, 120, 40, current_option);
 }

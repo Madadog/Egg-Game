@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{Flip, Hitbox, Vec2, tic80::SpriteOptions, cam_x, cam_y, map::Axis};
+use crate::{Flip, Hitbox, Vec2, tic80::SpriteOptions, map::{Axis, MapSet}, camera::Camera};
 
 #[derive(Debug)]
 pub struct Player {
@@ -64,8 +64,7 @@ impl Player {
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
     }
-    pub fn walk(&mut self, mut dx: i16, mut dy: i16, noclip: bool) -> (i16, i16) {
-        use crate::current_map;
+    pub fn walk(&mut self, mut dx: i16, mut dy: i16, noclip: bool, current_map: &MapSet) -> (i16, i16) {
         use crate::map::layer_collides;
 
         if dx == 0 && dy == 0 { return (dx, dy) };
@@ -98,7 +97,7 @@ impl Player {
         let (mut dy_collision_y, mut dy_collision_left, mut dy_collision_right) = (false, false, false);
         let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
         let mut diagonal_collision = false;
-        for layer in current_map().maps.iter() {
+        for layer in current_map.maps.iter() {
             let layer_hitbox = Hitbox::new(
                 layer.sx as i16,
                 layer.sy as i16,
@@ -135,18 +134,16 @@ impl Player {
 
         (dx, dy)
     }
-    pub fn apply_motion(&mut self, dx: i16, dy: i16) {
-        use crate::COMPANION_TRAIL;
-
+    pub fn apply_motion(&mut self, dx: i16, dy: i16, trail: &mut CompanionTrail) {
         // Apply motion
         if dx == 0 && dy == 0 {
-            COMPANION_TRAIL.write().unwrap().stop();
+            trail.stop();
             self.walktime = 0;
             self.walking = false;
             return;
         }
 
-        COMPANION_TRAIL.write().unwrap().push(
+        trail.push(
             Vec2::new(self.pos.x, self.pos.y),
             (self.dir.0, self.dir.1)
         );
@@ -193,7 +190,7 @@ pub enum Companion {
     Dog,
 }
 impl Companion {
-    pub fn spr_params(&self, position: Vec2, direction: (i8, i8), walktime: u8) -> (i32, i32, i32, SpriteOptions, u8, u8) {
+    pub fn spr_params(&self, position: Vec2, direction: (i8, i8), walktime: u8, camera: &Camera) -> (i32, i32, i32, SpriteOptions, u8, u8) {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -208,8 +205,8 @@ impl Companion {
                 } else {
                     0
                 };
-                (i, position.x as i32 - cam_x() + x_offset,
-                position.y as i32 - cam_y() - 2,
+                (i, position.x as i32 - camera.x() + x_offset,
+                position.y as i32 - camera.y() - 2,
                 SpriteOptions {
                     w,
                     h: 2,

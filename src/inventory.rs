@@ -1,8 +1,14 @@
-use crate::{dialogue_data::*, dialogue::{draw_dialogue_portrait}, tic_helpers::{print_raw_centered, get_blit_segment, blit_segment, spr_blit_segment}};
+use std::sync::RwLock;
+
+use once_cell::sync::Lazy;
+
+use crate::{dialogue_data::*, tic_helpers::{print_raw_centered, get_blit_segment, blit_segment, spr_blit_segment}, dialogue::Dialogue};
 
 static ITEM_FF: InventoryItem = InventoryItem {sprite: 513, name: ITEM_FF_NAME, desc: ITEM_FF_DESC};
 static ITEM_LM: InventoryItem = InventoryItem {sprite: 514, name: ITEM_LM_NAME, desc: ITEM_LM_DESC};
 static ITEM_CHEGG: InventoryItem = InventoryItem {sprite: 524, name: ITEM_CHEGG_NAME, desc: ITEM_CHEGG_DESC};
+
+pub static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| { InventoryUi::new() }));
 
 #[derive(Debug)]
 pub struct InventoryItem<'a> {
@@ -95,12 +101,14 @@ impl<'a> InventoryUiState<'a> {
 pub struct InventoryUi<'a> {
     pub inventory: Inventory<'a>,
     pub state: InventoryUiState<'a>,
+    pub dialogue: Dialogue,
 }
 impl<'a> InventoryUi<'a> {
     pub fn new() -> Self {
         Self {
             inventory: Inventory::new(),
             state: InventoryUiState::PageSelect(0),
+            dialogue: Dialogue::const_default(),
         }
     }
     pub fn open(&mut self) {
@@ -187,7 +195,6 @@ impl<'a> InventoryUi<'a> {
         };
         match &self.state {
             InventoryUiState::Items(current_index, selected) => {
-                use crate::DIALOGUE;
                 use crate::print;
                 let (sx, sy) = (
                     x_offset + side_column + column_margin + 3 + (*current_index as i32%4)*item_slot_size,
@@ -203,12 +210,12 @@ impl<'a> InventoryUi<'a> {
                     spr_outline(selected_item.sprite, sx+2, sy+2-4, SpriteOptions {scale, transparent: &[0], ..Default::default()}, 12);
                     rect_outline(7 , 98, 70, 9, 2, 3);
                     print!(selected_item.name, 9, 100, PrintOptions::default().with_color(12));
-                    draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(selected_item.desc), false, selected_item.sprite, 3, 1, 1);
+                    self.dialogue.draw_dialogue_portrait(&self.dialogue.fit_text(selected_item.desc), false, selected_item.sprite, 3, 1, 1);
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
                         rect_outline(7, 98, 70, 9, 2, 3);
                         print!(item.name, 9, 100, PrintOptions::default().with_color(12));
-                        draw_dialogue_portrait(&DIALOGUE.read().unwrap().fit_text(item.desc), false, item.sprite, 3, 1, 1);
+                        self.dialogue.draw_dialogue_portrait(&self.dialogue.fit_text(item.desc), false, item.sprite, 3, 1, 1);
                     }
                 }
             }

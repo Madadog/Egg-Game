@@ -19,6 +19,8 @@ impl Camera {
             )
         )
     }
+    pub fn x(&self) -> i32 { self.pos.x.into() }
+    pub fn y(&self) -> i32 { self.pos.y.into() }
     pub fn center_on(&mut self, x: i16, y: i16) {
         self.pos = self.bound(Some(x - WIDTH as i16/2), Some(y - HEIGHT as i16/2));
     }

@@ -14,10 +14,6 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::COMPANIONS;
-use crate::COMPANION_TRAIL;
-use crate::dialogue_data::{DOG_OBTAINED, DOG_RELINQUISHED, HOUSE_BACKYARD_DOGHOUSE};
-use crate::player::Companion;
 use crate::animation::*;
 use crate::Hitbox;
 
@@ -52,22 +48,4 @@ impl<'a> Interactable<'a> {
 #[derive(Debug)]
 pub enum InteractFn {
     ToggleDog,
-}
-impl InteractFn {
-    pub fn execute(&self) -> Option<&'static str> {
-        match self {
-            Self::ToggleDog => {
-                COMPANION_TRAIL.write().unwrap().fill(crate::player().pos, crate::player().dir);
-                let mut x = COMPANIONS.write().unwrap();
-                if x.has(Companion::Dog) {
-                    x.remove(Companion::Dog);
-                    Some(DOG_RELINQUISHED)
-                } else {
-                    x.add(Companion::Dog);
-                    Some(DOG_OBTAINED)
-                }
-            },
-            _ => {Some(HOUSE_BACKYARD_DOGHOUSE)}
-        }
-    }
 }
