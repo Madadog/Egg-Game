@@ -575,7 +575,7 @@ pub fn step_menu(entries: usize, y: i16) -> (usize, bool) {
 }
 
 pub fn draw_title(x: i32, y: i32) {
-    use crate::dialogue_data::GAME_TITLE;
+    use crate::dialogue_data::{GAME_TITLE, GAME_TITLE_BLURB};
     let title_width = print_raw(
         GAME_TITLE,
         999,
@@ -594,6 +594,17 @@ pub fn draw_title(x: i32, y: i32) {
             color: 2,
             ..Default::default()
         },
+    );
+    print_raw_centered(
+        GAME_TITLE_BLURB,
+        x,
+        y + 30,
+        PrintOptions {
+            scale: 1,
+            color: 13,
+            small_text: true,
+            ..Default::default()
+        }
     );
 
     rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
