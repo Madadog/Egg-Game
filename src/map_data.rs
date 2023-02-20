@@ -409,14 +409,26 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         },
         MapOptions { //couch
             x: 37,
-            y: 13,
+            y: 14,
             w: 4,
-            h: 3,
+            h: 2,
             transparent: &[0],
             sx: 12*8+2,
-            sy: 7*8,
+            sy: 8*8,
             ..DEFAULT_MAP
         },
+        MapOptions { //tv
+            x: 41,
+            y: 15,
+            w: 2,
+            h: 1,
+            transparent: &[0],
+            sx: 15*8+2,
+            sy: 11*8-1,
+            ..DEFAULT_MAP
+        },
+    ],
+    fg_maps: &[
         MapOptions { //tv
             x: 41,
             y: 13,
@@ -429,8 +441,8 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         },
     ],
     warps: &[Warp::new(Hitbox::new(10*8,4*8,2*8,8),Some(&HOUSE_STAIRWELL),Vec2::new(15*4,7*8)),
-    Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8)),
-    Warp::new(Hitbox::new(14*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(7*4,7*8)),
+        Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8)),
+        Warp::new(Hitbox::new(14*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(7*4,7*8)),
     ],
     interactables: &[
         Interactable {
@@ -439,7 +451,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(15*8+2, 9*8-1, 2*8, 3*8),
+            hitbox: Hitbox::new(15*8+2, 10*8-1, 2*8, 2*8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
@@ -452,6 +464,17 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             hitbox: Hitbox::new(8*8, 6*8, 8, 8),
             interaction: Interaction::Text(CONSTRUCTION_2),
             sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(12*8+2, 7*8, 1, 1),
+            interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
+            sprite: Some(Animation {
+                frames: &[
+                    AnimFrame::new(Vec2::new(0, 0), 35, 30, SpriteOptions {w: 3, h: 2,
+                        ..SpriteOptions::transparent_zero()}).with_outline(None),
+                ],
+                ..Animation::const_default()
+            }),
         },
         Interactable {
             hitbox: Hitbox::new(12*8+9, 7*8, 8, 8),
