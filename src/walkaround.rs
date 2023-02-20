@@ -61,7 +61,25 @@ impl<'a> WalkaroundState<'a> {
     pub fn cam_y(&self) -> i32 {
         self.camera.pos.y.into()
     }
-    pub fn step(&mut self) -> Option<GameState> {
+    pub fn execute_interact_fn(&mut self, interact: &InteractFn) -> Option<&'static str> {
+        match interact {
+            InteractFn::ToggleDog => {
+                self.companion_trail.fill(self.player.pos, self.player.dir);
+                if self.companion_list.has(Companion::Dog) {
+                    self.companion_list.remove(Companion::Dog);
+                    Some(DOG_RELINQUISHED)
+                } else {
+                    self.companion_list.add(Companion::Dog);
+                    Some(DOG_OBTAINED)
+                }
+            },
+            _ => {Some(HOUSE_BACKYARD_DOGHOUSE)}
+        }
+    }
+}
+
+impl<'a> Game for WalkaroundState<'a> {
+    fn step(&mut self) -> Option<GameState> {
         for (anim, interact) in self.map_animations
             .iter_mut()
             .zip(self.current_map.interactables.iter())
@@ -198,24 +216,6 @@ impl<'a> WalkaroundState<'a> {
         self.camera.center_on(self.player.pos.x + 4, self.player.pos.y + 8);
         None
     }
-    pub fn execute_interact_fn(&mut self, interact: &InteractFn) -> Option<&'static str> {
-        match interact {
-            InteractFn::ToggleDog => {
-                self.companion_trail.fill(self.player.pos, self.player.dir);
-                if self.companion_list.has(Companion::Dog) {
-                    self.companion_list.remove(Companion::Dog);
-                    Some(DOG_RELINQUISHED)
-                } else {
-                    self.companion_list.add(Companion::Dog);
-                    Some(DOG_OBTAINED)
-                }
-            },
-            _ => {Some(HOUSE_BACKYARD_DOGHOUSE)}
-        }
-    }
-}
-
-impl<'a> Game for WalkaroundState<'a> {
     fn draw(&self) {
         // draw bg
         palette_map_reset();
