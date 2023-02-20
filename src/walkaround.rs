@@ -189,7 +189,7 @@ impl<'a> Game for WalkaroundState<'a> {
             self.player.flip_controls = target.flip;
             self.companion_trail.fill(self.player.pos, self.player.dir);
             if let Some(new_map) = target.map {
-                self.load_map(&new_map);
+                self.load_map(new_map);
             }
         } else if interact {
             for item in self.current_map.interactables.iter() {

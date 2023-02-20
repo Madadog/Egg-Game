@@ -87,7 +87,7 @@ impl<'a> InventoryUiState<'a> {
                 if (*i == 0 || *i == 4) && dx == -1 {self.back(); return};
                 let dx = if *i == 3 {dx.min(0)} else {dx};
                 let new = *i as i32 + dx + dy * 4;
-                if new >= 0 && new < 8 { *i = new as usize; };
+                if (0..8).contains(&new) { *i = new as usize; };
             },
             Self::Eggs(i) => {
                 if *i == 0 && dx == -1 {self.back(); return};

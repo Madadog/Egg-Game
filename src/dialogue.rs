@@ -31,9 +31,9 @@ impl DialogueOptions {
             box_width: RwLock::new(200),
         }
     }
-    pub fn fixed(&self) -> bool { self.fixed.read().unwrap().clone() }
-    pub fn small_text(&self) -> bool { self.small_text.read().unwrap().clone() }
-    pub fn box_width(&self) -> usize { self.box_width.read().unwrap().clone() }
+    pub fn fixed(&self) -> bool { *self.fixed.read().unwrap() }
+    pub fn small_text(&self) -> bool { *self.small_text.read().unwrap() }
+    pub fn box_width(&self) -> usize { *self.box_width.read().unwrap() }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
         *self.fixed.write().unwrap() = fixed;
         *self.small_text.write().unwrap() = small_text;
@@ -125,7 +125,7 @@ impl Dialogue {
         let h = 24;
         rect_outline((WIDTH - w) / 2 + x, (HEIGHT - h) - 4 + y, w, h+height, 2, 3);
         print_alloc(
-            if timer {&string[..(print_timer)]} else {&string},
+            if timer {&string[..(print_timer)]} else {string},
             (WIDTH - w) / 2 + 3 + x,
             (HEIGHT - h) - 4 + 3 + y,
             PrintOptions {
@@ -142,7 +142,7 @@ impl Dialogue {
 
 
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
-    let width = print_alloc(
+    print_alloc(
         string,
         250,
         200,
@@ -151,8 +151,7 @@ pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
             small_text: small_font,
             ..Default::default()
         },
-    );
-    width
+    )
 }
 
 pub fn take_words(string: &str, count: usize, skip: usize) -> String {

@@ -56,16 +56,10 @@ pub enum Axis {
 }
 impl Axis {
     pub fn x(&self) -> bool {
-        match self {
-            Self::Both | Self::X => true,
-            _ => false,
-        }
+        matches!(self, Self::Both | Self::X)
     }
     pub fn y(&self) -> bool {
-        match self {
-            Self::Both | Self::Y => true,
-            _ => false,
-        }
+        matches!(self, Self::Both | Self::Y)
     }
 }
 

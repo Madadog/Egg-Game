@@ -162,7 +162,7 @@ fn test_many_points(p: [Option<[Vec2; 2]>; 3], layer_hitbox: Hitbox, layer_x: i3
     use crate::map::layer_collides;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
-            points.into_iter().for_each(|point| {
+            points.iter().for_each(|point| {
                 if layer_collides(*point, layer_hitbox, layer_x, layer_y) {
                     flags[i] = true;
                 }
