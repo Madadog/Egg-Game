@@ -2,7 +2,7 @@ use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
 
-use crate::{dialogue_data::*, tic_helpers::{print_raw_centered, get_blit_segment, blit_segment, spr_blit_segment}, dialogue::Dialogue};
+use crate::{dialogue_data::*, tic_helpers::{print_raw_centered, spr_blit_segment}, dialogue::Dialogue};
 
 static ITEM_FF: InventoryItem = InventoryItem {sprite: 513, name: ITEM_FF_NAME, desc: ITEM_FF_DESC};
 static ITEM_LM: InventoryItem = InventoryItem {sprite: 514, name: ITEM_LM_NAME, desc: ITEM_LM_DESC};

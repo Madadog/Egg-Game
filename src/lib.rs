@@ -32,17 +32,11 @@ mod tic_helpers;
 mod input_manager;
 mod walkaround;
 
-use crate::camera::Camera;
-use crate::dialogue::Dialogue;
 use crate::gamestate::GameState;
 use crate::map_data::*;
-use crate::player::*;
-use crate::inventory::InventoryUi;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
 use crate::tic_helpers::{SyncHelper};
-use gamestate::MenuState;
-use map::MapSet;
 use once_cell::sync::Lazy;
 use walkaround::WalkaroundState;
 use std::sync::atomic::{AtomicBool, Ordering};
