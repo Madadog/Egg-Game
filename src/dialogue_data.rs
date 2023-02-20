@@ -56,6 +56,7 @@ pub static DOG_OBTAINED: &str = "Dog has joined the party!";
 pub static DOG_RELINQUISHED: &str = "Dog has left the party.";
 pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
 pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could definitely open it with some of the POWER TOOLS inside... Oh wait.";
+pub static HOUSE_BACKYARD_SHED_WINDOW: &str = "You can't actually see anything through this window.";
 pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
 pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
 pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[

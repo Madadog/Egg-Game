@@ -304,7 +304,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             w: 3,
             h: 2,
             transparent: &[0],
-            sx: 101,
+            sx: 101-16,
             sy: 22,
             ..DEFAULT_MAP
         },
@@ -320,7 +320,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new_tile(17, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
+    warps: &[Warp::new_tile(15, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
@@ -333,12 +333,12 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(101, 22, 3 * 8, 2 * 8),
+            hitbox: Hitbox::new(101-16, 22, 3 * 8, 2 * 8),
             interaction: Interaction::Text(BEDROOM_TROLLEY),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(10 * 8, 3 * 8, 8, 8),
+            hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
             interaction: Interaction::Text(BEDROOM_WINDOW),
             sprite: None,
         },
@@ -383,7 +383,7 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
         Warp::new(
             Hitbox::new(1, 3 * 8, 8, 8),
             Some(&BEDROOM),
-            Vec2::new(16 * 8, 5 * 8),
+            Vec2::new(14 * 8, 5 * 8),
         ),
         Warp::new(
             Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
@@ -486,7 +486,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(15 * 8 + 2, 10 * 8 - 1, 2 * 8, 2 * 8),
+            hitbox: Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
@@ -636,6 +636,11 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(20 * 8, 8 * 8, 1 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_BACKYARD_SHED),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(22 * 8, 8 * 8, 1 * 8, 2 * 8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_SHED_WINDOW),
             sprite: None,
         },
         Interactable {
