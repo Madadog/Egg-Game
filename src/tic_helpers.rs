@@ -186,15 +186,6 @@ pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
     print_raw(string, x - string_width / 2, y, options);
 }
-pub const MOUSE_INPUT_DEFAULT: MouseInput = MouseInput {
-    x: 0,
-    y: 0,
-    scroll_x: 0,
-    scroll_y: 0,
-    left: false,
-    middle: false,
-    right: false,
-};
 
 pub struct SyncHelper {
     synced: bool,

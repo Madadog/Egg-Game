@@ -17,7 +17,7 @@
 use crate::dialogue::draw_dialogue_box;
 use crate::interact::Interaction;
 use crate::map::Axis;
-use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS, any_btnpr};
+use crate::{map_data::*, INVENTORY, COMPANION_TRAIL, COMPANIONS};
 use crate::inventory::InventoryUiState;
 use crate::position::{Hitbox, Vec2};
 use crate::tic80::*;
@@ -30,7 +30,8 @@ use crate::tic_helpers::{
     palette_map_rotate, print_raw_centered, screen_offset, set_palette, set_palette_colour,
     set_pmem, spr_outline, SWEETIE_16, rect_outline,
 };
-use crate::{any_btnp, cam_x, cam_y, debug_info, frames, mem_btn, mem_btnp, mouse_delta};
+use crate::{cam_x, cam_y, debug_info, frames};
+use crate::input_manager::{any_btnp, any_btnpr, mem_btn, mem_btnp, mouse_delta};
 
 pub enum GameState {
     Instructions(u16),

@@ -29,6 +29,7 @@ mod position;
 mod rand;
 mod tic80;
 mod tic_helpers;
+mod input_manager;
 
 use crate::camera::Camera;
 use crate::dialogue::Dialogue;
@@ -38,7 +39,7 @@ use crate::player::*;
 use crate::inventory::InventoryUi;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
-use crate::tic_helpers::{MOUSE_INPUT_DEFAULT, SyncHelper};
+use crate::tic_helpers::{SyncHelper};
 use map::MapSet;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -68,8 +69,6 @@ static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
 static CURRENT_MAP: RwLock<&MapSet> = RwLock::new(&SUPERMARKET);
 static DIALOGUE: RwLock<Dialogue> = RwLock::new(Dialogue::const_default());
 static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
-static GAMEPAD_HELPER: RwLock<[u8; 4]> = RwLock::new([0; 4]);
-static MOUSE_HELPER: RwLock<MouseInput> = RwLock::new(MOUSE_INPUT_DEFAULT);
 static MAINMENU: RwLock<usize> = RwLock::new(0);
 static RESET_PROTECTOR: RwLock<usize> = RwLock::new(0);
 static BG_COLOUR: RwLock<u8> = RwLock::new(0);
@@ -147,55 +146,6 @@ pub fn load_map(map: &'static MapSet<'static>) {
 pub fn run_gamestate() {
     GAMESTATE.write().unwrap().run();
 }
-pub fn mem_btn(id: u8) -> bool {
-    let controller: usize = (id / 8).min(3).into();
-    let id = id % 8;
-    let buttons = unsafe { (*GAMEPADS)[controller] };
-    (1 << id) & buttons != 0
-}
-pub fn mem_btnp(id: u8) -> bool {
-    let controller: usize = (id / 8).min(3).into();
-    let id = id % 8;
-    let buttons = unsafe { (*GAMEPADS)[controller] };
-    let previous = GAMEPAD_HELPER.read().unwrap()[controller];
-    (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
-}
-/// Returns true if any button was pressed. Ignores button releases.
-pub fn any_btnp() -> bool {
-    let buttons = unsafe { *GAMEPADS };
-    let previous = *GAMEPAD_HELPER.read().unwrap();
-    let mut flag = false;
-    for (b0, b1) in previous.iter().zip(buttons.iter()) {
-        flag |= b0.count_ones() < b1.count_ones();
-    }
-    flag
-}
-/// Returns true if any button was pressed or released
-pub fn any_btnpr() -> bool {
-    let buttons = unsafe { *GAMEPADS };
-    let previous = *GAMEPAD_HELPER.read().unwrap();
-    buttons != previous
-}
-pub fn step_gamepad_helper() {
-    let buttons = unsafe { *GAMEPADS };
-    *GAMEPAD_HELPER.write().unwrap() = buttons;
-}
-pub fn step_mouse_helper() {
-    let input = mouse();
-    *MOUSE_HELPER.write().unwrap() = input;
-}
-pub fn mouse_delta() -> MouseInput {
-    let old = MOUSE_HELPER.read().unwrap().clone();
-    let new = mouse();
-    MouseInput {
-        x: new.x - old.x,
-        y: new.y - old.y,
-        left: new.left && !old.left,
-        middle: new.middle && !old.middle,
-        right: new.right && !old.right,
-        ..new
-    }
-}
 
 #[export_name = "BOOT"]
 pub fn boot() {
@@ -233,6 +183,6 @@ pub fn tic() {
 
     run_gamestate();
     
-    step_gamepad_helper();
-    step_mouse_helper();
+    input_manager::step_gamepad_helper();
+    input_manager::step_mouse_helper();
 }

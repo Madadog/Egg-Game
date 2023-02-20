@@ -223,7 +223,7 @@ impl<'a> InventoryUi<'a> {
         };
     }
     pub fn step(&mut self) {
-        use crate::mem_btnp;
+        use crate::input_manager::mem_btnp;
         let (mut dx, mut dy) = (0, 0);
         if mem_btnp(0) { dy -= 1 }
         if mem_btnp(1) { dy += 1 }
