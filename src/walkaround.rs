@@ -231,7 +231,6 @@ impl<'a> Game for WalkaroundState<'a> {
         // draw bg
         palette_map_reset();
         cls(*crate::BG_COLOUR.read().unwrap());
-        blit_segment(4);
         let palette_map_rotation = self.current_map.palette_rotation;
         for (i, layer) in self.current_map.maps.iter().enumerate() {
             if let Some(amount) = palette_map_rotation.get(i) {
@@ -239,14 +238,16 @@ impl<'a> Game for WalkaroundState<'a> {
             } else {
                 palette_map_rotate(0)
             }
-            let mut layer = layer.clone();
-            layer.sx -= self.cam_x();
-            layer.sy -= self.cam_y();
+            blit_segment(layer.blit_segment);
+            let mut options: MapOptions = layer.clone().into();
+            options.sx -= self.cam_x();
+            options.sy -= self.cam_y();
             if debug_info().map_info {
-                rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
+                rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
             }
-            map(layer);
+            map(options.into());
         }
+        blit_segment(4);
         // draw sprites from least to greatest y
         let mut sprites: Vec<(i32, i32, i32, SpriteOptions, Option<u8>, u8)> = Vec::new();
         let player_sprite = self.player.sprite_index();
@@ -316,13 +317,14 @@ impl<'a> Game for WalkaroundState<'a> {
             } else {
                 palette_map_rotate(0)
             }
-            let mut layer = layer.clone();
-            layer.sx -= self.cam_x();
-            layer.sy -= self.cam_y();
+            blit_segment(layer.blit_segment);
+            let mut options: MapOptions = layer.clone().into();
+            options.sx -= self.cam_x();
+            options.sy -= self.cam_y();
             if debug_info().map_info {
-                rectb(layer.sx, layer.sy, layer.w * 8, layer.h * 8, 9);
+                rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
             }
-            map(layer);
+            map(options);
         }
         if let Some(string) = &self.dialogue.text {
             self.dialogue.draw_dialogue_box(string, true);

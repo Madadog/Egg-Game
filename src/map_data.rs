@@ -19,21 +19,12 @@ use crate::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
 use crate::map::Axis;
+use crate::map::MapLayer;
 use crate::map::MapSet;
 use crate::map::Warp;
 use crate::position::{Hitbox, Vec2};
-use crate::{MapOptions, SpriteOptions};
+use crate::SpriteOptions;
 
-pub(crate) const DEFAULT_MAP: MapOptions = MapOptions {
-    x: 60,
-    y: 17,
-    w: 30,
-    h: 17,
-    transparent: &[],
-    sx: 0,
-    sy: 0,
-    scale: 1,
-};
 pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     maps: &[],
     fg_maps: &[],
@@ -48,16 +39,16 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
 pub static SUPERMARKET: MapSet<'static> = MapSet {
     maps: &[
         //bg
-        MapOptions {
+        MapLayer {
             x: 60,
             y: 17,
             w: 26,
             h: 12,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //fruit stand
-        MapOptions {
+        MapLayer {
             x: 61,
             y: 29,
             w: 3,
@@ -65,10 +56,10 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 2 * 8,
             sy: 8 * 8,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
         //vending machines
-        MapOptions {
+        MapLayer {
             x: 70,
             y: 29,
             w: 4,
@@ -76,10 +67,10 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 19 * 8,
             sy: 4 * 8,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
         //counter
-        MapOptions {
+        MapLayer {
             x: 60,
             y: 31,
             w: 8,
@@ -87,10 +78,10 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 5 * 8,
             sy: 4 * 8,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
         //top vending machine
-        MapOptions {
+        MapLayer {
             x: 68,
             y: 29,
             w: 2,
@@ -98,7 +89,7 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 13 * 8,
             sy: 5 * 4,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -155,16 +146,16 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     maps: &[
         //bg
-        MapOptions {
+        MapLayer {
             x: 86,
             y: 17,
             w: 13,
             h: 7,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //closet
-        MapOptions {
+        MapLayer {
             x: 87,
             y: 24,
             w: 3,
@@ -172,10 +163,10 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 5 * 8,
             sy: 0,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
         //diagonal door
-        MapOptions {
+        MapLayer {
             x: 86,
             y: 24,
             w: 1,
@@ -183,7 +174,7 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 11 * 8,
             sy: 2 * 8,
-            scale: 1,
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -220,22 +211,22 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
 
 pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions {
+        MapLayer {
             x: 86,
             y: 28,
             w: 9,
             h: 6,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
-        MapOptions {
+        MapLayer {
             x: 93,
             y: 24,
             w: 5,
             h: 4,
             transparent: &[0],
             sx: 2 * 8,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[Warp::new_tile(2, 5, Some(&SUPERMARKET_HALL), 4, 2)],
@@ -263,12 +254,12 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
 };
 
 pub static TEST_PEN: MapSet<'static> = MapSet {
-    maps: &[MapOptions {
+    maps: &[MapLayer {
         x: 53,
         y: 17,
         w: 7,
         h: 9,
-        ..DEFAULT_MAP
+        ..MapLayer::DEFAULT_MAP
     }],
     warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
@@ -290,26 +281,26 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
 pub static BEDROOM: MapSet<'static> = MapSet {
     maps: &[
         //room
-        MapOptions {
+        MapLayer {
             x: 30,
             y: 0,
             w: 21,
             h: 10,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //trolley
-        MapOptions {
+        MapLayer {
             x: 30,
             y: 10,
             w: 3,
             h: 2,
             transparent: &[0],
-            sx: 101-16,
+            sx: 101 - 16,
             sy: 22,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //mattress
-        MapOptions {
+        MapLayer {
             x: 37,
             y: 10,
             w: 3,
@@ -317,7 +308,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 38,
             sy: 27,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[Warp::new_tile(15, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
@@ -333,7 +324,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(101-16, 22, 3 * 8, 2 * 8),
+            hitbox: Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8),
             interaction: Interaction::Text(BEDROOM_TROLLEY),
             sprite: None,
         },
@@ -349,15 +340,15 @@ pub static BEDROOM: MapSet<'static> = MapSet {
 pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
     maps: &[
         //room
-        MapOptions {
+        MapLayer {
             x: 51,
             y: 0,
             w: 16,
             h: 9,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //left door
-        MapOptions {
+        MapLayer {
             x: 41,
             y: 10,
             w: 1,
@@ -365,10 +356,10 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 0,
             sy: 7,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //right door
-        MapOptions {
+        MapLayer {
             x: 40,
             y: 10,
             w: 1,
@@ -376,7 +367,7 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 120,
             sy: 7,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -419,15 +410,15 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
 pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
     maps: &[
         //room
-        MapOptions {
+        MapLayer {
             x: 67,
             y: 0,
             w: 23,
             h: 13,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //couch
-        MapOptions {
+        MapLayer {
             x: 37,
             y: 14,
             w: 4,
@@ -435,10 +426,10 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 12 * 8 + 2,
             sy: 8 * 8,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //tv
-        MapOptions {
+        MapLayer {
             x: 41,
             y: 15,
             w: 2,
@@ -446,12 +437,12 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 15 * 8 + 2,
             sy: 11 * 8 - 1,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     fg_maps: &[
         //tv
-        MapOptions {
+        MapLayer {
             x: 41,
             y: 13,
             w: 2,
@@ -459,7 +450,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 15 * 8 + 2,
             sy: 9 * 8 - 1,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -470,9 +461,10 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         ),
         Warp::new(
             Hitbox::new(3 * 8, 9 * 8, 8, 8),
-            Some(&SUPERMARKET),
-            Vec2::new(14 * 8, 5 * 8),
-        ),
+            Some(&TOWN),
+            Vec2::new(17 * 8, 13 * 8),
+        )
+        .with_flip(Axis::Y),
         Warp::new(
             Hitbox::new(14 * 8, 5 * 8, 8, 8),
             Some(&HOUSE_KITCHEN),
@@ -553,15 +545,15 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
 pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
     maps: &[
         //room
-        MapOptions {
+        MapLayer {
             x: 90,
             y: 0,
             w: 13,
             h: 10,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //microwave
-        MapOptions {
+        MapLayer {
             x: 37,
             y: 12,
             w: 2,
@@ -569,7 +561,7 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
             sx: 7 * 8 + 6,
             sy: 4 * 8 - 3,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -607,10 +599,10 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
 pub static BACKYARD: MapSet<'static> = MapSet {
     maps: &[
         //room
-        MapOptions {
+        MapLayer {
             x: 120,
             y: 0,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     warps: &[
@@ -671,16 +663,16 @@ pub static BACKYARD: MapSet<'static> = MapSet {
 pub static WILDERNESS: MapSet<'static> = MapSet {
     maps: &[
         //ground
-        MapOptions {
+        MapLayer {
             x: 120,
             y: 68,
             w: 30 * 4,
             h: 17 * 4,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //left barrier
-        MapOptions {
+        MapLayer {
             x: 120,
             y: 78,
             w: 1,
@@ -688,10 +680,10 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: -8,
             sy: 37 * 8,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
         //bottom barrier
-        MapOptions {
+        MapLayer {
             x: 120,
             y: 72,
             w: 23,
@@ -699,18 +691,18 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
             transparent: &[0],
             sx: 17 * 8,
             sy: 68 * 8,
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     fg_maps: &[
         //foreground
-        MapOptions {
+        MapLayer {
             x: 120,
             y: 0,
             w: 30 * 4,
             h: 17 * 4,
             transparent: &[0],
-            ..DEFAULT_MAP
+            ..MapLayer::DEFAULT_MAP
         },
     ],
     bg_colour: 3,
@@ -718,6 +710,44 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
         Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
         Some(&BACKYARD),
         Vec2::new(14 * 8 - 4, 15 * 8),
+    )
+    .with_flip(Axis::Y)],
+    interactables: &[],
+    bank: 1,
+    ..DEFAULT_MAP_SET
+};
+
+pub static TOWN: MapSet<'static> = MapSet {
+    maps: &[
+        //ground
+        MapLayer {
+            x: 0,
+            y: 0,
+            w: 30 * 4,
+            h: 17 * 4,
+            transparent: &[0],
+            blit_segment: 5,
+            flag_offset: 256,
+            ..MapLayer::DEFAULT_MAP
+        },
+    ],
+    fg_maps: &[
+        //foreground
+        MapLayer {
+            x: 0,
+            y: 68,
+            w: 30 * 4,
+            h: 17 * 4,
+            transparent: &[0],
+            blit_segment: 5,
+            ..MapLayer::DEFAULT_MAP
+        },
+    ],
+    bg_colour: 0,
+    warps: &[Warp::new(
+        Hitbox::new(17 * 8, 13 * 8, 8, 8),
+        Some(&HOUSE_LIVING_ROOM),
+        Vec2::new(4 * 8, 9 * 8),
     )
     .with_flip(Axis::Y)],
     interactables: &[],

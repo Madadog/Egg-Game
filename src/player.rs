@@ -132,6 +132,7 @@ impl Player {
                 layer_hitbox,
                 layer.x,
                 layer.y,
+                layer.flag_offset,
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
@@ -139,10 +140,11 @@ impl Player {
                 layer_hitbox,
                 layer.x,
                 layer.y,
+                layer.flag_offset,
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag {
-                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y) {
+                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y, layer.flag_offset) {
                     diagonal_collision = true;
                 }
             }
@@ -194,13 +196,14 @@ fn test_many_points(
     layer_hitbox: Hitbox,
     layer_x: i32,
     layer_y: i32,
+    spr_flag_offset: i32,
     mut flags: [bool; 3],
 ) -> [bool; 3] {
     use crate::map::layer_collides;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides(*point, layer_hitbox, layer_x, layer_y) {
+                if layer_collides(*point, layer_hitbox, layer_x, layer_y, spr_flag_offset) {
                     flags[i] = true;
                 }
             });
