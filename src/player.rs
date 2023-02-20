@@ -14,7 +14,12 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{Flip, Hitbox, Vec2, tic80::SpriteOptions, map::{Axis, MapSet}, camera::Camera};
+use crate::{
+    camera::Camera,
+    map::{Axis, MapSet},
+    tic80::SpriteOptions,
+    Flip, Hitbox, Vec2,
+};
 
 #[derive(Debug)]
 pub struct Player {
@@ -64,24 +69,37 @@ impl Player {
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
     }
-    pub fn walk(&mut self, mut dx: i16, mut dy: i16, noclip: bool, current_map: &MapSet) -> (i16, i16) {
+    pub fn walk(
+        &mut self,
+        mut dx: i16,
+        mut dy: i16,
+        noclip: bool,
+        current_map: &MapSet,
+    ) -> (i16, i16) {
         use crate::map::layer_collides;
 
-        if dx == 0 && dy == 0 { return (dx, dy) };
+        if dx == 0 && dy == 0 {
+            return (dx, dy);
+        };
 
         match self.flip_controls {
-            Axis::None => {},
+            Axis::None => {}
             Axis::X => dx *= -1,
             Axis::Y => dy *= -1,
-            Axis::Both => { dx *= -1; dy *= -1 },
+            Axis::Both => {
+                dx *= -1;
+                dy *= -1
+            }
         }
-        
+
         // Face direction
         self.dir.1 = dy as i8;
         self.dir.0 = dx as i8;
-        
-        if noclip { return (dx, dy) };
-        
+
+        if noclip {
+            return (dx, dy);
+        };
+
         // Player position + intended movement
         let player_hitbox = self.hitbox();
         let delta_hitbox = player_hitbox.offset_xy(-1, -1).grow(2, 2);
@@ -90,11 +108,13 @@ impl Player {
         let points_dx = player_hitbox.dx_corners(dx);
         let points_dx_up = player_hitbox.offset_xy(0, -1).dx_corners(dx);
         let points_dx_down = player_hitbox.offset_xy(0, 1).dx_corners(dx);
-        let (mut dx_collision_x, mut dx_collision_up, mut dx_collision_down) = (false, false, false);
+        let (mut dx_collision_x, mut dx_collision_up, mut dx_collision_down) =
+            (false, false, false);
         let points_dy = player_hitbox.dy_corners(dy);
         let points_dy_left = player_hitbox.offset_xy(-1, 0).dy_corners(dy);
         let points_dy_right = player_hitbox.offset_xy(1, 0).dy_corners(dy);
-        let (mut dy_collision_y, mut dy_collision_left, mut dy_collision_right) = (false, false, false);
+        let (mut dy_collision_y, mut dy_collision_left, mut dy_collision_right) =
+            (false, false, false);
         let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
         let mut diagonal_collision = false;
         for layer in current_map.maps.iter() {
@@ -104,7 +124,9 @@ impl Player {
                 layer.w as i16 * 8,
                 layer.h as i16 * 8,
             );
-            if !layer_hitbox.touches(delta_hitbox) { continue }
+            if !layer_hitbox.touches(delta_hitbox) {
+                continue;
+            }
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
                 [points_dx, points_dx_up, points_dx_down],
                 layer_hitbox,
@@ -125,8 +147,20 @@ impl Player {
                 }
             }
         }
-        alt_dir(dx_collision_x, dx_collision_down, dx_collision_up, &mut dx, &mut dy);
-        alt_dir(dy_collision_y, dy_collision_right, dy_collision_left, &mut dy, &mut dx);
+        alt_dir(
+            dx_collision_x,
+            dx_collision_down,
+            dx_collision_up,
+            &mut dx,
+            &mut dy,
+        );
+        alt_dir(
+            dy_collision_y,
+            dy_collision_right,
+            dy_collision_left,
+            &mut dy,
+            &mut dx,
+        );
         if diagonal_collision && dx != 0 && dy != 0 {
             dx = 0;
             dy = 0;
@@ -143,10 +177,7 @@ impl Player {
             return;
         }
 
-        trail.push(
-            Vec2::new(self.pos.x, self.pos.y),
-            (self.dir.0, self.dir.1)
-        );
+        trail.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1));
         self.pos.x += dx;
         self.pos.y += dy;
         self.walktime = self.walktime.wrapping_add(1);
@@ -158,7 +189,13 @@ impl Default for Player {
         Self::const_default()
     }
 }
-fn test_many_points(p: [Option<[Vec2; 2]>; 3], layer_hitbox: Hitbox, layer_x: i32, layer_y: i32, mut flags: [bool; 3]) -> [bool; 3] {
+fn test_many_points(
+    p: [Option<[Vec2; 2]>; 3],
+    layer_hitbox: Hitbox,
+    layer_x: i32,
+    layer_y: i32,
+    mut flags: [bool; 3],
+) -> [bool; 3] {
     use crate::map::layer_collides;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
@@ -190,7 +227,13 @@ pub enum Companion {
     Dog,
 }
 impl Companion {
-    pub fn spr_params(&self, position: Vec2, direction: (i8, i8), walktime: u8, camera: &Camera) -> (i32, i32, i32, SpriteOptions, Option<u8>, u8) {
+    pub fn spr_params(
+        &self,
+        position: Vec2,
+        direction: (i8, i8),
+        walktime: u8,
+        camera: &Camera,
+    ) -> (i32, i32, i32, SpriteOptions, Option<u8>, u8) {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -200,20 +243,21 @@ impl Companion {
                     (_, 1) => (1, 710 + t as i32, Flip::None),
                     (_, _) => (1, 712 + t as i32, Flip::None),
                 };
-                let x_offset = if let Flip::Horizontal = flip {
-                    -8
-                } else {
-                    0
-                };
-                (i, position.x as i32 - camera.x() + x_offset,
-                position.y as i32 - camera.y() - 2,
-                SpriteOptions {
-                    w,
-                    h: 2,
-                    flip,
-                    ..SpriteOptions::transparent_zero()
-                }, Some(1), 1)
-            },
+                let x_offset = if let Flip::Horizontal = flip { -8 } else { 0 };
+                (
+                    i,
+                    position.x as i32 - camera.x() + x_offset,
+                    position.y as i32 - camera.y() - 2,
+                    SpriteOptions {
+                        w,
+                        h: 2,
+                        flip,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                    Some(1),
+                    1,
+                )
+            }
             _ => (0, 0, 0, SpriteOptions::default(), None, 0),
         }
     }
@@ -235,12 +279,12 @@ impl CompanionTrail {
     /// When player moves, rotate all positions towards start of buffer, add new position end of buffer.
     pub fn push(&mut self, position: Vec2, direction: (i8, i8)) {
         assert_eq!(self.positions.len(), self.directions.len());
-        for i in 0..self.positions.len()-1 {
-            self.positions[i] = self.positions[i+1];
-            self.directions[i] = self.directions[i+1];
+        for i in 0..self.positions.len() - 1 {
+            self.positions[i] = self.positions[i + 1];
+            self.directions[i] = self.directions[i + 1];
         }
-        self.positions[self.positions.len()-1] = position;
-        self.directions[self.directions.len()-1] = direction;
+        self.positions[self.positions.len() - 1] = position;
+        self.directions[self.directions.len() - 1] = direction;
         self.walktime = self.walktime.wrapping_add(1);
     }
     /// When player stops moving, tell animations to switch to idle pose.
@@ -254,22 +298,26 @@ impl CompanionTrail {
     }
     pub fn mid(&self) -> (Vec2, (i8, i8)) {
         (
-            self.positions[self.positions.len()/2],
-            self.directions[self.directions.len()/2]
+            self.positions[self.positions.len() / 2],
+            self.directions[self.directions.len() / 2],
         )
     }
     pub fn oldest(&self) -> (Vec2, (i8, i8)) {
         (self.positions[0], self.directions[0])
     }
-    pub fn walktime(&self) -> u8 {self.walktime}
+    pub fn walktime(&self) -> u8 {
+        self.walktime
+    }
 }
 
 pub struct CompanionList {
-    pub companions: [Option<Companion>; 2]
+    pub companions: [Option<Companion>; 2],
 }
 impl CompanionList {
     pub const fn new() -> Self {
-        Self { companions: [None; 2] }
+        Self {
+            companions: [None; 2],
+        }
     }
     pub fn add(&mut self, companion: Companion) {
         if let Some(x) = self.companions.iter_mut().find(|x| x.is_none()) {
@@ -282,7 +330,11 @@ impl CompanionList {
         self.companions.contains(&Some(companion))
     }
     pub fn remove(&mut self, target: Companion) -> bool {
-        if let Some(x) = self.companions.iter_mut().find(|x| if let Some(x) = x {*x==target} else {false}) {
+        if let Some(x) =
+            self.companions
+                .iter_mut()
+                .find(|x| if let Some(x) = x { *x == target } else { false })
+        {
             *x = None;
             true
         } else {

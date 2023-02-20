@@ -36,15 +36,18 @@ pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the vi
 pub static HOUSE_STAIRWELL_PAINTING: &str = "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.";
 pub static HOUSE_STAIRWELL_DOOR: &str = "You shouldn't go in there.";
 pub static HOUSE_LIVING_ROOM_COUCH: &str = "He's busy.";
-pub static HOUSE_LIVING_ROOM_TV_1: &str = "It's a cartoon of some sort. The protagonist is still charging up his main attack.";
+pub static HOUSE_LIVING_ROOM_TV_1: &str =
+    "It's a cartoon of some sort. The protagonist is still charging up his main attack.";
 pub static HOUSE_LIVING_ROOM_TV_2: &str = "Some sort of cartoon. While the hero was charging his attack, the villain took over the world.";
 pub static HOUSE_LIVING_ROOM_TV_3: &str = "A long cartoon series. After taking over the world, the villain created global stability and happiness.";
 pub static HOUSE_LIVING_ROOM_TV_4: &str = "Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.";
 pub static HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.";
 pub static HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
-pub static HOUSE_LIVING_ROOM_WINDOW: &str = "You harbour some very strong feelings about gothic windows.\nNone of them are good.";
+pub static HOUSE_LIVING_ROOM_WINDOW: &str =
+    "You harbour some very strong feelings about gothic windows.\nNone of them are good.";
 pub static HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
-pub static HOUSE_KITCHEN_SINK: &str = "The unholy king of tacky windows. Words fail to convey your antipathy.";
+pub static HOUSE_KITCHEN_SINK: &str =
+    "The unholy king of tacky windows. Words fail to convey your antipathy.";
 pub static HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
 pub static UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
 pub static UNKNOWN_2: &str = "... Quick, recast the \"Sleep\" shell on your opponent to keep it perma-stunned! Unfair and effective!";
@@ -85,7 +88,8 @@ pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
 ];
 pub static INVENTORY_TITLE: &str = "INVENTORY\0";
 pub static ITEM_FF_NAME: &str = "French Gry";
-pub static ITEM_FF_DESC: &str = "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill.";
+pub static ITEM_FF_DESC: &str =
+    "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill.";
 pub static ITEM_CHEGG_NAME: &str = "Mystery Egg";
 pub static ITEM_CHEGG_DESC: &str = "There's something inside.";
 pub static ITEM_LM_NAME: &str = "Little Man";
@@ -104,8 +108,7 @@ pub static CONSTRUCTION_1: &str =
 pub static CONSTRUCTION_2: &str = "Looks like it's still under construction.";
 pub static EMERGENCY_EXIT: &str =
     "This is an emergency exit. It's not an emergency right now. Ergo, you cannot use the exit.";
-pub static SM_HALL_SHELF: &str =
-    "There's a single bottle of floor cleaner. And no mop.";
+pub static SM_HALL_SHELF: &str = "There's a single bottle of floor cleaner. And no mop.";
 pub static SM_HALL_WINDOW: &str = "Looks like this window has recently been painted yellow.";
 pub static EGG_1: &str = "It's floating.";
 pub static SM_STOREROOM_SHELF: &str = "They're all out of Keratin Krunch.";

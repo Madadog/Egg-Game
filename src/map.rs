@@ -1,5 +1,8 @@
-use crate::{position::{Vec2, Hitbox, touches_tile}, tic80::{mget, MapOptions}, interact::Interactable};
-
+use crate::{
+    interact::Interactable,
+    position::{touches_tile, Hitbox, Vec2},
+    tic80::{mget, MapOptions},
+};
 
 #[derive(Clone)]
 pub struct MapSet<'a> {
@@ -23,7 +26,12 @@ pub struct Warp {
 
 impl Warp {
     pub const fn new(from: Hitbox, map: Option<&'static MapSet<'static>>, to: Vec2) -> Self {
-        Self { from, map, to, flip: Axis::None }
+        Self {
+            from,
+            map,
+            to,
+            flip: Axis::None,
+        }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
     pub const fn new_tile(
@@ -40,7 +48,7 @@ impl Warp {
         )
     }
     pub const fn with_flip(self, flip: Axis) -> Self {
-        Self {flip, ..self}
+        Self { flip, ..self }
     }
     pub fn map(&'static self) -> Option<&'static MapSet<'static>> {
         self.map

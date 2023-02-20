@@ -1,16 +1,16 @@
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::dialogue_data::*;
 use crate::gamestate::Game;
-use crate::input_manager::{mem_btn, mem_btnp, any_btnpr};
-use crate::interact::{Interaction, InteractFn};
+use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
+use crate::interact::{InteractFn, Interaction};
 use crate::inventory::INVENTORY;
 use crate::map::Axis;
-use crate::{camera::Camera, map::MapSet, dialogue::Dialogue, gamestate::GameState};
-use crate::map_data::{SUPERMARKET, WILDERNESS, TEST_PEN, BEDROOM, DEFAULT_MAP_SET};
-use crate::{SYNC_HELPER, BG_COLOUR, trace, print, debug_info};
+use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
+use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::tic80::*;
 use crate::tic_helpers::*;
-use crate::player::{Player, CompanionTrail, CompanionList, Companion};
+use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
+use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
 
 pub struct WalkaroundState<'a> {
     player: Player,
@@ -43,13 +43,19 @@ impl<'a> WalkaroundState<'a> {
             music(track as i32, MusicOptions::default());
         };
         if map.bank != SYNC_HELPER.read().unwrap().last_bank() {
-            let x = SYNC_HELPER.write().unwrap().sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
+            let x = SYNC_HELPER
+                .write()
+                .unwrap()
+                .sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
             if x.is_err() {
                 let bank = map.bank;
-                trace!(format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),12);
+                trace!(
+                    format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),
+                    12
+                );
             }
         }
-    
+
         self.map_animations.clear();
         for _ in map.interactables {
             self.map_animations.push((0, 0));
@@ -72,15 +78,16 @@ impl<'a> WalkaroundState<'a> {
                     self.companion_list.add(Companion::Dog);
                     Some(DOG_OBTAINED)
                 }
-            },
-            _ => {Some(HOUSE_BACKYARD_DOGHOUSE)}
+            }
+            _ => Some(HOUSE_BACKYARD_DOGHOUSE),
         }
     }
 }
 
 impl<'a> Game for WalkaroundState<'a> {
     fn step(&mut self) -> Option<GameState> {
-        for (anim, interact) in self.map_animations
+        for (anim, interact) in self
+            .map_animations
             .iter_mut()
             .zip(self.current_map.interactables.iter())
         {
@@ -139,7 +146,7 @@ impl<'a> Game for WalkaroundState<'a> {
             }
             if mem_btnp(5) {
                 INVENTORY.write().unwrap().open();
-                return Some(GameState::Inventory)
+                return Some(GameState::Inventory);
             }
         } else {
             self.dialogue.tick(1);
@@ -156,9 +163,11 @@ impl<'a> Game for WalkaroundState<'a> {
                 interact = false;
                 self.dialogue.close();
             }
-            trace!("Attempting interact...",11);
+            trace!("Attempting interact...", 11);
         }
-        if any_btnpr() { self.player.flip_controls = Axis::None }
+        if any_btnpr() {
+            self.player.flip_controls = Axis::None
+        }
         let noclip = if key(63) && key(64) {
             dy *= 3;
             dx *= 4;
@@ -166,19 +175,20 @@ impl<'a> Game for WalkaroundState<'a> {
         } else {
             false
         };
-        
+
         let (dx, dy) = self.player.walk(dx, dy, noclip, self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
-        let interact_hitbox = self.player.hitbox().offset_xy(
-            self.player.dir.0.into(),
-            self.player.dir.1.into(),
-        );
+        let interact_hitbox = self
+            .player
+            .hitbox()
+            .offset_xy(self.player.dir.0.into(), self.player.dir.1.into());
 
         let mut warp_target = None;
         for warp in self.current_map.warps.iter() {
-            if self.player.hitbox().touches(warp.from) || (interact && interact_hitbox.touches(warp.from))
+            if self.player.hitbox().touches(warp.from)
+                || (interact && interact_hitbox.touches(warp.from))
             {
                 warp_target = Some(warp.clone());
                 break;
@@ -198,22 +208,23 @@ impl<'a> Game for WalkaroundState<'a> {
                         Interaction::Text(x) => {
                             trace!(format!("{x:?}"), 12);
                             self.dialogue.set_text(x);
-                        },
+                        }
                         Interaction::Func(x) => {
                             trace!(format!("{x:?}"), 12);
                             if let Some(dialogue) = self.execute_interact_fn(x) {
                                 self.dialogue.set_text(dialogue);
                             };
-                        },
+                        }
                         x => {
                             trace!(format!("{x:?}"), 12);
-                        },
+                        }
                     }
                 }
             }
         }
 
-        self.camera.center_on(self.player.pos.x + 4, self.player.pos.y + 8);
+        self.camera
+            .center_on(self.player.pos.x + 4, self.player.pos.y + 8);
         None
     }
     fn draw(&self) {
@@ -256,7 +267,8 @@ impl<'a> Game for WalkaroundState<'a> {
             1,
         ));
 
-        for (item, time) in self.current_map
+        for (item, time) in self
+            .current_map
             .interactables
             .iter()
             .zip(&self.map_animations)
@@ -285,26 +297,14 @@ impl<'a> Game for WalkaroundState<'a> {
             }
         }
 
-        sprites.sort_by(|a, b| (a.2+a.3.h*8)
-            .partial_cmp(&(b.2+b.3.h*8)).unwrap());
-        
+        sprites.sort_by(|a, b| (a.2 + a.3.h * 8).partial_cmp(&(b.2 + b.3.h * 8)).unwrap());
+
         for options in sprites {
             palette_map_rotate(options.5);
             if let Some(outline) = options.4 {
-                spr_outline(
-                    options.0,
-                    options.1,
-                    options.2,
-                    options.3,
-                    outline,
-                );
+                spr_outline(options.0, options.1, options.2, options.3, outline);
             } else {
-                spr(
-                    options.0,
-                    options.1,
-                    options.2,
-                    options.3,
-                );
+                spr(options.0, options.1, options.2, options.3);
             }
         }
 

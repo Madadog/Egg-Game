@@ -37,10 +37,7 @@ impl<'a> AnimFrame<'a> {
         }
     }
     pub const fn with_outline(self, outline: Option<u8>) -> Self {
-        Self {
-            outline,
-            ..self
-        }
+        Self { outline, ..self }
     }
     pub fn const_default() -> Self {
         Self {

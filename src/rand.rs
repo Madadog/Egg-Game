@@ -159,7 +159,7 @@ impl Lcg64Xsh32 {
         let xsh = (((state >> XSHIFT) ^ state) >> SPARE) as u32;
         xsh.rotate_right(rot)
     }
-/*
+    /*
     #[inline]
     fn next_u64(&mut self) -> u64 {
         impls::next_u64_via_u32(self)

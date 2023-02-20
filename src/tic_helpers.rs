@@ -1,16 +1,16 @@
 // Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
-// 
+//
 // This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
-// 
+//
 // This program is free software: you can redistribute it and/or modify it under
 // the terms of the GNU General Public License as published by the Free Software
 // Foundation, either version 3 of the License, or (at your option) any later
 // version.
-// 
+//
 // This program is distributed in the hope that it will be useful, but WITHOUT
 // ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 // FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
@@ -194,7 +194,10 @@ pub struct SyncHelper {
 
 impl SyncHelper {
     pub const fn new() -> Self {
-        SyncHelper { synced: false, last_bank: 0 }
+        SyncHelper {
+            synced: false,
+            last_bank: 0,
+        }
     }
     pub fn step(&mut self) {
         self.synced = false;
@@ -211,16 +214,21 @@ impl SyncHelper {
     /// * flags   = 1<<6 -- 64
     /// * screen  = 1<<7 -- 128 (as of 0.90)
     pub fn sync(&mut self, mask: i32, bank: u8) -> Result<(), ()> {
-        if self.synced {Err(())}
-        else {
+        if self.synced {
+            Err(())
+        } else {
             self.synced = true;
             self.last_bank = bank;
             unsafe { sync(mask, bank, false) };
             Ok(())
         }
     }
-    pub fn is_synced(&self) -> bool {self.synced}
-    pub fn last_bank(&self) -> u8 {self.last_bank}
+    pub fn is_synced(&self) -> bool {
+        self.synced
+    }
+    pub fn last_bank(&self) -> u8 {
+        self.last_bank
+    }
 }
 
 pub const SWEETIE_16: [[u8; 3]; 16] = [

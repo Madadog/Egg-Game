@@ -44,7 +44,6 @@ impl<'a> Interactable<'a> {
     }
 }
 
-
 #[derive(Debug)]
 pub enum InteractFn {
     ToggleDog,

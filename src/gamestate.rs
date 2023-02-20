@@ -19,8 +19,8 @@ use std::sync::RwLock;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::inventory::{InventoryUiState, INVENTORY};
 use crate::position::{Hitbox, Vec2};
-use crate::{tic80::*, WALKAROUND_STATE};
 use crate::rand;
+use crate::{tic80::*, WALKAROUND_STATE};
 
 use crate::tic_helpers::*;
 
@@ -40,8 +40,7 @@ impl GameState {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || get_pmem(0) != 0)
-                && any_btnp() {
+                if (*i > 60 || get_pmem(0) != 0) && any_btnp() {
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
@@ -58,8 +57,12 @@ impl GameState {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
-                if mem_btn(4) { *x += 1; }
-                if mem_btn(5) { *x += 1000; }
+                if mem_btn(4) {
+                    *x += 1;
+                }
+                if mem_btn(5) {
+                    *x += 1000;
+                }
                 if draw_animation(*x) {
                     *x += 1;
                 } else {
@@ -70,7 +73,7 @@ impl GameState {
                 match state.step_main_menu() {
                     Some(MainMenuOption::Play) => *self = Self::Instructions(0),
                     Some(MainMenuOption::Options) => *self = Self::Options(MenuState::new()),
-                    None => { state.draw_main_menu() }
+                    None => state.draw_main_menu(),
                 };
             }
             Self::Options(state) => {
@@ -93,7 +96,9 @@ impl GameState {
 }
 
 pub trait Game {
-    fn step(&mut self) -> Option<GameState> { None }
+    fn step(&mut self) -> Option<GameState> {
+        None
+    }
     fn draw(&self);
 }
 
@@ -101,9 +106,7 @@ pub fn step_walkaround() -> Option<GameState> {
     None
 }
 
-pub fn draw_walkaround() {
-
-}
+pub fn draw_walkaround() {}
 
 pub fn draw_instructions() {
     cls(0);
@@ -211,7 +214,6 @@ pub fn draw_animation(t: u16) -> bool {
     }
 }
 
-
 static MENU_STATE: RwLock<MenuState> = RwLock::new(MenuState::new());
 
 pub struct MenuState {
@@ -220,7 +222,10 @@ pub struct MenuState {
 }
 impl MenuState {
     pub const fn new() -> Self {
-        Self { index: 0, reset_protector: 0 }
+        Self {
+            index: 0,
+            reset_protector: 0,
+        }
     }
     pub fn step_main_menu(&mut self) -> Option<MainMenuOption> {
         let (menu_index, clicked) = step_menu(2, 88, &mut self.index);
@@ -237,9 +242,9 @@ impl MenuState {
     pub fn draw_main_menu(&self) {
         use crate::dialogue_data::{MENU_OPTIONS, MENU_PLAY};
         cls(0);
-    
+
         draw_title(120, 50);
-    
+
         let strings = [MENU_PLAY, MENU_OPTIONS];
         let current_option = self.index;
         draw_menu(&strings, 120, 88, current_option);
@@ -274,23 +279,18 @@ impl MenuState {
         }
         true
     }
-    
+
     pub fn draw_options(&self) {
         cls(0);
         use crate::dialogue_data::{
-            MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET,
-            OPTIONS_RESET_SURE,
+            MENU_BACK, OPTIONS_FONT_SIZE, OPTIONS_LOSE_DATA, OPTIONS_RESET, OPTIONS_RESET_SURE,
         };
         let reset_string = if self.reset_protector == 0 {
             OPTIONS_RESET
         } else {
             OPTIONS_RESET_SURE
         };
-        let strings = [
-            MENU_BACK,
-            OPTIONS_FONT_SIZE,
-            reset_string,
-        ];
+        let strings = [MENU_BACK, OPTIONS_FONT_SIZE, reset_string];
         let current_option = self.index;
         if current_option == 2 {
             rect(60, 10, 120, 11, 2);
@@ -305,14 +305,13 @@ impl MenuState {
             );
         }
         draw_menu(&strings, 120, 40, current_option);
-    }    
+    }
 }
 
 pub enum MainMenuOption {
     Play,
     Options,
 }
-
 
 pub fn draw_menu(entries: &[&str], x: i32, y: i32, current_option: usize) {
     for (i, string) in entries.iter().enumerate() {
@@ -386,7 +385,7 @@ pub fn draw_title(x: i32, y: i32) {
             color: 13,
             small_text: true,
             ..Default::default()
-        }
+        },
     );
 
     rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);

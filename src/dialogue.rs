@@ -16,7 +16,7 @@
 
 use std::sync::RwLock;
 
-use crate::{print_alloc, PrintOptions, tic80::SpriteOptions};
+use crate::{print_alloc, tic80::SpriteOptions, PrintOptions};
 
 pub struct DialogueOptions {
     pub fixed: RwLock<bool>,
@@ -31,9 +31,15 @@ impl DialogueOptions {
             box_width: RwLock::new(200),
         }
     }
-    pub fn fixed(&self) -> bool { *self.fixed.read().unwrap() }
-    pub fn small_text(&self) -> bool { *self.small_text.read().unwrap() }
-    pub fn box_width(&self) -> usize { *self.box_width.read().unwrap() }
+    pub fn fixed(&self) -> bool {
+        *self.fixed.read().unwrap()
+    }
+    pub fn small_text(&self) -> bool {
+        *self.small_text.read().unwrap()
+    }
+    pub fn box_width(&self) -> usize {
+        *self.box_width.read().unwrap()
+    }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
         *self.fixed.write().unwrap() = fixed;
         *self.small_text.write().unwrap() = small_text;
@@ -67,7 +73,9 @@ impl Dialogue {
             width: 200,
         }
     }
-    pub fn with_width(self, width: usize) -> Self { Self { width, ..self }}
+    pub fn with_width(self, width: usize) -> Self {
+        Self { width, ..self }
+    }
     pub fn is_done(&self) -> bool {
         match &self.text {
             Some(text) => self.timer == text.len(),
@@ -80,9 +88,9 @@ impl Dialogue {
     }
     pub fn fit_text(&self, string: &str) -> String {
         fit_default_paragraph(string, self.wrap_width())
-    } 
+    }
     pub fn wrap_width(&self) -> usize {
-        self.width-3
+        self.width - 3
     }
     pub fn close(&mut self) {
         self.text = None;
@@ -105,27 +113,64 @@ impl Dialogue {
             *text = fit_default_paragraph(text, width);
         }
     }
-    pub fn draw_dialogue_portrait(&self, string: &str, timer: bool, portrait: i32, scale: i32, sw: i32, sh: i32) {
-        use crate::{WIDTH, HEIGHT, spr};
+    pub fn draw_dialogue_portrait(
+        &self,
+        string: &str,
+        timer: bool,
+        portrait: i32,
+        scale: i32,
+        sw: i32,
+        sh: i32,
+    ) {
         use crate::tic_helpers::rect_outline;
+        use crate::{spr, HEIGHT, WIDTH};
 
         let w = self.width as i32;
         let h = 24;
         self.draw_dialogue_box_with_offset(string, timer, 14, -2, 4);
-        rect_outline((WIDTH - w) / 2-13, (HEIGHT - h) - 6, h+4, h+4, 0, 3);
-        spr(portrait, (WIDTH - w) / 2-13+2, (HEIGHT - h) - 6+2, SpriteOptions {scale, transparent: &[0], w: sw, h: sh, ..Default::default()});
+        rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
+        spr(
+            portrait,
+            (WIDTH - w) / 2 - 13 + 2,
+            (HEIGHT - h) - 6 + 2,
+            SpriteOptions {
+                scale,
+                transparent: &[0],
+                w: sw,
+                h: sh,
+                ..Default::default()
+            },
+        );
     }
 
-    pub fn draw_dialogue_box_with_offset(&self, string: &str, timer: bool, x: i32, y: i32, height: i32) {
-        use crate::{WIDTH, HEIGHT};
+    pub fn draw_dialogue_box_with_offset(
+        &self,
+        string: &str,
+        timer: bool,
+        x: i32,
+        y: i32,
+        height: i32,
+    ) {
         use crate::tic_helpers::rect_outline;
+        use crate::{HEIGHT, WIDTH};
 
         let print_timer = self.timer;
         let w = self.width as i32;
         let h = 24;
-        rect_outline((WIDTH - w) / 2 + x, (HEIGHT - h) - 4 + y, w, h+height, 2, 3);
+        rect_outline(
+            (WIDTH - w) / 2 + x,
+            (HEIGHT - h) - 4 + y,
+            w,
+            h + height,
+            2,
+            3,
+        );
         print_alloc(
-            if timer {&string[..(print_timer)]} else {string},
+            if timer {
+                &string[..(print_timer)]
+            } else {
+                string
+            },
             (WIDTH - w) / 2 + 3 + x,
             (HEIGHT - h) - 4 + 3 + y,
             PrintOptions {
@@ -138,8 +183,6 @@ impl Dialogue {
         self.draw_dialogue_box_with_offset(string, timer, 0, 0, 0)
     }
 }
-
-
 
 pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
     print_alloc(
@@ -197,5 +240,10 @@ pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: b
 }
 
 pub fn fit_default_paragraph(string: &str, wrap_width: usize) -> String {
-    fit_paragraph(string, wrap_width, DIALOGUE_OPTIONS.fixed(), DIALOGUE_OPTIONS.small_text())
+    fit_paragraph(
+        string,
+        wrap_width,
+        DIALOGUE_OPTIONS.fixed(),
+        DIALOGUE_OPTIONS.small_text(),
+    )
 }

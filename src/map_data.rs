@@ -47,8 +47,8 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
 
 pub static SUPERMARKET: MapSet<'static> = MapSet {
     maps: &[
+        //bg
         MapOptions {
-            //bg
             x: 60,
             y: 17,
             w: 26,
@@ -56,8 +56,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
+        //fruit stand
         MapOptions {
-            //fruit stand
             x: 61,
             y: 29,
             w: 3,
@@ -67,8 +67,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sy: 8 * 8,
             scale: 1,
         },
+        //vending machines
         MapOptions {
-            //vending machines
             x: 70,
             y: 29,
             w: 4,
@@ -78,8 +78,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sy: 4 * 8,
             scale: 1,
         },
+        //counter
         MapOptions {
-            //counter
             x: 60,
             y: 31,
             w: 8,
@@ -89,8 +89,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sy: 4 * 8,
             scale: 1,
         },
+        //top vending machine
         MapOptions {
-            //top vending machine
             x: 68,
             y: 29,
             w: 2,
@@ -104,7 +104,11 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
     warps: &[
         Warp::new_tile(17, 4, Some(&SUPERMARKET_HALL), 9, 4),
         Warp::new_tile(8, 4, Some(&SUPERMARKET_HALL), 3, 4),
-        Warp::new(Hitbox::new(11*8,11*8,3*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(4*8,9*8)),
+        Warp::new(
+            Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
+            Some(&HOUSE_LIVING_ROOM),
+            Vec2::new(4 * 8, 9 * 8),
+        ),
     ],
     interactables: &[
         Interactable {
@@ -150,8 +154,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
 
 pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
     maps: &[
+        //bg
         MapOptions {
-            //bg
             x: 86,
             y: 17,
             w: 13,
@@ -159,8 +163,8 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             transparent: &[0],
             ..DEFAULT_MAP
         },
+        //closet
         MapOptions {
-            //closet
             x: 87,
             y: 24,
             w: 3,
@@ -170,8 +174,8 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             sy: 0,
             scale: 1,
         },
+        //diagonal door
         MapOptions {
-            //diagonal door
             x: 86,
             y: 24,
             w: 1,
@@ -259,15 +263,13 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
 };
 
 pub static TEST_PEN: MapSet<'static> = MapSet {
-    maps: &[
-        MapOptions {
-            x: 53,
-            y: 17,
-            w: 7,
-            h: 9,
-            ..DEFAULT_MAP
-        },
-    ],
+    maps: &[MapOptions {
+        x: 53,
+        y: 17,
+        w: 7,
+        h: 9,
+        ..DEFAULT_MAP
+    }],
     warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
@@ -287,14 +289,16 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
 
 pub static BEDROOM: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //room
+        //room
+        MapOptions {
             x: 30,
             y: 0,
             w: 21,
             h: 10,
             ..DEFAULT_MAP
         },
-        MapOptions { //trolley
+        //trolley
+        MapOptions {
             x: 30,
             y: 10,
             w: 3,
@@ -304,7 +308,8 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             sy: 22,
             ..DEFAULT_MAP
         },
-        MapOptions { //mattress
+        //mattress
+        MapOptions {
             x: 37,
             y: 10,
             w: 3,
@@ -318,22 +323,22 @@ pub static BEDROOM: MapSet<'static> = MapSet {
     warps: &[Warp::new_tile(17, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(38, 27, 3*8, 2*8),
+            hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
             interaction: Interaction::Text(BEDROOM_MATTRESS),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(2*8, 4*8, 2*8, 4*8),
+            hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8),
             interaction: Interaction::Text(BEDROOM_CLOSET),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(101, 22, 3*8, 2*8),
+            hitbox: Hitbox::new(101, 22, 3 * 8, 2 * 8),
             interaction: Interaction::Text(BEDROOM_TROLLEY),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(10*8, 3*8, 8, 8),
+            hitbox: Hitbox::new(10 * 8, 3 * 8, 8, 8),
             interaction: Interaction::Text(BEDROOM_WINDOW),
             sprite: None,
         },
@@ -343,14 +348,16 @@ pub static BEDROOM: MapSet<'static> = MapSet {
 
 pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //room
+        //room
+        MapOptions {
             x: 51,
             y: 0,
             w: 16,
             h: 9,
             ..DEFAULT_MAP
         },
-        MapOptions { //left door
+        //left door
+        MapOptions {
             x: 41,
             y: 10,
             w: 1,
@@ -360,7 +367,8 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             sy: 7,
             ..DEFAULT_MAP
         },
-        MapOptions { //right door
+        //right door
+        MapOptions {
             x: 40,
             y: 10,
             w: 1,
@@ -371,26 +379,36 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(1,3*8,8,8),Some(&BEDROOM),Vec2::new(16*8,5*8)),
-             Warp::new(Hitbox::new(7*8,9*8,2*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(21*4,4*8))],
+    warps: &[
+        Warp::new(
+            Hitbox::new(1, 3 * 8, 8, 8),
+            Some(&BEDROOM),
+            Vec2::new(16 * 8, 5 * 8),
+        ),
+        Warp::new(
+            Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
+            Some(&HOUSE_LIVING_ROOM),
+            Vec2::new(21 * 4, 4 * 8),
+        ),
+    ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(2*8, 2*8, 8, 8),
+            hitbox: Hitbox::new(2 * 8, 2 * 8, 8, 8),
             interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(7*8, 4*8, 2*8, 8),
+            hitbox: Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8),
             interaction: Interaction::Text(HOUSE_STAIRWELL_PAINTING),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(13*8, 2*8, 8, 8),
+            hitbox: Hitbox::new(13 * 8, 2 * 8, 8, 8),
             interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW2),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(15*8, 3*8, 8, 8),
+            hitbox: Hitbox::new(15 * 8, 3 * 8, 8, 8),
             interaction: Interaction::Text(HOUSE_STAIRWELL_DOOR),
             sprite: None,
         },
@@ -400,91 +418,131 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
 
 pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //room
+        //room
+        MapOptions {
             x: 67,
             y: 0,
             w: 23,
             h: 13,
             ..DEFAULT_MAP
         },
-        MapOptions { //couch
+        //couch
+        MapOptions {
             x: 37,
             y: 14,
             w: 4,
             h: 2,
             transparent: &[0],
-            sx: 12*8+2,
-            sy: 8*8,
+            sx: 12 * 8 + 2,
+            sy: 8 * 8,
             ..DEFAULT_MAP
         },
-        MapOptions { //tv
+        //tv
+        MapOptions {
             x: 41,
             y: 15,
             w: 2,
             h: 1,
             transparent: &[0],
-            sx: 15*8+2,
-            sy: 11*8-1,
+            sx: 15 * 8 + 2,
+            sy: 11 * 8 - 1,
             ..DEFAULT_MAP
         },
     ],
     fg_maps: &[
-        MapOptions { //tv
+        //tv
+        MapOptions {
             x: 41,
             y: 13,
             w: 2,
             h: 3,
             transparent: &[0],
-            sx: 15*8+2,
-            sy: 9*8-1,
+            sx: 15 * 8 + 2,
+            sy: 9 * 8 - 1,
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(10*8,4*8,2*8,8),Some(&HOUSE_STAIRWELL),Vec2::new(15*4,7*8)),
-        Warp::new(Hitbox::new(3*8,9*8,8,8),Some(&SUPERMARKET),Vec2::new(14*8,5*8)),
-        Warp::new(Hitbox::new(14*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(7*4,7*8)),
+    warps: &[
+        Warp::new(
+            Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
+            Some(&HOUSE_STAIRWELL),
+            Vec2::new(15 * 4, 7 * 8),
+        ),
+        Warp::new(
+            Hitbox::new(3 * 8, 9 * 8, 8, 8),
+            Some(&SUPERMARKET),
+            Vec2::new(14 * 8, 5 * 8),
+        ),
+        Warp::new(
+            Hitbox::new(14 * 8, 5 * 8, 8, 8),
+            Some(&HOUSE_KITCHEN),
+            Vec2::new(7 * 4, 7 * 8),
+        ),
     ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(12*8+2, 7*8, 3*8, 3*8),
+            hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(15*8+2, 10*8-1, 2*8, 2*8),
+            hitbox: Hitbox::new(15 * 8 + 2, 10 * 8 - 1, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(5*8, 6*8, 2*8, 2*8),
+            hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_WINDOW),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(8*8, 6*8, 8, 8),
+            hitbox: Hitbox::new(8 * 8, 6 * 8, 8, 8),
             interaction: Interaction::Text(CONSTRUCTION_2),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(12*8+2, 7*8, 1, 1),
+            hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: Some(Animation {
-                frames: &[
-                    AnimFrame::new(Vec2::new(0, 0), 35, 30, SpriteOptions {w: 3, h: 2,
-                        ..SpriteOptions::transparent_zero()}).with_outline(None),
-                ],
+                frames: &[AnimFrame::new(
+                    Vec2::new(0, 0),
+                    35,
+                    30,
+                    SpriteOptions {
+                        w: 3,
+                        h: 2,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                )
+                .with_outline(None)],
                 ..Animation::const_default()
             }),
         },
         Interactable {
-            hitbox: Hitbox::new(12*8+9, 7*8, 8, 8),
+            hitbox: Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: Some(Animation {
                 frames: &[
-                    AnimFrame::new(Vec2::new(0, 0), 576, 30, SpriteOptions {w: 2, h: 3,
-                        ..SpriteOptions::transparent_zero()}),
-                    AnimFrame::new(Vec2::new(0, 0), 578, 30, SpriteOptions {w: 2, h: 3,
-                        ..SpriteOptions::transparent_zero()}),
+                    AnimFrame::new(
+                        Vec2::new(0, 0),
+                        576,
+                        30,
+                        SpriteOptions {
+                            w: 2,
+                            h: 3,
+                            ..SpriteOptions::transparent_zero()
+                        },
+                    ),
+                    AnimFrame::new(
+                        Vec2::new(0, 0),
+                        578,
+                        30,
+                        SpriteOptions {
+                            w: 2,
+                            h: 3,
+                            ..SpriteOptions::transparent_zero()
+                        },
+                    ),
                 ],
                 ..Animation::const_default()
             }),
@@ -494,39 +552,51 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
 };
 pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //room
+        //room
+        MapOptions {
             x: 90,
             y: 0,
             w: 13,
             h: 10,
             ..DEFAULT_MAP
         },
-        MapOptions { //microwave
+        //microwave
+        MapOptions {
             x: 37,
             y: 12,
             w: 2,
             h: 1,
-            sx: 7*8+6,
-            sy: 4*8-3,
+            sx: 7 * 8 + 6,
+            sy: 4 * 8 - 3,
             transparent: &[0],
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(2*8,8*8+7,4*8,8),Some(&HOUSE_LIVING_ROOM),Vec2::new(14*8,5*8)),
-    Warp::new(Hitbox::new(11*8,4*8,8,3*8),Some(&BACKYARD),Vec2::new(15*8,5*8))],
+    warps: &[
+        Warp::new(
+            Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
+            Some(&HOUSE_LIVING_ROOM),
+            Vec2::new(14 * 8, 5 * 8),
+        ),
+        Warp::new(
+            Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
+            Some(&BACKYARD),
+            Vec2::new(15 * 8, 5 * 8),
+        ),
+    ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(2*8, 4*8, 2*8, 2*8),
+            hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_KITCHEN_CUPBOARD),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(5*8, 4*8, 5*4, 2*8),
+            hitbox: Hitbox::new(5 * 8, 4 * 8, 5 * 4, 2 * 8),
             interaction: Interaction::Text(HOUSE_KITCHEN_SINK),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(16*4, 4*8, 2*8, 2*8),
+            hitbox: Hitbox::new(16 * 4, 4 * 8, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_KITCHEN_MICROWAVE),
             sprite: None,
         },
@@ -536,37 +606,50 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
 
 pub static BACKYARD: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //room
+        //room
+        MapOptions {
             x: 120,
             y: 0,
             ..DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(15*8,5*8,8,8),Some(&HOUSE_KITCHEN),Vec2::new(10*8-3,5*8+3)).with_flip(Axis::Y),
-             Warp::new(Hitbox::new(12*8,16*8+7,4*8,8),Some(&WILDERNESS),Vec2::new(8*8,61*8)).with_flip(Axis::Y)],
+    warps: &[
+        Warp::new(
+            Hitbox::new(15 * 8, 5 * 8, 8, 8),
+            Some(&HOUSE_KITCHEN),
+            Vec2::new(10 * 8 - 3, 5 * 8 + 3),
+        )
+        .with_flip(Axis::Y),
+        Warp::new(
+            Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
+            Some(&WILDERNESS),
+            Vec2::new(8 * 8, 61 * 8),
+        )
+        .with_flip(Axis::Y),
+    ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(9*8, 5*8, 2*8, 2*8),
+            hitbox: Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_BACKYARD_BASEMENT),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(20*8, 8*8, 1*8, 2*8),
+            hitbox: Hitbox::new(20 * 8, 8 * 8, 1 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_BACKYARD_SHED),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(21*8, 13*8, 1*8, 1*8),
+            hitbox: Hitbox::new(21 * 8, 13 * 8, 1 * 8, 1 * 8),
             interaction: Interaction::Func(InteractFn::ToggleDog),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(5*8, 0, 1*8, 16*8),
+            hitbox: Hitbox::new(5 * 8, 0, 1 * 8, 16 * 8),
             interaction: Interaction::Text(HOUSE_BACKYARD_STORMDRAIN),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(3, 2*8, 8, 8),
+            hitbox: Hitbox::new(3, 2 * 8, 8, 8),
             interaction: Interaction::Text(DEFAULT),
             sprite: Some(Animation {
                 frames: &[
@@ -582,47 +665,56 @@ pub static BACKYARD: MapSet<'static> = MapSet {
 
 pub static WILDERNESS: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //ground
+        //ground
+        MapOptions {
             x: 120,
             y: 68,
-            w: 30*4,
-            h: 17*4,
+            w: 30 * 4,
+            h: 17 * 4,
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions { //left barrier
+        //left barrier
+        MapOptions {
             x: 120,
             y: 78,
             w: 1,
             h: 22,
             transparent: &[0],
             sx: -8,
-            sy: 37*8,
+            sy: 37 * 8,
             ..DEFAULT_MAP
         },
-        MapOptions { //bottom barrier
+        //bottom barrier
+        MapOptions {
             x: 120,
             y: 72,
             w: 23,
             h: 1,
             transparent: &[0],
-            sx: 17*8,
-            sy: 68*8,
+            sx: 17 * 8,
+            sy: 68 * 8,
             ..DEFAULT_MAP
         },
     ],
     fg_maps: &[
-        MapOptions { //foreground
+        //foreground
+        MapOptions {
             x: 120,
             y: 0,
-            w: 30*4,
-            h: 17*4,
+            w: 30 * 4,
+            h: 17 * 4,
             transparent: &[0],
             ..DEFAULT_MAP
-        }
+        },
     ],
     bg_colour: 3,
-    warps: &[Warp::new(Hitbox::new(7*8,63*8+4,2*8,8),Some(&BACKYARD),Vec2::new(14*8-4,15*8)).with_flip(Axis::Y)],
+    warps: &[Warp::new(
+        Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
+        Some(&BACKYARD),
+        Vec2::new(14 * 8 - 4, 15 * 8),
+    )
+    .with_flip(Axis::Y)],
     interactables: &[],
     bank: 1,
     ..DEFAULT_MAP_SET
@@ -638,39 +730,132 @@ const VENDING_MACHINE_MAP: MapOptions = MapOptions {
 };
 pub static DISPLACEMENT_TEST_MAP: MapSet<'static> = MapSet {
     maps: &[
-        MapOptions { //ground
+        //ground
+        MapOptions {
             x: 120,
             y: 68,
-            w: 30*4,
-            h: 17*4,
+            w: 30 * 4,
+            h: 17 * 4,
             transparent: &[0],
             ..DEFAULT_MAP
         },
-        MapOptions { sx: 0, sy: 0, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 1*16, sy: 1, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 2*16, sy: 2, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 3*16, sy: 3, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 4*16, sy: 4, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 5*16, sy: 5, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 6*16, sy: 6, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 7*16, sy: 7, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 8*16, sy: 8, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 9*16, sy: 9, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 10*16, sy: 10, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 11*16, sy: 11, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 12*16, sy: 12, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 13*16, sy: 13, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 14*16, sy: 14, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 15*16, sy: 15, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 16*16, sy: 16, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 17*16, sy: 17, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 18*16, sy: 18, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 19*16, sy: 19, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 20*16, sy: 20, ..VENDING_MACHINE_MAP },
-        MapOptions { sx: 21*16, sy: 21, ..VENDING_MACHINE_MAP },
+        MapOptions {
+            sx: 0,
+            sy: 0,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 1 * 16,
+            sy: 1,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 2 * 16,
+            sy: 2,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 3 * 16,
+            sy: 3,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 4 * 16,
+            sy: 4,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 5 * 16,
+            sy: 5,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 6 * 16,
+            sy: 6,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 7 * 16,
+            sy: 7,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 8 * 16,
+            sy: 8,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 9 * 16,
+            sy: 9,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 10 * 16,
+            sy: 10,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 11 * 16,
+            sy: 11,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 12 * 16,
+            sy: 12,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 13 * 16,
+            sy: 13,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 14 * 16,
+            sy: 14,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 15 * 16,
+            sy: 15,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 16 * 16,
+            sy: 16,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 17 * 16,
+            sy: 17,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 18 * 16,
+            sy: 18,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 19 * 16,
+            sy: 19,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 20 * 16,
+            sy: 20,
+            ..VENDING_MACHINE_MAP
+        },
+        MapOptions {
+            sx: 21 * 16,
+            sy: 21,
+            ..VENDING_MACHINE_MAP
+        },
     ],
     bg_colour: 0,
-    warps: &[Warp::new(Hitbox::new(7*8,63*8+4,2*8,8),Some(&BACKYARD),Vec2::new(14*8,13*8))],
+    warps: &[Warp::new(
+        Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
+        Some(&BACKYARD),
+        Vec2::new(14 * 8, 13 * 8),
+    )],
     interactables: &[],
     ..DEFAULT_MAP_SET
 };

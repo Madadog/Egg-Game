@@ -2,13 +2,29 @@ use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
 
-use crate::{dialogue_data::*, tic_helpers::{print_raw_centered, spr_blit_segment}, dialogue::Dialogue};
+use crate::{
+    dialogue::Dialogue,
+    dialogue_data::*,
+    tic_helpers::{print_raw_centered, spr_blit_segment},
+};
 
-static ITEM_FF: InventoryItem = InventoryItem {sprite: 513, name: ITEM_FF_NAME, desc: ITEM_FF_DESC};
-static ITEM_LM: InventoryItem = InventoryItem {sprite: 514, name: ITEM_LM_NAME, desc: ITEM_LM_DESC};
-static ITEM_CHEGG: InventoryItem = InventoryItem {sprite: 524, name: ITEM_CHEGG_NAME, desc: ITEM_CHEGG_DESC};
+static ITEM_FF: InventoryItem = InventoryItem {
+    sprite: 513,
+    name: ITEM_FF_NAME,
+    desc: ITEM_FF_DESC,
+};
+static ITEM_LM: InventoryItem = InventoryItem {
+    sprite: 514,
+    name: ITEM_LM_NAME,
+    desc: ITEM_LM_DESC,
+};
+static ITEM_CHEGG: InventoryItem = InventoryItem {
+    sprite: 524,
+    name: ITEM_CHEGG_NAME,
+    desc: ITEM_CHEGG_DESC,
+};
 
-pub static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| { InventoryUi::new() }));
+pub static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| InventoryUi::new()));
 
 #[derive(Debug)]
 pub struct InventoryItem<'a> {
@@ -29,7 +45,16 @@ pub struct Inventory<'a> {
 impl<'a> Inventory<'a> {
     pub fn new() -> Self {
         Self {
-            items: [Some(&ITEM_FF), Some(&ITEM_LM), Some(&ITEM_CHEGG), None, None, None, None, None],
+            items: [
+                Some(&ITEM_FF),
+                Some(&ITEM_LM),
+                Some(&ITEM_CHEGG),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             unlocks: [false; 4],
         }
     }
@@ -80,19 +105,29 @@ impl<'a> InventoryUiState<'a> {
     pub fn arrows(&mut self, dx: i32, dy: i32) {
         match self {
             Self::PageSelect(i) => {
-                *i = (*i+dy%2).clamp(0, 1);
-                if dx == 1 {self.change()};
-            },
+                *i = (*i + dy % 2).clamp(0, 1);
+                if dx == 1 {
+                    self.change()
+                };
+            }
             Self::Items(i, _) => {
-                if (*i == 0 || *i == 4) && dx == -1 {self.back(); return};
-                let dx = if *i == 3 {dx.min(0)} else {dx};
+                if (*i == 0 || *i == 4) && dx == -1 {
+                    self.back();
+                    return;
+                };
+                let dx = if *i == 3 { dx.min(0) } else { dx };
                 let new = *i as i32 + dx + dy * 4;
-                if (0..8).contains(&new) { *i = new as usize; };
-            },
+                if (0..8).contains(&new) {
+                    *i = new as usize;
+                };
+            }
             Self::Eggs(i) => {
-                if *i == 0 && dx == -1 {self.back(); return};
+                if *i == 0 && dx == -1 {
+                    self.back();
+                    return;
+                };
                 *i = (*i as i32 + dx).clamp(0, 3) as usize;
-            },
+            }
             _ => (),
         }
     }
@@ -122,9 +157,9 @@ impl<'a> InventoryUi<'a> {
                     // Put item back down
                     if old_index == new_index {
                         *selected_item = None;
-                        return
+                        return;
                     };
-                    // Swap items, pick up swapped item if present. 
+                    // Swap items, pick up swapped item if present.
                     self.inventory.swap(*new_index, *old_index);
                     if let Some(Some(x)) = self.inventory.items.get(*old_index) {
                         *id = *x;
@@ -137,94 +172,230 @@ impl<'a> InventoryUi<'a> {
                         *selected_item = Some((*new_index, *x));
                     };
                 }
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
     pub fn draw(&self) {
-        use crate::tic80::{rect, rectb, cls, print_raw, spr, PrintOptions, WIDTH, HEIGHT, SpriteOptions};
+        use crate::tic80::{
+            cls, print_raw, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
+        };
         use crate::tic_helpers::{rect_outline, spr_outline};
         let side_column = 32;
         let column_margin = 2;
         let scale = 2;
-        let item_slot_size = scale*8+5;
-        let main_width = item_slot_size*4+5;
+        let item_slot_size = scale * 8 + 5;
+        let main_width = item_slot_size * 4 + 5;
         let total_width = main_width + side_column + column_margin;
-        let total_height = item_slot_size*2+5;
-        let x_offset = (WIDTH - total_width)/2;
-        let y_offset = (HEIGHT - total_height)/2;
+        let total_height = item_slot_size * 2 + 5;
+        let x_offset = (WIDTH - total_width) / 2;
+        let y_offset = (HEIGHT - total_height) / 2;
         let mut column_colour = 0;
         let mut main_colour = 0;
         match self.state {
-            InventoryUiState::PageSelect(_) => {column_colour += 2},
-            _ => {main_colour += 2;},
+            InventoryUiState::PageSelect(_) => column_colour += 2,
+            _ => {
+                main_colour += 2;
+            }
         };
         cls(0);
-        print_raw_centered(crate::dialogue_data::INVENTORY_TITLE, 120, 37, PrintOptions {color: 12, ..Default::default()});
+        print_raw_centered(
+            crate::dialogue_data::INVENTORY_TITLE,
+            120,
+            37,
+            PrintOptions {
+                color: 12,
+                ..Default::default()
+            },
+        );
         // draw side selection
-        rect_outline(x_offset, y_offset, side_column, 21, column_colour, column_colour+1);
-        rect(x_offset+1,y_offset+8*self.state.page()+3,side_column-2,7,column_colour+1);
-        print_raw("Items\0", x_offset+2, y_offset+4, PrintOptions {color: 12, ..Default::default()});
-        print_raw("Shell\0", x_offset+2, y_offset+8+4, PrintOptions {color: 12, ..Default::default()});
+        rect_outline(
+            x_offset,
+            y_offset,
+            side_column,
+            21,
+            column_colour,
+            column_colour + 1,
+        );
+        rect(
+            x_offset + 1,
+            y_offset + 8 * self.state.page() + 3,
+            side_column - 2,
+            7,
+            column_colour + 1,
+        );
+        print_raw(
+            "Items\0",
+            x_offset + 2,
+            y_offset + 4,
+            PrintOptions {
+                color: 12,
+                ..Default::default()
+            },
+        );
+        print_raw(
+            "Shell\0",
+            x_offset + 2,
+            y_offset + 8 + 4,
+            PrintOptions {
+                color: 12,
+                ..Default::default()
+            },
+        );
         match self.state.page() {
             0 => {
-                rect_outline(x_offset + side_column + column_margin,y_offset, main_width, total_height, main_colour, main_colour+1);
+                rect_outline(
+                    x_offset + side_column + column_margin,
+                    y_offset,
+                    main_width,
+                    total_height,
+                    main_colour,
+                    main_colour + 1,
+                );
                 for (i, item) in (0..).zip(self.inventory.items.iter()) {
                     let (sx, sy) = (
-                        x_offset + side_column + column_margin + 3 + (i%4)*item_slot_size,
-                        y_offset + 3 + (i/4)*item_slot_size,
+                        x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
+                        y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    rect_outline(sx, sy, item_slot_size-1, item_slot_size-1, 0, main_colour+1);
+                    rect_outline(
+                        sx,
+                        sy,
+                        item_slot_size - 1,
+                        item_slot_size - 1,
+                        0,
+                        main_colour + 1,
+                    );
                     if let Some(item) = item {
-                        spr(item.sprite, sx+2, sy+2, SpriteOptions {scale, transparent: &[0], ..Default::default()});
+                        spr(
+                            item.sprite,
+                            sx + 2,
+                            sy + 2,
+                            SpriteOptions {
+                                scale,
+                                transparent: &[0],
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
-            },
+            }
             1 => {
-                rect_outline(x_offset + side_column + column_margin,y_offset, main_width, item_slot_size+5, main_colour, main_colour+1);
+                rect_outline(
+                    x_offset + side_column + column_margin,
+                    y_offset,
+                    main_width,
+                    item_slot_size + 5,
+                    main_colour,
+                    main_colour + 1,
+                );
                 for i in 0..4 {
                     let (sx, sy) = (
-                        x_offset + side_column + column_margin + 3 + (i%4)*item_slot_size,
-                        y_offset + 3 + (i/4)*item_slot_size,
+                        x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
+                        y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    rect_outline(sx, sy, item_slot_size-1, item_slot_size-1, 0, main_colour+1);
-                    spr_blit_segment(1086, sx+2, sy+2, SpriteOptions {transparent: &[0], w: 2, h: 2, ..Default::default()}, 8);
+                    rect_outline(
+                        sx,
+                        sy,
+                        item_slot_size - 1,
+                        item_slot_size - 1,
+                        0,
+                        main_colour + 1,
+                    );
+                    spr_blit_segment(
+                        1086,
+                        sx + 2,
+                        sy + 2,
+                        SpriteOptions {
+                            transparent: &[0],
+                            w: 2,
+                            h: 2,
+                            ..Default::default()
+                        },
+                        8,
+                    );
                 }
-            },
+            }
             _ => (),
         };
         match &self.state {
             InventoryUiState::Items(current_index, selected) => {
                 use crate::print;
                 let (sx, sy) = (
-                    x_offset + side_column + column_margin + 3 + (*current_index as i32%4)*item_slot_size,
-                    y_offset + 3 + (*current_index as i32/4)*item_slot_size,
+                    x_offset
+                        + side_column
+                        + column_margin
+                        + 3
+                        + (*current_index as i32 % 4) * item_slot_size,
+                    y_offset + 3 + (*current_index as i32 / 4) * item_slot_size,
                 );
-                rectb(sx, sy, item_slot_size-1, item_slot_size-1, 12);
+                rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
                 if let Some((selected_index, selected_item)) = selected {
                     let (old_sx, old_sy) = (
-                        x_offset + side_column + column_margin + 3 + (*selected_index as i32%4)*item_slot_size,
-                        y_offset + 3 + (*selected_index as i32/4)*item_slot_size,
+                        x_offset
+                            + side_column
+                            + column_margin
+                            + 3
+                            + (*selected_index as i32 % 4) * item_slot_size,
+                        y_offset + 3 + (*selected_index as i32 / 4) * item_slot_size,
                     );
-                    rect(old_sx+1, old_sy+1, item_slot_size-3, item_slot_size-3, 0);
-                    spr_outline(selected_item.sprite, sx+2, sy+2-4, SpriteOptions {scale, transparent: &[0], ..Default::default()}, 12);
-                    rect_outline(7 , 98, 70, 9, 2, 3);
-                    print!(selected_item.name, 9, 100, PrintOptions::default().with_color(12));
-                    self.dialogue.draw_dialogue_portrait(&self.dialogue.fit_text(selected_item.desc), false, selected_item.sprite, 3, 1, 1);
+                    rect(
+                        old_sx + 1,
+                        old_sy + 1,
+                        item_slot_size - 3,
+                        item_slot_size - 3,
+                        0,
+                    );
+                    spr_outline(
+                        selected_item.sprite,
+                        sx + 2,
+                        sy + 2 - 4,
+                        SpriteOptions {
+                            scale,
+                            transparent: &[0],
+                            ..Default::default()
+                        },
+                        12,
+                    );
+                    rect_outline(7, 98, 70, 9, 2, 3);
+                    print!(
+                        selected_item.name,
+                        9,
+                        100,
+                        PrintOptions::default().with_color(12)
+                    );
+                    self.dialogue.draw_dialogue_portrait(
+                        &self.dialogue.fit_text(selected_item.desc),
+                        false,
+                        selected_item.sprite,
+                        3,
+                        1,
+                        1,
+                    );
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
                         rect_outline(7, 98, 70, 9, 2, 3);
                         print!(item.name, 9, 100, PrintOptions::default().with_color(12));
-                        self.dialogue.draw_dialogue_portrait(&self.dialogue.fit_text(item.desc), false, item.sprite, 3, 1, 1);
+                        self.dialogue.draw_dialogue_portrait(
+                            &self.dialogue.fit_text(item.desc),
+                            false,
+                            item.sprite,
+                            3,
+                            1,
+                            1,
+                        );
                     }
                 }
             }
             InventoryUiState::Eggs(current_index) => {
                 let (sx, sy) = (
-                    x_offset + side_column + column_margin + 3 + (*current_index as i32%4)*item_slot_size,
+                    x_offset
+                        + side_column
+                        + column_margin
+                        + 3
+                        + (*current_index as i32 % 4) * item_slot_size,
                     y_offset + 3,
                 );
-                rectb(sx, sy, item_slot_size-1, item_slot_size-1, 12);
+                rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
             }
             _ => {}
         };
@@ -232,12 +403,24 @@ impl<'a> InventoryUi<'a> {
     pub fn step(&mut self) {
         use crate::input_manager::mem_btnp;
         let (mut dx, mut dy) = (0, 0);
-        if mem_btnp(0) { dy -= 1 }
-        if mem_btnp(1) { dy += 1 }
-        if mem_btnp(2) { dx -= 1 }
-        if mem_btnp(3) { dx += 1 }
+        if mem_btnp(0) {
+            dy -= 1
+        }
+        if mem_btnp(1) {
+            dy += 1
+        }
+        if mem_btnp(2) {
+            dx -= 1
+        }
+        if mem_btnp(3) {
+            dx += 1
+        }
         self.state.arrows(dx, dy);
-        if mem_btnp(4) { self.click() };
-        if mem_btnp(5) { self.state.back() };
+        if mem_btnp(4) {
+            self.click()
+        };
+        if mem_btnp(5) {
+            self.state.back()
+        };
     }
 }
