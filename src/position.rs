@@ -179,20 +179,20 @@ pub fn touches_tile(id: usize, point: Vec2) -> bool {
     let flags = unsafe { (*SPRITE_FLAGS)[id] };
     // Tile flag corresponds to collision type
     match flags {
-        0 => false,                         // Walkable
-        1 => true,                          // Solid
-        2 => point.x + point.y <= 7,        // Top-left ramp
-        3 => point.x >= point.y,            // Top-right ramp
-        4 => point.x + point.y >= 7,        // Bottom-right ramp
-        5 => point.x <= point.y,            // Bottom-left ramp
-        6 => point.y <= 3,                  // Top half
-        7 => point.y >= 3,                  // Bottom half
-        8 => point.x >= 3,                  // Right half
-        9 => point.x <= 3,                  // Left half
-        10 => point.y <= 3 && point.x >= 3, // Top-right corner
-        11 => point.y <= 3 && point.x <= 3, // Top-left corner
-        12 => point.y >= 3 && point.x >= 3, // Bottom-right corner
-        13 => point.y >= 3 && point.x <= 3, // Bottom-left corner
+        0b0 => false,                           // Walkable
+        0b1 => true,                            // Solid
+        0b10 => point.x + point.y <= 7,         // Top-left ramp
+        0b11 => point.x >= point.y,             // Top-right ramp
+        0b100 => point.x + point.y >= 7,        // Bottom-right ramp
+        0b101 => point.x <= point.y,            // Bottom-left ramp
+        0b110 => point.y <= 3,                  // Top half
+        0b111 => point.y >= 3,                  // Bottom half
+        0b1000 => point.x >= 3,                 // Right half
+        0b1001 => point.x <= 3,                 // Left half
+        0b1010 => point.y <= 3 && point.x >= 3, // Top-right corner
+        0b1011 => point.y <= 3 && point.x <= 3, // Top-left corner
+        0b1100 => point.y >= 3 && point.x >= 3, // Bottom-right corner
+        0b1101 => point.y >= 3 && point.x <= 3, // Bottom-left corner
         _ => false,
     }
 }
