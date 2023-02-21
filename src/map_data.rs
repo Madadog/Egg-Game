@@ -97,8 +97,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
         Warp::new_tile(8, 4, Some(&SUPERMARKET_HALL), 3, 4),
         Warp::new(
             Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
-            Some(&HOUSE_LIVING_ROOM),
-            Vec2::new(4 * 8, 9 * 8),
+            Some(&TOWN),
+            Vec2::new(51 * 4, 15 * 8),
         ),
     ],
     interactables: &[
@@ -355,7 +355,7 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             h: 3,
             transparent: &[0],
             sx: 0,
-            sy: 7,
+            sy: 6,
             ..MapLayer::DEFAULT_MAP
         },
         //right door
@@ -366,7 +366,7 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             h: 3,
             transparent: &[0],
             sx: 120,
-            sy: 7,
+            sy: 6,
             ..MapLayer::DEFAULT_MAP
         },
     ],
@@ -636,6 +636,11 @@ pub static BACKYARD: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
+            hitbox: Hitbox::new(24 * 8, 10 * 8, 1 * 8, 6 * 8),
+            interaction: Interaction::Text(HOUSE_BACKYARD_NEIGHBOURS),
+            sprite: None,
+        },
+        Interactable {
             hitbox: Hitbox::new(21 * 8, 13 * 8, 1 * 8, 1 * 8),
             interaction: Interaction::Func(InteractFn::ToggleDog),
             sprite: None,
@@ -744,13 +749,35 @@ pub static TOWN: MapSet<'static> = MapSet {
         },
     ],
     bg_colour: 0,
-    warps: &[Warp::new(
-        Hitbox::new(17 * 8, 13 * 8, 8, 8),
-        Some(&HOUSE_LIVING_ROOM),
-        Vec2::new(4 * 8, 9 * 8),
-    )
-    .with_flip(Axis::Y)],
-    interactables: &[],
+    warps: &[
+        Warp::new(
+            Hitbox::new(17 * 8, 13 * 8, 8, 8),
+            Some(&HOUSE_LIVING_ROOM),
+            Vec2::new(4 * 9, 8 * 8),
+        ),
+        Warp::new(
+            Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
+            Some(&SUPERMARKET),
+            Vec2::new(97, 73),
+        ),
+    ],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(8*6, 17 * 8, 1 * 8, 6 * 8),
+            interaction: Interaction::Text(TOWN_TRAFFIC),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(8*8, 17 * 8, 1 * 8, 1 * 8),
+            interaction: Interaction::Text(TOWN_LAMPPOST),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(14 * 8, 13 * 8, 8, 8),
+            interaction: Interaction::Text(TOWN_HOME_WINDOW),
+            sprite: None,
+        },
+    ],
     bank: 1,
     ..DEFAULT_MAP_SET
 };

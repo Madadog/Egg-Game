@@ -18,7 +18,7 @@
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
 pub static GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub static GAME_TITLE_BLURB: &str = "v0.0.8\0";
+pub static GAME_TITLE_BLURB: &str = "v0.0.9\0";
 pub static MENU_PLAY: &str = "Play\0";
 pub static MENU_OPTIONS: &str = "Options\0";
 pub static MENU_BACK: &str = "Back\0";
@@ -56,7 +56,9 @@ pub static DOG_OBTAINED: &str = "Dog has joined the party!";
 pub static DOG_RELINQUISHED: &str = "Dog has left the party.";
 pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
 pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could definitely open it with some of the POWER TOOLS inside... Oh wait.";
-pub static HOUSE_BACKYARD_SHED_WINDOW: &str = "You can't actually see anything through this window.";
+pub static HOUSE_BACKYARD_SHED_WINDOW: &str =
+    "You can't actually see anything through this window.";
+pub static HOUSE_BACKYARD_NEIGHBOURS: &str = "You don't know much about the neighbours. The traffic makes it difficult to get to their house.";
 pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
 pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
 pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
@@ -87,6 +89,10 @@ pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
     "bb_horror",
     "Please hurry!!!",
 ];
+pub static TOWN_TRAFFIC: &str = "They've been like this for a while now.";
+pub static TOWN_LAMPPOST: &str =
+    "Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.";
+pub static TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";
 pub static INVENTORY_TITLE: &str = "INVENTORY\0";
 pub static ITEM_FF_NAME: &str = "French Gry";
 pub static ITEM_FF_DESC: &str =
