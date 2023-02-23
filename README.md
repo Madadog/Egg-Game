@@ -19,9 +19,9 @@ To run, just load game.wasmp or game-stable.tic (from GitHub releases) into TIC-
 ## TIC80 Stable vs TIC80 Main
 This project currently targets version `1.0.2369-dev` of TIC-80, which is not yet stable.
 
-To build for the stable version of TIC-80 (currently `1.0.2164`), the `void_mget` feature must be enabled (i.e. `cargo build --release --features void_mget`).
+To build for the stable version of TIC-80 (currently `1.0.2164`), the `reimplement_mget` feature must be enabled (i.e. `cargo build --release --features reimplement_mget`).
 
-This feature is required because the WASM function signature of `mget()` differs between the stable and main. Support for the stable branch is also needed to upload to the TIC-80 website.
+This feature is required because the WASM function signature of `mget()` differs between the stable and main branches.
 
 ## Building
 To build, first make sure you have installed the `wasm32-unknown-unknown` target using rustup:

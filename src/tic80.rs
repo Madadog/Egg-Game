@@ -130,9 +130,7 @@ pub mod sys {
         // pub fn memcpy(dest: i32, src: i32, length: i32);
         // pub fn memset(address: i32, value: i32, length: i32);
 
-        #[cfg(feature = "void_mget")]
-        pub fn mget(x: i32, y: i32);
-        #[cfg(not(feature = "void_mget"))]
+        #[cfg(not(feature = "reimplement_mget"))]
         pub fn mget(x: i32, y: i32) -> i32;
         pub fn mset(x: i32, y: i32, value: i32);
         pub fn mouse(mouse: *mut MouseInput);
@@ -518,7 +516,7 @@ pub fn map(opts: MapOptions) {
     }
 }
 
-#[cfg(feature = "void_mget")]
+#[cfg(feature = "reimplement_mget")]
 pub fn mget(x: i32, y: i32) -> i32 {
     if x < 0 || x >= WIDTH * 8 || y < 0 || y >= HEIGHT {
         return 0;
@@ -528,7 +526,7 @@ pub fn mget(x: i32, y: i32) -> i32 {
     ret
 }
 
-#[cfg(not(feature = "void_mget"))]
+#[cfg(not(feature = "reimplement_mget"))]
 pub fn mget(x: i32, y: i32) -> i32 {
     unsafe { sys::mget(x, y) }
 }
