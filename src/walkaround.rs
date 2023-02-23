@@ -1,5 +1,5 @@
 use crate::dialogue::DIALOGUE_OPTIONS;
-use crate::dialogue_data::*;
+use crate::{dialogue_data::*, save};
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
@@ -78,7 +78,18 @@ impl<'a> WalkaroundState<'a> {
                     self.companion_list.add(Companion::Dog);
                     Some(DOG_OBTAINED)
                 }
+            },
+            InteractFn::StairwellWindow => {
+                save::HOUSE_FLAGS.set_flags(0b0000_0001);
+                Some(HOUSE_STAIRWELL_WINDOW)
             }
+            InteractFn::StairwellPainting => {
+                if save::HOUSE_FLAGS.contains(0b0000_0001) {
+                    Some(HOUSE_STAIRWELL_PAINTING_AFTER)
+                } else {
+                    Some(HOUSE_STAIRWELL_PAINTING_INIT)
+                }
+            },
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
         }
     }

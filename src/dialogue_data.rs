@@ -33,7 +33,8 @@ pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
 pub static BEDROOM_WINDOW: &str = "It's a beautiful day... \n            \n... Outside.";
 pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
 pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
-pub static HOUSE_STAIRWELL_PAINTING: &str = "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.";
+pub static HOUSE_STAIRWELL_PAINTING_INIT: &str = "It's not as good as the real thing.";
+pub static HOUSE_STAIRWELL_PAINTING_AFTER: &str = "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.";
 pub static HOUSE_STAIRWELL_DOOR: &str = "You shouldn't go in there.";
 pub static HOUSE_LIVING_ROOM_COUCH: &str = "He's busy.";
 pub static HOUSE_LIVING_ROOM_TV_1: &str =
@@ -89,7 +90,7 @@ pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
     "bb_horror",
     "Please hurry!!!",
 ];
-pub static TOWN_TRAFFIC: &str = "They've been like this for a while now.";
+pub static TOWN_TRAFFIC: &str = "They've been stuck like this for a while now.";
 pub static TOWN_LAMPPOST: &str =
     "Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.";
 pub static TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";

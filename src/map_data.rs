@@ -390,12 +390,12 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(2 * 8, 2 * 8, 8, 8),
-            interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW),
+            interaction: Interaction::Func(InteractFn::StairwellWindow),
             sprite: None,
         },
         Interactable {
             hitbox: Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8),
-            interaction: Interaction::Text(HOUSE_STAIRWELL_PAINTING),
+            interaction: Interaction::Func(InteractFn::StairwellPainting),
             sprite: None,
         },
         Interactable {
