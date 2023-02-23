@@ -33,14 +33,14 @@ impl DialogueOptions {
         *self.fixed.read().unwrap()
     }
     pub fn small_text(&self) -> bool {
-        save::MENU_DATA.contains(0b0000_0010)
+        save::SMALL_TEXT_ON.is_true()
     }
     pub fn box_width(&self) -> usize {
         *self.box_width.read().unwrap()
     }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
         *self.fixed.write().unwrap() = fixed;
-        if small_text { save::MENU_DATA.set_flags(0b0000_0010) } else { save::MENU_DATA.clear_flags(0b0000_0010) }
+        if small_text { save::SMALL_TEXT_ON.set_true() } else { save::SMALL_TEXT_ON.set_false() }
     }
     pub fn get_options(&self) -> PrintOptions {
         PrintOptions {
@@ -50,7 +50,7 @@ impl DialogueOptions {
         }
     }
     pub fn toggle_small_text(&self) {
-        save::MENU_DATA.toggle_flags(0b0000_0010);
+        save::SMALL_TEXT_ON.toggle();
     }
     pub fn toggle_fixed(&self) {
         *self.fixed.write().unwrap() = !self.fixed()

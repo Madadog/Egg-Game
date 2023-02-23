@@ -108,11 +108,11 @@ impl<'a> WalkaroundState<'a> {
                 }
             }
             InteractFn::StairwellWindow => {
-                save::HOUSE_FLAGS.set_flags(0b0000_0001);
+                save::HOUSE_STAIRWELL_WINDOW_INTERACTED.set_true();
                 Some(HOUSE_STAIRWELL_WINDOW)
             }
             InteractFn::StairwellPainting => {
-                if save::HOUSE_FLAGS.contains(0b0000_0001) {
+                if save::HOUSE_STAIRWELL_WINDOW_INTERACTED.is_true() {
                     Some(HOUSE_STAIRWELL_PAINTING_AFTER)
                 } else {
                     Some(HOUSE_STAIRWELL_PAINTING_INIT)

@@ -1,7 +1,8 @@
 use crate::tic80::PERSISTENT_RAM;
 
-pub struct PmemSlot(usize);
-impl PmemSlot {
+/// A 1-byte Pmem slot. When set, it will be saved to the player's hard drive and persist across runs.
+pub struct PmemU8(usize);
+impl PmemU8 {
     pub const fn new(i: usize) -> Self {
         assert!(i < 1024);
         Self(i)
@@ -14,63 +15,77 @@ impl PmemSlot {
     pub fn set(&self, val: u8) {
         unsafe { (*PERSISTENT_RAM)[self.0] = val }
     }
-    /// Set binary flags to 1. To set to 0, use `clear_flags()`.
-    pub fn set_flags(&self, flags: u8) {
-        unsafe { (*PERSISTENT_RAM)[self.0] |= flags }
+}
+
+/// 1 bit from a Pmem slot.
+pub struct PmemBit {
+    index: usize,
+    bit: u8,
+}
+impl PmemBit {
+    pub const fn new(index: usize, bit: u8) -> Self {
+        assert!(index < 1024);
+        Self { index, bit }
     }
-    /// Clear binary flags by setting them to 0.
-    pub fn clear_flags(&self, flags: u8) {
-        let flags = flags^255; // invert flags
-        unsafe { (*PERSISTENT_RAM)[self.0] &= flags }
+    /// Get inner value
+    pub fn is_true(&self) -> bool {
+        (unsafe { (*PERSISTENT_RAM)[self.index] } & self.bit) == self.bit
     }
-    /// XORs binary flags.
-    pub fn toggle_flags(&self, flags: u8) {
-        unsafe { (*PERSISTENT_RAM)[self.0] ^= flags }
+    /// Set inner value to true
+    pub fn set_true(&self) {
+        unsafe { (*PERSISTENT_RAM)[self.index] |= self.bit }
     }
-    pub fn contains(&self, flag: u8) -> bool {
-        self.get() & flag == flag
+    /// Set inner value to false
+    pub fn set_false(&self) {
+        unsafe { (*PERSISTENT_RAM)[self.index] &= self.bit ^ 255 }
+    }
+    pub fn toggle(&self) {
+        unsafe { (*PERSISTENT_RAM)[self.index] ^= self.bit }
     }
 }
 
-/// * b0: Has intro anim been seen.
-/// * b1: Font size setting.
-/// * b2-7 reserved.
-pub const MENU_DATA: PmemSlot = PmemSlot::new(0);
-/// * b0: Window1 interacted.
-/// * b1: Dog fed.
-/// * b2: Living room entered.
-/// * b3-7 reserved.
-pub const HOUSE_FLAGS: PmemSlot = PmemSlot::new(1);
-pub const EGG_COUNT: PmemSlot = PmemSlot::new(2);
-pub const EGG_COUNT2: PmemSlot = PmemSlot::new(3);
-pub const EGG_FLAGS: PmemSlot = PmemSlot::new(4);
-pub const TOWN_FLAGS: PmemSlot = PmemSlot::new(5);
-/// * b0: Thievery thwarted. 
-/// * b1: Key access.
-pub const SUPERMARKET_FLAGS: PmemSlot = PmemSlot::new(6);
-pub const HOSPITAL_FLAGS: PmemSlot = PmemSlot::new(7);
-pub const WILDERNESS_FLAGS: PmemSlot = PmemSlot::new(8);
-pub const FACTORY_FLAGS: PmemSlot = PmemSlot::new(9);
-pub const EGG_POP_COUNT: PmemSlot = PmemSlot::new(10);
-/// * b0: Key
-/// * b1: Curiosity
-/// * b2: Egg^2
-/// * b3: Monster
-/// * b4-7 reserved.
-pub const INVENTORY_FLAGS: PmemSlot = PmemSlot::new(15);
+pub const INTRO_ANIM_SEEN: PmemBit = PmemBit::new(0, 0b0000_0001);
+pub const SMALL_TEXT_ON: PmemBit = PmemBit::new(0, 0b0000_0010);
+pub const INSTRUCTIONS_READ: PmemBit = PmemBit::new(0, 0b0000_0100);
+
+pub const HOUSE_STAIRWELL_WINDOW_INTERACTED: PmemBit = PmemBit::new(1, 0b0000_0001);
+pub const DOG_FED: PmemBit = PmemBit::new(1, 0b0000_0010);
+pub const LIVING_ROOM_SEEN: PmemBit = PmemBit::new(1, 0b0000_0100);
+
+pub const EGG_COUNT_LO: PmemU8 = PmemU8::new(2);
+pub const EGG_COUNT_HI: PmemU8 = PmemU8::new(3);
+pub const EGG_FLAGS: PmemU8 = PmemU8::new(4);
+pub const TOWN_FLAGS: PmemU8 = PmemU8::new(5);
+
+pub const SUPERMARKET_THIEF: PmemBit = PmemBit::new(6, 0b0000_0001);
+pub const SUPERMARKET_KEY_ACCESS: PmemBit = PmemBit::new(6, 0b0000_0010);
+pub const SUPERMARKET_BACKROOM: PmemBit = PmemBit::new(6, 0b0000_0100);
+
+pub const HOSPITAL_FLAGS: PmemU8 = PmemU8::new(7);
+
+pub const WILDERNESS_EGG_FOUND: PmemBit = PmemBit::new(8, 0b0000_0001);
+
+pub const FACTORY_FLAGS: PmemU8 = PmemU8::new(9);
+pub const EGG_POP_COUNT: PmemU8 = PmemU8::new(10);
+
+pub const SHELL_KEY: PmemBit = PmemBit::new(15, 0b0000_0001);
+pub const SHELL_CURIOSITY: PmemBit = PmemBit::new(15, 0b0000_0010);
+pub const SHELL_MATRYOSHKA: PmemBit = PmemBit::new(15, 0b0000_0100);
+pub const SHELL_MONSTER: PmemBit = PmemBit::new(15, 0b0000_1000);
+
 /// Inventory slots hold a u8 ItemID. There's no way I'll use ALL 255 items......
 /// TODO: Convert between item and id.
-pub const INVENTORY_SLOTS: [PmemSlot; 8] = [
-    PmemSlot::new(16),
-    PmemSlot::new(17),
-    PmemSlot::new(18),
-    PmemSlot::new(19),
-    PmemSlot::new(20),
-    PmemSlot::new(21),
-    PmemSlot::new(22),
-    PmemSlot::new(23),
+pub const INVENTORY_SLOTS: [PmemU8; 8] = [
+    PmemU8::new(16),
+    PmemU8::new(17),
+    PmemU8::new(18),
+    PmemU8::new(19),
+    PmemU8::new(20),
+    PmemU8::new(21),
+    PmemU8::new(22),
+    PmemU8::new(23),
 ];
 /// TODO: Convert between map and id...
-pub const CURRENT_MAP: PmemSlot = PmemSlot::new(24);
-pub const PLAYER_X: [PmemSlot; 2] = [PmemSlot::new(25), PmemSlot::new(26)];
-pub const PLAYER_Y: [PmemSlot; 2] = [PmemSlot::new(27), PmemSlot::new(28)];
+pub const CURRENT_MAP: PmemU8 = PmemU8::new(24);
+pub const PLAYER_X: [PmemU8; 2] = [PmemU8::new(25), PmemU8::new(26)];
+pub const PLAYER_Y: [PmemU8; 2] = [PmemU8::new(27), PmemU8::new(28)];

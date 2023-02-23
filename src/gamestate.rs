@@ -38,7 +38,8 @@ impl GameState {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || save::MENU_DATA.contains(0b0000_0001)) && any_btnp() {
+                if (*i > 60 || save::INSTRUCTIONS_READ.is_true()) && any_btnp() {
+                    save::INSTRUCTIONS_READ.set_true();
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
@@ -51,7 +52,7 @@ impl GameState {
                 }
             }
             Self::Animation(x) => {
-                if save::MENU_DATA.contains(0b0000_0001) {
+                if save::INTRO_ANIM_SEEN.is_true() {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
@@ -196,7 +197,7 @@ pub fn draw_animation(t: u16) -> bool {
                 },
             );
             // Intro has played, skip it on next boot.
-            save::MENU_DATA.set_flags(0b0000_0001);
+            save::INTRO_ANIM_SEEN.set_true();
             screen_offset(0, 0);
             set_palette(SWEETIE_16);
             cls(0);
