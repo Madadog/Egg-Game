@@ -21,6 +21,7 @@ use crate::position::Vec2;
 #[derive(Debug)]
 pub enum Interaction<'a> {
     Text(&'a str),
+    Dialogue(&'a [&'a str]),
     Func(InteractFn),
 }
 

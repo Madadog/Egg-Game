@@ -258,9 +258,11 @@ impl<'a> Game for WalkaroundState<'a> {
                 self.dialogue.skip();
             }
         }
-        if mem_btnp(4) && self.dialogue.is_done() {
+        if mem_btnp(4) && self.dialogue.is_line_done() {
             interact = true;
-            if matches!(self.dialogue.text, Some(_)) {
+            if self.dialogue.next_text() {
+                interact = false;
+            } else if matches!(self.dialogue.text, Some(_)) {
                 interact = false;
                 self.dialogue.close();
             }
@@ -309,6 +311,10 @@ impl<'a> Game for WalkaroundState<'a> {
                         Interaction::Text(x) => {
                             trace!(format!("{x:?}"), 12);
                             self.dialogue.set_text(x);
+                        }
+                        Interaction::Dialogue(x) => {
+                            trace!(format!("{x:?}"), 12);
+                            self.dialogue.set_dialogue(x);
                         }
                         Interaction::Func(x) => {
                             trace!(format!("{x:?}"), 12);

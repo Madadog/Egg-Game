@@ -60,6 +60,7 @@ pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
 
 pub struct Dialogue {
     pub text: Option<String>,
+    pub buffer: Vec<String>,
     pub timer: usize,
     pub width: usize,
 }
@@ -67,6 +68,7 @@ impl Dialogue {
     pub const fn const_default() -> Self {
         Self {
             text: None,
+            buffer: Vec::new(),
             timer: 0,
             width: 200,
         }
@@ -74,7 +76,7 @@ impl Dialogue {
     pub fn with_width(self, width: usize) -> Self {
         Self { width, ..self }
     }
-    pub fn is_done(&self) -> bool {
+    pub fn is_line_done(&self) -> bool {
         match &self.text {
             Some(text) => self.timer == text.len(),
             None => true,
@@ -84,6 +86,18 @@ impl Dialogue {
         self.text = Some(self.fit_text(string));
         self.timer = 0;
     }
+    pub fn set_dialogue(&mut self, dialogue: &[&str]) {
+        self.buffer = dialogue.iter().rev().map(|x| x.to_string()).collect();
+        self.next_text();
+    }
+    pub fn next_text(&mut self) -> bool {
+        if let Some(x) = self.buffer.pop() {
+            self.set_text(&x);
+            true
+        } else {
+            false
+        }
+    }
     pub fn fit_text(&self, string: &str) -> String {
         fit_default_paragraph(string, self.wrap_width())
     }
@@ -92,6 +106,7 @@ impl Dialogue {
     }
     pub fn close(&mut self) {
         self.text = None;
+        self.buffer.clear();
         self.timer = 0;
     }
     pub fn tick(&mut self, amount: usize) {
