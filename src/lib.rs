@@ -97,6 +97,9 @@ pub fn run_gamestate() {
 
 #[export_name = "BOOT"]
 pub fn boot() {
+    std::panic::set_hook(Box::new(|x| {
+        trace!(format!("{x}"),12);
+    }));
     WALKAROUND_STATE.write().unwrap().load_map(&BEDROOM);
 }
 
