@@ -311,7 +311,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             ..MapLayer::DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new_tile(15, 6, Some(&HOUSE_STAIRWELL), 1, 2)],
+    warps: &[Warp::new(Hitbox::new(15*8, 6*8, 8, 8), Some(&HOUSE_STAIRWELL), Vec2::new(1*8+1, 2*8))],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
@@ -326,6 +326,11 @@ pub static BEDROOM: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8),
             interaction: Interaction::Text(BEDROOM_TROLLEY),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
+            interaction: Interaction::Text(BEDROOM_WINDOW),
             sprite: None,
         },
         Interactable {
