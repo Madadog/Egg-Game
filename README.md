@@ -70,11 +70,15 @@ This will create a new, smaller `cart.wasm` file in the working directory.
 |`src/dialogue.rs`|Drawing text character-by-character, automatically adding line-breaks.|
 |`src/dialogue_data.rs`|All text-strings used in game.|
 |`src/gamestate.rs`|Logic for switching between game menus and gameplay.|
+|`src/input_manager.rs`|Helper functions for keyboard and mouse input.|
 |`src/interact.rs`|Struct for interactable map objects.|
 |`src/lib.rs`|Main file. Defines the `TIC()` and `BOOT()` functions run by TIC-80.|
 |`src/map_data.rs`|Defines each game "area" and the locations of interactable objects.|
+|`src/map.rs`|Structs used in `map_data.rs`.|
 |`src/player.rs`|Player struct and animation helper functions.|
 |`src/position.rs`|Vec2 and Hitbox types used for collision detection.|
 |`src/rand.rs`|PCG32 RNG from Rust Rand crate.|
+|`src/save.rs`|Helpers for saving to the 'PERSISTENT_RAM' section of TIC-80 memory.|
 |`src/tic80.rs`|TIC-80 WASM function bindings and memory addresses. From the original TIC-80 Rust template.|
 |`src/tic_helpers.rs`|Miscellaneous helper functions for interacting with TIC-80 memory.|
+|`src/walkaround.rs`|RPG-style map navigation.|
