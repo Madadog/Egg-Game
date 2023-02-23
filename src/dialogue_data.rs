@@ -52,6 +52,7 @@ pub static HOUSE_KITCHEN_SINK: &str =
 pub static HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
 pub static UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
 pub static UNKNOWN_2: &str = "... Quick, recast the \"Sleep\" shell on your opponent to keep it perma-stunned! Unfair and effective!";
+pub static UNKNOWN_3: &str = "... Don't get your hopes up.";
 pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.";
 pub static DOG_OBTAINED: &str = "Dog has joined the party!";
 pub static DOG_RELINQUISHED: &str = "Dog has left the party.";

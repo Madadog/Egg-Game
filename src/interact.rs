@@ -16,6 +16,7 @@
 
 use crate::animation::*;
 use crate::Hitbox;
+use crate::position::Vec2;
 
 #[derive(Debug)]
 pub enum Interaction<'a> {
@@ -49,4 +50,6 @@ pub enum InteractFn {
     ToggleDog,
     StairwellWindow,
     StairwellPainting,
+    Note(i32),
+    Piano(Vec2),
 }

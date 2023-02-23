@@ -475,6 +475,11 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             Some(&HOUSE_KITCHEN),
             Vec2::new(7 * 4, 7 * 8),
         ),
+        Warp::new(
+            Hitbox::new(8 * 8, 5 * 8, 8, 8),
+            Some(&PIANO_ROOM),
+            Vec2::new(18 * 4, 6 * 8),
+        ),
     ],
     interactables: &[
         Interactable {
@@ -490,11 +495,6 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
             interaction: Interaction::Text(HOUSE_LIVING_ROOM_WINDOW),
-            sprite: None,
-        },
-        Interactable {
-            hitbox: Hitbox::new(8 * 8, 6 * 8, 8, 8),
-            interaction: Interaction::Text(CONSTRUCTION_2),
             sprite: None,
         },
         Interactable {
@@ -784,5 +784,38 @@ pub static TOWN: MapSet<'static> = MapSet {
         },
     ],
     bank: 1,
+    ..DEFAULT_MAP_SET
+};
+
+pub static PIANO_ROOM: MapSet<'static> = MapSet {
+    maps: &[
+        MapLayer {
+            x: 99,
+            y: 15,
+            w: 21,
+            h: 9,
+            ..MapLayer::DEFAULT_MAP
+        },
+    ],
+    bg_colour: 0,
+    warps: &[
+        Warp::new(
+            Hitbox::new(9 * 8, 8 * 8, 8*2, 8),
+            Some(&HOUSE_LIVING_ROOM),
+            Vec2::new(8 * 8, 5 * 8),
+        ),
+    ],
+    interactables: &[
+        Interactable {
+            hitbox: Hitbox::new(4 * 8, 1 * 8, 8*13, 8*5),
+            interaction: Interaction::Func(InteractFn::Piano(Vec2::new(4*8, 1*8))),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(0, 6*8, 8*2, 8*2),
+            interaction: Interaction::Text(UNKNOWN_3),
+            sprite: None,
+        },
+    ],
     ..DEFAULT_MAP_SET
 };
