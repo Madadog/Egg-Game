@@ -1,3 +1,8 @@
 /target
 /Cargo.lock
 /.local
+/ignore
+build-stable.sh
+build.sh
+tic80
+tic80-v1.0
