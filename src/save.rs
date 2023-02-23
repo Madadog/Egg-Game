@@ -14,14 +14,18 @@ impl PmemSlot {
     pub fn set(&self, val: u8) {
         unsafe { (*PERSISTENT_RAM)[self.0] = val }
     }
-    /// Set binary flags
+    /// Set binary flags to 1. To set to 0, use `clear_flags()`.
     pub fn set_flags(&self, flags: u8) {
         unsafe { (*PERSISTENT_RAM)[self.0] |= flags }
     }
-    /// Clear binary flags.
+    /// Clear binary flags by setting them to 0.
     pub fn clear_flags(&self, flags: u8) {
         let flags = flags^255; // invert flags
         unsafe { (*PERSISTENT_RAM)[self.0] &= flags }
+    }
+    /// XORs binary flags.
+    pub fn toggle_flags(&self, flags: u8) {
+        unsafe { (*PERSISTENT_RAM)[self.0] ^= flags }
     }
     pub fn contains(&self, flag: u8) -> bool {
         self.get() & flag == flag

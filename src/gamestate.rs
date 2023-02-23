@@ -17,7 +17,7 @@
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::inventory::{InventoryUiState, INVENTORY};
 use crate::position::{Hitbox, Vec2};
-use crate::rand;
+use crate::{rand, save};
 use crate::{tic80::*, WALKAROUND_STATE};
 
 use crate::tic_helpers::*;
@@ -38,7 +38,7 @@ impl GameState {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || get_pmem(0) != 0) && any_btnp() {
+                if (*i > 60 || save::MENU_DATA.contains(0b0000_0001)) && any_btnp() {
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
@@ -51,7 +51,7 @@ impl GameState {
                 }
             }
             Self::Animation(x) => {
-                if get_pmem(0) != 0 {
+                if save::MENU_DATA.contains(0b0000_0001) {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
@@ -195,7 +195,8 @@ pub fn draw_animation(t: u16) -> bool {
                     ..Default::default()
                 },
             );
-            set_pmem(0, 1);
+            // Intro has played, skip it on next boot.
+            save::MENU_DATA.set_flags(0b0000_0001);
             screen_offset(0, 0);
             set_palette(SWEETIE_16);
             cls(0);

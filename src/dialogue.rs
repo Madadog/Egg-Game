@@ -16,18 +16,16 @@
 
 use std::sync::RwLock;
 
-use crate::{print_alloc, tic80::SpriteOptions, PrintOptions};
+use crate::{print_alloc, tic80::SpriteOptions, PrintOptions, save};
 
 pub struct DialogueOptions {
     pub fixed: RwLock<bool>,
-    pub small_text: RwLock<bool>,
     pub box_width: RwLock<usize>,
 }
 impl DialogueOptions {
     pub const fn new() -> Self {
         Self {
             fixed: RwLock::new(false),
-            small_text: RwLock::new(false),
             box_width: RwLock::new(200),
         }
     }
@@ -35,14 +33,14 @@ impl DialogueOptions {
         *self.fixed.read().unwrap()
     }
     pub fn small_text(&self) -> bool {
-        *self.small_text.read().unwrap()
+        save::MENU_DATA.contains(0b0000_0010)
     }
     pub fn box_width(&self) -> usize {
         *self.box_width.read().unwrap()
     }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
         *self.fixed.write().unwrap() = fixed;
-        *self.small_text.write().unwrap() = small_text;
+        if small_text { save::MENU_DATA.set_flags(0b0000_0010) } else { save::MENU_DATA.clear_flags(0b0000_0010) }
     }
     pub fn get_options(&self) -> PrintOptions {
         PrintOptions {
@@ -52,7 +50,7 @@ impl DialogueOptions {
         }
     }
     pub fn toggle_small_text(&self) {
-        *self.small_text.write().unwrap() = !self.small_text()
+        save::MENU_DATA.toggle_flags(0b0000_0010);
     }
     pub fn toggle_fixed(&self) {
         *self.fixed.write().unwrap() = !self.fixed()
