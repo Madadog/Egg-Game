@@ -1,7 +1,7 @@
 use crate::{
     interact::Interactable,
     position::{touches_tile, Hitbox, Vec2},
-    tic80::{mget, MapOptions},
+    tic80::{mget, MapOptions}, camera::CameraBounds,
 };
 
 #[derive(Clone)]
@@ -14,6 +14,7 @@ pub struct MapSet<'a> {
     pub palette_rotation: &'a [u8],
     pub music_track: Option<u8>,
     pub bank: u8,
+    pub camera_bounds: Option<CameraBounds>,
 }
 
 #[derive(Clone)]

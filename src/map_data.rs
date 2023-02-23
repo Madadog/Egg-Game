@@ -15,6 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::animation::*;
+use crate::camera::CameraBounds;
 use crate::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
@@ -34,6 +35,7 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     palette_rotation: &[],
     music_track: None,
     bank: 0,
+    camera_bounds: None,
 };
 
 pub static SUPERMARKET: MapSet<'static> = MapSet {
@@ -311,7 +313,11 @@ pub static BEDROOM: MapSet<'static> = MapSet {
             ..MapLayer::DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new(Hitbox::new(15*8, 6*8, 8, 8), Some(&HOUSE_STAIRWELL), Vec2::new(1*8+1, 2*8))],
+    warps: &[Warp::new(
+        Hitbox::new(15 * 8, 6 * 8, 8, 8),
+        Some(&HOUSE_STAIRWELL),
+        Vec2::new(1 * 8 + 1, 2 * 8),
+    )],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
@@ -478,7 +484,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         Warp::new(
             Hitbox::new(8 * 8, 5 * 8, 8, 8),
             Some(&PIANO_ROOM),
-            Vec2::new(18 * 4, 6 * 8),
+            Vec2::new(19 * 4, 6 * 8),
         ),
     ],
     interactables: &[
@@ -768,12 +774,12 @@ pub static TOWN: MapSet<'static> = MapSet {
     ],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(8*6, 17 * 8, 1 * 8, 6 * 8),
+            hitbox: Hitbox::new(8 * 6, 17 * 8, 1 * 8, 6 * 8),
             interaction: Interaction::Text(TOWN_TRAFFIC),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(8*8, 17 * 8, 1 * 8, 1 * 8),
+            hitbox: Hitbox::new(8 * 8, 17 * 8, 1 * 8, 1 * 8),
             interaction: Interaction::Text(TOWN_LAMPPOST),
             sprite: None,
         },
@@ -788,34 +794,31 @@ pub static TOWN: MapSet<'static> = MapSet {
 };
 
 pub static PIANO_ROOM: MapSet<'static> = MapSet {
-    maps: &[
-        MapLayer {
-            x: 99,
-            y: 15,
-            w: 21,
-            h: 9,
-            ..MapLayer::DEFAULT_MAP
-        },
-    ],
+    maps: &[MapLayer {
+        x: 99,
+        y: 15,
+        w: 21,
+        h: 10,
+        ..MapLayer::DEFAULT_MAP
+    }],
     bg_colour: 0,
-    warps: &[
-        Warp::new(
-            Hitbox::new(9 * 8, 8 * 8, 8*2, 8),
-            Some(&HOUSE_LIVING_ROOM),
-            Vec2::new(8 * 8, 5 * 8),
-        ),
-    ],
+    warps: &[Warp::new(
+        Hitbox::new(9 * 8, 8 * 8, 8 * 2, 8),
+        Some(&HOUSE_LIVING_ROOM),
+        Vec2::new(8 * 8, 5 * 8),
+    )],
     interactables: &[
         Interactable {
-            hitbox: Hitbox::new(4 * 8, 1 * 8, 8*13, 8*5),
-            interaction: Interaction::Func(InteractFn::Piano(Vec2::new(4*8, 1*8))),
+            hitbox: Hitbox::new(4 * 8, 1 * 8, 4 * 25, 4 * 9),
+            interaction: Interaction::Func(InteractFn::Piano(Vec2::new(4 * 8, 1 * 8))),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(0, 6*8, 8*2, 8*2),
+            hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8 * 1),
             interaction: Interaction::Text(UNKNOWN_3),
             sprite: None,
         },
     ],
+    camera_bounds: Some(CameraBounds::stick(21 * 8 / 2 - 120, -64)),
     ..DEFAULT_MAP_SET
 };

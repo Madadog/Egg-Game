@@ -56,7 +56,7 @@ impl Camera {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CameraBounds {
     x_bounds: CameraRange,
     y_bounds: CameraRange,
@@ -84,7 +84,7 @@ impl CameraBounds {
 /// Restriction of camera's movement along x or y axes.
 /// `Range` clamps to `(min, max)`. `Stick` restricts to a single value.
 /// `Free` gives full `i16` range.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CameraRange {
     Free,
     Stick(i16),

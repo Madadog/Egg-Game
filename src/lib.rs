@@ -32,6 +32,7 @@ mod tic_helpers;
 mod input_manager;
 mod walkaround;
 mod save;
+mod particles;
 
 use crate::gamestate::GameState;
 use crate::map_data::*;

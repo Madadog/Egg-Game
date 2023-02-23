@@ -5,7 +5,9 @@ use crate::interact::{InteractFn, Interaction};
 use crate::inventory::INVENTORY;
 use crate::map::Axis;
 use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
+use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
+use crate::position::Vec2;
 use crate::tic80::*;
 use crate::tic_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
@@ -20,6 +22,7 @@ pub struct WalkaroundState<'a> {
     camera: Camera,
     current_map: &'a MapSet<'a>,
     dialogue: Dialogue,
+    particles: ParticleList,
 }
 impl<'a> WalkaroundState<'a> {
     pub const fn new() -> Self {
@@ -31,12 +34,17 @@ impl<'a> WalkaroundState<'a> {
             camera: Camera::const_default(),
             current_map: &DEFAULT_MAP_SET,
             dialogue: Dialogue::const_default(),
+            particles: ParticleList::new(),
         }
     }
     pub fn load_map(&mut self, map: &'a MapSet<'static>) {
         let map1 = &map.maps[0];
-        self.camera =
-            Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
+        if let Some(bounds) = &map.camera_bounds {
+            self.camera.bounds = bounds.clone();
+        } else {
+            self.camera =
+                Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
+        }
         self.current_map = map;
         *BG_COLOUR.write().unwrap() = map.bg_colour;
         if let Some(track) = map.music_track {
@@ -116,15 +124,35 @@ impl<'a> WalkaroundState<'a> {
                     SfxOptions {
                         note: *note,
                         octave: 5,
-                        duration: 60,
+                        duration: 70,
                         ..Default::default()
                     },
                 );
                 None
             }
             InteractFn::Piano(origin) => {
-                let mut note = (self.player.pos.x + 4 - origin.x)/8;
-                if self.player.pos.y - origin.y < 2 {note += 5};
+                let mut note = (self.player.pos.x + 4 - origin.x) / 8;
+                let x = origin.x + note * 8;
+                let y = if self.player.pos.y - origin.y < 2 {
+                    note += 5;
+                    origin.y + 1
+                } else {
+                    origin.y + 17
+                };
+                self.particles.add(Particle::new(
+                    ParticleDraw::Rect(7, 15, 3),
+                    10,
+                    Vec2::new(x, y),
+                ));
+                let (x, y) = (origin.x + note * 6 - 2, origin.y - 7);
+                self.particles.add(
+                    Particle::new(
+                        ParticleDraw::Rect(6, 7, note as u8 % 12 + 1),
+                        60,
+                        Vec2::new(x, y),
+                    )
+                    .with_velocity(Vec2::new(0, -1)),
+                );
                 sfx(
                     32,
                     SfxOptions {
@@ -159,6 +187,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 }
             }
         }
+        self.particles.step();
 
         if keyp(28, -1, -1) {
             self.load_map(&SUPERMARKET);
@@ -319,6 +348,8 @@ impl<'a> Game for WalkaroundState<'a> {
             }
             map(options.into());
         }
+
+        self.particles.draw(-self.cam_x(), -self.cam_y());
         blit_segment(4);
         // draw sprites from least to greatest y
         let mut sprites: Vec<(i32, i32, i32, SpriteOptions, Option<u8>, u8)> = Vec::new();
@@ -398,6 +429,7 @@ impl<'a> Game for WalkaroundState<'a> {
             }
             map(options);
         }
+
         if let Some(string) = &self.dialogue.text {
             self.dialogue.draw_dialogue_box(string, true);
         }
