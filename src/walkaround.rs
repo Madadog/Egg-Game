@@ -54,7 +54,7 @@ impl<'a> WalkaroundState<'a> {
             let x = SYNC_HELPER
                 .write()
                 .unwrap()
-                .sync(1 | 4 | 8 | 16 | 32 | 64 | 128, map.bank);
+                .sync(1 | 4 | 8 | 16 | 64 | 128, map.bank);
             if x.is_err() {
                 let bank = map.bank;
                 trace!(
