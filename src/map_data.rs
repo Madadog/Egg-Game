@@ -19,10 +19,10 @@ use crate::camera::CameraBounds;
 use crate::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
-use crate::map::Axis;
 use crate::map::MapLayer;
 use crate::map::MapSet;
 use crate::map::Warp;
+use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::SpriteOptions;
 
@@ -101,7 +101,8 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
             Some(&TOWN),
             Vec2::new(51 * 4, 15 * 8),
-        ),
+        )
+        .with_mode(WarpMode::Auto),
     ],
     interactables: &[
         Interactable {
@@ -180,8 +181,8 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
         },
     ],
     warps: &[
-        Warp::new_tile(9, 6, Some(&SUPERMARKET), 17, 4),
-        Warp::new_tile(3, 6, Some(&SUPERMARKET), 8, 4),
+        Warp::new_tile(9, 6, Some(&SUPERMARKET), 17, 4).with_mode(WarpMode::Auto),
+        Warp::new_tile(3, 6, Some(&SUPERMARKET), 8, 4).with_mode(WarpMode::Auto),
         Warp::new_tile(4, 2, Some(&SUPERMARKET_STOREROOM), 2, 3),
     ],
     interactables: &[
@@ -231,7 +232,7 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
             ..MapLayer::DEFAULT_MAP
         },
     ],
-    warps: &[Warp::new_tile(2, 5, Some(&SUPERMARKET_HALL), 4, 2)],
+    warps: &[Warp::new_tile(2, 5, Some(&SUPERMARKET_HALL), 4, 2).with_mode(WarpMode::Auto)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(53, 28, 8, 10),
@@ -391,7 +392,8 @@ pub static HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
             Some(&HOUSE_LIVING_ROOM),
             Vec2::new(21 * 4, 4 * 8),
-        ),
+        )
+        .with_mode(WarpMode::Auto),
     ],
     interactables: &[
         Interactable {
@@ -469,7 +471,8 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
             Some(&HOUSE_STAIRWELL),
             Vec2::new(15 * 4, 7 * 8),
-        ),
+        )
+        .with_mode(WarpMode::Auto),
         Warp::new(
             Hitbox::new(3 * 8, 9 * 8, 8, 8),
             Some(&TOWN),
@@ -580,7 +583,8 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
             Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
             Some(&HOUSE_LIVING_ROOM),
             Vec2::new(14 * 8, 5 * 8),
-        ),
+        )
+        .with_mode(WarpMode::Auto),
         Warp::new(
             Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
             Some(&BACKYARD),
@@ -628,6 +632,7 @@ pub static BACKYARD: MapSet<'static> = MapSet {
             Some(&WILDERNESS),
             Vec2::new(8 * 8, 61 * 8),
         )
+        .with_mode(WarpMode::Auto)
         .with_flip(Axis::Y),
     ],
     interactables: &[
@@ -743,6 +748,7 @@ pub static WILDERNESS: MapSet<'static> = MapSet {
         Some(&BACKYARD),
         Vec2::new(14 * 8 - 4, 15 * 8),
     )
+    .with_mode(WarpMode::Auto)
     .with_flip(Axis::Y)],
     interactables: &[],
     bank: 1,
@@ -822,7 +828,8 @@ pub static PIANO_ROOM: MapSet<'static> = MapSet {
         Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
         Some(&HOUSE_LIVING_ROOM),
         Vec2::new(8 * 8, 5 * 8),
-    )],
+    )
+    .with_mode(WarpMode::Auto)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(4 * 8, 1 * 8, 4 * 25, 4 * 9),

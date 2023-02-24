@@ -3,16 +3,16 @@ use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::inventory::INVENTORY;
-use crate::map::Axis;
+use crate::map::{Axis, WarpMode};
 use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::{tic80::*, sound};
 use crate::tic_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
 use crate::{dialogue_data::*, frames, save};
+use crate::{sound, tic80::*};
 
 pub struct WalkaroundState<'a> {
     player: Player,
@@ -245,8 +245,14 @@ impl<'a> Game for WalkaroundState<'a> {
         let mut warp_target = None;
         for warp in self.current_map.warps.iter() {
             if self.player.hitbox().touches(warp.from)
-                || (interact && interact_hitbox.touches(warp.from))
+            || (interact && interact_hitbox.touches(warp.from))
             {
+                match warp.mode {
+                    WarpMode::Interact => {
+                        sound::DOOR.play();
+                    },
+                    _ => {}
+                };
                 warp_target = Some(warp.clone());
                 break;
             }

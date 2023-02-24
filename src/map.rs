@@ -60,11 +60,22 @@ impl<'a> From<MapLayer<'a>> for MapOptions<'a> {
 }
 
 #[derive(Clone)]
+/// Defines how a warp is interacted with.
+pub enum WarpMode {
+    /// Automatically used when touched.
+    Auto,
+    /// Requires the player to manually interact with the door
+    /// if the "Automatic doors" setting is disabled.
+    Interact,
+}
+
+#[derive(Clone)]
 pub struct Warp {
     pub from: Hitbox,
     pub map: Option<&'static MapSet<'static>>,
     pub to: Vec2,
     pub flip: Axis,
+    pub mode: WarpMode,
 }
 
 impl Warp {
@@ -74,6 +85,7 @@ impl Warp {
             map,
             to,
             flip: Axis::None,
+            mode: WarpMode::Interact,
         }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
@@ -92,6 +104,9 @@ impl Warp {
     }
     pub const fn with_flip(self, flip: Axis) -> Self {
         Self { flip, ..self }
+    }
+    pub const fn with_mode(self, mode: WarpMode) -> Self {
+        Self { mode, ..self }
     }
     pub fn map(&'static self) -> Option<&'static MapSet<'static>> {
         self.map
