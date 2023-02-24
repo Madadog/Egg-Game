@@ -8,7 +8,7 @@ use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNES
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::tic80::*;
+use crate::{tic80::*, sound};
 use crate::tic_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
@@ -81,29 +81,11 @@ impl<'a> WalkaroundState<'a> {
                 self.companion_trail.fill(self.player.pos, self.player.dir);
                 if self.companion_list.has(Companion::Dog) {
                     self.companion_list.remove(Companion::Dog);
-                    sfx(
-                        36,
-                        SfxOptions {
-                            note: 0,
-                            octave: 5,
-                            speed: 0,
-                            duration: 15,
-                            ..Default::default()
-                        },
-                    );
+                    sound::ALERT_DOWN.play();
                     Some(DOG_RELINQUISHED)
                 } else {
                     self.companion_list.add(Companion::Dog);
-                    sfx(
-                        33,
-                        SfxOptions {
-                            note: 0,
-                            octave: 5,
-                            speed: -2,
-                            duration: 80,
-                            ..Default::default()
-                        },
-                    );
+                    sound::EQUIP_OBTAINED.play();
                     Some(DOG_OBTAINED)
                 }
             }
@@ -119,15 +101,7 @@ impl<'a> WalkaroundState<'a> {
                 }
             }
             InteractFn::Note(note) => {
-                sfx(
-                    32,
-                    SfxOptions {
-                        note: *note,
-                        octave: 5,
-                        duration: 70,
-                        ..Default::default()
-                    },
-                );
+                sound::PIANO.with_note(*note).play();
                 None
             }
             InteractFn::Piano(origin) => {
@@ -153,15 +127,7 @@ impl<'a> WalkaroundState<'a> {
                     )
                     .with_velocity(Vec2::new(0, -1)),
                 );
-                sfx(
-                    32,
-                    SfxOptions {
-                        note: note as i32,
-                        octave: 5,
-                        duration: 60,
-                        ..Default::default()
-                    },
-                );
+                sound::PIANO.with_note(note as i32).play();
                 None
             }
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
@@ -236,19 +202,7 @@ impl<'a> Game for WalkaroundState<'a> {
             }
         } else {
             if self.dialogue.timer == 0 {
-                sfx(
-                    39,
-                    SfxOptions {
-                        note: 4,
-                        octave: 5,
-                        speed: 2,
-                        channel: 3,
-                        volume_left: 7,
-                        volume_right: 7,
-                        duration: 5,
-                        ..Default::default()
-                    },
-                );
+                sound::INTERACT.play();
             }
             self.dialogue.tick(1);
             if mem_btn(4) {

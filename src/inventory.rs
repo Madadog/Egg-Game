@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 use crate::{
     dialogue::Dialogue,
     dialogue_data::*,
+    sound,
     tic_helpers::{print_raw_centered, spr_blit_segment},
 };
 
@@ -89,6 +90,7 @@ impl<'a> InventoryUiState<'a> {
         }
     }
     pub fn change(&mut self) {
+        sound::CLICK.play();
         match self {
             Self::PageSelect(0) => *self = Self::Items(0, None),
             Self::PageSelect(1) => *self = Self::Eggs(0),
@@ -97,7 +99,10 @@ impl<'a> InventoryUiState<'a> {
     }
     pub fn back(&mut self) {
         match self {
-            Self::PageSelect(_) => *self = Self::Close,
+            Self::PageSelect(_) => {
+                sound::INTERACT.with_note(-17).play();
+                *self = Self::Close
+            }
             Self::Close => (),
             _ => self.change(),
         }
@@ -105,6 +110,9 @@ impl<'a> InventoryUiState<'a> {
     pub fn arrows(&mut self, dx: i32, dy: i32) {
         match self {
             Self::PageSelect(i) => {
+                if dx != 0 || dy != 0 {
+                    sound::CLICK.play()
+                };
                 *i = (*i + dy % 2).clamp(0, 1);
                 if dx == 1 {
                     self.change()
@@ -147,6 +155,7 @@ impl<'a> InventoryUi<'a> {
         }
     }
     pub fn open(&mut self) {
+        sound::INTERACT.with_note(-12).play();
         self.state = InventoryUiState::PageSelect(0);
     }
     pub fn click(&mut self) {
@@ -156,22 +165,32 @@ impl<'a> InventoryUi<'a> {
                 if let Some((old_index, id)) = selected_item {
                     // Put item back down
                     if old_index == new_index {
+                        sound::INTERACT.with_note(-5).play();
                         *selected_item = None;
                         return;
                     };
+
                     // Swap items, pick up swapped item if present.
                     self.inventory.swap(*new_index, *old_index);
                     if let Some(Some(x)) = self.inventory.items.get(*old_index) {
+                        sound::INTERACT.with_note(0).play();
                         *id = *x;
                     } else {
+                        sound::INTERACT.with_note(-5).play();
                         *selected_item = None;
                     };
                 } else {
                     // Pick up item
                     if let Some(Some(x)) = self.inventory.items.get(*new_index) {
+                        sound::INTERACT.play();
                         *selected_item = Some((*new_index, *x));
+                    } else {
+                        sound::DENY.play();
                     };
                 }
+            }
+            InventoryUiState::Eggs(_index) => {
+                sound::DENY.play();
             }
             _ => (),
         }

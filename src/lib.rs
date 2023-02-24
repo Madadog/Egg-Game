@@ -33,6 +33,7 @@ mod input_manager;
 mod walkaround;
 mod save;
 mod particles;
+mod sound;
 
 use crate::gamestate::GameState;
 use crate::map_data::*;
