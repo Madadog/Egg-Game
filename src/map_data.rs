@@ -819,7 +819,7 @@ pub static PIANO_ROOM: MapSet<'static> = MapSet {
     }],
     bg_colour: 0,
     warps: &[Warp::new(
-        Hitbox::new(9 * 8, 8 * 8, 8 * 2, 8),
+        Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
         Some(&HOUSE_LIVING_ROOM),
         Vec2::new(8 * 8, 5 * 8),
     )],
