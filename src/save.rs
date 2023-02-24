@@ -1,4 +1,4 @@
-use crate::tic80::PERSISTENT_RAM;
+use crate::tic_helpers::{get_pmem, set_pmem};
 
 /// A 1-byte Pmem slot. When set, it will be saved to the player's hard drive and persist across runs.
 pub struct PmemU8(usize);
@@ -9,11 +9,11 @@ impl PmemU8 {
     }
     /// Get whole inner value as u8
     pub fn get(&self) -> u8 {
-        unsafe { (*PERSISTENT_RAM)[self.0] }
+        get_pmem(self.0)
     }
     /// Set whole inner value with u8
-    pub fn set(&self, val: u8) {
-        unsafe { (*PERSISTENT_RAM)[self.0] = val }
+    pub fn set(&self, value: u8) {
+        set_pmem(self.0, value)
     }
 }
 
@@ -25,28 +25,39 @@ pub struct PmemBit {
 impl PmemBit {
     pub const fn new(index: usize, bit: u8) -> Self {
         assert!(index < 1024);
+        assert!(bit.is_power_of_two());
         Self { index, bit }
+    }
+    /// Returns the whole byte associated with this bit.
+    /// 
+    /// To set it, use `set_pmem` directly.
+    pub fn get_byte(&self) -> u8 {
+        get_pmem(self.index)
     }
     /// Get inner value
     pub fn is_true(&self) -> bool {
-        (unsafe { (*PERSISTENT_RAM)[self.index] } & self.bit) == self.bit
+        (self.get_byte() & self.bit) == self.bit
     }
     /// Set inner value to true
     pub fn set_true(&self) {
-        unsafe { (*PERSISTENT_RAM)[self.index] |= self.bit }
+        let value = self.get_byte() | self.bit;
+        set_pmem(self.index, value);
     }
     /// Set inner value to false
     pub fn set_false(&self) {
-        unsafe { (*PERSISTENT_RAM)[self.index] &= self.bit ^ 255 }
+        let value = self.get_byte() & (self.bit ^ 255);
+        set_pmem(self.index, value);
     }
     pub fn toggle(&self) {
-        unsafe { (*PERSISTENT_RAM)[self.index] ^= self.bit }
+        let value = self.get_byte() ^ self.bit;
+        set_pmem(self.index, value);
     }
 }
 
 pub const INTRO_ANIM_SEEN: PmemBit = PmemBit::new(0, 0b0000_0001);
 pub const SMALL_TEXT_ON: PmemBit = PmemBit::new(0, 0b0000_0010);
 pub const INSTRUCTIONS_READ: PmemBit = PmemBit::new(0, 0b0000_0100);
+pub const MANUAL_DOORS: PmemBit = PmemBit::new(0, 0b0000_1000);
 
 pub const HOUSE_STAIRWELL_WINDOW_INTERACTED: PmemBit = PmemBit::new(1, 0b0000_0001);
 pub const DOG_FED: PmemBit = PmemBit::new(1, 0b0000_0010);
@@ -67,6 +78,9 @@ pub const WILDERNESS_EGG_FOUND: PmemBit = PmemBit::new(8, 0b0000_0001);
 
 pub const FACTORY_FLAGS: PmemU8 = PmemU8::new(9);
 pub const EGG_POP_COUNT: PmemU8 = PmemU8::new(10);
+
+
+pub const IS_NIGHT: PmemBit = PmemBit::new(0, 0b0000_0001);
 
 pub const SHELL_KEY: PmemBit = PmemBit::new(15, 0b0000_0001);
 pub const SHELL_CURIOSITY: PmemBit = PmemBit::new(15, 0b0000_0010);
