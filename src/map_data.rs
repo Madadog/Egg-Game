@@ -337,12 +337,7 @@ pub static BEDROOM: MapSet<'static> = MapSet {
         },
         Interactable {
             hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: Interaction::Text(BEDROOM_WINDOW),
-            sprite: None,
-        },
-        Interactable {
-            hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: Interaction::Text(BEDROOM_WINDOW),
+            interaction: Interaction::EnumText(BEDROOM_WINDOW),
             sprite: None,
         },
     ],

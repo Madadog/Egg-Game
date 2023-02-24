@@ -16,12 +16,14 @@
 
 use crate::animation::*;
 use crate::Hitbox;
+use crate::dialogue::TextContent;
 use crate::position::Vec2;
 
 #[derive(Debug)]
 pub enum Interaction<'a> {
     Text(&'a str),
-    Dialogue(&'a [&'a str]),
+    EnumText(&'a [TextContent]),
+    Dialogue(&'a [&'static str]),
     Func(InteractFn),
 }
 

@@ -1,16 +1,36 @@
-use crate::tic80::{SfxOptions, sfx};
+use crate::tic80::{sfx, SfxOptions};
 
 pub struct SfxData {
     id: i32,
     options: SfxOptions,
 }
 impl SfxData {
-    pub const fn new(id: i32, options: SfxOptions) -> Self { Self { id, options } }
+    pub const fn new(id: i32, options: SfxOptions) -> Self {
+        Self { id, options }
+    }
     pub fn play(self) {
         //todo: check if channel is occupied and return bool
         sfx(self.id, self.options);
     }
-    pub fn with_note(self, note: i32) -> Self { Self {options: SfxOptions { note, ..self.options }, ..self}}
+    pub fn with_note(self, note: i32) -> Self {
+        Self {
+            options: SfxOptions {
+                note,
+                ..self.options
+            },
+            ..self
+        }
+    }
+    pub fn with_volume(self, volume: i32) -> Self {
+        Self {
+            options: SfxOptions {
+                volume_left: volume,
+                volume_right: volume,
+                ..self.options
+            },
+            ..self
+        }
+    }
 }
 
 pub const DEFAULT_SFX: SfxOptions = SfxOptions {

@@ -14,11 +14,13 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::dialogue::TextContent::{*, self};
+
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
 pub static GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub static GAME_TITLE_BLURB: &str = "v0.0.10\0";
+pub static GAME_TITLE_BLURB: &str = "v0.0.11\0";
 pub static MENU_PLAY: &str = "Play\0";
 pub static MENU_OPTIONS: &str = "Options\0";
 pub static MENU_BACK: &str = "Back\0";
@@ -30,7 +32,7 @@ pub static OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
 pub static BEDROOM_MATTRESS: &str = "You can't get to sleep.";
 pub static BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
 pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
-pub static BEDROOM_WINDOW: &str = "It's a beautiful day... \n            \n... Outside.";
+pub static BEDROOM_WINDOW: &[TextContent] = &[Text("It's a beautiful day..."), Delay(30), Text("Outside.")];
 pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
 pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
 pub static HOUSE_STAIRWELL_PAINTING_INIT: &str = "It's not as good as the real thing.";

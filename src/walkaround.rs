@@ -201,7 +201,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 return Some(GameState::Inventory);
             }
         } else {
-            if self.dialogue.timer == 0 {
+            if self.dialogue.characters == 0 {
                 sound::INTERACT.play();
             }
             self.dialogue.tick(1);
@@ -275,6 +275,10 @@ impl<'a> Game for WalkaroundState<'a> {
                         Interaction::Dialogue(x) => {
                             trace!(format!("{x:?}"), 12);
                             self.dialogue.set_dialogue(x);
+                        }
+                        Interaction::EnumText(x) => {
+                            trace!(format!("{x:?}"), 12);
+                            self.dialogue.set_enum_text(x);
                         }
                         Interaction::Func(x) => {
                             trace!(format!("{x:?}"), 12);

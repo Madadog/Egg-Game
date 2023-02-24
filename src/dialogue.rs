@@ -16,7 +16,7 @@
 
 use std::sync::RwLock;
 
-use crate::{print_alloc, tic80::SpriteOptions, PrintOptions, save};
+use crate::{print_alloc, save, sound, tic80::SpriteOptions, PrintOptions};
 
 pub struct DialogueOptions {
     pub fixed: RwLock<bool>,
@@ -40,7 +40,11 @@ impl DialogueOptions {
     }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
         *self.fixed.write().unwrap() = fixed;
-        if small_text { save::SMALL_TEXT_ON.set_true() } else { save::SMALL_TEXT_ON.set_false() }
+        if small_text {
+            save::SMALL_TEXT_ON.set_true()
+        } else {
+            save::SMALL_TEXT_ON.set_false()
+        }
     }
     pub fn get_options(&self) -> PrintOptions {
         PrintOptions {
@@ -60,17 +64,21 @@ pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
 
 pub struct Dialogue {
     pub text: Option<String>,
-    pub buffer: Vec<String>,
-    pub timer: usize,
+    pub buffer: Vec<TextContent>,
+    pub characters: usize,
     pub width: usize,
+    pub delay: usize,
+    pub print_time: Option<usize>,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
         Self {
             text: None,
             buffer: Vec::new(),
-            timer: 0,
+            characters: 0,
             width: 200,
+            delay: 0,
+            print_time: None,
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -78,32 +86,47 @@ impl Dialogue {
     }
     pub fn is_line_done(&self) -> bool {
         match &self.text {
-            Some(text) => self.timer == text.len(),
+            Some(text) => self.characters == text.len(),
             None => true,
         }
     }
     pub fn set_current_text(&mut self, string: &str) {
         self.text = Some(self.fit_text(string));
-        self.timer = 0;
+        self.characters = 0;
+        self.print_time = Some(0);
     }
     pub fn try_set_text(&mut self, string: &str) -> bool {
         if self.text.is_none() || self.is_line_done() {
-            self.text = Some(self.fit_text(string));
-            self.timer = 0;
+            self.set_current_text(string);
             true
         } else {
             false
         }
     }
-    pub fn set_dialogue(&mut self, dialogue: &[&str]) {
-        self.buffer = dialogue.iter().rev().map(|x| x.to_string()).collect();
+    pub fn set_dialogue(&mut self, dialogue: &[&'static str]) {
+        self.buffer = dialogue.iter().rev().map(|x| TextContent::Text(x)).collect();
+        self.next_text();
+    }
+    pub fn set_enum_text(&mut self, dialogue: &[TextContent]) {
+        self.buffer = dialogue.iter().rev().cloned().collect();
         self.next_text();
     }
     pub fn next_text(&mut self) -> bool {
-        if let Some(x) = self.buffer.pop() {
-            self.try_set_text(&x)
+        if let Some(text_content) = self.buffer.pop() {
+            self.consume_text_content(text_content)
         } else {
             false
+        }
+    }
+    pub fn consume_text_content(&mut self, text_content: TextContent) -> bool {
+        match text_content {
+            TextContent::Text(x) => {
+                self.try_set_text(x)
+            },
+            TextContent::Delay(x) => {
+                self.add_delay(x as usize);
+                false
+            },
         }
     }
     pub fn fit_text(&self, string: &str) -> String {
@@ -115,16 +138,34 @@ impl Dialogue {
     pub fn close(&mut self) {
         self.text = None;
         self.buffer.clear();
-        self.timer = 0;
+        self.characters = 0;
+        self.delay = 0;
+        self.print_time = None;
     }
     pub fn tick(&mut self, amount: usize) {
+        if self.characters == self.text.as_ref().map_or(0, |x| x.len()) {return}
+        self.print_time = self.print_time.map(|x| x + 1);
         if let Some(text) = &mut self.text {
-            self.timer = (self.timer + amount).min(text.len());
+            if self.print_time.unwrap() % 4 == 0 {
+                sound::CLICK.with_volume(2).play();
+            }
+            if self.delay != 0 {
+                self.delay = self.delay.saturating_sub(amount);
+                return;
+            }
+            if text.chars().nth(self.characters).unwrap() == '.' {
+                self.delay += 4;
+            }
+            self.characters = (self.characters + amount).min(text.len());
+            self.delay += 1;
         }
+    }
+    pub fn add_delay(&mut self, amount: usize) {
+        self.delay.saturating_add(amount);
     }
     pub fn skip(&mut self) {
         if let Some(text) = &mut self.text {
-            self.timer = text.len();
+            self.characters = text.len();
         }
     }
     pub fn set_options(&mut self, fixed: bool, small_text: bool) {
@@ -175,7 +216,7 @@ impl Dialogue {
         use crate::tic_helpers::rect_outline;
         use crate::{HEIGHT, WIDTH};
 
-        let print_timer = self.timer;
+        let print_timer = self.characters;
         let w = self.width as i32;
         let h = 24;
         rect_outline(
@@ -267,4 +308,10 @@ pub fn fit_default_paragraph(string: &str, wrap_width: usize) -> String {
         DIALOGUE_OPTIONS.fixed(),
         DIALOGUE_OPTIONS.small_text(),
     )
+}
+
+#[derive(Debug, Clone)]
+pub enum TextContent {
+    Text(&'static str),
+    Delay(u8),
 }
