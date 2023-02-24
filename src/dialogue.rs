@@ -82,9 +82,18 @@ impl Dialogue {
             None => true,
         }
     }
-    pub fn set_text(&mut self, string: &str) {
+    pub fn set_current_text(&mut self, string: &str) {
         self.text = Some(self.fit_text(string));
         self.timer = 0;
+    }
+    pub fn try_set_text(&mut self, string: &str) -> bool {
+        if self.text.is_none() || self.is_line_done() {
+            self.text = Some(self.fit_text(string));
+            self.timer = 0;
+            true
+        } else {
+            false
+        }
     }
     pub fn set_dialogue(&mut self, dialogue: &[&str]) {
         self.buffer = dialogue.iter().rev().map(|x| x.to_string()).collect();
@@ -92,8 +101,7 @@ impl Dialogue {
     }
     pub fn next_text(&mut self) -> bool {
         if let Some(x) = self.buffer.pop() {
-            self.set_text(&x);
-            true
+            self.try_set_text(&x)
         } else {
             false
         }

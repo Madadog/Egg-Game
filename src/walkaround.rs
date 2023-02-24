@@ -310,7 +310,7 @@ impl<'a> Game for WalkaroundState<'a> {
                     match &item.interaction {
                         Interaction::Text(x) => {
                             trace!(format!("{x:?}"), 12);
-                            self.dialogue.set_text(x);
+                            self.dialogue.set_current_text(x);
                         }
                         Interaction::Dialogue(x) => {
                             trace!(format!("{x:?}"), 12);
@@ -319,7 +319,7 @@ impl<'a> Game for WalkaroundState<'a> {
                         Interaction::Func(x) => {
                             trace!(format!("{x:?}"), 12);
                             if let Some(dialogue) = self.execute_interact_fn(x) {
-                                self.dialogue.set_text(dialogue);
+                                self.dialogue.set_current_text(dialogue);
                             };
                         }
                         x => {
