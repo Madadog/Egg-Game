@@ -672,22 +672,6 @@ pub static BACKYARD: MapSet<'static> = MapSet {
                 ..Animation::const_default()
             }),
         },
-        Interactable {
-            hitbox: Hitbox::new(8 * 7, 10 * 8, 8, 8),
-            interaction: Interaction::Dialogue(HOUSE_BACKYARD_ANTHILL),
-            sprite: Some(Animation {
-                frames: &[AnimFrame::new(
-                    Vec2::new(0, 0),
-                    841,
-                    30,
-                    SpriteOptions {
-                        h: 2,
-                        ..SpriteOptions::transparent_zero()
-                    },
-                )],
-                ..Animation::const_default()
-            }),
-        },
     ],
     ..DEFAULT_MAP_SET
 };
