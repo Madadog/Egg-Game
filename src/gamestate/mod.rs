@@ -17,14 +17,15 @@
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::inventory::{InventoryUiState, INVENTORY};
 use crate::save;
-use crate::{tic80::*, WALKAROUND_STATE};
+use crate::{tic80_core::*, WALKAROUND_STATE};
 
 use self::menu::{MainMenuOption, MenuState};
 use crate::input_manager::{any_btnp, mem_btn};
-use crate::tic_helpers::*;
+use crate::tic80_helpers::*;
 
 mod intro;
 mod menu;
+pub mod walkaround;
 
 pub enum GameState {
     Instructions(u16),

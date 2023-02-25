@@ -1,4 +1,4 @@
-use crate::tic_helpers::{get_pmem, set_pmem};
+use crate::tic80_helpers::{get_pmem, set_pmem};
 
 /// A 1-byte Pmem slot. When set, it will be saved to the player's hard drive and persist across runs.
 pub struct PmemU8(usize);

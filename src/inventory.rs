@@ -6,7 +6,7 @@ use crate::{
     dialogue::Dialogue,
     dialogue_data::*,
     sound,
-    tic_helpers::{print_raw_centered, spr_blit_segment},
+    tic80_helpers::{print_raw_centered, spr_blit_segment},
 };
 
 static ITEM_FF: InventoryItem = InventoryItem {
@@ -196,10 +196,10 @@ impl<'a> InventoryUi<'a> {
         }
     }
     pub fn draw(&self) {
-        use crate::tic80::{
+        use crate::tic80_core::{
             cls, print_raw, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
         };
-        use crate::tic_helpers::{rect_outline, spr_outline};
+        use crate::tic80_helpers::{rect_outline, spr_outline};
         let side_column = 32;
         let column_margin = 2;
         let scale = 2;
@@ -420,7 +420,7 @@ impl<'a> InventoryUi<'a> {
         };
     }
     pub fn step(&mut self) {
-        use crate::input_manager::mem_btnp;
+        use crate::tic80_helpers::input_manager::mem_btnp;
         let (mut dx, mut dy) = (0, 0);
         if mem_btnp(0) {
             dy -= 1

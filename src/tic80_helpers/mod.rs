@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::tic80::*;
+use crate::tic80_core::*;
+
+pub mod input_manager;
 
 pub fn palette_map_swap(from: u8, to: u8) {
     let from: i32 = (from % 16).into();

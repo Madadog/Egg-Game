@@ -8,11 +8,11 @@ use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNES
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::tic_helpers::*;
+use crate::tic80_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
-use crate::{dialogue_data::*, frames, save};
-use crate::{sound, tic80::*};
+use crate::{dialogue_data::*, save};
+use crate::{sound, tic80_core::*};
 
 pub struct WalkaroundState<'a> {
     player: Player,
@@ -168,10 +168,10 @@ impl<'a> Game for WalkaroundState<'a> {
             self.load_map(&BEDROOM);
         }
         if keyp(33, -1, -1) {
-            set_palette(crate::tic_helpers::SWEETIE_16);
+            set_palette(crate::tic80_helpers::SWEETIE_16);
         }
         if keyp(34, -1, -1) {
-            set_palette(crate::tic_helpers::NIGHT_16);
+            set_palette(crate::tic80_helpers::NIGHT_16);
         }
         {
             let small_text = DIALOGUE_OPTIONS.small_text();
@@ -183,7 +183,7 @@ impl<'a> Game for WalkaroundState<'a> {
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
-        if matches!(self.dialogue.text, None) {
+        if matches!(self.dialogue.current_text, None) {
             if mem_btn(0) {
                 dy -= 1;
             }
@@ -216,7 +216,7 @@ impl<'a> Game for WalkaroundState<'a> {
             interact = true;
             if self.dialogue.next_text() {
                 interact = false;
-            } else if matches!(self.dialogue.text, Some(_)) {
+            } else if matches!(self.dialogue.current_text, Some(_)) {
                 interact = false;
                 self.dialogue.close();
             }
@@ -400,7 +400,7 @@ impl<'a> Game for WalkaroundState<'a> {
             map(options);
         }
 
-        if let Some(string) = &self.dialogue.text {
+        if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(string, true);
         }
         if debug_info().map_info {

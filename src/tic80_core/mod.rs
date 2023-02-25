@@ -27,6 +27,8 @@ use std::ffi::CString;
 
 pub use sys::MouseInput;
 
+mod alloc;
+
 // Constants
 pub const WIDTH: i32 = 240;
 pub const HEIGHT: i32 = 136;
@@ -676,10 +678,10 @@ pub fn print_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) ->
 #[macro_export]
 macro_rules! print {
     ($text: literal, $($args: expr), *) => {
-        $crate::tic80::print_raw(concat!($text, "\0"), $($args), *);
+        $crate::tic80_core::print_raw(concat!($text, "\0"), $($args), *);
     };
     ($text: expr, $($args: expr), *) => {
-        $crate::tic80::print_alloc($text, $($args), *);
+        $crate::tic80_core::print_alloc($text, $($args), *);
     };
 }
 
@@ -745,10 +747,10 @@ pub fn font_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: FontOptions) -> i
 #[macro_export]
 macro_rules! font {
     ($text: literal, $($args: expr), *) => {
-        $crate::tic80::font_raw(concat!($text, "\0"), $($args), *);
+        $crate::tic80_core::font_raw(concat!($text, "\0"), $($args), *);
     };
     ($text: expr, $($args: expr), *) => {
-        $crate::tic80::font_alloc($text, $($args), *);
+        $crate::tic80_core::font_alloc($text, $($args), *);
     };
 }
 
@@ -760,10 +762,10 @@ pub fn trace_alloc(text: impl AsRef<str>, color: u8) {
 #[macro_export]
 macro_rules! trace {
     ($text: literal, $color: expr) => {
-        unsafe { crate::tic80::sys::trace(concat!($text, "\0").as_ptr(), $color) }
+        unsafe { crate::tic80_core::sys::trace(concat!($text, "\0").as_ptr(), $color) }
     };
     ($text: expr, $color: expr) => {
-        crate::tic80::trace_alloc($text, $color);
+        crate::tic80_core::trace_alloc($text, $color);
     };
 }
 

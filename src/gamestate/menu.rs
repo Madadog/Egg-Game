@@ -2,8 +2,8 @@ use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::frames;
 use crate::input_manager::*;
 use crate::position::*;
-use crate::tic80::*;
-use crate::tic_helpers::*;
+use crate::tic80_core::*;
+use crate::tic80_helpers::*;
 
 pub struct MenuState {
     index: usize,

@@ -16,7 +16,7 @@
 
 use std::sync::RwLock;
 
-use crate::{print_alloc, save, sound, tic80::SpriteOptions, PrintOptions};
+use crate::{print_alloc, save, sound, tic80_core::SpriteOptions, PrintOptions};
 
 pub struct DialogueOptions {
     pub fixed: RwLock<bool>,
@@ -184,7 +184,7 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use crate::tic_helpers::rect_outline;
+        use crate::tic80_helpers::rect_outline;
         use crate::{spr, HEIGHT, WIDTH};
 
         let w = self.width as i32;
@@ -213,7 +213,7 @@ impl Dialogue {
         y: i32,
         height: i32,
     ) {
-        use crate::tic_helpers::rect_outline;
+        use crate::tic80_helpers::rect_outline;
         use crate::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;

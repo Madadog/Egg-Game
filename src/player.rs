@@ -17,7 +17,7 @@
 use crate::{
     camera::Camera,
     map::{Axis, MapSet},
-    tic80::SpriteOptions,
+    tic80_core::SpriteOptions,
     Flip, Hitbox, Vec2,
 };
 

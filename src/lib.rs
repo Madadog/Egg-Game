@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-pub mod alloc;
 mod animation;
 mod camera;
 mod dialogue;
@@ -27,10 +26,8 @@ mod player;
 mod inventory;
 mod position;
 mod rand;
-mod tic80;
-mod tic_helpers;
-mod input_manager;
-mod walkaround;
+mod tic80_core;
+mod tic80_helpers;
 mod save;
 mod particles;
 mod sound;
@@ -39,12 +36,13 @@ use crate::gamestate::GameState;
 use crate::map_data::*;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
-use crate::tic_helpers::{SyncHelper};
+use crate::tic80_helpers::{SyncHelper};
 use once_cell::sync::Lazy;
-use walkaround::WalkaroundState;
+use tic80_helpers::input_manager;
+use crate::gamestate::walkaround::WalkaroundState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use tic80::*;
+use tic80_core::*;
 
 pub struct DebugInfo {
     player_info: bool,

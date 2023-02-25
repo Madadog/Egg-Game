@@ -1,4 +1,4 @@
-use crate::tic80::{sfx, SfxOptions};
+use crate::tic80_core::{sfx, SfxOptions};
 
 pub struct SfxData {
     id: i32,

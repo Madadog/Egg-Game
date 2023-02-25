@@ -675,6 +675,8 @@ pub static BACKYARD: MapSet<'static> = MapSet {
     ],
     ..DEFAULT_MAP_SET
 };
+//TODO: Pet the dog. 
+//TODO: Fix formatted dialogue. 
 
 pub static WILDERNESS: MapSet<'static> = MapSet {
     maps: &[

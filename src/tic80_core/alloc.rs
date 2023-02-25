@@ -1,6 +1,7 @@
 // Neither of the original files are commented with licenses,
-// So here is the ISC license of the WASM4 project followed
-// by the MIT license of the TIC-80 project.
+// So here is the ISC license of the WASM4 project (initial
+// origin of this file) followed by the MIT license of the
+// TIC-80 project (which modified the original file).
 
 // Copyright (c) Bruno Garcia
 // 

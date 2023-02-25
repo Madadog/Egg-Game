@@ -1,6 +1,6 @@
 use crate::{
     position::Vec2,
-    tic80::{rect, rectb, spr, SpriteOptions},
+    tic80_core::{rect, rectb, spr, SpriteOptions},
 };
 
 pub enum ParticleDraw {

@@ -1,5 +1,5 @@
 use std::sync::RwLock;
-use crate::tic80::{sys::MouseInput, GAMEPADS, mouse};
+use crate::tic80_core::{sys::MouseInput, GAMEPADS, mouse};
 
 pub static GAMEPAD_HELPER: RwLock<[u8; 4]> = RwLock::new([0; 4]);
 

@@ -1,8 +1,8 @@
 use crate::gamestate::menu::draw_title;
 use crate::rand;
 use crate::save;
-use crate::tic80::*;
-use crate::tic_helpers::*;
+use crate::tic80_core::*;
+use crate::tic80_helpers::*;
 
 pub fn draw_animation(t: u16) -> bool {
     let steps: &[u16] = &[0, 1, 700, 760];

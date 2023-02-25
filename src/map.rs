@@ -1,7 +1,7 @@
 use crate::{
     interact::Interactable,
     position::{touches_tile, Hitbox, Vec2},
-    tic80::{mget, MapOptions}, camera::CameraBounds,
+    tic80_core::{mget, MapOptions}, camera::CameraBounds,
 };
 
 #[derive(Clone)]
