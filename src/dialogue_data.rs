@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::dialogue::TextContent::{*, self};
+use crate::dialogue::TextContent::{self, *};
 
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue
@@ -32,7 +32,10 @@ pub static OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
 pub static BEDROOM_MATTRESS: &str = "You can't get to sleep.";
 pub static BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
 pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
-pub static BEDROOM_WINDOW: &[TextContent] = &[Text("It's a beautiful day..."), Delay(30), Text("Outside.")];
+pub static BEDROOM_WINDOW: &[TextContent] = &[
+    Text("It's a beautiful day...\n\n"),
+    Delayed("... Outside.", 30),
+];
 pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
 pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
 pub static HOUSE_STAIRWELL_PAINTING_INIT: &str = "It's not as good as the real thing.";
@@ -46,8 +49,10 @@ pub static HOUSE_LIVING_ROOM_TV_3: &str = "A long cartoon series. After taking o
 pub static HOUSE_LIVING_ROOM_TV_4: &str = "Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.";
 pub static HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.";
 pub static HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
-pub static HOUSE_LIVING_ROOM_WINDOW: &str =
-    "You harbour some very strong feelings about gothic windows.\nNone of them are good.";
+pub static HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
+    Text("You harbour some very strong feelings about gothic windows.\n"),
+    Delayed("None of them are good.", 30),
+];
 pub static HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
 pub static HOUSE_KITCHEN_SINK: &str =
     "The unholy king of tacky windows. Words fail to convey your antipathy.";
@@ -62,7 +67,10 @@ pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the c
 pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could definitely open it with some of the POWER TOOLS inside... Oh wait.";
 pub static HOUSE_BACKYARD_SHED_WINDOW: &str =
     "You can't actually see anything through this window.";
-pub static HOUSE_BACKYARD_NEIGHBOURS: &str = "You don't know much about the neighbours. The traffic makes it difficult to get to their house.";
+pub static HOUSE_BACKYARD_NEIGHBOURS: &[&str] = &[
+    "You don't know much about the neighbours.",
+    "... The traffic makes it difficult to get to their house.",
+];
 pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
 pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
 pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
@@ -97,6 +105,26 @@ pub static TOWN_TRAFFIC: &str = "They've been stuck like this for a while now.";
 pub static TOWN_LAMPPOST: &str =
     "Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.";
 pub static TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";
+pub static TOWN_WIDE: &[TextContent] = &[
+    Text("T"),
+    Delayed("h", 10),
+    Delayed("i", 10),
+    Delayed("s", 10),
+    Delayed(" ", 10),
+    Delayed("t", 10),
+    Delayed("e", 10),
+    Delayed("x", 10),
+    Delayed("t", 10),
+    Delayed(" ", 10),
+    Delayed("i", 10),
+    Delayed("s", 10),
+    Delayed(" ", 10),
+    Delayed("w", 10),
+    Delayed("i", 10),
+    Delayed("d", 10),
+    Delayed("e", 10),
+    Delayed("...", 10),
+];
 pub static INVENTORY_TITLE: &str = "INVENTORY\0";
 pub static ITEM_FF_NAME: &str = "French Gry";
 pub static ITEM_FF_DESC: &str =

@@ -14,9 +14,25 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::RwLock;
+use std::{fmt::format, sync::RwLock};
 
-use crate::{print_alloc, save, sound, tic80_core::SpriteOptions, PrintOptions};
+use crate::{print_alloc, save, sound, tic80_core::SpriteOptions, trace, PrintOptions};
+
+#[derive(Debug, Clone)]
+pub enum TextContent {
+    Text(&'static str),
+    Delayed(&'static str, u8),
+    Delay(u8),
+}
+impl TextContent {
+    pub fn is_auto(&self) -> bool {
+        use TextContent::*;
+        match self {
+            Delayed(_, _) | Delay(_) => true,
+            _ => false,
+        }
+    }
+}
 
 pub struct DialogueOptions {
     pub fixed: RwLock<bool>,
@@ -63,9 +79,9 @@ impl DialogueOptions {
 pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
 
 pub struct Dialogue {
-    pub text: Option<String>,
-    pub buffer: Vec<TextContent>,
+    pub current_text: Option<String>,
     pub characters: usize,
+    pub next_text: Vec<TextContent>,
     pub width: usize,
     pub delay: usize,
     pub print_time: Option<usize>,
@@ -73,8 +89,8 @@ pub struct Dialogue {
 impl Dialogue {
     pub const fn const_default() -> Self {
         Self {
-            text: None,
-            buffer: Vec::new(),
+            current_text: None,
+            next_text: Vec::new(),
             characters: 0,
             width: 200,
             delay: 0,
@@ -85,34 +101,40 @@ impl Dialogue {
         Self { width, ..self }
     }
     pub fn is_line_done(&self) -> bool {
-        match &self.text {
-            Some(text) => self.characters == text.len(),
+        match &self.current_text {
+            Some(text) => self.characters == text.len() - 1,
             None => true,
         }
     }
-    pub fn set_current_text(&mut self, string: &str) {
-        self.text = Some(self.fit_text(string));
+    fn set_current_text(&mut self, string: &str) {
+        self.current_text = Some(self.fit_text(string));
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn try_set_text(&mut self, string: &str) -> bool {
-        if self.text.is_none() || self.is_line_done() {
+    pub fn add_text(&mut self, string: &'static str) -> bool {
+        if self.current_text.is_none() || self.is_line_done() {
             self.set_current_text(string);
             true
         } else {
+            self.next_text.push(TextContent::Text(string));
             false
         }
     }
     pub fn set_dialogue(&mut self, dialogue: &[&'static str]) {
-        self.buffer = dialogue.iter().rev().map(|x| TextContent::Text(x)).collect();
+        self.next_text = dialogue
+            .iter()
+            .rev()
+            .map(|x| TextContent::Text(x))
+            .collect();
         self.next_text();
     }
     pub fn set_enum_text(&mut self, dialogue: &[TextContent]) {
-        self.buffer = dialogue.iter().rev().cloned().collect();
+        self.next_text = dialogue.iter().rev().cloned().collect();
         self.next_text();
     }
     pub fn next_text(&mut self) -> bool {
-        if let Some(text_content) = self.buffer.pop() {
+        if let Some(text_content) = self.next_text.pop() {
+            trace!(format!("Popping text content: {:?}", text_content), 12);
             self.consume_text_content(text_content)
         } else {
             false
@@ -120,13 +142,20 @@ impl Dialogue {
     }
     pub fn consume_text_content(&mut self, text_content: TextContent) -> bool {
         match text_content {
-            TextContent::Text(x) => {
-                self.try_set_text(x)
-            },
+            TextContent::Text(text) => self.add_text(text),
             TextContent::Delay(x) => {
-                self.add_delay(x as usize);
-                false
-            },
+                self.add_delay(x.into());
+                true
+            }
+            TextContent::Delayed(text, delay) => {
+                if let Some(string) = &mut self.current_text {
+                    string.push_str(text);
+                    self.add_delay(delay.into());
+                } else {
+                    self.add_text(text);
+                }
+                true
+            }
         }
     }
     pub fn fit_text(&self, string: &str) -> String {
@@ -136,42 +165,70 @@ impl Dialogue {
         self.width - 3
     }
     pub fn close(&mut self) {
-        self.text = None;
-        self.buffer.clear();
+        self.current_text = None;
+        self.next_text.clear();
         self.characters = 0;
         self.delay = 0;
         self.print_time = None;
     }
+    pub fn text_len(&self) -> usize {
+        self.current_text.as_ref().map_or(0, |x| x.len())
+    }
     pub fn tick(&mut self, amount: usize) {
-        if self.characters == self.text.as_ref().map_or(0, |x| x.len()) {return}
-        self.print_time = self.print_time.map(|x| x + 1);
-        if let Some(text) = &mut self.text {
-            if self.print_time.unwrap() % 4 == 0 {
-                sound::CLICK.with_volume(2).play();
-            }
+        if let Some(text) = &mut self.current_text {
+            // trace!(format!("delay = {}", self.delay),12);
             if self.delay != 0 {
                 self.delay = self.delay.saturating_sub(amount);
                 return;
             }
-            if text.chars().nth(self.characters).unwrap() == '.' {
-                self.delay += 4;
+            let mut silent_char = false;
+            if let Some(char) = text.chars().nth(self.characters) {
+                if char == '.' {
+                    self.delay += 4;
+                }
+                if char.is_ascii_control() {
+                    silent_char = true
+                }
+            } else {
+                trace!(format!("index was {}", self.characters), 12);
             }
-            self.characters = (self.characters + amount).min(text.len());
+            self.print_time = self.print_time.map(|x| x + 1);
+            if !silent_char && self.print_time.unwrap() % 2 == 0 && !self.is_line_done() {
+                sound::CLICK.with_volume(2).play();
+            }
+            self.step_text(amount);
+            // trace!(format!("self.is_line_done(): {},  self.can_autoadvance(): {}", self.is_line_done(), self.can_autoadvance()),12);
+            if self.is_line_done() && self.can_autoadvance() {
+                self.next_text();
+            }
             self.delay += 1;
         }
     }
+    pub fn step_text(&mut self, amount: usize) {
+        self.characters = (self.characters + amount).min(self.text_len() - 1);
+    }
+    pub fn can_autoadvance(&self) -> bool {
+        if let Some(content) = self.next_text.last() {
+            content.is_auto()
+        } else {
+            false
+        }
+    }
     pub fn add_delay(&mut self, amount: usize) {
-        self.delay.saturating_add(amount);
+        self.delay = self.delay.saturating_add(amount);
     }
     pub fn skip(&mut self) {
-        if let Some(text) = &mut self.text {
-            self.characters = text.len();
+        while self.can_autoadvance() {
+            self.next_text();
+        }
+        if let Some(text) = &mut self.current_text {
+            self.characters = text.len() - 1;
         }
     }
     pub fn set_options(&mut self, fixed: bool, small_text: bool) {
         DIALOGUE_OPTIONS.set_options(fixed, small_text);
         let width = self.wrap_width();
-        if let Some(text) = &mut self.text {
+        if let Some(text) = &mut self.current_text {
             *text = fit_default_paragraph(text, width);
         }
     }
@@ -229,7 +286,7 @@ impl Dialogue {
         );
         print_alloc(
             if timer {
-                &string[..(print_timer)]
+                &string[..=(print_timer)]
             } else {
                 string
             },
@@ -263,15 +320,15 @@ pub fn take_words(string: &str, count: usize, skip: usize) -> String {
     string.split_inclusive(' ').skip(skip).take(count).collect()
 }
 
-/// Clamps a string to the specified width (with the TIC-80 font). Returns a string and
-/// the number of fitting words.
+/// Clamps a string to the specified width (with the TIC-80 font). Returns a string,
+/// the number of fitting words, and a bool for if the whole string fit.
 pub fn fit_string(
     string: &str,
     wrap_width: usize,
     start_word: usize,
     fixed: bool,
     small_font: bool,
-) -> (String, usize) {
+) -> (String, usize, bool) {
     let len = string.split_inclusive(' ').skip(start_word).count();
     let mut line_length = 0;
     for i in 1..=len {
@@ -282,7 +339,7 @@ pub fn fit_string(
             line_length = i
         };
     }
-    (take_words(string, line_length, start_word), line_length)
+    (take_words(string, line_length, start_word), line_length, line_length == len)
 }
 
 pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {
@@ -290,13 +347,13 @@ pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: b
     let mut paragraph = String::new();
     let mut skip = 0;
     while skip < len {
-        let (string, x) = fit_string(string, wrap_width, skip, fixed, small_font);
+        let (string, x, all_fits) = fit_string(string, wrap_width, skip, fixed, small_font);
         skip += x;
         paragraph.push_str(&string);
-        paragraph.push('\n');
-        if x == 0 {
+        if all_fits {
             return paragraph;
         }
+        paragraph.push('\n');
     }
     paragraph
 }
@@ -308,10 +365,4 @@ pub fn fit_default_paragraph(string: &str, wrap_width: usize) -> String {
         DIALOGUE_OPTIONS.fixed(),
         DIALOGUE_OPTIONS.small_text(),
     )
-}
-
-#[derive(Debug, Clone)]
-pub enum TextContent {
-    Text(&'static str),
-    Delay(u8),
 }

@@ -498,7 +498,7 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         },
         Interactable {
             hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_WINDOW),
+            interaction: Interaction::EnumText(HOUSE_LIVING_ROOM_WINDOW),
             sprite: None,
         },
         Interactable {
@@ -648,7 +648,7 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         },
         Interactable {
             hitbox: Hitbox::new(24 * 8, 10 * 8, 1 * 8, 6 * 8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_NEIGHBOURS),
+            interaction: Interaction::Dialogue(HOUSE_BACKYARD_NEIGHBOURS),
             sprite: None,
         },
         Interactable {
@@ -789,6 +789,11 @@ pub static TOWN: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(14 * 8, 13 * 8, 8, 8),
             interaction: Interaction::Text(TOWN_HOME_WINDOW),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(224, 142, 8*2, 8),
+            interaction: Interaction::EnumText(TOWN_WIDE),
             sprite: None,
         },
     ],
