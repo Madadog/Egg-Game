@@ -80,7 +80,7 @@ pub const FACTORY_FLAGS: PmemU8 = PmemU8::new(9);
 pub const EGG_POP_COUNT: PmemU8 = PmemU8::new(10);
 
 
-pub const IS_NIGHT: PmemBit = PmemBit::new(0, 0b0000_0001);
+pub const IS_NIGHT: PmemBit = PmemBit::new(11, 0b0000_0001);
 
 pub const SHELL_KEY: PmemBit = PmemBit::new(15, 0b0000_0001);
 pub const SHELL_CURIOSITY: PmemBit = PmemBit::new(15, 0b0000_0010);
