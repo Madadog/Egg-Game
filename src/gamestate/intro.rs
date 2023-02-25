@@ -60,7 +60,7 @@ pub fn draw_animation(t: u16) -> bool {
             draw_ovr(|| {
                 cls(0);
                 fade_palette([[0x0F; 3]; 16], SWEETIE_16, local_time.unwrap() * 10);
-                draw_title(120, 50)
+                draw_title(120, 53)
             });
             true
         }
@@ -77,7 +77,7 @@ pub fn draw_animation(t: u16) -> bool {
             screen_offset(0, 0);
             set_palette(SWEETIE_16);
             cls(0);
-            draw_title(120, 50);
+            draw_title(120, 53);
             draw_ovr(|| cls(0));
             false
         }
