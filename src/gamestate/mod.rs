@@ -106,10 +106,11 @@ pub fn draw_instructions() {
     cls(0);
     let string = crate::dialogue_data::INSTRUCTIONS;
     let small_text = DIALOGUE_OPTIONS.small_text();
-    rect_outline(7, 15, 226, 100, 1, 2);
+    rect_outline(6, 15, 228, 100, 0, 1);
+    rect(8, 17, 224, 96, 1);
     print_raw(
         string,
-        11,
+        12,
         21,
         PrintOptions {
             color: 0,
@@ -119,7 +120,7 @@ pub fn draw_instructions() {
     );
     print_raw(
         string,
-        10,
+        11,
         20,
         PrintOptions {
             color: 12,
@@ -127,4 +128,8 @@ pub fn draw_instructions() {
             ..Default::default()
         },
     );
+    let origin = 11.0;
+    let width = 66.0;
+    line(origin, 27.0, origin + width, 27.0, 12);
+    line(origin + 1.0, 28.0, origin + width + 1.0, 28.0, 0);
 }

@@ -20,7 +20,7 @@ use crate::dialogue::TextContent::{*, self};
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
 pub static GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub static GAME_TITLE_BLURB: &str = "v0.0.11\0";
+pub static GAME_TITLE_BLURB: &str = "version 0.0.11\0";
 pub static MENU_PLAY: &str = "Play\0";
 pub static MENU_OPTIONS: &str = "Options\0";
 pub static MENU_BACK: &str = "Back\0";

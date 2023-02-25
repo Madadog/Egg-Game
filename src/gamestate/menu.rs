@@ -32,7 +32,7 @@ impl MenuState {
         use crate::dialogue_data::{MENU_OPTIONS, MENU_PLAY};
         cls(0);
 
-        draw_title(120, 50);
+        draw_title(120, 53);
 
         let strings = [MENU_PLAY, MENU_OPTIONS];
         let current_option = self.index;
@@ -165,13 +165,13 @@ pub fn draw_title(x: i32, y: i32) {
             ..Default::default()
         },
     );
-    print_raw_centered(
+    print_raw(
         GAME_TITLE_BLURB,
-        x,
-        y + 30,
+        3,
+        3,
         PrintOptions {
             scale: 1,
-            color: 13,
+            color: 14,
             small_text: true,
             ..Default::default()
         },
