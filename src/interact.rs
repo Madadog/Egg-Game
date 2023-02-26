@@ -25,20 +25,21 @@ pub enum Interaction<'a> {
     EnumText(&'a [TextContent]),
     Dialogue(&'a [&'static str]),
     Func(InteractFn),
+    None,
 }
 
 #[derive(Debug)]
 pub struct Interactable<'a> {
     pub hitbox: Hitbox,
     pub interaction: Interaction<'a>,
-    pub sprite: Option<Animation<'a>>,
+    pub sprite: Option<&'a [AnimFrame<'a>]>,
 }
 
 impl<'a> Interactable<'a> {
     pub const fn new(
         hitbox: Hitbox,
         interaction: Interaction<'a>,
-        sprite: Option<Animation<'a>>,
+        sprite: Option<&'a [AnimFrame<'a>]>,
     ) -> Self {
         Self {
             hitbox,

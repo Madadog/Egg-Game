@@ -132,7 +132,7 @@ impl Player {
                 layer_hitbox,
                 layer.x,
                 layer.y,
-                layer.flag_offset,
+                layer.rotate_spr_flags,
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
@@ -140,11 +140,11 @@ impl Player {
                 layer_hitbox,
                 layer.x,
                 layer.y,
-                layer.flag_offset,
+                layer.rotate_spr_flags,
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag {
-                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y, layer.flag_offset) {
+                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y, layer.rotate_spr_flags) {
                     diagonal_collision = true;
                 }
             }

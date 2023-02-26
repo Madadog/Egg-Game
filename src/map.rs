@@ -1,7 +1,8 @@
 use crate::{
+    camera::CameraBounds,
     interact::Interactable,
     position::{touches_tile, Hitbox, Vec2},
-    tic80_core::{mget, MapOptions}, camera::CameraBounds,
+    tic80_core::{mget, MapOptions},
 };
 
 #[derive(Clone)]
@@ -11,10 +12,17 @@ pub struct MapSet<'a> {
     pub warps: &'a [Warp],
     pub interactables: &'a [Interactable<'a>],
     pub bg_colour: u8,
-    pub palette_rotation: &'a [u8],
     pub music_track: Option<u8>,
     pub bank: u8,
     pub camera_bounds: Option<CameraBounds>,
+}
+impl<'a> MapSet<'a> {
+    pub fn draw_bg(&self, offset: Vec2) {
+        self.maps.iter().for_each(|layer| layer.draw(offset))
+    }
+    pub fn draw_fg(&self, offset: Vec2) {
+        self.fg_maps.iter().for_each(|layer| layer.draw(offset))
+    }
 }
 
 #[derive(Clone)]
@@ -28,7 +36,8 @@ pub struct MapLayer<'a> {
     pub transparent: &'a [u8],
     pub scale: i8,
     pub blit_segment: u8,
-    pub flag_offset: i32,
+    pub rotate_palette: u8,
+    pub rotate_spr_flags: i32,
 }
 impl<'a> MapLayer<'a> {
     pub const DEFAULT_MAP: Self = Self {
@@ -41,8 +50,30 @@ impl<'a> MapLayer<'a> {
         transparent: &[],
         scale: 1,
         blit_segment: 4,
-        flag_offset: 0,
+        rotate_palette: 0,
+        rotate_spr_flags: 0,
     };
+    pub fn size(&self) -> Vec2 {
+        Vec2::new(self.w.try_into().unwrap(), self.h.try_into().unwrap())
+    }
+    pub fn offset(&self) -> Vec2 {
+        Vec2::new(self.sx.try_into().unwrap(), self.sy.try_into().unwrap())
+    }
+    pub fn draw(&self, offset: Vec2) {
+        use crate::debug_info;
+        use crate::tic80_core::{map, rectb};
+        use crate::tic80_helpers::{blit_segment, palette_map_rotate};
+
+        palette_map_rotate(self.rotate_palette);
+        blit_segment(self.blit_segment);
+        let mut options: MapOptions = self.clone().into();
+        options.sx -= i32::from(offset.x);
+        options.sy -= i32::from(offset.y);
+        if debug_info().map_info {
+            rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
+        }
+        map(options);
+    }
 }
 impl<'a> From<MapLayer<'a>> for MapOptions<'a> {
     fn from(map: MapLayer<'a>) -> Self {

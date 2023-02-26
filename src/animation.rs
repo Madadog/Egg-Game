@@ -66,14 +66,11 @@ impl<'a> Animation<'a> {
         }
     }
     pub fn current_frame(&self) -> &AnimFrame<'a> {
-        &self.frames[self.index]
+        &self.frames.get(self.index).expect("Couldn't find animation frame!")
     }
     pub fn advance(&mut self) {
         if self.tick >= self.current_frame().duration {
-            self.index += 1;
-            if self.index == self.frames.len() {
-                self.index = 0;
-            }
+            self.index = (self.index + 1) % self.frames.len();
             self.tick = 0;
         } else {
             self.tick += 1;

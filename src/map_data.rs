@@ -32,7 +32,6 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     warps: &[],
     interactables: &[],
     bg_colour: 0,
-    palette_rotation: &[],
     music_track: None,
     bank: 0,
     camera_bounds: None,
@@ -47,6 +46,7 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             w: 26,
             h: 12,
             transparent: &[0],
+            rotate_palette: 1,
             ..MapLayer::DEFAULT_MAP
         },
         //fruit stand
@@ -141,7 +141,6 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
-    palette_rotation: &[1],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
@@ -155,6 +154,7 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             w: 13,
             h: 7,
             transparent: &[0],
+            rotate_palette: 1,
             ..MapLayer::DEFAULT_MAP
         },
         //closet
@@ -207,7 +207,6 @@ pub static SUPERMARKET_HALL: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
-    palette_rotation: &[1],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
@@ -220,6 +219,7 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
             w: 9,
             h: 6,
             transparent: &[0],
+            rotate_palette: 1,
             ..MapLayer::DEFAULT_MAP
         },
         MapLayer {
@@ -237,13 +237,10 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(53, 28, 8, 10),
             interaction: Interaction::Text(EGG_1),
-            sprite: Some(Animation {
-                frames: &[
-                    AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
-                    AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
-                ],
-                ..Animation::const_default()
-            }),
+            sprite: Some(&[
+                AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
+                AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+            ]),
         },
         Interactable {
             hitbox: Hitbox::new(16, 0, 5 * 8, 4 * 7),
@@ -251,7 +248,6 @@ pub static SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
             sprite: None,
         },
     ],
-    palette_rotation: &[1],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
@@ -262,21 +258,18 @@ pub static TEST_PEN: MapSet<'static> = MapSet {
         y: 17,
         w: 7,
         h: 9,
+        rotate_palette: 1,
         ..MapLayer::DEFAULT_MAP
     }],
     warps: &[Warp::new_tile(3, 8, Some(&SUPERMARKET), 10, 4)],
     interactables: &[Interactable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
         interaction: Interaction::Text(EGG_1),
-        sprite: Some(Animation {
-            frames: &[
-                AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
-                AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
-            ],
-            ..Animation::const_default()
-        }),
+        sprite: Some(&[
+            AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
+            AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+        ]),
     }],
-    palette_rotation: &[1],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
@@ -503,50 +496,44 @@ pub static HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         },
         Interactable {
             hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
-            sprite: Some(Animation {
-                frames: &[AnimFrame::new(
-                    Vec2::new(0, 0),
-                    35,
-                    30,
-                    SpriteOptions {
-                        w: 3,
-                        h: 2,
-                        ..SpriteOptions::transparent_zero()
-                    },
-                )
-                .with_outline(None)],
-                ..Animation::const_default()
-            }),
+            interaction: Interaction::None,
+            sprite: Some(&[AnimFrame::new(
+                Vec2::new(0, 0),
+                35,
+                30,
+                SpriteOptions {
+                    w: 3,
+                    h: 2,
+                    ..SpriteOptions::transparent_zero()
+                },
+            )
+            .with_outline(None)]),
         },
         Interactable {
             hitbox: Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
-            sprite: Some(Animation {
-                frames: &[
-                    AnimFrame::new(
-                        Vec2::new(0, 0),
-                        576,
-                        30,
-                        SpriteOptions {
-                            w: 2,
-                            h: 3,
-                            ..SpriteOptions::transparent_zero()
-                        },
-                    ),
-                    AnimFrame::new(
-                        Vec2::new(0, 0),
-                        578,
-                        30,
-                        SpriteOptions {
-                            w: 2,
-                            h: 3,
-                            ..SpriteOptions::transparent_zero()
-                        },
-                    ),
-                ],
-                ..Animation::const_default()
-            }),
+            interaction: Interaction::None,
+            sprite: Some(&[
+                AnimFrame::new(
+                    Vec2::new(0, 0),
+                    576,
+                    30,
+                    SpriteOptions {
+                        w: 2,
+                        h: 3,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                ),
+                AnimFrame::new(
+                    Vec2::new(0, 0),
+                    578,
+                    30,
+                    SpriteOptions {
+                        w: 2,
+                        h: 3,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                ),
+            ]),
         },
     ],
     ..DEFAULT_MAP_SET
@@ -664,19 +651,16 @@ pub static BACKYARD: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(3, 2 * 8, 8, 8),
             interaction: Interaction::Text(DEFAULT),
-            sprite: Some(Animation {
-                frames: &[
-                    AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
-                    AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
-                ],
-                ..Animation::const_default()
-            }),
+            sprite: Some(&[
+                AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
+                AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
+            ]),
         },
     ],
     ..DEFAULT_MAP_SET
 };
-//TODO: Pet the dog. 
-//TODO: Fix formatted dialogue. 
+//TODO: Pet the dog.
+//TODO: Fix formatted dialogue.
 
 pub static WILDERNESS: MapSet<'static> = MapSet {
     maps: &[
@@ -746,7 +730,7 @@ pub static TOWN: MapSet<'static> = MapSet {
             h: 17 * 4,
             transparent: &[0],
             blit_segment: 5,
-            flag_offset: 256,
+            rotate_spr_flags: 256,
             ..MapLayer::DEFAULT_MAP
         },
     ],
@@ -792,7 +776,7 @@ pub static TOWN: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(224, 142, 8*2, 8),
+            hitbox: Hitbox::new(224, 142, 8 * 2, 8),
             interaction: Interaction::EnumText(TOWN_WIDE),
             sprite: None,
         },

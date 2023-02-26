@@ -1,3 +1,4 @@
+use crate::animation::Animation;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
@@ -18,7 +19,7 @@ pub struct WalkaroundState<'a> {
     player: Player,
     companion_trail: CompanionTrail,
     companion_list: CompanionList,
-    map_animations: Vec<(u16, usize)>,
+    map_animations: Vec<Animation<'a>>,
     camera: Camera,
     current_map: &'a MapSet<'a>,
     dialogue: Dialogue,
@@ -65,10 +66,15 @@ impl<'a> WalkaroundState<'a> {
             }
         }
 
-        self.map_animations.clear();
-        for _ in map_set.interactables {
-            self.map_animations.push((0, 0));
-        }
+        self.map_animations = map_set
+            .interactables
+            .iter()
+            .flat_map(|x| x.sprite)
+            .map(|frames| Animation {
+                frames,
+                ..Animation::const_default()
+            })
+            .collect();
     }
     pub fn cam_x(&self) -> i32 {
         self.camera.pos.x.into()
@@ -138,22 +144,10 @@ impl<'a> WalkaroundState<'a> {
 
 impl<'a> Game for WalkaroundState<'a> {
     fn step(&mut self) -> Option<GameState> {
-        for (anim, interact) in self
-            .map_animations
+        self.map_animations
             .iter_mut()
-            .zip(self.current_map.interactables.iter())
-        {
-            if let Some(sprite) = &interact.sprite {
-                anim.0 += 1; //timer
-                if anim.0 > sprite.frames[anim.1].duration {
-                    anim.0 = 0;
-                    anim.1 += 1; //index
-                    if anim.1 >= sprite.frames.len() {
-                        anim.1 = 0;
-                    }
-                }
-            }
-        }
+            .for_each(|anim| anim.advance());
+
         self.particles.step();
 
         if keyp(28, -1, -1) {
@@ -246,7 +240,7 @@ impl<'a> Game for WalkaroundState<'a> {
         let mut warp_target = None;
         for warp in self.current_map.warps.iter() {
             if self.player.hitbox().touches(warp.from)
-            || (interact && interact_hitbox.touches(warp.from))
+                || (interact && interact_hitbox.touches(warp.from))
             {
                 match warp.mode {
                     WarpMode::Interact => {
@@ -303,22 +297,7 @@ impl<'a> Game for WalkaroundState<'a> {
         // draw bg
         palette_map_reset();
         cls(*crate::BG_COLOUR.read().unwrap());
-        let palette_map_rotation = self.current_map.palette_rotation;
-        for (i, layer) in self.current_map.maps.iter().enumerate() {
-            if let Some(amount) = palette_map_rotation.get(i) {
-                palette_map_rotate(*amount)
-            } else {
-                palette_map_rotate(0)
-            }
-            blit_segment(layer.blit_segment);
-            let mut options: MapOptions = layer.clone().into();
-            options.sx -= self.cam_x();
-            options.sy -= self.cam_y();
-            if debug_info().map_info {
-                rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
-            }
-            map(options.into());
-        }
+        self.current_map.draw_bg(self.camera.pos);
 
         self.particles.draw(-self.cam_x(), -self.cam_y());
         blit_segment(4);
@@ -342,22 +321,20 @@ impl<'a> Game for WalkaroundState<'a> {
             1,
         ));
 
-        for (item, time) in self
-            .current_map
-            .interactables
-            .iter()
-            .zip(&self.map_animations)
-        {
-            if let Some(anim) = &item.sprite {
-                sprites.push((
-                    anim.frames[time.1].spr_id.into(),
-                    anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - self.cam_x(),
-                    anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - self.cam_y(),
-                    anim.frames[time.1].options.clone(),
-                    anim.frames[time.1].outline_colour,
-                    anim.frames[time.1].palette_rotate,
-                ));
-            }
+        for (anim, item) in self.map_animations.iter().zip(
+            self.current_map
+                .interactables
+                .iter()
+                .filter(|x| x.sprite.is_some()),
+        ) {
+            sprites.push((
+                anim.current_frame().spr_id.into(),
+                anim.current_frame().pos.x as i32 + item.hitbox.x as i32 - self.cam_x(),
+                anim.current_frame().pos.y as i32 + item.hitbox.y as i32 - self.cam_y(),
+                anim.current_frame().options.clone(),
+                anim.current_frame().outline_colour,
+                anim.current_frame().palette_rotate,
+            ));
         }
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
             if let Some(companion) = companion {
@@ -385,21 +362,7 @@ impl<'a> Game for WalkaroundState<'a> {
 
         // draw fg
         palette_map_reset();
-        for (i, layer) in self.current_map.fg_maps.iter().enumerate() {
-            if let Some(amount) = palette_map_rotation.get(i) {
-                palette_map_rotate(*amount)
-            } else {
-                palette_map_rotate(0)
-            }
-            blit_segment(layer.blit_segment);
-            let mut options: MapOptions = layer.clone().into();
-            options.sx -= self.cam_x();
-            options.sy -= self.cam_y();
-            if debug_info().map_info {
-                rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
-            }
-            map(options);
-        }
+        self.current_map.draw_fg(self.camera.pos);
 
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(string, true);
