@@ -3,7 +3,7 @@ use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
-use crate::inventory::INVENTORY;
+use crate::gamestate::inventory::INVENTORY;
 use crate::map::{Axis, WarpMode};
 use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};

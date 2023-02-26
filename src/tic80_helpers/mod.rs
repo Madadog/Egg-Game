@@ -188,6 +188,10 @@ pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
     print_raw(string, x - string_width / 2, y, options);
 }
+pub fn print_alloc_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
+    let string_width = print_alloc(string, 999, 999, options.clone());
+    print_alloc(string, x - string_width / 2, y, options);
+}
 pub fn print_raw_shadow(string: &str, x: i32, y: i32, options: PrintOptions, shadow_colour: i32) {
     let shadow_options = PrintOptions {
         color: shadow_colour,

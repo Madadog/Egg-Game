@@ -3,10 +3,11 @@ use std::sync::RwLock;
 use once_cell::sync::Lazy;
 
 use crate::{
-    dialogue::Dialogue,
+    dialogue::{print_width, Dialogue},
     dialogue_data::*,
     sound,
-    tic80_helpers::{print_raw_centered, spr_blit_segment},
+    tic80_core::print_alloc,
+    tic80_helpers::{print_alloc_centered, print_raw_centered, spr_blit_segment, blit_segment},
 };
 
 static ITEM_FF: InventoryItem = InventoryItem {
@@ -78,6 +79,7 @@ pub enum InventoryUiState<'a> {
     PageSelect(i32),
     Items(usize, Option<(usize, &'a InventoryItem<'static>)>),
     Eggs(usize),
+    Options,
     Close,
 }
 impl<'a> InventoryUiState<'a> {
@@ -86,6 +88,8 @@ impl<'a> InventoryUiState<'a> {
             Self::PageSelect(x) => *x,
             Self::Items(_, _) => 0,
             Self::Eggs(_) => 1,
+            Self::Options => 2,
+            Self::Close => 3,
             _ => 2,
         }
     }
@@ -94,6 +98,8 @@ impl<'a> InventoryUiState<'a> {
         match self {
             Self::PageSelect(0) => *self = Self::Items(0, None),
             Self::PageSelect(1) => *self = Self::Eggs(0),
+            Self::PageSelect(2) => *self = Self::Options,
+            Self::PageSelect(3) => *self = Self::Close,
             _ => *self = Self::PageSelect(self.page()),
         };
     }
@@ -113,7 +119,7 @@ impl<'a> InventoryUiState<'a> {
                 if dx != 0 || dy != 0 {
                     sound::CLICK.play()
                 };
-                *i = (*i + dy % 2).clamp(0, 1);
+                *i = (*i + dy % 3).clamp(0, 3);
                 if dx == 1 {
                     self.change()
                 };
@@ -196,11 +202,24 @@ impl<'a> InventoryUi<'a> {
         }
     }
     pub fn draw(&self) {
+        use crate::dialogue::DIALOGUE_OPTIONS;
         use crate::tic80_core::{
             cls, print_raw, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
         };
         use crate::tic80_helpers::{rect_outline, spr_outline};
-        let side_column = 32;
+        blit_segment(4);
+        let entries = [
+            INVENTORY_ITEMS,
+            INVENTORY_SHELL,
+            INVENTORY_OPTIONS,
+            INVENTORY_BACK,
+        ];
+        let width = entries
+            .iter()
+            .map(|x| print_width(x, false, DIALOGUE_OPTIONS.small_text()))
+            .max()
+            .unwrap();
+        let side_column = width + 3;
         let column_margin = 2;
         let scale = 2;
         let item_slot_size = scale * 8 + 5;
@@ -218,12 +237,13 @@ impl<'a> InventoryUi<'a> {
             }
         };
         cls(0);
-        print_raw_centered(
+        print_alloc_centered(
             crate::dialogue_data::INVENTORY_TITLE,
             120,
             37,
             PrintOptions {
                 color: 12,
+                small_text: DIALOGUE_OPTIONS.small_text(),
                 ..Default::default()
             },
         );
@@ -232,7 +252,7 @@ impl<'a> InventoryUi<'a> {
             x_offset,
             y_offset,
             side_column,
-            21,
+            5 + entries.len() as i32 * 8,
             column_colour,
             column_colour + 1,
         );
@@ -243,24 +263,18 @@ impl<'a> InventoryUi<'a> {
             7,
             column_colour + 1,
         );
-        print_raw(
-            "Items\0",
-            x_offset + 2,
-            y_offset + 4,
-            PrintOptions {
-                color: 12,
-                ..Default::default()
-            },
-        );
-        print_raw(
-            "Shell\0",
-            x_offset + 2,
-            y_offset + 8 + 4,
-            PrintOptions {
-                color: 12,
-                ..Default::default()
-            },
-        );
+        for (i, string) in entries.iter().enumerate() {
+            print_alloc(
+                string,
+                x_offset + 2,
+                y_offset + i as i32 * 8 + 4,
+                PrintOptions {
+                    color: 12,
+                    small_text: DIALOGUE_OPTIONS.small_text(),
+                    ..Default::default()
+                },
+            );
+        }
         match self.state.page() {
             0 => {
                 rect_outline(
@@ -380,7 +394,11 @@ impl<'a> InventoryUi<'a> {
                         selected_item.name,
                         9,
                         100,
-                        PrintOptions::default().with_color(12)
+                        PrintOptions {
+                            small_text: DIALOGUE_OPTIONS.small_text(),
+                            color: 12,
+                            ..Default::default()
+                        }
                     );
                     self.dialogue.draw_dialogue_portrait(
                         &self.dialogue.fit_text(selected_item.desc),
@@ -393,7 +411,16 @@ impl<'a> InventoryUi<'a> {
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
                         rect_outline(7, 98, 70, 9, 2, 3);
-                        print!(item.name, 9, 100, PrintOptions::default().with_color(12));
+                        print!(
+                            item.name,
+                            9,
+                            100,
+                            PrintOptions {
+                                small_text: DIALOGUE_OPTIONS.small_text(),
+                                color: 12,
+                                ..Default::default()
+                            }
+                        );
                         self.dialogue.draw_dialogue_portrait(
                             &self.dialogue.fit_text(item.desc),
                             false,

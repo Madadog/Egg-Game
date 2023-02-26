@@ -15,7 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
-use crate::inventory::{InventoryUiState, INVENTORY};
+use self::inventory::{InventoryUiState, INVENTORY};
 use crate::save;
 use crate::{tic80_core::*, WALKAROUND_STATE};
 
@@ -25,6 +25,7 @@ use crate::tic80_helpers::*;
 
 mod intro;
 mod menu;
+mod inventory;
 pub mod walkaround;
 
 #[derive(Debug)]
@@ -75,10 +76,10 @@ impl GameState {
             }
             Self::Inventory => {
                 INVENTORY.write().unwrap().step();
-                if matches!(INVENTORY.read().unwrap().state, InventoryUiState::Close) {
-                    *self = Self::Walkaround;
-                } else {
-                    INVENTORY.read().unwrap().draw();
+                match INVENTORY.read().unwrap().state {
+                    InventoryUiState::Close => {*self = Self::Walkaround},
+                    InventoryUiState::Options => {*self = Self::MainMenu(MenuState::inventory_options())},
+                    _ => {INVENTORY.read().unwrap().draw()}
                 }
             }
         }

@@ -15,6 +15,7 @@ pub struct MenuState {
     index: usize,
     entries: Vec<MenuEntry>,
     draw_title: Option<&'static str>,
+    back_entry: Option<MenuEntry>,
 }
 impl MenuState {
     pub fn new() -> Self {
@@ -22,6 +23,18 @@ impl MenuState {
             index: 0,
             entries: vec![MenuEntry::Play, MenuEntry::Options],
             draw_title: Some(GAME_TITLE),
+            back_entry: None,
+        }
+    }
+    pub fn inventory_options() -> Self {
+        Self {
+            entries: vec![
+                MenuEntry::Inventory,
+                MenuEntry::FontSize,
+            ],
+            draw_title: None,
+            back_entry: Some(MenuEntry::Inventory),
+            ..Self::new()
         }
     }
     pub fn step_main_menu(&mut self) -> Option<GameState> {
@@ -32,11 +45,19 @@ impl MenuState {
             self.exit_hover(old_index);
             sound::CLICK.play()
         }
-        if mem_btnp(4) || clicked {
-            sound::INTERACT.play();
-            return self.click(menu_index);
+        let (index, action) = if mem_btnp(4) || clicked {
+            (Some(menu_index), true)
+        } else if mem_btnp(5) && self.back_entry.is_some() {
+            (None, true)
+        } else {
+            (None, false)
         };
-        None
+        if action {
+            sound::INTERACT.play();
+            self.click(index)
+        } else {
+            None
+        }
     }
     pub fn entry_height(&self) -> i16 {
         if self.draw_title.is_some() {
@@ -45,14 +66,22 @@ impl MenuState {
             40
         }
     }
-    pub fn click(&mut self, index: usize) -> Option<GameState> {
+    pub fn click(&mut self, index: Option<usize>) -> Option<GameState> {
         use MenuEntry::*;
-        match &mut self.entries[index] {
+        let x = if let Some(index) = index {
+            &mut self.entries[index]
+        } else if let Some(entry) = &mut self.back_entry {
+            entry
+        } else {
+            return None;
+        };
+        match x {
             Play => return Some(GameState::Instructions(0)),
             Options => {
                 self.index = 0;
                 self.draw_title = Some(OPTIONS_TITLE);
                 self.entries = vec![MainMenu, FontSize, Reset(0)];
+                self.back_entry = Some(MainMenu);
             }
             MainMenu => {
                 *self = MenuState::new();
@@ -66,14 +95,21 @@ impl MenuState {
                     return Some(GameState::Animation(0));
                 }
             }
+            Inventory => {
+                crate::gamestate::inventory::INVENTORY
+                    .write()
+                    .unwrap()
+                    .state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
+                return Some(GameState::Inventory);
+            }
         };
         None
     }
     pub fn exit_hover(&mut self, index: usize) {
         use MenuEntry::*;
         match &mut self.entries[index] {
-            Reset(x) => {*x = 0},
-            _ => {},
+            Reset(x) => *x = 0,
+            _ => {}
         }
     }
     fn hover(&self, index: usize) {
@@ -116,6 +152,7 @@ pub enum MenuEntry {
     MainMenu,
     FontSize,
     Reset(u8),
+    Inventory,
 }
 impl MenuEntry {
     pub fn text(&self) -> &'static str {
@@ -137,6 +174,7 @@ impl MenuEntry {
                     OPTIONS_RESET_SURE
                 }
             }
+            Inventory => MENU_BACK,
         }
     }
 }

@@ -126,7 +126,11 @@ pub static TOWN_WIDE: &[TextContent] = &[
     Delayed("e", 10),
     Delayed("...", 10),
 ];
-pub static INVENTORY_TITLE: &str = "INVENTORY\0";
+pub static INVENTORY_TITLE: &str = "INVENTORY";
+pub static INVENTORY_ITEMS: &str = "Items";
+pub static INVENTORY_SHELL: &str = "Shell";
+pub static INVENTORY_OPTIONS: &str = "Options";
+pub static INVENTORY_BACK: &str = "Back";
 pub static ITEM_FF_NAME: &str = "French Gry";
 pub static ITEM_FF_DESC: &str =
     "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill.";

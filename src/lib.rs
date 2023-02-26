@@ -23,7 +23,6 @@ mod interact;
 mod map;
 mod map_data;
 mod player;
-mod inventory;
 mod position;
 mod rand;
 mod tic80_core;
