@@ -1,5 +1,8 @@
 use crate::Vec2;
-use crate::{trace, HEIGHT, WIDTH};
+use crate::{trace, HEIGHT as TIC_HEIGHT, WIDTH as TIC_WIDTH};
+
+const HEIGHT: i16 = TIC_HEIGHT as i16;
+const WIDTH: i16 = TIC_WIDTH as i16;
 
 #[derive(Debug)]
 pub struct Camera {
@@ -26,36 +29,44 @@ impl Camera {
         self.pos.y.into()
     }
     pub fn center_on(&mut self, x: i16, y: i16) {
-        self.pos = self.bound(Some(x - WIDTH as i16 / 2), Some(y - HEIGHT as i16 / 2));
+        self.pos = self.bound(Some(x - WIDTH / 2), Some(y - HEIGHT / 2));
     }
-    pub fn from_map_size(w: u8, h: u8, sx: i16, sy: i16) -> Self {
-        let (w, h): (i16, i16) = (w.into(), h.into());
-        trace!(format!("W: {w}, H: {h}"), 11);
-        let (x_offset, y_offset): (i16, i16) = ((WIDTH / 2) as i16, (HEIGHT / 2) as i16);
-        let (cx, cy): (i16, i16) = (w * 4 + sx - x_offset, h * 4 + sy - y_offset);
-        if w <= 30 && h <= 17 {
+    pub fn from_map_size(size: Vec2, offset: Vec2) -> Self {
+        assert!(size.x.is_positive() && size.y.is_positive());
+        trace!(format!("Map size: {size:?}"), 11);
+
+        let cam_offset = Vec2::new(WIDTH / 2, HEIGHT / 2);
+        let center = size * 4 + offset - cam_offset;
+
+        if size.x <= WIDTH / 8 && size.y <= HEIGHT / 8 {
             // Area fits inside screen, center and display.
-            Camera::new(Vec2::new(cx, cy), CameraBounds::stick(cx, cy))
+            Camera::new(
+                Vec2::new(center.x, center.y),
+                CameraBounds::stick(center.x, center.y),
+            )
         } else {
             // Area does not fit inside screen, follow target & add bounds.
             Camera::new(
-                Vec2::new(cx, cy),
+                Vec2::new(center.x, center.y),
                 CameraBounds {
-                    x_bounds: if w >= 30 {
-                        CameraRange::Range(sx, sx + w * 8 - WIDTH as i16)
+                    x_bounds: if size.x >= WIDTH / 8 {
+                        CameraRange::Range(offset.x, offset.x + size.x * 8 - WIDTH)
                     } else {
-                        CameraRange::Stick(cx)
+                        CameraRange::Stick(center.x)
                     },
-                    y_bounds: if h >= 17 {
-                        CameraRange::Range(sy, sy + h * 8 - HEIGHT as i16)
+                    y_bounds: if size.y >= HEIGHT / 8 {
+                        CameraRange::Range(offset.y, offset.y + size.y * 8 - HEIGHT)
                     } else {
-                        CameraRange::Stick(cy)
+                        CameraRange::Stick(center.y)
                     },
                 },
             )
         }
     }
 }
+
+use CameraRange::*;
+
 #[derive(Debug, Clone)]
 pub struct CameraBounds {
     x_bounds: CameraRange,
@@ -66,15 +77,12 @@ impl CameraBounds {
         Self { x_bounds, y_bounds }
     }
     pub const fn stick(x: i16, y: i16) -> Self {
-        use CameraRange::*;
         Self::new(Stick(x), Stick(y))
     }
     pub const fn free() -> Self {
-        use CameraRange::*;
         Self::new(Free, Free)
     }
     pub const fn bounded(x: (i16, i16), y: (i16, i16)) -> Self {
-        use CameraRange::*;
         Self::new(Range(x.0, x.1 - 240), Range(y.0, y.1 - 136))
     }
     pub fn bound(&self, focus: Vec2) -> Vec2 {

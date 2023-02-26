@@ -37,26 +37,27 @@ impl<'a> WalkaroundState<'a> {
             particles: ParticleList::new(),
         }
     }
-    pub fn load_map(&mut self, map: &'a MapSet<'static>) {
-        let map1 = &map.maps[0];
-        if let Some(bounds) = &map.camera_bounds {
+    pub fn load_map(&mut self, map_set: &'a MapSet<'static>) {
+        let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
+        if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else {
-            self.camera =
-                Camera::from_map_size(map1.w as u8, map1.h as u8, map1.sx as i16, map1.sy as i16);
+            let map_size = map1.size();
+            let map_offset = map1.offset();
+            self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        self.current_map = map;
-        *BG_COLOUR.write().unwrap() = map.bg_colour;
-        if let Some(track) = map.music_track {
+        self.current_map = map_set;
+        *BG_COLOUR.write().unwrap() = map_set.bg_colour;
+        if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
-        if map.bank != SYNC_HELPER.read().unwrap().last_bank() {
+        if map_set.bank != SYNC_HELPER.read().unwrap().last_bank() {
             let x = SYNC_HELPER
                 .write()
                 .unwrap()
-                .sync(1 | 4 | 8 | 16 | 64 | 128, map.bank);
+                .sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
             if x.is_err() {
-                let bank = map.bank;
+                let bank = map_set.bank;
                 trace!(
                     format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),
                     12
@@ -65,7 +66,7 @@ impl<'a> WalkaroundState<'a> {
         }
 
         self.map_animations.clear();
-        for _ in map.interactables {
+        for _ in map_set.interactables {
             self.map_animations.push((0, 0));
         }
     }
