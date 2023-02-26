@@ -20,7 +20,7 @@ use crate::{dialogue::TextContent::{self, *}, sound, portraits};
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
 pub static GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub static GAME_TITLE_BLURB: &str = "version 0.0.12\0";
+pub static GAME_TITLE_BLURB: &str = "version 0.0.13\0";
 pub static MENU_PLAY: &str = "Play\0";
 pub static MENU_OPTIONS: &str = "Options\0";
 pub static MENU_BACK: &str = "Back\0";
@@ -60,8 +60,11 @@ pub static THING: &[TextContent] = &[
     Portrait(None),
     AutoText("What about that creature on the couch?"),
     Pause,
-    Portrait(Some(&portraits::Y_NORMAL)),
-    AutoText("He doesn't count."),
+    Portrait(Some(&portraits::Y_LOOK)),
+    AutoText("He"),
+    Delayed(" LITERALLY", 20),
+    Delayed(" doesn't qualify.", 10),
+    Delayed(" Like, as a living thing.", 30),
     Pause,
     Portrait(None),
     AutoText("You've also got a dog... He's right there..."),
@@ -70,7 +73,7 @@ pub static THING: &[TextContent] = &[
     AutoText("I can't pet him. What good is a dog in a game if you can't pet it?"),
     Pause,
     Portrait(None),
-    Sound(sound::EQUIP_OBTAINED),
+    Sound(&sound::EQUIP_OBTAINED),
     AutoText("[GAMEDEV] took critical damage...! You won the battle!"),
     Text("Earned 0 Exp. Received:\n* Responsibility for your actions.\n* Nothing else in particular.")
 ];
@@ -93,7 +96,7 @@ pub static HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
 ];
 pub static HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
 pub static HOUSE_KITCHEN_SINK: &[TextContent] = &[
-    Sound(sound::ALERT_UP),
+    Sound(&sound::ALERT_UP),
     Delayed("Found something down the drain...!\n", 0),
     Text("... You left it there."),
     Delayed("\n\nThis isn't an RPG, after all.", 30),

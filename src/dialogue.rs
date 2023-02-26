@@ -30,7 +30,7 @@ pub enum TextContent {
     Text(&'static str),
     Delayed(&'static str, u8),
     Delay(u8),
-    Sound(SfxData),
+    Sound(&'static SfxData),
     Portrait(Option<&'static TalkPic>),
     Pause,
     AutoText(&'static str),
@@ -190,7 +190,7 @@ impl Dialogue {
                 true
             }
             TextContent::Sound(x) => {
-                x.play();
+                x.clone().play();
                 true
             }
             TextContent::Portrait(x) => {

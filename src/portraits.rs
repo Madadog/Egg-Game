@@ -43,3 +43,15 @@ pub static Y_AWAY: TalkPic = TalkPic::new(
         }
     ]
 );
+pub static Y_LOOK: TalkPic = TalkPic::new(
+    &[
+        AnimFrame {
+            pos: Vec2::new(4, 11),
+            spr_id: 980,
+            duration: 30,
+            options: SPR_4X4,
+            outline_colour: Some(0),
+            palette_rotate: 0,
+        }
+    ]
+);
