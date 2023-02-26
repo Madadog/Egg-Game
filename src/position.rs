@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::ops::{Sub, Mul, Div, Add};
+
 #[derive(Debug, Clone, Copy)]
 pub struct Vec2 {
     pub x: i16,
@@ -23,15 +25,57 @@ impl Vec2 {
     pub const fn new(x: i16, y: i16) -> Self {
         Vec2 { x, y }
     }
+    pub const fn splat(value: i16) -> Self {
+        Vec2::new(value, value)
+    }
     pub fn draw(&self, colour: u8) {
         crate::pix(self.x.into(), self.y.into(), colour);
     }
 }
-impl std::ops::Add for Vec2 {
+
+// Math operations on Vec2
+impl Add for Vec2 {
     type Output = Vec2;
 
     fn add(self, rhs: Self) -> Self::Output {
         Vec2::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+impl Sub for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Vec2::new(self.x - rhs.x, self.y - rhs.y)
+    }
+}
+impl Mul for Vec2 {
+    type Output = Vec2;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Vec2::new(self.x * rhs.x, self.y * rhs.y)
+    }
+}
+impl Div for Vec2 {
+    type Output = Vec2;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Vec2::new(self.x / rhs.x, self.y / rhs.y)
+    }
+}
+
+// Math operations with singular numbers...
+impl Mul<i16> for Vec2 {
+    type Output = Vec2;
+
+    fn mul(self, rhs: i16) -> Self::Output {
+        Vec2::new(self.x * rhs, self.y * rhs)
+    }
+}
+impl Div<i16> for Vec2 {
+    type Output = Vec2;
+
+    fn div(self, rhs: i16) -> Self::Output {
+        Vec2::new(self.x / rhs, self.y / rhs)
     }
 }
 
