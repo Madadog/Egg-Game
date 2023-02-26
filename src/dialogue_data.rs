@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{dialogue::TextContent::{self, *}, sound};
+use crate::{dialogue::TextContent::{self, *}, sound, portraits};
 
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue
@@ -37,6 +37,42 @@ pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
 pub static BEDROOM_WINDOW: &[TextContent] = &[
     Text("It's a beautiful day...\n\n"),
     Delayed("... Outside.", 30),
+];
+pub static THING: &[TextContent] = &[
+    Text("This shouldn't be here..."),
+    Pause,
+    Portrait(Some(&portraits::Y_NORMAL)),
+    AutoText("You got that right. It's so.... so.... ... crappily drawn!!! What the heck is this thing, anyway?!?!"),
+    Pause,
+    Portrait(None),
+    AutoText("I have no idea... I don't remember drawing this sprite. I don't even know where it came from."),
+    Pause,
+    Portrait(Some(&portraits::Y_NORMAL)),
+    AutoText("Sounds honest. On that note, when are you gonna hurry up and add the actual gameplay?! This whole walking sim thing is getting kinda old..."),
+    Pause,
+    Portrait(None),
+    AutoText("Stop. You are hurting my feelings."),
+    Pause,
+    Portrait(Some(&portraits::Y_AWAY)),
+    AutoText("Fiiiiiiiiiine. I'll just walk around this empty map forever I guess,"),
+    Delayed(" without a single thing to do, and with no living things to interact with.", 10),
+    Pause,
+    Portrait(None),
+    AutoText("What about that creature on the couch?"),
+    Pause,
+    Portrait(Some(&portraits::Y_NORMAL)),
+    AutoText("He doesn't count."),
+    Pause,
+    Portrait(None),
+    AutoText("You've also got a dog... He's right there..."),
+    Pause,
+    Portrait(Some(&portraits::Y_NORMAL)),
+    AutoText("I can't pet him. What good is a dog in a game if you can't pet it?"),
+    Pause,
+    Portrait(None),
+    Sound(sound::EQUIP_OBTAINED),
+    AutoText("[GAMEDEV] took critical damage...! You won the battle!"),
+    Text("Earned 0 Exp. Received:\n* Responsibility for your actions.\n* Nothing else in particular.")
 ];
 pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
 pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";

@@ -17,10 +17,12 @@
 use std::{fmt::format, sync::RwLock};
 
 use crate::{
+    animation::{AnimFrame, Animation},
+    portraits::TalkPic,
     print_alloc, save,
     sound::{self, SfxData},
     tic80_core::SpriteOptions,
-    trace, PrintOptions,
+    trace, PrintOptions, tic80_helpers::{palette_map_rotate, palette_map_reset, spr_outline, blit_segment},
 };
 
 #[derive(Debug, Clone)]
@@ -29,12 +31,22 @@ pub enum TextContent {
     Delayed(&'static str, u8),
     Delay(u8),
     Sound(SfxData),
+    Portrait(Option<&'static TalkPic>),
+    Pause,
+    AutoText(&'static str),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
         match self {
-            Delayed(_, _) | Delay(_) | Sound(_) => true,
+            Text(_) | Pause => false,
+            _ => true,
+        }
+    }
+    pub fn is_skip(&self) -> bool {
+        use TextContent::*;
+        match self {
+            Sound(_) | Portrait(_) => true,
             _ => false,
         }
     }
@@ -91,6 +103,7 @@ pub struct Dialogue {
     pub width: usize,
     pub delay: usize,
     pub print_time: Option<usize>,
+    pub portrait: Option<Animation<'static>>,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
@@ -101,6 +114,7 @@ impl Dialogue {
             width: 200,
             delay: 0,
             print_time: None,
+            portrait: None,
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -146,14 +160,20 @@ impl Dialogue {
     pub fn next_text(&mut self) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             trace!(format!("Popping text content: {:?}", text_content), 12);
-            self.consume_text_content(text_content)
+            let skip = text_content.is_skip();
+            let val = self.consume_text_content(text_content);
+            if skip {
+                self.next_text()
+            } else {
+                val
+            }
         } else {
             false
         }
     }
     pub fn consume_text_content(&mut self, text_content: TextContent) -> bool {
         match text_content {
-            TextContent::Text(text) => self.add_text(text),
+            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(text),
             TextContent::Delay(x) => {
                 self.add_delay(x.into());
                 true
@@ -173,6 +193,15 @@ impl Dialogue {
                 x.play();
                 true
             }
+            TextContent::Portrait(x) => {
+                self.portrait = if let Some(portrait) = x {
+                    Some(portrait.clone().to_anim())
+                } else {
+                    None
+                };
+                true
+            }
+            TextContent::Pause => true,
         }
     }
     pub fn fit_text(&self, string: &str) -> String {
@@ -182,11 +211,10 @@ impl Dialogue {
         self.width - 3
     }
     pub fn close(&mut self) {
-        self.current_text = None;
-        self.next_text.clear();
-        self.characters = 0;
-        self.delay = 0;
-        self.print_time = None;
+        *self = Self {
+            width: self.width,
+            ..Self::const_default()
+        }
     }
     pub fn text_len(&self) -> usize {
         self.current_text.as_ref().map_or(0, |x| x.len())
@@ -265,6 +293,7 @@ impl Dialogue {
         let h = 24;
         self.draw_dialogue_box_with_offset(string, timer, 14, -2, 4);
         rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
+
         spr(
             portrait,
             (WIDTH - w) / 2 - 13 + 2,
@@ -283,16 +312,38 @@ impl Dialogue {
         &self,
         string: &str,
         timer: bool,
-        x: i32,
-        y: i32,
-        height: i32,
+        mut x: i32,
+        mut y: i32,
+        mut height: i32,
     ) {
         use crate::tic80_helpers::rect_outline;
+        use crate::tic80_core::rectb;
         use crate::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;
         let w = self.width as i32;
         let h = 24;
+        // Portrait
+        if let Some(anim) = &self.portrait {
+            rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
+            let frame = anim.current_frame();
+            x += 14;
+            y -= 2;
+            height += 4;
+            let (x, y): (i32, i32) = (frame.pos.x.into(), frame.pos.y.into());
+            blit_segment(4);
+            palette_map_rotate(frame.palette_rotate);
+            spr_outline(
+                frame.spr_id.into(),
+                (WIDTH - w) / 2 - 13 + 2 + x,
+                (HEIGHT - h) - 6 + 2 + y,
+                frame.options.clone(),
+                frame.outline_colour.unwrap_or_default(),
+            );
+            palette_map_reset();
+            rectb((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 3);
+        }
+        // Text box
         rect_outline(
             (WIDTH - w) / 2 + x,
             (HEIGHT - h) - 4 + y,

@@ -30,6 +30,7 @@ mod tic80_helpers;
 mod save;
 mod particles;
 mod sound;
+mod portraits;
 
 use crate::gamestate::GameState;
 use crate::map_data::*;

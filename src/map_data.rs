@@ -140,6 +140,11 @@ pub static SUPERMARKET: MapSet<'static> = MapSet {
             interaction: Interaction::Text(CONSTRUCTION_1),
             sprite: None,
         },
+        Interactable {
+            hitbox: Hitbox::new(80, 35, 8, 8),
+            interaction: Interaction::EnumText(THING),
+            sprite: Some(&[AnimFrame::new(Vec2::splat(0), 625, 30, SpriteOptions::transparent_zero())]),
+        },
     ],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
