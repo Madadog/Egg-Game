@@ -19,33 +19,33 @@ use crate::{SpriteOptions, Vec2};
 #[derive(Debug)]
 pub struct AnimFrame<'a> {
     pub pos: Vec2,
-    pub id: u16,
-    pub length: u16,
+    pub spr_id: u16,
+    pub duration: u16,
     pub options: SpriteOptions<'a>,
-    pub outline: Option<u8>,
+    pub outline_colour: Option<u8>,
     pub palette_rotate: u8,
 }
 impl<'a> AnimFrame<'a> {
-    pub const fn new(pos: Vec2, id: u16, length: u16, options: SpriteOptions<'a>) -> Self {
+    pub const fn new(pos: Vec2, spr_id: u16, duration: u16, options: SpriteOptions<'a>) -> Self {
         Self {
             pos,
-            id,
-            length,
+            spr_id,
+            duration,
             options,
-            outline: Some(1),
+            outline_colour: Some(1),
             palette_rotate: 0,
         }
     }
     pub const fn with_outline(self, outline: Option<u8>) -> Self {
-        Self { outline, ..self }
+        Self { outline_colour: outline, ..self }
     }
     pub fn const_default() -> Self {
         Self {
             pos: Vec2::new(0, 0),
-            id: 0,
-            length: 1,
+            spr_id: 0,
+            duration: 1,
             options: SpriteOptions::transparent_zero(),
-            outline: Some(1),
+            outline_colour: Some(1),
             palette_rotate: 0,
         }
     }
@@ -69,7 +69,7 @@ impl<'a> Animation<'a> {
         &self.frames[self.index]
     }
     pub fn advance(&mut self) {
-        if self.tick >= self.current_frame().length {
+        if self.tick >= self.current_frame().duration {
             self.index += 1;
             if self.index == self.frames.len() {
                 self.index = 0;

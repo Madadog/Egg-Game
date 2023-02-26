@@ -145,7 +145,7 @@ impl<'a> Game for WalkaroundState<'a> {
         {
             if let Some(sprite) = &interact.sprite {
                 anim.0 += 1; //timer
-                if anim.0 > sprite.frames[anim.1].length {
+                if anim.0 > sprite.frames[anim.1].duration {
                     anim.0 = 0;
                     anim.1 += 1; //index
                     if anim.1 >= sprite.frames.len() {
@@ -251,7 +251,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 match warp.mode {
                     WarpMode::Interact => {
                         sound::DOOR.play();
-                    },
+                    }
                     _ => {}
                 };
                 warp_target = Some(warp.clone());
@@ -350,11 +350,11 @@ impl<'a> Game for WalkaroundState<'a> {
         {
             if let Some(anim) = &item.sprite {
                 sprites.push((
-                    anim.frames[time.1].id.into(),
+                    anim.frames[time.1].spr_id.into(),
                     anim.frames[time.1].pos.x as i32 + item.hitbox.x as i32 - self.cam_x(),
                     anim.frames[time.1].pos.y as i32 + item.hitbox.y as i32 - self.cam_y(),
                     anim.frames[time.1].options.clone(),
-                    anim.frames[time.1].outline,
+                    anim.frames[time.1].outline_colour,
                     anim.frames[time.1].palette_rotate,
                 ));
             }
