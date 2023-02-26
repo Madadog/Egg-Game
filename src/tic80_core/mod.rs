@@ -287,6 +287,7 @@ pub fn music(track: i32, opts: MusicOptions) {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SfxOptions {
     pub note: i32,
     pub octave: i32,

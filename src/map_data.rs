@@ -580,13 +580,18 @@ pub static HOUSE_KITCHEN: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(5 * 8, 4 * 8, 5 * 4, 2 * 8),
-            interaction: Interaction::Text(HOUSE_KITCHEN_SINK),
+            hitbox: Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8),
+            interaction: Interaction::EnumText(HOUSE_KITCHEN_SINK),
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(16 * 4, 4 * 8, 2 * 8, 2 * 8),
+            hitbox: Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
             interaction: Interaction::Text(HOUSE_KITCHEN_MICROWAVE),
+            sprite: None,
+        },
+        Interactable {
+            hitbox: Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8),
+            interaction: Interaction::Text(HOUSE_KITCHEN_WINDOW),
             sprite: None,
         },
     ],

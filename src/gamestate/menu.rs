@@ -31,6 +31,7 @@ impl MenuState {
             entries: vec![
                 MenuEntry::Inventory,
                 MenuEntry::FontSize,
+                MenuEntry::ExitToMenu,
             ],
             draw_title: None,
             back_entry: Some(MenuEntry::Inventory),
@@ -83,7 +84,7 @@ impl MenuState {
                 self.entries = vec![MainMenu, FontSize, Reset(0)];
                 self.back_entry = Some(MainMenu);
             }
-            MainMenu => {
+            MainMenu | ExitToMenu => {
                 *self = MenuState::new();
             }
             FontSize => DIALOGUE_OPTIONS.toggle_small_text(),
@@ -153,12 +154,13 @@ pub enum MenuEntry {
     FontSize,
     Reset(u8),
     Inventory,
+    ExitToMenu,
 }
 impl MenuEntry {
     pub fn text(&self) -> &'static str {
         use crate::dialogue_data::{
             MENU_BACK, MENU_OPTIONS, MENU_PLAY, OPTIONS_FONT_SIZE, OPTIONS_RESET,
-            OPTIONS_RESET_SURE,
+            OPTIONS_RESET_SURE, MENU_EXIT,
         };
         use MenuEntry::*;
 
@@ -175,6 +177,7 @@ impl MenuEntry {
                 }
             }
             Inventory => MENU_BACK,
+            ExitToMenu => MENU_EXIT,
         }
     }
 }

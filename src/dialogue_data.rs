@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::dialogue::TextContent::{self, *};
+use crate::{dialogue::TextContent::{self, *}, sound};
 
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue
@@ -24,6 +24,7 @@ pub static GAME_TITLE_BLURB: &str = "version 0.0.12\0";
 pub static MENU_PLAY: &str = "Play\0";
 pub static MENU_OPTIONS: &str = "Options\0";
 pub static MENU_BACK: &str = "Back\0";
+pub static MENU_EXIT: &str = "Exit to Menu\0";
 pub static OPTIONS_TITLE: &str = "super unfinished OPTIONS MENU\0";
 pub static OPTIONS_FONT_SIZE: &str = "Toggle Font Size\0";
 pub static OPTIONS_FONT_FIXED: &str = "Toggle Fixed Font size\0";
@@ -55,7 +56,13 @@ pub static HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
     Delayed("None of them are good.", 30),
 ];
 pub static HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
-pub static HOUSE_KITCHEN_SINK: &str =
+pub static HOUSE_KITCHEN_SINK: &[TextContent] = &[
+    Sound(sound::ALERT_UP),
+    Delayed("Found something down the drain...!\n", 0),
+    Text("... You left it there."),
+    Delayed("\n\nThis isn't an RPG, after all.", 30),
+];
+pub static HOUSE_KITCHEN_WINDOW: &str =
     "The unholy king of tacky windows. Words fail to convey your antipathy.";
 pub static HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
 pub static UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
@@ -65,7 +72,7 @@ pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the g
 pub static DOG_OBTAINED: &str = "Dog has joined the party!";
 pub static DOG_RELINQUISHED: &str = "Dog has left the party.";
 pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
-pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could definitely open it with some of the POWER TOOLS inside... Oh wait.";
+pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could easily open it with some of the POWER TOOLS inside... Oh wait.";
 pub static HOUSE_BACKYARD_SHED_WINDOW: &str =
     "You can't actually see anything through this window.";
 pub static HOUSE_BACKYARD_NEIGHBOURS: &[&str] = &[

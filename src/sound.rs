@@ -1,5 +1,6 @@
 use crate::tic80_core::{sfx, SfxOptions};
 
+#[derive(Debug, Clone)]
 pub struct SfxData {
     id: i32,
     options: SfxOptions,
@@ -67,7 +68,16 @@ pub const DENY: SfxData = SfxData::new(
         ..DEFAULT_SFX
     },
 );
-
+pub const ALERT_UP: SfxData = SfxData::new(
+    35,
+    SfxOptions {
+        note: 0,
+        octave: 5,
+        speed: -1,
+        duration: 60,
+        ..DEFAULT_SFX
+    },
+);
 pub const ALERT_DOWN: SfxData = SfxData::new(
     36,
     SfxOptions {

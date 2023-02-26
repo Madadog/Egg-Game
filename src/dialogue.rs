@@ -16,19 +16,25 @@
 
 use std::{fmt::format, sync::RwLock};
 
-use crate::{print_alloc, save, sound, tic80_core::SpriteOptions, trace, PrintOptions};
+use crate::{
+    print_alloc, save,
+    sound::{self, SfxData},
+    tic80_core::SpriteOptions,
+    trace, PrintOptions,
+};
 
 #[derive(Debug, Clone)]
 pub enum TextContent {
     Text(&'static str),
     Delayed(&'static str, u8),
     Delay(u8),
+    Sound(SfxData),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
         match self {
-            Delayed(_, _) | Delay(_) => true,
+            Delayed(_, _) | Delay(_) | Sound(_) => true,
             _ => false,
         }
     }
@@ -102,7 +108,7 @@ impl Dialogue {
     }
     pub fn is_line_done(&self) -> bool {
         match &self.current_text {
-            Some(text) => self.characters == text.len() - 1,
+            Some(text) => text.len() == 0 || self.characters == text.len() - 1,
             None => true,
         }
     }
@@ -118,6 +124,11 @@ impl Dialogue {
         } else {
             self.next_text.push(TextContent::Text(string));
             false
+        }
+    }
+    pub fn maybe_add_text(&mut self, string: &'static str) {
+        if self.current_text.is_none() {
+            self.set_current_text(string);
         }
     }
     pub fn set_dialogue(&mut self, dialogue: &[&'static str]) {
@@ -148,12 +159,18 @@ impl Dialogue {
                 true
             }
             TextContent::Delayed(text, delay) => {
+                let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(text);
+                    *string = fit_default_paragraph(string, wrap_width);
                     self.add_delay(delay.into());
                 } else {
                     self.add_text(text);
                 }
+                true
+            }
+            TextContent::Sound(x) => {
+                x.play();
                 true
             }
         }
@@ -197,11 +214,11 @@ impl Dialogue {
                 sound::CLICK.with_volume(2).play();
             }
             self.step_text(amount);
-            // trace!(format!("self.is_line_done(): {},  self.can_autoadvance(): {}", self.is_line_done(), self.can_autoadvance()),12);
-            if self.is_line_done() && self.can_autoadvance() {
-                self.next_text();
-            }
             self.delay += 1;
+        }
+        // trace!(format!("self.is_line_done(): {},  self.can_autoadvance(): {}", self.is_line_done(), self.can_autoadvance()),12);
+        if self.is_line_done() && self.can_autoadvance() {
+            self.next_text();
         }
     }
     pub fn step_text(&mut self, amount: usize) {
@@ -339,7 +356,11 @@ pub fn fit_string(
             line_length = i
         };
     }
-    (take_words(string, line_length, start_word), line_length, line_length == len)
+    (
+        take_words(string, line_length, start_word),
+        line_length,
+        line_length == len,
+    )
 }
 
 pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {

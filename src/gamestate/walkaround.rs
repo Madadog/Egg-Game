@@ -178,7 +178,7 @@ impl<'a> Game for WalkaroundState<'a> {
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
-        if matches!(self.dialogue.current_text, None) {
+        if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
             if mem_btn(0) {
                 dy -= 1;
             }
@@ -285,6 +285,7 @@ impl<'a> Game for WalkaroundState<'a> {
                             trace!(format!("{x:?}"), 12);
                         }
                     }
+                    break;
                 }
             }
         }
