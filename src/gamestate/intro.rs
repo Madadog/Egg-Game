@@ -1,3 +1,4 @@
+use crate::dialogue_data::GAME_TITLE;
 use crate::gamestate::menu::draw_title;
 use crate::rand;
 use crate::save;
@@ -5,19 +6,16 @@ use crate::tic80_core::*;
 use crate::tic80_helpers::*;
 
 pub fn draw_animation(t: u16) -> bool {
-    let steps: &[u16] = &[0, 1, 700, 760];
+    let steps: &[u16] = &[0, 700, 760];
     let index = steps.iter().position(|&x| x >= t);
     let local_time = index.map(|x| t - steps[x.saturating_sub(1)]);
     match index {
         Some(0) => {
             cls(0);
             set_palette([[0; 3]; 16]);
-            // fade_palette(SWEETIE_16, [[0; 3]; 16], 256/50 * t);
-            true
-        }
-        Some(1) => {
             music(3, MusicOptions::default());
             draw_ovr(|| {
+                cls(0);
                 set_palette([[0; 3]; 16]);
                 circb(90, 38, 4, 4);
                 circb(90, 36, 3, 4);
@@ -29,7 +27,7 @@ pub fn draw_animation(t: u16) -> bool {
             });
             true
         }
-        Some(2) => {
+        Some(1) => {
             let local_time = local_time.unwrap();
             let max_time = 700.0 - 60.0;
             fade_palette([[0; 3]; 16], SWEETIE_16, local_time * 2);
@@ -53,14 +51,14 @@ pub fn draw_animation(t: u16) -> bool {
             });
             true
         }
-        Some(3) => {
-            screen_offset(0, 0);
+        Some(2) => {
             fade_palette_colour(15, [0x0F; 3], [26, 28, 44], local_time.unwrap() * 10);
             cls(15);
             draw_ovr(|| {
+                screen_offset(0, 0);
                 cls(0);
                 fade_palette([[0x0F; 3]; 16], SWEETIE_16, local_time.unwrap() * 10);
-                draw_title(120, 53)
+                draw_title(120, 53, GAME_TITLE);
             });
             true
         }
@@ -77,7 +75,7 @@ pub fn draw_animation(t: u16) -> bool {
             screen_offset(0, 0);
             set_palette(SWEETIE_16);
             cls(0);
-            draw_title(120, 53);
+            draw_title(120, 53, GAME_TITLE);
             draw_ovr(|| cls(0));
             false
         }

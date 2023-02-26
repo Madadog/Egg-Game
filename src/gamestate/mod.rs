@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use crate::inventory::{InventoryUiState, INVENTORY};
 use crate::save;
 use crate::{tic80_core::*, WALKAROUND_STATE};
 
-use self::menu::{MainMenuOption, MenuState};
+use self::menu::MenuState;
 use crate::input_manager::{any_btnp, mem_btn};
 use crate::tic80_helpers::*;
 
@@ -27,12 +27,12 @@ mod intro;
 mod menu;
 pub mod walkaround;
 
+#[derive(Debug)]
 pub enum GameState {
     Instructions(u16),
     Walkaround,
     Animation(u16),
     MainMenu(MenuState),
-    Options(MenuState),
     Inventory,
 }
 impl GameState {
@@ -58,9 +58,6 @@ impl GameState {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
-                if mem_btn(4) {
-                    *x += 1;
-                }
                 if mem_btn(5) {
                     *x += 1000;
                 }
@@ -72,17 +69,9 @@ impl GameState {
             }
             Self::MainMenu(state) => {
                 match state.step_main_menu() {
-                    Some(MainMenuOption::Play) => *self = Self::Instructions(0),
-                    Some(MainMenuOption::Options) => *self = Self::Options(MenuState::new()),
+                    Some(x) => *self = x,
                     None => state.draw_main_menu(),
                 };
-            }
-            Self::Options(state) => {
-                if state.step_options() {
-                    state.draw_options();
-                } else {
-                    *self = Self::MainMenu(MenuState::new());
-                }
             }
             Self::Inventory => {
                 INVENTORY.write().unwrap().step();
@@ -105,22 +94,12 @@ pub trait Game {
 
 pub fn draw_instructions() {
     cls(0);
-    let string = crate::dialogue_data::INSTRUCTIONS;
+    use crate::dialogue_data::{INSTRUCTIONS, INSTRUCTIONS_TITLE};
     let small_text = DIALOGUE_OPTIONS.small_text();
     rect_outline(6, 15, 228, 100, 0, 1);
     rect(8, 17, 224, 96, 1);
-    print_raw(
-        string,
-        12,
-        21,
-        PrintOptions {
-            color: 0,
-            small_text,
-            ..Default::default()
-        },
-    );
-    print_raw(
-        string,
+    print_raw_shadow(
+        &format!("{}\0", INSTRUCTIONS_TITLE),
         11,
         20,
         PrintOptions {
@@ -128,9 +107,21 @@ pub fn draw_instructions() {
             small_text,
             ..Default::default()
         },
+        0,
+    );
+    print_raw_shadow(
+        INSTRUCTIONS,
+        11,
+        36,
+        PrintOptions {
+            color: 12,
+            small_text,
+            ..Default::default()
+        },
+        0,
     );
     let origin = 11.0;
-    let width = 66.0;
+    let width = (print_width(INSTRUCTIONS_TITLE, false, small_text) - 1) as f32;
     line(origin, 27.0, origin + width, 27.0, 12);
     line(origin + 1.0, 28.0, origin + width + 1.0, 28.0, 0);
 }

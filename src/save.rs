@@ -1,4 +1,16 @@
-use crate::tic80_helpers::{get_pmem, set_pmem};
+use crate::{
+    tic80_core::PERSISTENT_RAM,
+    tic80_helpers::{get_pmem, set_pmem}, trace,
+};
+
+/// Do not call this while reading or writing to persistent ram.
+pub fn zero_pmem() {
+    unsafe { 
+        for byte in (*PERSISTENT_RAM).iter_mut() {
+            *byte = 0;
+        }
+    }
+}
 
 /// A 1-byte Pmem slot. When set, it will be saved to the player's hard drive and persist across runs.
 pub struct PmemU8(usize);
@@ -29,7 +41,7 @@ impl PmemBit {
         Self { index, bit }
     }
     /// Returns the whole byte associated with this bit.
-    /// 
+    ///
     /// To set it, use `set_pmem` directly.
     pub fn get_byte(&self) -> u8 {
         get_pmem(self.index)
@@ -78,7 +90,6 @@ pub const WILDERNESS_EGG_FOUND: PmemBit = PmemBit::new(8, 0b0000_0001);
 
 pub const FACTORY_FLAGS: PmemU8 = PmemU8::new(9);
 pub const EGG_POP_COUNT: PmemU8 = PmemU8::new(10);
-
 
 pub const IS_NIGHT: PmemBit = PmemBit::new(11, 0b0000_0001);
 
