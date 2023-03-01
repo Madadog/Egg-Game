@@ -1,25 +1,29 @@
-use crate::animation::Animation;
+use crate::animation::{AnimFrame, Animation};
 use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::gamestate::inventory::INVENTORY;
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
-use crate::gamestate::inventory::INVENTORY;
 use crate::map::{Axis, WarpMode};
 use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
-use crate::position::Vec2;
+use crate::position::{Hitbox, Vec2};
 use crate::tic80_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
 use crate::{dialogue_data::*, save};
 use crate::{sound, tic80_core::*};
 
+use self::creatures::Creature;
+mod creatures;
+
 pub struct WalkaroundState<'a> {
     player: Player,
     companion_trail: CompanionTrail,
     companion_list: CompanionList,
     map_animations: Vec<Animation<'a>>,
+    creatures: Vec<Creature>,
     camera: Camera,
     current_map: &'a MapSet<'a>,
     dialogue: Dialogue,
@@ -32,6 +36,7 @@ impl<'a> WalkaroundState<'a> {
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
+            creatures: Vec::new(),
             camera: Camera::const_default(),
             current_map: &DEFAULT_MAP_SET,
             dialogue: Dialogue::const_default(),
@@ -75,12 +80,18 @@ impl<'a> WalkaroundState<'a> {
                 ..Animation::const_default()
             })
             .collect();
+
+        self.map_animations.shrink_to_fit();
+        self.particles.shrink_to_fit();
     }
     pub fn cam_x(&self) -> i32 {
         self.camera.pos.x.into()
     }
     pub fn cam_y(&self) -> i32 {
         self.camera.pos.y.into()
+    }
+    pub fn cam_state(&mut self) -> &mut crate::camera::CameraBounds {
+        &mut self.camera.bounds
     }
     pub fn execute_interact_fn(&mut self, interact: &InteractFn) -> Option<&'static str> {
         match interact {
@@ -137,6 +148,12 @@ impl<'a> WalkaroundState<'a> {
                 sound::PIANO.with_note(note as i32).play();
                 None
             }
+            InteractFn::AddCreatures(x) => {
+                self.creatures.extend((0..=*x).map(|_| {
+                    Creature::const_default().with_offset(self.player.pos)
+                }));
+                None
+            }
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
         }
     }
@@ -168,11 +185,8 @@ impl<'a> Game for WalkaroundState<'a> {
         if keyp(34, -1, -1) {
             set_palette(crate::tic80_helpers::NIGHT_16);
         }
-        {
-            let small_text = DIALOGUE_OPTIONS.small_text();
-            if keyp(36, -1, -1) {
-                self.dialogue.set_options(false, !small_text);
-            }
+        if keyp(35, -1, -1) {
+            set_palette(crate::tic80_helpers::B_W);
         }
 
         // Get keyboard inputs
@@ -216,6 +230,9 @@ impl<'a> Game for WalkaroundState<'a> {
                 self.dialogue.close();
             }
             trace!("Attempting interact...", 11);
+        }
+        if mem_btnp(6) {
+            return Some(GameState::MainMenu(super::menu::MenuState::debug_options()))
         }
         if any_btnpr() {
             self.player.flip_controls = Axis::None
@@ -322,20 +339,35 @@ impl<'a> Game for WalkaroundState<'a> {
             1,
         ));
 
-        for (anim, item) in self.map_animations.iter().zip(
-            self.current_map
-                .interactables
-                .iter()
-                .filter(|x| x.sprite.is_some()),
-        ) {
+        for (anim, hitbox) in self
+            .map_animations
+            .iter()
+            .zip(
+                self.current_map
+                    .interactables
+                    .iter()
+                    .filter(|x| x.sprite.is_some())
+                    .map(|x| x.hitbox),
+            )
+        {
             sprites.push((
                 anim.current_frame().spr_id.into(),
-                anim.current_frame().pos.x as i32 + item.hitbox.x as i32 - self.cam_x(),
-                anim.current_frame().pos.y as i32 + item.hitbox.y as i32 - self.cam_y(),
+                anim.current_frame().pos.x as i32 + hitbox.x as i32 - self.cam_x(),
+                anim.current_frame().pos.y as i32 + hitbox.y as i32 - self.cam_y(),
                 anim.current_frame().options.clone(),
                 anim.current_frame().outline_colour,
                 anim.current_frame().palette_rotate,
             ));
+        }
+        for creature in self.creatures.iter() {
+            sprites.push((
+                creature.sprite.into(),
+                creature.hitbox.x as i32 - self.cam_x(),
+                creature.hitbox.y as i32 - self.cam_y(),
+                SpriteOptions::transparent_zero(),
+                Some(1),
+                0,
+            ))
         }
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
             if let Some(companion) = companion {

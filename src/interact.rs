@@ -56,4 +56,5 @@ pub enum InteractFn {
     StairwellPainting,
     Note(i32),
     Piano(Vec2),
+    AddCreatures(usize),
 }

@@ -1,57 +1,124 @@
-use crate::{animation::{AnimFrame, Animation}, position::Vec2, tic80_core::SpriteOptions};
-
+use crate::{
+    position::Vec2,
+    tic80_core::{spr, SpriteOptions}, tic80_helpers::{draw_outline, palette_map_rotate, spr_outline},
+};
 
 #[derive(Debug, Clone)]
-pub struct TalkPic {
-    pub frames: &'static [AnimFrame<'static>],
+pub enum PicContainer {
+    Pic4x4(&'static Pic4x4),
+    PicSingle(&'static PicSingle),
 }
-impl TalkPic {
-    pub fn to_anim(self) -> Animation<'static> {
-        Animation {
-            frames: self.frames,
-            ..Animation::const_default()
+impl PicContainer {
+    pub fn draw_offset(&self, offset: Vec2) {
+        match self {
+            Self::Pic4x4(x) => x.draw_offset(offset),
+            Self::PicSingle(x) => x.draw_offset(offset),
         }
-    }
-    pub const fn new(frames: &'static [AnimFrame<'static>]) -> Self {
-        Self { frames }
     }
 }
 
-const SPR_4X4: SpriteOptions = SpriteOptions {w: 2, h: 2, ..SpriteOptions::transparent_zero()};
+#[derive(Debug, Clone)]
+pub struct Pic4x4 {
+    spr_ids: [i16; 4],
+    offset: (i8, i8),
+}
+impl Pic4x4 {
+    pub fn draw_offset(&self, offset: Vec2) {
+        for (i, id) in self.spr_ids.iter().enumerate() {
+            let i = i as i32;
+            let (x, y): (i32, i32) = (
+                i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
+                i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
+            );
+            draw_outline((*id).into(), x, y, SpriteOptions::transparent_zero(), 1);
+        }
+        palette_map_rotate(1);
+        for (i, id) in self.spr_ids.iter().enumerate() {
+            let i = i as i32;
+            let (x, y): (i32, i32) = (
+                i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
+                i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
+            );
+            spr((*id).into(), x, y, SpriteOptions::transparent_zero());
+        }
+        palette_map_rotate(0);
+    }
+    pub const fn to(&'static self) -> PicContainer {
+        PicContainer::Pic4x4(self)
+    }
+}
 
-pub static Y_NORMAL: TalkPic = TalkPic::new(
-    &[
-        AnimFrame {
-            pos: Vec2::new(3, 9),
-            spr_id: 920,
-            duration: 30,
-            options: SPR_4X4,
-            outline_colour: Some(0),
-            palette_rotate: 0,
-        }
-    ]
-);
-pub static Y_AWAY: TalkPic = TalkPic::new(
-    &[
-        AnimFrame {
-            pos: Vec2::new(3, 9),
-            spr_id: 988,
-            duration: 30,
-            options: SPR_4X4,
-            outline_colour: Some(0),
-            palette_rotate: 0,
-        }
-    ]
-);
-pub static Y_LOOK: TalkPic = TalkPic::new(
-    &[
-        AnimFrame {
-            pos: Vec2::new(4, 11),
-            spr_id: 980,
-            duration: 30,
-            options: SPR_4X4,
-            outline_colour: Some(0),
-            palette_rotate: 0,
-        }
-    ]
-);
+#[derive(Debug, Clone)]
+pub struct PicSingle {
+    spr_id: i16,
+    offset: (i8, i8),
+}
+impl PicSingle {
+    pub fn draw_offset(&self, offset: Vec2) {
+        let (x, y): (i32, i32) = (
+            i32::from(self.offset.0) + i32::from(offset.x),
+            i32::from(self.offset.1) + i32::from(offset.y),
+        );
+        palette_map_rotate(1);
+        spr_outline(
+            self.spr_id.into(),
+            x,
+            y,
+            SpriteOptions {
+                w: 2,
+                h: 2,
+                ..SpriteOptions::transparent_zero()
+            },
+            1,
+        );
+        palette_map_rotate(0);
+    }
+    pub const fn to(&'static self) -> PicContainer {
+        PicContainer::PicSingle(self)
+    }
+}
+
+pub static Y_NORMAL: Pic4x4 = Pic4x4 {
+    spr_ids: [920, 921, 952, 953],
+    offset: (4, 13),
+};
+pub static Y_LOOK: Pic4x4 = Pic4x4 {
+    spr_ids: [980, 981, 1012, 1013],
+    offset: (4, 15),
+};
+pub static Y_CLOSE: Pic4x4 = Pic4x4 {
+    spr_ids: [982, 983, 1012, 1013],
+    offset: (3, 11),
+};
+pub static Y_OOF: Pic4x4 = Pic4x4 {
+    spr_ids: [1014, 1015, 1012, 1013],
+    offset: (3, 11),
+};
+pub static Y_NO: Pic4x4 = Pic4x4 {
+    spr_ids: [984, 985, 1012, 1016],
+    offset: (3, 11),
+};
+pub static Y_YELL: Pic4x4 = Pic4x4 {
+    spr_ids: [986, 987, 1018, 1019],
+    offset: (3, 11),
+};
+pub static Y_AWAY: PicSingle = PicSingle {
+    spr_id: 988,
+    offset: (4, 13),
+};
+pub static Y_SMUG: PicSingle = PicSingle {
+    spr_id: 990,
+    offset: (3, 7),
+};
+pub static Y_FRUS: PicSingle = PicSingle {
+    spr_id: 926,
+    offset: (3, 7),
+};
+pub static Y_HMM: PicSingle = PicSingle {
+    spr_id: 924,
+    offset: (3, 7),
+};
+pub static Y_REGRET: PicSingle = PicSingle {
+    spr_id: 922,
+    offset: (3, 7),
+};

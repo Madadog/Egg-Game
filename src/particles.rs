@@ -66,6 +66,9 @@ impl ParticleList {
         self.particles.iter_mut().for_each(|x| x.step());
         self.particles.retain(|x| x.alive());
     }
+    pub fn shrink_to_fit(&mut self) {
+        self.particles.shrink_to_fit();
+    }
     pub fn draw(&self, x_offset: i32, y_offset: i32) {
         self.particles
             .iter()

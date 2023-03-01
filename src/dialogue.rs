@@ -18,11 +18,13 @@ use std::{fmt::format, sync::RwLock};
 
 use crate::{
     animation::{AnimFrame, Animation},
-    portraits::TalkPic,
+    portraits::PicContainer,
+    position::Vec2,
     print_alloc, save,
     sound::{self, SfxData},
     tic80_core::SpriteOptions,
-    trace, PrintOptions, tic80_helpers::{palette_map_rotate, palette_map_reset, spr_outline, blit_segment},
+    tic80_helpers::{blit_segment, palette_map_reset, palette_map_rotate, spr_outline},
+    trace, PrintOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -31,7 +33,7 @@ pub enum TextContent {
     Delayed(&'static str, u8),
     Delay(u8),
     Sound(&'static SfxData),
-    Portrait(Option<&'static TalkPic>),
+    Portrait(Option<&'static PicContainer>),
     Pause,
     AutoText(&'static str),
 }
@@ -103,7 +105,7 @@ pub struct Dialogue {
     pub width: usize,
     pub delay: usize,
     pub print_time: Option<usize>,
-    pub portrait: Option<Animation<'static>>,
+    pub portrait: Option<Vec<PicContainer>>,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
@@ -194,10 +196,14 @@ impl Dialogue {
                 true
             }
             TextContent::Portrait(x) => {
-                self.portrait = if let Some(portrait) = x {
-                    Some(portrait.clone().to_anim())
+                if let Some(portrait) = x {
+                    if let Some(portraits) = &mut self.portrait {
+                        portraits.push(portrait.clone());
+                    } else {
+                        self.portrait = Some(vec![portrait.clone()]);
+                    }
                 } else {
-                    None
+                    self.portrait = None;
                 };
                 true
             }
@@ -214,7 +220,8 @@ impl Dialogue {
         *self = Self {
             width: self.width,
             ..Self::const_default()
-        }
+        };
+        self.next_text.shrink_to_fit();
     }
     pub fn text_len(&self) -> usize {
         self.current_text.as_ref().map_or(0, |x| x.len())
@@ -316,30 +323,26 @@ impl Dialogue {
         mut y: i32,
         mut height: i32,
     ) {
-        use crate::tic80_helpers::rect_outline;
         use crate::tic80_core::rectb;
+        use crate::tic80_helpers::rect_outline;
         use crate::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;
         let w = self.width as i32;
         let h = 24;
         // Portrait
-        if let Some(anim) = &self.portrait {
+        if let Some(portrait) = &self.portrait {
             rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
-            let frame = anim.current_frame();
+            let frame = &portrait[0];
             x += 14;
             y -= 2;
             height += 4;
-            let (x, y): (i32, i32) = (frame.pos.x.into(), frame.pos.y.into());
             blit_segment(4);
-            palette_map_rotate(frame.palette_rotate);
-            spr_outline(
-                frame.spr_id.into(),
-                (WIDTH - w) / 2 - 13 + 2 + x,
-                (HEIGHT - h) - 6 + 2 + y,
-                frame.options.clone(),
-                frame.outline_colour.unwrap_or_default(),
-            );
+            palette_map_rotate(0);
+            frame.draw_offset(Vec2::new(
+                ((WIDTH - w) / 2 - 15) as i16,
+                ((HEIGHT - h) - 8) as i16,
+            ));
             palette_map_reset();
             rectb((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 3);
         }

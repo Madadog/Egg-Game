@@ -58,6 +58,9 @@ pub struct Animation<'a> {
     pub frames: &'a [AnimFrame<'a>],
 }
 impl<'a> Animation<'a> {
+    pub const fn new(frames: &'a [AnimFrame<'a>]) -> Self {
+        Self { frames, ..Self::const_default() }
+    }
     pub const fn const_default() -> Self {
         Self {
             tick: 0,

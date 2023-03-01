@@ -23,11 +23,13 @@
 // Because this isn't in a separate crate, we have to allow unused code to silence the warnings.
 #![allow(dead_code, unused_macros)]
 
-use std::ffi::CString;
+use std::{ffi::CString, sync::atomic::AtomicUsize};
 
 pub use sys::MouseInput;
 
 mod alloc;
+
+pub static MEM_USAGE: AtomicUsize = AtomicUsize::new(0);
 
 // Constants
 pub const WIDTH: i32 = 240;

@@ -1,3 +1,4 @@
+use crate::camera::CameraBounds;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::dialogue_data::GAME_TITLE;
 use crate::dialogue_data::OPTIONS_TITLE;
@@ -35,6 +36,18 @@ impl MenuState {
             ],
             draw_title: None,
             back_entry: Some(MenuEntry::Inventory),
+            ..Self::new()
+        }
+    }
+    pub fn debug_options() -> Self {
+        let mut entries = vec![MenuEntry::Walk];
+        entries.extend(
+            (0..crate::dialogue_data::MENU_DEBUG_CONTROLS.len()).map(|x| MenuEntry::Debug(x as u8)),
+        );
+        Self {
+            entries,
+            draw_title: None,
+            back_entry: Some(MenuEntry::Walk),
             ..Self::new()
         }
     }
@@ -103,6 +116,32 @@ impl MenuState {
                     .state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
                 return Some(GameState::Inventory);
             }
+            Space => {}
+            Debug(x) => {
+                let walk = || crate::WALKAROUND_STATE.write().unwrap();
+                match x {
+                    0 => {
+                        set_palette(crate::tic80_helpers::SWEETIE_16);
+                    }
+                    1 => {
+                        set_palette(crate::tic80_helpers::NIGHT_16);
+                    }
+                    2 => {
+                        set_palette(crate::tic80_helpers::B_W);
+                    }
+                    3 => {
+                        *walk().cam_state() = CameraBounds::free();
+                    }
+                    4 => {
+                        walk().execute_interact_fn(&crate::interact::InteractFn::ToggleDog);
+                    }
+                    5 => {
+                        walk().execute_interact_fn(&crate::interact::InteractFn::AddCreatures(1));
+                    }
+                    _ => {}
+                }
+            }
+            Walk => return Some(GameState::Walkaround),
         };
         None
     }
@@ -155,13 +194,13 @@ pub enum MenuEntry {
     Reset(u8),
     Inventory,
     ExitToMenu,
+    Space,
+    Debug(u8),
+    Walk,
 }
 impl MenuEntry {
     pub fn text(&self) -> &'static str {
-        use crate::dialogue_data::{
-            MENU_BACK, MENU_OPTIONS, MENU_PLAY, OPTIONS_FONT_SIZE, OPTIONS_RESET,
-            OPTIONS_RESET_SURE, MENU_EXIT,
-        };
+        use crate::dialogue_data::*;
         use MenuEntry::*;
 
         match self {
@@ -178,6 +217,9 @@ impl MenuEntry {
             }
             Inventory => MENU_BACK,
             ExitToMenu => MENU_EXIT,
+            Space => "\0",
+            Debug(x) => MENU_DEBUG_CONTROLS[usize::from(*x)],
+            Walk => MENU_PLAY,
         }
     }
 }
@@ -215,10 +257,13 @@ pub fn step_menu(entries: usize, y: i16, index: &mut usize) -> (usize, bool) {
         }
     }
     if mem_btnp(0) {
-        *index = old_index.saturating_sub(1);
+        match old_index.checked_sub(1) {
+            Some(x) => *index = x,
+            None => *index = entries - 1,
+        }
     }
     if mem_btnp(1) {
-        *index = old_index.saturating_add(1).min(entries - 1);
+        *index = old_index.saturating_add(1) % entries;
     }
 
     (*index, clicked)

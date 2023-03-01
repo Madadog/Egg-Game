@@ -46,6 +46,8 @@ use std::cell::RefCell;
 
 use buddy_alloc::{BuddyAllocParam, FastAllocParam, NonThreadsafeAlloc};
 
+use super::MEM_USAGE;
+
 extern "C" {
     static __heap_base: u8;
 }
@@ -72,10 +74,12 @@ unsafe impl GlobalAlloc for TicAlloc {
                 Some(NonThreadsafeAlloc::new(fast_param, buddy_param))
             };
         }
+        MEM_USAGE.fetch_add(layout.size(), std::sync::atomic::Ordering::SeqCst);
         self.0.borrow().as_ref().unwrap().alloc(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        MEM_USAGE.fetch_sub(layout.size(), std::sync::atomic::Ordering::SeqCst);
         self.0.borrow().as_ref().unwrap().dealloc(ptr, layout)
     }
 }

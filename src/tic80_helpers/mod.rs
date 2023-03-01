@@ -168,14 +168,18 @@ pub fn spr_blit_segment(id: i32, x: i32, y: i32, opts: SpriteOptions, blit_seg: 
     blit_segment(old);
 }
 
-pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
+pub fn draw_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
     let old_map = get_palette_map();
     palette_map_set_all(outline_colour);
     spr(id, x + 1, y, sprite_options.clone());
     spr(id, x - 1, y, sprite_options.clone());
     spr(id, x, y + 1, sprite_options.clone());
-    spr(id, x, y - 1, sprite_options.clone());
+    spr(id, x, y - 1, sprite_options);
     set_palette_map(old_map);
+}
+
+pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
+    draw_outline(id, x, y, sprite_options.clone(), outline_colour);
     spr(id, x, y, sprite_options);
 }
 
@@ -269,6 +273,24 @@ pub const NIGHT_16: [[u8; 3]; 16] = [
     [41, 54, 111],   // #29366f
     [59, 93, 201],   // #3b5dc9
     [65, 166, 246],  // #41a6f6
+    [115, 239, 247], // #73eff7
+    [167, 240, 112], // #a7f070
+    [56, 183, 100],  // #38b764
+    [37, 113, 121],  // #257179
+    [41, 54, 111],   // #29366f
+    [59, 93, 201],   // #3b5dc9
+    [65, 166, 246],  // #41a6f6
+    [244, 244, 244], // #f4f4f4
+    [115, 239, 247], // #73eff7
+    [148, 176, 194], // #94b0c2
+    [86, 108, 134],  // #566c86
+];
+pub const B_W: [[u8; 3]; 16] = [
+    [28, 24, 24],    // #1c1818
+    [72, 64, 64],    // #484040
+    [149, 141, 141], // #958d79
+    [200, 200, 186], // #f6f6da
+    [246, 246, 218],  // #41a6f6
     [115, 239, 247], // #73eff7
     [167, 240, 112], // #a7f070
     [56, 183, 100],  // #38b764
