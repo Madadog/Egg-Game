@@ -22,14 +22,14 @@ use crate::{
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
-pub static GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub static GAME_TITLE_BLURB: &str = "version 0.0.14\0";
-pub static MENU_PLAY: &str = "Play\0";
-pub static MENU_OPTIONS: &str = "Options\0";
-pub static MENU_BACK: &str = "Back\0";
-pub static MENU_EXIT: &str = "Exit to Menu\0";
-pub static MENU_DEBUG: &str = "Debug\0";
-pub static MENU_DEBUG_CONTROLS: &[&str] = &[
+pub const GAME_TITLE: &str = "super unfinished EGG GAME\0";
+pub const GAME_TITLE_BLURB: &str = "version 0.0.14\0";
+pub const MENU_PLAY: &str = "Play\0";
+pub const MENU_OPTIONS: &str = "Options\0";
+pub const MENU_BACK: &str = "Back\0";
+pub const MENU_EXIT: &str = "Exit to Menu\0";
+pub const MENU_DEBUG: &str = "Debug\0";
+pub const MENU_DEBUG_CONTROLS: &[&str] = &[
     "Palette 1\0",
     "Palette 2\0",
     "Palette 3\0",
@@ -37,20 +37,20 @@ pub static MENU_DEBUG_CONTROLS: &[&str] = &[
     "Toggle Dog\0",
     "Add creature\0",
 ];
-pub static OPTIONS_TITLE: &str = "super unfinished OPTIONS MENU\0";
-pub static OPTIONS_FONT_SIZE: &str = "Toggle Font Size\0";
-pub static OPTIONS_FONT_FIXED: &str = "Toggle Fixed Font size\0";
-pub static OPTIONS_RESET: &str = "Erase Data\0";
-pub static OPTIONS_RESET_SURE: &str = "Erase Data (Press again to confirm)\0";
-pub static OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
-pub static BEDROOM_MATTRESS: &str = "You can't get to sleep.";
-pub static BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
-pub static BEDROOM_CLOSET: &str = "Everything you have is in here.";
-pub static BEDROOM_WINDOW: &[TextContent] = &[
+pub const OPTIONS_TITLE: &str = "super unfinished OPTIONS MENU\0";
+pub const OPTIONS_FONT_SIZE: &str = "Toggle Font Size\0";
+pub const OPTIONS_FONT_FIXED: &str = "Toggle Fixed Font size\0";
+pub const OPTIONS_RESET: &str = "Erase Data\0";
+pub const OPTIONS_RESET_SURE: &str = "Erase Data (Press again to confirm)\0";
+pub const OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
+pub const BEDROOM_MATTRESS: &str = "You can't get to sleep.";
+pub const BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
+pub const BEDROOM_CLOSET: &str = "Everything you have is in here.";
+pub const BEDROOM_WINDOW: &[TextContent] = &[
     Text("It's a beautiful day...\n\n"),
     Delayed("... Outside.", 30),
 ];
-pub static THING: &[TextContent] = &[
+pub const THING: &[TextContent] = &[
     Text("This shouldn't be here..."),
     Pause,
     Portrait(Some(&portraits::Y_NORMAL.to())),
@@ -89,50 +89,50 @@ pub static THING: &[TextContent] = &[
     AutoText("[GAMEDEV] took critical damage...! You won the battle!"),
     Text("Earned 0 Exp. Received:\n* Responsibility for your actions.\n* Nothing else in particular.")
 ];
-pub static HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
-pub static HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
-pub static HOUSE_STAIRWELL_PAINTING_INIT: &str = "It's not as good as the real thing.";
-pub static HOUSE_STAIRWELL_PAINTING_AFTER: &str = "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.";
-pub static HOUSE_STAIRWELL_DOOR: &str = "You shouldn't go in there.";
-pub static HOUSE_LIVING_ROOM_COUCH: &str = "He's busy.";
-pub static HOUSE_LIVING_ROOM_TV_1: &str =
+pub const HOUSE_STAIRWELL_WINDOW: &str = "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.";
+pub const HOUSE_STAIRWELL_WINDOW2: &str = "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.";
+pub const HOUSE_STAIRWELL_PAINTING_INIT: &str = "It's not as good as the real thing.";
+pub const HOUSE_STAIRWELL_PAINTING_AFTER: &str = "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.";
+pub const HOUSE_STAIRWELL_DOOR: &str = "You shouldn't go in there.";
+pub const HOUSE_LIVING_ROOM_COUCH: &str = "He's busy.";
+pub const HOUSE_LIVING_ROOM_TV_1: &str =
     "It's a cartoon of some sort. The protagonist is still charging up his main attack.";
-pub static HOUSE_LIVING_ROOM_TV_2: &str = "Some sort of cartoon. While the hero was charging his attack, the villain took over the world.";
-pub static HOUSE_LIVING_ROOM_TV_3: &str = "A long cartoon series. After taking over the world, the villain created global stability and happiness.";
-pub static HOUSE_LIVING_ROOM_TV_4: &str = "Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.";
-pub static HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.";
-pub static HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
-pub static HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
+pub const HOUSE_LIVING_ROOM_TV_2: &str = "Some sort of cartoon. While the hero was charging his attack, the villain took over the world.";
+pub const HOUSE_LIVING_ROOM_TV_3: &str = "A long cartoon series. After taking over the world, the villain created global stability and happiness.";
+pub const HOUSE_LIVING_ROOM_TV_4: &str = "Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.";
+pub const HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.";
+pub const HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
+pub const HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
     Text("You harbour some very strong feelings about gothic windows.\n"),
     Delayed("None of them are good.", 30),
 ];
-pub static HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
-pub static HOUSE_KITCHEN_SINK: &[TextContent] = &[
+pub const HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
+pub const HOUSE_KITCHEN_SINK: &[TextContent] = &[
     Sound(&sound::ALERT_UP),
     Delayed("Found something down the drain...!\n", 0),
     Text("... You left it there."),
     Delayed("\n\nThis isn't an RPG, after all.", 30),
 ];
-pub static HOUSE_KITCHEN_WINDOW: &str =
+pub const HOUSE_KITCHEN_WINDOW: &str =
     "The unholy king of tacky windows. Words fail to convey your antipathy.";
-pub static HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
-pub static UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
-pub static UNKNOWN_2: &str = "... Quick, recast the \"Sleep\" shell on your opponent to keep it perma-stunned! Unfair and effective!";
-pub static UNKNOWN_3: &str = "... Don't get your hopes up.";
-pub static DEFAULT: &str = "You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.";
-pub static DOG_OBTAINED: &str = "Dog has joined the party!";
-pub static DOG_RELINQUISHED: &str = "Dog has left the party.";
-pub static HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
-pub static HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could easily open it with some of the POWER TOOLS inside... Oh wait.";
-pub static HOUSE_BACKYARD_SHED_WINDOW: &str =
+pub const HOUSE_KITCHEN_MICROWAVE: &str = "Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...";
+pub const UNKNOWN_1: &str = "The wispy ethers of your moral fibre hold this door shut.";
+pub const UNKNOWN_2: &str = "... Quick, recast the \"Sleep\" shell on your opponent to keep it perma-stunned! Unfair and effective!";
+pub const UNKNOWN_3: &str = "... Don't get your hopes up.";
+pub const DEFAULT: &str = "You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.";
+pub const DOG_OBTAINED: &str = "Dog has joined the party!";
+pub const DOG_RELINQUISHED: &str = "Dog has left the party.";
+pub const HOUSE_BACKYARD_BASEMENT: &str = "A horrendous stench rises from the cellar.";
+pub const HOUSE_BACKYARD_SHED: &str = "The shed door won't budge, but you could easily open it with some of the POWER TOOLS inside... Oh wait.";
+pub const HOUSE_BACKYARD_SHED_WINDOW: &str =
     "You can't actually see anything through this window.";
-pub static HOUSE_BACKYARD_NEIGHBOURS: &[&str] = &[
+pub const HOUSE_BACKYARD_NEIGHBOURS: &[&str] = &[
     "You don't know much about the neighbours.",
     "... The traffic makes it difficult to get to their house.",
 ];
-pub static HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
-pub static HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
-pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
+pub const HOUSE_BACKYARD_DOGHOUSE: &str = "SUBROUTINE \"DOG\" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.";
+pub const HOUSE_BACKYARD_STORMDRAIN: &str = "Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.";
+pub const HOUSE_BACKYARD_ANTHILL: &[&str] = &[
     "bb_grin",
     "Hey sis, let's play \"stick our fingers in the anthill!\"",
     "y_disgust",
@@ -160,11 +160,11 @@ pub static HOUSE_BACKYARD_ANTHILL: &[&str] = &[
     "bb_horror",
     "Please hurry!!!",
 ];
-pub static TOWN_TRAFFIC: &str = "They've been stuck like this for a while now.";
-pub static TOWN_LAMPPOST: &str =
+pub const TOWN_TRAFFIC: &str = "They've been stuck like this for a while now.";
+pub const TOWN_LAMPPOST: &str =
     "Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.";
-pub static TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";
-pub static TOWN_WIDE: &[TextContent] = &[
+pub const TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";
+pub const TOWN_WIDE: &[TextContent] = &[
     Text("T"),
     Delayed("h", 10),
     Delayed("i", 10),
@@ -184,37 +184,37 @@ pub static TOWN_WIDE: &[TextContent] = &[
     Delayed("e", 10),
     Delayed("...", 10),
 ];
-pub static INVENTORY_TITLE: &str = "INVENTORY";
-pub static INVENTORY_ITEMS: &str = "Items";
-pub static INVENTORY_SHELL: &str = "Shell";
-pub static INVENTORY_OPTIONS: &str = "Options";
-pub static INVENTORY_BACK: &str = "Back";
-pub static ITEM_FF_NAME: &str = "French Gry";
-pub static ITEM_FF_DESC: &str =
+pub const INVENTORY_TITLE: &str = "INVENTORY";
+pub const INVENTORY_ITEMS: &str = "Items";
+pub const INVENTORY_SHELL: &str = "Shell";
+pub const INVENTORY_OPTIONS: &str = "Options";
+pub const INVENTORY_BACK: &str = "Back";
+pub const ITEM_FF_NAME: &str = "French Gry";
+pub const ITEM_FF_DESC: &str =
     "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill.";
-pub static ITEM_CHEGG_NAME: &str = "Mystery Egg";
-pub static ITEM_CHEGG_DESC: &str = "There's something inside.";
-pub static ITEM_LM_NAME: &str = "Little Man";
-pub static ITEM_LM_DESC: &str = "\"... Hello? Somebody there? ... It's awful dark in here...\"";
-pub static SM_COIN_RETURN: &str = "There's no money in the coin return slot.";
-pub static SM_FRUIT_BASKET: &str = "They're not fresh.";
-pub static SM_MAIN_WINDOW: &str = "It's yellow outside.";
-pub static SM_FRIDGE_1: &str =
+pub const ITEM_CHEGG_NAME: &str = "Mystery Egg";
+pub const ITEM_CHEGG_DESC: &str = "There's something inside.";
+pub const ITEM_LM_NAME: &str = "Little Man";
+pub const ITEM_LM_DESC: &str = "\"... Hello? Somebody there? ... It's awful dark in here...\"";
+pub const SM_COIN_RETURN: &str = "There's no money in the coin return slot.";
+pub const SM_FRUIT_BASKET: &str = "They're not fresh.";
+pub const SM_MAIN_WINDOW: &str = "It's yellow outside.";
+pub const SM_FRIDGE_1: &str =
     "If you blow on the glass, it fogs up, revealing all the fingerprints left by prior employees.";
-pub static SM_FRIDGE_2: &str =
+pub const SM_FRIDGE_2: &str =
     "A note on the front says \"Out of Order\", followed by a smiley face. A sickening contrast.";
-pub static SM_VENDING_MACHINE: &str =
+pub const SM_VENDING_MACHINE: &str =
     "The blurb reads \"It's SodaTime!\". The machine is filled to the brim with cans of motor oil.";
-pub static CONSTRUCTION_1: &str =
+pub const CONSTRUCTION_1: &str =
     "Looks like the creator didn't put too much effort into this part of the map.";
-pub static CONSTRUCTION_2: &str = "Looks like it's still under construction.";
-pub static EMERGENCY_EXIT: &str =
+pub const CONSTRUCTION_2: &str = "Looks like it's still under construction.";
+pub const EMERGENCY_EXIT: &str =
     "This is an emergency exit. It's not an emergency right now. Ergo, you cannot use the exit.";
-pub static SM_HALL_SHELF: &str = "There's a single bottle of floor cleaner. And no mop.";
-pub static SM_HALL_WINDOW: &str = "Looks like this window has recently been painted yellow.";
-pub static EGG_1: &str = "It's floating.";
-pub static SM_STOREROOM_SHELF: &str = "They're all out of Keratin Krunch.";
-pub static SM_TITLE: &str = "S____MAR__T";
-pub static INSTRUCTIONS_TITLE: &str = "Instructions";
-pub static INSTRUCTIONS: &str = "Arrow keys: Move around.\n\n[Z]: Interact.\n\n[X]: Open inventory, Skip text.\n\n\nRemember to get regular sleep.\n\n\n\n    Press any button to continue.\0";
-// pub static _: &str = "";
+pub const SM_HALL_SHELF: &str = "There's a single bottle of floor cleaner. And no mop.";
+pub const SM_HALL_WINDOW: &str = "Looks like this window has recently been painted yellow.";
+pub const EGG_1: &str = "It's floating.";
+pub const SM_STOREROOM_SHELF: &str = "They're all out of Keratin Krunch.";
+pub const SM_TITLE: &str = "S____MAR__T";
+pub const INSTRUCTIONS_TITLE: &str = "Instructions";
+pub const INSTRUCTIONS: &str = "Arrow keys: Move around.\n\n[Z]: Interact.\n\n[X]: Open inventory, Skip text.\n\n\nRemember to get regular sleep.\n\n\n\n    Press any button to continue.\0";
+// pub const _: &str = "";

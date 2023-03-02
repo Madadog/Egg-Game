@@ -25,7 +25,7 @@ pub struct WalkaroundState<'a> {
     map_animations: Vec<Animation<'a>>,
     creatures: Vec<Creature>,
     camera: Camera,
-    current_map: &'a MapSet<'a>,
+    current_map: MapSet<'a>,
     dialogue: Dialogue,
     particles: ParticleList,
 }
@@ -38,12 +38,12 @@ impl<'a> WalkaroundState<'a> {
             map_animations: Vec::new(),
             creatures: Vec::new(),
             camera: Camera::const_default(),
-            current_map: &DEFAULT_MAP_SET,
+            current_map: DEFAULT_MAP_SET,
             dialogue: Dialogue::const_default(),
             particles: ParticleList::new(),
         }
     }
-    pub fn load_map(&mut self, map_set: &'a MapSet<'static>) {
+    pub fn load_map(&mut self, map_set: MapSet<'a>) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
@@ -52,7 +52,6 @@ impl<'a> WalkaroundState<'a> {
             let map_offset = map1.offset();
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        self.current_map = map_set;
         *BG_COLOUR.write().unwrap() = map_set.bg_colour;
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
@@ -80,6 +79,8 @@ impl<'a> WalkaroundState<'a> {
                 ..Animation::const_default()
             })
             .collect();
+
+        self.current_map = map_set;
 
         self.map_animations.shrink_to_fit();
         self.particles.shrink_to_fit();
@@ -149,9 +150,9 @@ impl<'a> WalkaroundState<'a> {
                 None
             }
             InteractFn::AddCreatures(x) => {
-                self.creatures.extend((0..=*x).map(|_| {
-                    Creature::const_default().with_offset(self.player.pos)
-                }));
+                self.creatures.extend(
+                    (0..=*x).map(|_| Creature::const_default().with_offset(self.player.pos)),
+                );
                 None
             }
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
@@ -168,16 +169,16 @@ impl<'a> Game for WalkaroundState<'a> {
         self.particles.step();
 
         if keyp(28, -1, -1) {
-            self.load_map(&SUPERMARKET);
+            self.load_map(SUPERMARKET);
         }
         if keyp(29, -1, -1) {
-            self.load_map(&WILDERNESS);
+            self.load_map(WILDERNESS);
         }
         if keyp(30, -1, -1) {
-            self.load_map(&TEST_PEN);
+            self.load_map(TEST_PEN);
         }
         if keyp(31, -1, -1) {
-            self.load_map(&BEDROOM);
+            self.load_map(BEDROOM);
         }
         if keyp(33, -1, -1) {
             set_palette(crate::tic80_helpers::SWEETIE_16);
@@ -232,7 +233,7 @@ impl<'a> Game for WalkaroundState<'a> {
             trace!("Attempting interact...", 11);
         }
         if mem_btnp(6) {
-            return Some(GameState::MainMenu(super::menu::MenuState::debug_options()))
+            return Some(GameState::MainMenu(super::menu::MenuState::debug_options()));
         }
         if any_btnpr() {
             self.player.flip_controls = Axis::None
@@ -245,7 +246,7 @@ impl<'a> Game for WalkaroundState<'a> {
             false
         };
 
-        let (dx, dy) = self.player.walk(dx, dy, noclip, self.current_map);
+        let (dx, dy) = self.player.walk(dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
@@ -256,8 +257,8 @@ impl<'a> Game for WalkaroundState<'a> {
 
         let mut warp_target = None;
         for warp in self.current_map.warps.iter() {
-            if self.player.hitbox().touches(warp.from)
-                || (interact && interact_hitbox.touches(warp.from))
+            if self.player.hitbox().touches(warp.hitbox())
+                || (interact && interact_hitbox.touches(warp.hitbox()))
             {
                 match warp.mode {
                     WarpMode::Interact => {
@@ -270,11 +271,11 @@ impl<'a> Game for WalkaroundState<'a> {
             }
         }
         if let Some(target) = warp_target {
-            self.player.pos = target.to;
+            self.player.pos = target.target();
             self.player.flip_controls = target.flip;
             self.companion_trail.fill(self.player.pos, self.player.dir);
             if let Some(new_map) = target.map {
-                self.load_map(new_map);
+                self.load_map(new_map.map());
             }
         } else if interact {
             for item in self.current_map.interactables.iter() {
@@ -339,17 +340,13 @@ impl<'a> Game for WalkaroundState<'a> {
             1,
         ));
 
-        for (anim, hitbox) in self
-            .map_animations
-            .iter()
-            .zip(
-                self.current_map
-                    .interactables
-                    .iter()
-                    .filter(|x| x.sprite.is_some())
-                    .map(|x| x.hitbox),
-            )
-        {
+        for (anim, hitbox) in self.map_animations.iter().zip(
+            self.current_map
+                .interactables
+                .iter()
+                .filter(|x| x.sprite.is_some())
+                .map(|x| x.hitbox),
+        ) {
             sprites.push((
                 anim.current_frame().spr_id.into(),
                 anim.current_frame().pos.x as i32 + hitbox.x as i32 - self.cam_x(),
@@ -402,7 +399,7 @@ impl<'a> Game for WalkaroundState<'a> {
         }
         if debug_info().map_info {
             for warp in self.current_map.warps.iter() {
-                warp.from
+                warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
                     .draw(12);
             }

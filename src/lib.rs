@@ -31,6 +31,7 @@ mod save;
 mod sound;
 mod tic80_core;
 mod tic80_helpers;
+mod packed;
 
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::GameState;
@@ -39,6 +40,7 @@ use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
 use crate::tic80_helpers::SyncHelper;
 use once_cell::sync::Lazy;
+use packed::{PackedI16, PackedU8};
 use std::fmt::format;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -104,7 +106,8 @@ pub fn boot() {
     std::panic::set_hook(Box::new(|x| {
         trace!(format!("{x}"), 2);
     }));
-    WALKAROUND_STATE.write().unwrap().load_map(&BEDROOM);
+    WALKAROUND_STATE.write().unwrap().load_map(BEDROOM);
+    PackedU8::test();
 }
 
 #[export_name = "TIC"]

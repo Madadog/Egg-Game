@@ -78,47 +78,47 @@ impl PicSingle {
     }
 }
 
-pub static Y_NORMAL: Pic4x4 = Pic4x4 {
+pub const Y_NORMAL: Pic4x4 = Pic4x4 {
     spr_ids: [920, 921, 952, 953],
     offset: (8, 13),
 };
-pub static Y_LOOK: Pic4x4 = Pic4x4 {
+pub const Y_LOOK: Pic4x4 = Pic4x4 {
     spr_ids: [980, 981, 1012, 1013],
     offset: (8, 15),
 };
-pub static Y_CLOSE: Pic4x4 = Pic4x4 {
+pub const Y_CLOSE: Pic4x4 = Pic4x4 {
     spr_ids: [982, 983, 1012, 1013],
     offset: (3, 11),
 };
-pub static Y_OOF: Pic4x4 = Pic4x4 {
+pub const Y_OOF: Pic4x4 = Pic4x4 {
     spr_ids: [1014, 1015, 1012, 1013],
     offset: (3, 11),
 };
-pub static Y_NO: Pic4x4 = Pic4x4 {
+pub const Y_NO: Pic4x4 = Pic4x4 {
     spr_ids: [984, 985, 1012, 1016],
     offset: (3, 11),
 };
-pub static Y_YELL: Pic4x4 = Pic4x4 {
+pub const Y_YELL: Pic4x4 = Pic4x4 {
     spr_ids: [986, 987, 1018, 1019],
     offset: (3, 11),
 };
-pub static Y_AWAY: PicSingle = PicSingle {
+pub const Y_AWAY: PicSingle = PicSingle {
     spr_id: 988,
     offset: (8, 13),
 };
-pub static Y_SMUG: PicSingle = PicSingle {
+pub const Y_SMUG: PicSingle = PicSingle {
     spr_id: 990,
     offset: (3, 7),
 };
-pub static Y_FRUS: PicSingle = PicSingle {
+pub const Y_FRUS: PicSingle = PicSingle {
     spr_id: 926,
     offset: (3, 7),
 };
-pub static Y_HMM: PicSingle = PicSingle {
+pub const Y_HMM: PicSingle = PicSingle {
     spr_id: 924,
     offset: (3, 7),
 };
-pub static Y_REGRET: PicSingle = PicSingle {
+pub const Y_REGRET: PicSingle = PicSingle {
     spr_id: 922,
     offset: (3, 7),
 };

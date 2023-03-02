@@ -119,10 +119,10 @@ impl Player {
         let mut diagonal_collision = false;
         for layer in current_map.maps.iter() {
             let layer_hitbox = Hitbox::new(
-                layer.sx as i16,
-                layer.sy as i16,
-                layer.w as i16 * 8,
-                layer.h as i16 * 8,
+                layer.offset().x,
+                layer.offset().y,
+                layer.size().x * 8,
+                layer.size().y * 8,
             );
             if !layer_hitbox.touches(delta_hitbox) {
                 continue;
@@ -130,21 +130,27 @@ impl Player {
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
                 [points_dx, points_dx_up, points_dx_down],
                 layer_hitbox,
-                layer.x,
-                layer.y,
-                layer.rotate_spr_flags,
+                layer.origin.x().into(),
+                layer.origin.y().into(),
+                layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
                 [points_dy, points_dy_left, points_dy_right],
                 layer_hitbox,
-                layer.x,
-                layer.y,
-                layer.rotate_spr_flags,
+                layer.origin.x().into(),
+                layer.origin.y().into(),
+                layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag {
-                if layer_collides(point_diag, layer_hitbox, layer.x, layer.y, layer.rotate_spr_flags) {
+                if layer_collides(
+                    point_diag,
+                    layer_hitbox,
+                    layer.origin.x().into(),
+                    layer.origin.y().into(),
+                    layer.shift_sprite_flags(),
+                ) {
                     diagonal_collision = true;
                 }
             }
@@ -196,7 +202,7 @@ fn test_many_points(
     layer_hitbox: Hitbox,
     layer_x: i32,
     layer_y: i32,
-    spr_flag_offset: i32,
+    spr_flag_offset: bool,
     mut flags: [bool; 3],
 ) -> [bool; 3] {
     use crate::map::layer_collides;
