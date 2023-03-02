@@ -161,7 +161,7 @@ impl Dialogue {
     }
     pub fn next_text(&mut self) -> bool {
         if let Some(text_content) = self.next_text.pop() {
-            trace!(format!("Popping text content: {:?}", text_content), 12);
+            // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
             let val = self.consume_text_content(text_content);
             if skip {
@@ -228,7 +228,6 @@ impl Dialogue {
     }
     pub fn tick(&mut self, amount: usize) {
         if let Some(text) = &mut self.current_text {
-            // trace!(format!("delay = {}", self.delay),12);
             if self.delay != 0 {
                 self.delay = self.delay.saturating_sub(amount);
                 return;
@@ -241,8 +240,6 @@ impl Dialogue {
                 if char.is_ascii_control() {
                     silent_char = true
                 }
-            } else {
-                trace!(format!("index was {}", self.characters), 12);
             }
             self.print_time = self.print_time.map(|x| x + 1);
             if !silent_char && self.print_time.unwrap() % 2 == 0 && !self.is_line_done() {
@@ -251,7 +248,6 @@ impl Dialogue {
             self.step_text(amount);
             self.delay += 1;
         }
-        // trace!(format!("self.is_line_done(): {},  self.can_autoadvance(): {}", self.is_line_done(), self.can_autoadvance()),12);
         if self.is_line_done() && self.can_autoadvance() {
             self.next_text();
         }
@@ -333,7 +329,7 @@ impl Dialogue {
         // Portrait
         if let Some(portrait) = &self.portrait {
             rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
-            let frame = &portrait[0];
+            let frame = &portrait.get(0).unwrap_or_else(|| std::process::abort());
             x += 14;
             y -= 2;
             height += 4;

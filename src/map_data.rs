@@ -76,7 +76,7 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
         //bg
         MapLayer::new(60, 17, 26, 12)
             .with_trans(&[0])
-            .with_blit_rot_flags(0, 1, 0),
+            .with_blit_rot_flags(4, 1, 0),
         //fruit stand
         MapLayer::new(61, 29, 3, 2)
             .with_trans(&[0])
@@ -160,7 +160,7 @@ pub const SUPERMARKET_HALL: MapSet<'static> = MapSet {
         //bg
         MapLayer::new(86, 17, 13, 7)
             .with_trans(&[0])
-            .with_blit_rot_flags(0, 1, 0),
+            .with_blit_rot_flags(4, 1, 0),
         //closet
         MapLayer::new(87, 24, 3, 4)
             .with_trans(&[0])
@@ -204,7 +204,7 @@ pub const SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     maps: &[
         MapLayer::new(86, 28, 9, 6)
             .with_trans(&[0])
-            .with_blit_rot_flags(0, 1, 0),
+            .with_blit_rot_flags(4, 1, 0),
         MapLayer::new(93, 24, 5, 4)
             .with_trans(&[0])
             .with_offset(2 * 8, 0),
@@ -551,7 +551,14 @@ pub const BACKYARD: MapSet<'static> = MapSet {
     ..DEFAULT_MAP_SET
 };
 //TODO: Pet the dog.
-//TODO: Fix formatted dialogue.
+//TODO: Somehow reduce code size...
+    // Reduce necessary tracked state
+    // Functionify
+    // Zip strings if necessary...
+        // serialize, zip, embed, unzip, deserialize...
+//TODO: Make intro animation
+//TODO: Creatures walk
+//TODO: Chicken <-> egg loop
 
 pub const WILDERNESS: MapSet<'static> = MapSet {
     maps: &[

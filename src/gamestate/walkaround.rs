@@ -52,11 +52,11 @@ impl<'a> WalkaroundState<'a> {
             let map_offset = map1.offset();
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        *BG_COLOUR.write().unwrap() = map_set.bg_colour;
+        *BG_COLOUR.write().unwrap_or_else(|_| std::process::abort()) = map_set.bg_colour;
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
-        if map_set.bank != SYNC_HELPER.read().unwrap().last_bank() {
+        if map_set.bank != SYNC_HELPER.read().unwrap_or_else(|_| std::process::abort()).last_bank() {
             let x = SYNC_HELPER
                 .write()
                 .unwrap()
@@ -302,26 +302,20 @@ impl<'a> Game for WalkaroundState<'a> {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
                         Interaction::Text(x) => {
-                            trace!(format!("{x:?}"), 12);
                             self.dialogue.add_text(x);
                         }
                         Interaction::Dialogue(x) => {
-                            trace!(format!("{x:?}"), 12);
                             self.dialogue.set_dialogue(x);
                         }
                         Interaction::EnumText(x) => {
-                            trace!(format!("{x:?}"), 12);
                             self.dialogue.set_enum_text(x);
                         }
                         Interaction::Func(x) => {
-                            trace!(format!("{x:?}"), 12);
                             if let Some(dialogue) = self.execute_interact_fn(x) {
                                 self.dialogue.add_text(dialogue);
                             };
                         }
-                        x => {
-                            trace!(format!("{x:?}"), 12);
-                        }
+                        x => {}
                     }
                     break;
                 }

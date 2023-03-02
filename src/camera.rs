@@ -33,7 +33,6 @@ impl Camera {
     }
     pub fn from_map_size(size: Vec2, offset: Vec2) -> Self {
         assert!(size.x.is_positive() && size.y.is_positive());
-        trace!(format!("Map size: {size:?}"), 11);
 
         let cam_offset = Vec2::new(WIDTH / 2, HEIGHT / 2);
         let center = size * 4 + offset - cam_offset;

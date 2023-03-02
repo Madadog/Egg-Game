@@ -165,10 +165,10 @@ pub fn tic() {
             pix((i * 2) % 240, i / 240, l);
             pix((i * 2 + 1) % 240, i / 240, u);
         }
-        let acc = MEM_USAGE.load(Ordering::SeqCst) as f32 / 1000.0;
+        let acc = MEM_USAGE.load(Ordering::SeqCst);
         print_raw(
             &format!(
-                "{acc}kB/160kB used (heap). [n] to close.\nDisplaying address offset = {}\0",
+                "{acc}/160kB used (heap). [n] to close.\nDisplaying address offset = {}\0",
                 debug_info().memory_index
             ),
             1,

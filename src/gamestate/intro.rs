@@ -28,12 +28,13 @@ pub fn draw_animation(t: u16) -> bool {
             true
         }
         Some(1) => {
-            let local_time = local_time.unwrap();
+            let local_time = local_time.unwrap_or_else(|| std::process::abort());
             let max_time = 700.0 - 60.0;
             fade_palette([[0; 3]; 16], SWEETIE_16, local_time * 2);
             draw_ovr(|| {
                 fade_palette([[0; 3]; 16], SWEETIE_16, local_time * 2);
-                let t = (local_time as f32 / max_time).powf(0.02);
+                // powf(0.02) is very code-dense, so we approximate it...
+                let t = (local_time as f32 / max_time).sqrt().sqrt().sqrt().sqrt().sqrt().sqrt();
                 let size = 200.0 / (max_time + 1.0 - t * max_time).powi(2).max(1.0);
                 let t = size as i32;
                 set_palette_colour(15, [0x0F; 3]);

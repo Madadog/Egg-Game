@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::process;
+
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use self::inventory::{InventoryUiState, INVENTORY};
 use crate::save;
@@ -43,14 +45,14 @@ impl GameState {
                 *i += 1;
                 if (*i > 60 || save::INSTRUCTIONS_READ.is_true()) && any_btnp() {
                     save::INSTRUCTIONS_READ.set_true();
-                    WALKAROUND_STATE.write().unwrap().load_pmem();
+                    WALKAROUND_STATE.write().unwrap_or_else(|_| process::abort()).load_pmem();
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
             }
             Self::Walkaround => {
-                let next = WALKAROUND_STATE.write().unwrap().step();
-                WALKAROUND_STATE.read().unwrap().draw();
+                let next = WALKAROUND_STATE.write().unwrap_or_else(|_| process::abort()).step();
+                WALKAROUND_STATE.read().unwrap_or_else(|_| process::abort()).draw();
                 if let Some(state) = next {
                     *self = state;
                 }
@@ -76,11 +78,11 @@ impl GameState {
                 };
             }
             Self::Inventory => {
-                INVENTORY.write().unwrap().step();
-                match INVENTORY.read().unwrap().state {
+                INVENTORY.write().unwrap_or_else(|_| process::abort()).step();
+                match INVENTORY.read().unwrap_or_else(|_| process::abort()).state {
                     InventoryUiState::Close => {*self = Self::Walkaround},
                     InventoryUiState::Options => {*self = Self::MainMenu(MenuState::inventory_options())},
-                    _ => {INVENTORY.read().unwrap().draw()}
+                    _ => {INVENTORY.read().unwrap_or_else(|_| process::abort()).draw()}
                 }
             }
         }
