@@ -5,7 +5,7 @@ use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
-use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
+use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS, MapIndex};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::{Hitbox, Vec2};
@@ -158,6 +158,22 @@ impl<'a> WalkaroundState<'a> {
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
         }
     }
+
+    fn save(&self, new_map: &MapIndex) {
+        save::CURRENT_MAP.set(new_map.0.try_into().unwrap());
+        let x = self.player.pos.x.to_le_bytes();
+        save::PLAYER_X[0].set(x[0]);
+        save::PLAYER_X[1].set(x[1]);
+        let y = self.player.pos.y.to_le_bytes();
+        save::PLAYER_Y[0].set(y[0]);
+        save::PLAYER_Y[1].set(y[1]);
+    }
+
+    pub fn load_pmem(&mut self) {
+        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map());
+        self.player.pos.x = i16::from_le_bytes([save::PLAYER_X[0].get(), save::PLAYER_X[1].get()]);
+        self.player.pos.y = i16::from_le_bytes([save::PLAYER_Y[0].get(), save::PLAYER_Y[1].get()]);
+    }
 }
 
 impl<'a> Game for WalkaroundState<'a> {
@@ -179,6 +195,9 @@ impl<'a> Game for WalkaroundState<'a> {
         }
         if keyp(31, -1, -1) {
             self.load_map(BEDROOM);
+        }
+        if keyp(32, -1, -1) {
+            self.load_pmem();
         }
         if keyp(33, -1, -1) {
             set_palette(crate::tic80_helpers::SWEETIE_16);
@@ -275,6 +294,7 @@ impl<'a> Game for WalkaroundState<'a> {
             self.player.flip_controls = target.flip;
             self.companion_trail.fill(self.player.pos, self.player.dir);
             if let Some(new_map) = target.map {
+                self.save(&new_map);
                 self.load_map(new_map.map());
             }
         } else if interact {

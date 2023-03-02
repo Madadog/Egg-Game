@@ -43,6 +43,7 @@ impl GameState {
                 *i += 1;
                 if (*i > 60 || save::INSTRUCTIONS_READ.is_true()) && any_btnp() {
                     save::INSTRUCTIONS_READ.set_true();
+                    WALKAROUND_STATE.write().unwrap().load_pmem();
                     *self = Self::Walkaround;
                 }
                 draw_instructions();

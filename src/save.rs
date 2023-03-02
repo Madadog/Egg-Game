@@ -1,6 +1,6 @@
 use crate::{
     tic80_core::PERSISTENT_RAM,
-    tic80_helpers::{get_pmem, set_pmem}, trace,
+    tic80_helpers::{get_pmem, set_pmem},
 };
 
 /// Do not call this while reading or writing to persistent ram.
@@ -110,7 +110,6 @@ pub const INVENTORY_SLOTS: [PmemU8; 8] = [
     PmemU8::new(22),
     PmemU8::new(23),
 ];
-/// TODO: Convert between map and id...
 pub const CURRENT_MAP: PmemU8 = PmemU8::new(24);
 pub const PLAYER_X: [PmemU8; 2] = [PmemU8::new(25), PmemU8::new(26)];
 pub const PLAYER_Y: [PmemU8; 2] = [PmemU8::new(27), PmemU8::new(28)];

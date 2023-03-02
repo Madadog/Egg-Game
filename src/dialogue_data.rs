@@ -28,7 +28,6 @@ pub const MENU_PLAY: &str = "Play\0";
 pub const MENU_OPTIONS: &str = "Options\0";
 pub const MENU_BACK: &str = "Back\0";
 pub const MENU_EXIT: &str = "Exit to Menu\0";
-pub const MENU_DEBUG: &str = "Debug\0";
 pub const MENU_DEBUG_CONTROLS: &[&str] = &[
     "Palette 1\0",
     "Palette 2\0",
@@ -39,7 +38,6 @@ pub const MENU_DEBUG_CONTROLS: &[&str] = &[
 ];
 pub const OPTIONS_TITLE: &str = "super unfinished OPTIONS MENU\0";
 pub const OPTIONS_FONT_SIZE: &str = "Toggle Font Size\0";
-pub const OPTIONS_FONT_FIXED: &str = "Toggle Fixed Font size\0";
 pub const OPTIONS_RESET: &str = "Erase Data\0";
 pub const OPTIONS_RESET_SURE: &str = "Erase Data (Press again to confirm)\0";
 pub const OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
