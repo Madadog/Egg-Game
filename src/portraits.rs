@@ -80,11 +80,11 @@ impl PicSingle {
 
 pub static Y_NORMAL: Pic4x4 = Pic4x4 {
     spr_ids: [920, 921, 952, 953],
-    offset: (4, 13),
+    offset: (8, 13),
 };
 pub static Y_LOOK: Pic4x4 = Pic4x4 {
     spr_ids: [980, 981, 1012, 1013],
-    offset: (4, 15),
+    offset: (8, 15),
 };
 pub static Y_CLOSE: Pic4x4 = Pic4x4 {
     spr_ids: [982, 983, 1012, 1013],
@@ -104,7 +104,7 @@ pub static Y_YELL: Pic4x4 = Pic4x4 {
 };
 pub static Y_AWAY: PicSingle = PicSingle {
     spr_id: 988,
-    offset: (4, 13),
+    offset: (8, 13),
 };
 pub static Y_SMUG: PicSingle = PicSingle {
     spr_id: 990,
