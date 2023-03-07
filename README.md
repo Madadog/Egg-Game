@@ -39,13 +39,13 @@ cargo build --release
 To import the resulting WASM to a cartridge:
 
 ```
-tic80 --fs . --cmd 'load game.tic & import binary target/wasm32-unknown-unknown/release/cart.wasm & save'
+tic80 --fs . --cmd 'load game.wasmp & import binary target/wasm32-unknown-unknown/release/cart.wasm & save'
 ```
 
 Or from the TIC-80 console:
 
 ```
-load game.tic
+load game.wasmp
 import binary target/wasm32-unknown-unknown/release/cart.wasm
 save
 ```
