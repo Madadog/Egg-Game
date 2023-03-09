@@ -8,7 +8,7 @@ use crate::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN,
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::tic80_helpers::*;
+use crate::{tic80_helpers::*, rand_u8};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
 use crate::{dialogue_data::*, save};
@@ -91,7 +91,8 @@ impl<'a> WalkaroundState<'a> {
         self.current_map = map_set;
 
         self.map_animations.shrink_to_fit();
-        self.particles.shrink_to_fit();
+
+        self.particles.clear();
     }
     pub fn cam_x(&self) -> i32 {
         self.camera.pos.x.into()
@@ -307,6 +308,17 @@ impl<'a> Game for WalkaroundState<'a> {
 
         let (dx, dy) = self.player.walk(dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
+        if dx != 0 || dy != 0 {
+            let pos = self.player.pos + Vec2::new(4, 12);
+            self.particles
+                .add(Particle::new(ParticleDraw::Circ(2, 2), 10, pos)
+                .with_velocity(Vec2::new((rand_u8()%3) as i16 - 1, (rand_u8()%3) as i16 - 1))
+            );
+            self.particles
+                .add(Particle::new(ParticleDraw::Circ(1, 1), 10, pos)
+                .with_velocity(Vec2::new((rand_u8()%3-1) as i16, (rand_u8()%3-1) as i16))
+            );
+        }
 
         // Set after player.dir has updated
         let interact_hitbox = self

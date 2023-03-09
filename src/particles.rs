@@ -1,11 +1,12 @@
 use crate::{
     position::Vec2,
-    tic80_core::{rect, rectb, spr, SpriteOptions},
+    tic80_core::{rect, rectb, spr, SpriteOptions, circ},
 };
 
 pub enum ParticleDraw {
     Rect(i32, i32, u8),
     RectB(i32, i32, u8),
+    Circ(i32, u8),
     Spr(i32),
 }
 impl ParticleDraw {
@@ -13,6 +14,7 @@ impl ParticleDraw {
         match &self {
             ParticleDraw::Rect(w, h, colour) => rect(x, y, *w, *h, *colour),
             ParticleDraw::RectB(w, h, colour) => rectb(x, y, *w, *h, *colour),
+            ParticleDraw::Circ(radius, colour) => circ(x, y, *radius, *colour),
             ParticleDraw::Spr(id) => spr(*id, x, y, SpriteOptions::transparent_zero()),
         }
     }
@@ -76,5 +78,9 @@ impl ParticleList {
     }
     pub fn add(&mut self, particle: Particle) {
         self.particles.push(particle)
+    }
+    pub fn clear(&mut self) {
+        self.particles.clear();
+        self.shrink_to_fit();
     }
 }
