@@ -16,10 +16,11 @@
 
 use crate::{
     camera::Camera,
+    interact::Interactable,
     map::{Axis, MapSet},
     tic80_core::SpriteOptions,
     tic80_helpers::DrawParams,
-    Flip, Hitbox, Vec2,
+    Flip, Hitbox, Vec2, position,
 };
 
 #[derive(Debug)]
@@ -243,7 +244,7 @@ fn test_many_points(
 }
 
 /// Logic for sliding on 1 pixel ramps.
-/// 
+///
 /// If there is a forwards collision but no diagonal one,
 /// this function will move in the first available
 /// diagonal direction.
@@ -309,6 +310,34 @@ impl Companion {
             _ => DrawParams::new(0, 0, 0, SpriteOptions::default(), None, 0),
         }
     }
+    pub fn interact(
+        self,
+        position: Vec2,
+        direction: (i8, i8),
+        player_position: Vec2,
+    ) -> Interactable<'static> {
+        use crate::interact::{InteractFn, Interaction};
+        match self {
+            Companion::Dog => {
+                let mut pixel = 0;
+                let offset = if direction.1 == 0 {
+                    direction.0 > 0
+                } else {
+                    let x = player_position.x > position.x;
+                    if x {
+                        pixel -= 1;
+                    }
+                    x
+                };
+                let position = position + Vec2::new(pixel, 0);
+                Interactable::new(
+                    Hitbox::new(position.x, position.y, 16, 16),
+                    Interaction::Func(InteractFn::Pet(position, Some(offset))),
+                    None,
+                )
+            }
+        }
+    }
 }
 
 pub struct CompanionTrail {
@@ -331,8 +360,8 @@ impl CompanionTrail {
             self.positions[i] = self.positions[i + 1];
             self.directions[i] = self.directions[i + 1];
         }
-        self.positions[self.positions.len() - 1] = position;
-        self.directions[self.directions.len() - 1] = direction;
+        *self.positions.last_mut().unwrap() = position;
+        *self.directions.last_mut().unwrap() = direction;
         self.walktime = self.walktime.wrapping_add(1);
     }
     /// When player stops moving, tell animations to switch to idle pose.
@@ -352,6 +381,12 @@ impl CompanionTrail {
     }
     pub fn oldest(&self) -> (Vec2, (i8, i8)) {
         (self.positions[0], self.directions[0])
+    }
+    pub fn latest(&self) -> (Vec2, (i8, i8)) {
+        (
+            *self.positions.last().unwrap(),
+            *self.directions.last().unwrap(),
+        )
     }
     pub fn walktime(&self) -> u8 {
         self.walktime
@@ -387,6 +422,31 @@ impl CompanionList {
             true
         } else {
             false
+        }
+    }
+    pub fn count(&self) -> usize {
+        self.companions
+            .iter()
+            .filter(|companion| companion.is_some())
+            .count()
+    }
+    pub fn interact(&self, positions: &CompanionTrail) -> Vec<Interactable<'static>> {
+        match self.companions {
+            [Some(x), Some(y)] => vec![
+                x.interact(positions.mid().0, positions.mid().1, positions.latest().0),
+                y.interact(
+                    positions.oldest().0,
+                    positions.oldest().1,
+                    positions.latest().0,
+                ),
+            ],
+            [Some(x), None] => vec![x.interact(
+                positions.oldest().0,
+                positions.oldest().1,
+                positions.latest().0,
+            )],
+            [None, None] => vec![],
+            [None, Some(_)] => todo!(),
         }
     }
 }

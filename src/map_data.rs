@@ -283,11 +283,6 @@ pub const BEDROOM: MapSet<'static> = MapSet {
             interaction: Interaction::EnumText(BEDROOM_WINDOW),
             sprite: None,
         },
-        Interactable {
-            hitbox: Hitbox::new(9 * 8, 5 * 8, 8, 8),
-            interaction: Interaction::Func(InteractFn::Pet(Vec2::new(9 * 8, 5 * 8))),
-            sprite: None,
-        },
     ],
     ..DEFAULT_MAP_SET
 };
@@ -557,10 +552,10 @@ pub const BACKYARD: MapSet<'static> = MapSet {
 };
 //TODO: Pet the dog.
 //TODO: Somehow reduce code size...
-    // Reduce necessary tracked state
-    // Functionify
-    // Zip strings if necessary...
-        // serialize, zip, embed, unzip, deserialize...
+// Reduce necessary tracked state
+// Functionify
+// Zip strings if necessary...
+// serialize, zip, embed, unzip, deserialize...
 //TODO: Make intro animation
 //TODO: Creatures walk
 //TODO: Chicken <-> egg loop

@@ -113,6 +113,20 @@ pub const INTERACT: SfxData = SfxData::new(
     },
 );
 
+pub const POP: SfxData = SfxData::new(
+    40,
+    SfxOptions {
+        note: 9,
+        octave: 5,
+        speed: 4,
+        channel: 3,
+        volume_left: 7,
+        volume_right: 7,
+        duration: 10,
+        ..DEFAULT_SFX
+    },
+);
+
 pub const CLICK: SfxData = SfxData::new(
     41,
     SfxOptions {

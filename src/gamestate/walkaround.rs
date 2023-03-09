@@ -1,3 +1,5 @@
+use std::fmt::format;
+
 use crate::animation::Animation;
 use crate::gamestate::inventory::INVENTORY;
 use crate::gamestate::Game;
@@ -8,10 +10,10 @@ use crate::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN,
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::{tic80_helpers::*, rand_u8};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
 use crate::{dialogue_data::*, save};
+use crate::{rand_u8, tic80_helpers::*};
 use crate::{sound, tic80_core::*};
 
 use self::creatures::Creature;
@@ -92,6 +94,7 @@ impl<'a> WalkaroundState<'a> {
 
         self.map_animations.shrink_to_fit();
 
+        self.creatures.clear();
         self.particles.clear();
     }
     pub fn cam_x(&self) -> i32 {
@@ -164,8 +167,8 @@ impl<'a> WalkaroundState<'a> {
                 );
                 None
             }
-            InteractFn::Pet(vec) => {
-                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player.pos));
+            InteractFn::Pet(vec, flip) => {
+                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player.pos, *flip));
                 None
             }
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
@@ -218,6 +221,7 @@ impl<'a> Game for WalkaroundState<'a> {
             .for_each(|anim| anim.advance());
 
         self.particles.step();
+        self.creatures.iter_mut().for_each(|x| x.step());
 
         if self.play_cutscene() {
             return None;
@@ -304,21 +308,8 @@ impl<'a> Game for WalkaroundState<'a> {
             false
         };
 
-        self.creatures.iter_mut().for_each(|x| x.step());
-
         let (dx, dy) = self.player.walk(dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
-        if dx != 0 || dy != 0 {
-            let pos = self.player.pos + Vec2::new(4, 12);
-            self.particles
-                .add(Particle::new(ParticleDraw::Circ(2, 2), 10, pos)
-                .with_velocity(Vec2::new((rand_u8()%3) as i16 - 1, (rand_u8()%3) as i16 - 1))
-            );
-            self.particles
-                .add(Particle::new(ParticleDraw::Circ(1, 1), 10, pos)
-                .with_velocity(Vec2::new((rand_u8()%3-1) as i16, (rand_u8()%3-1) as i16))
-            );
-        }
 
         // Set after player.dir has updated
         let interact_hitbox = self
@@ -350,7 +341,12 @@ impl<'a> Game for WalkaroundState<'a> {
                 self.load_map(new_map.map());
             }
         } else if interact {
-            for item in self.current_map.interactables.iter() {
+            for item in self
+                .current_map
+                .interactables
+                .iter()
+                .chain({ self.companion_list.interact(&self.companion_trail).iter() })
+            {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
                         Interaction::Text(x) => {

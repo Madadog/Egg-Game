@@ -12,7 +12,7 @@ pub fn zero_pmem() {
     }
 }
 
-/// A 1-byte Pmem slot. When set, it will be saved to the player's hard drive and persist across runs.
+/// A 1-byte Pmem slot. When set, it will be saved to the player's storage device and persist across runs.
 pub struct PmemU8(usize);
 impl PmemU8 {
     pub const fn new(i: usize) -> Self {

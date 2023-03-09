@@ -19,7 +19,7 @@ use crate::Hitbox;
 use crate::dialogue::TextContent;
 use crate::position::Vec2;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Interaction<'a> {
     Text(&'static str),
     EnumText(&'a [TextContent]),
@@ -28,7 +28,7 @@ pub enum Interaction<'a> {
     None,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Interactable<'a> {
     pub hitbox: Hitbox,
     pub interaction: Interaction<'a>,
@@ -51,13 +51,19 @@ impl<'a> Interactable<'a> {
 
 /// A 'scripting' API for the walkaround section of the game. Various interactables
 /// do one-off things, so they are all put inside this enum.
-#[derive(Debug)]
+/// 
+/// This probably doesn't scale well.
+#[derive(Debug, Clone)]
 pub enum InteractFn {
     ToggleDog,
     StairwellWindow,
     StairwellPainting,
+    /// i32: Pitch of note
     Note(i32),
+    /// Vec2: Size of piano
     Piano(Vec2),
+    /// usize: number of creatures to add
     AddCreatures(usize),
-    Pet(Vec2),
+    /// Vec2: Dog position. bool: Dog direction, false=left, true=right
+    Pet(Vec2, Option<bool>),
 }

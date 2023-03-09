@@ -91,4 +91,30 @@ pub enum CreatureState {
     Idle(Timer),
     Walking(Timer, Vec2),
 }
+
+/*
+struct GameData {next_map: Option<&'static crate::map::MapSet<'static>>}
+impl GameData {
+    fn load_next_map(&mut self) -> Option<&'static crate::map::MapSet<'static>> {
+        self.next_map.take()
+    }
 }
+struct GameMap(&'static crate::map::MapSet<'static>);
+impl GameMap {
+    fn interact(&self, game_data: &mut GameData) {
+        game_data.next_map = None;
+    }
+}
+
+struct Game {game_data: GameData, game_map: GameMap}
+
+
+
+impl Game {
+    fn run(&mut self) {
+        if let Some(x) = self.game_data.load_next_map() {
+            self.game_map = GameMap(x);
+        }
+        self.game_map.interact(&mut self.game_data)
+    }
+} */

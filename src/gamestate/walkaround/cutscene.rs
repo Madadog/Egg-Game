@@ -1,4 +1,4 @@
-use crate::position::Vec2;
+use crate::{position::Vec2, sound};
 
 use super::WalkaroundState;
 
@@ -12,12 +12,25 @@ impl Cutscene {
     pub fn new(stages: Vec<Vec<CutsceneItem>>) -> Self {
         Self { stages, index: 0 }
     }
-    pub fn pet_dog(position: Vec2, initial_position: Vec2) -> Cutscene {
-        Self::new(vec![
+    pub fn pet_dog(dog_position: Vec2, initial_position: Vec2, flip: Option<bool>) -> Cutscene {
+        let (position, dir) = if let Some(flip) = flip {
+            if flip {
+                (dog_position + Vec2::new(8, 0), (-1, 1))
+            } else {
+                (dog_position + Vec2::new(-8, 0), (1, 1))
+            }
+        } else {
+            (dog_position, (0, 0))
+        };
+        let mut vec = vec![
             vec![CutsceneItem::MovePlayer(position)],
             vec![CutsceneItem::PetDog(0)],
             vec![CutsceneItem::MovePlayer(initial_position)],
-        ])
+        ];
+        if flip.is_some() {
+            vec.insert(1, vec![CutsceneItem::FacePlayer(dir)]);
+        }
+        Self::new(vec)
     }
     pub fn is_stage_done(&self, walkaround: &WalkaroundState) -> bool {
         self.stages
@@ -55,6 +68,7 @@ pub enum CutsceneState {
 #[derive(Clone)]
 pub enum CutsceneItem {
     WalkPlayer(Vec2),
+    FacePlayer((i8, i8)),
     MovePlayer(Vec2),
     PetDog(u8),
 }
@@ -63,7 +77,8 @@ impl CutsceneItem {
         match self {
             CutsceneItem::WalkPlayer(pos) => walkaround.player.pos == *pos,
             CutsceneItem::MovePlayer(pos) => walkaround.player.pos == *pos,
-            CutsceneItem::PetDog(x) => *x > 60,
+            CutsceneItem::FacePlayer(_) => true,
+            CutsceneItem::PetDog(x) => *x > 90,
         }
     }
     pub fn advance(&mut self, walkaround: &mut WalkaroundState) {
@@ -89,11 +104,15 @@ impl CutsceneItem {
             }
             CutsceneItem::PetDog(x) => {
                 walkaround.player.pet_timer = Some(*x);
+                if *x % 20 == 0 {
+                    sound::POP.play();
+                }
                 *x += 1;
                 if self.is_done(walkaround) {
                     walkaround.player.pet_timer = None;
                 }
             }
+            CutsceneItem::FacePlayer(dir) => walkaround.player.dir = *dir,
         }
     }
 }
