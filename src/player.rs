@@ -179,14 +179,14 @@ impl Player {
                 }
             }
         }
-        alt_dir(
+        slide_ramp(
             dx_collision_x,
             dx_collision_down,
             dx_collision_up,
             &mut dx,
             &mut dy,
         );
-        alt_dir(
+        slide_ramp(
             dy_collision_y,
             dy_collision_right,
             dy_collision_left,
@@ -241,17 +241,32 @@ fn test_many_points(
     }
     flags
 }
-fn alt_dir(main: bool, plus: bool, minus: bool, main_axis: &mut i16, sec_axis: &mut i16) {
-    if *sec_axis == 0 && main {
-        if !plus {
-            *sec_axis = 1;
-        } else if !minus {
-            *sec_axis = -1;
+
+/// Logic for sliding on 1 pixel ramps.
+/// 
+/// If there is a forwards collision but no diagonal one,
+/// this function will move in the first available
+/// diagonal direction.
+fn slide_ramp(
+    main_axis_collides: bool,
+    plus_side_collides: bool,
+    minus_side_collides: bool,
+    main_axis_delta: &mut i16,
+    side_axis_delta: &mut i16,
+) {
+    if !main_axis_collides {
+        return;
+    }
+    if *side_axis_delta == 0 {
+        if !plus_side_collides {
+            *side_axis_delta = 1;
+        } else if !minus_side_collides {
+            *side_axis_delta = -1;
         } else {
-            *main_axis = 0;
+            *main_axis_delta = 0;
         }
-    } else if main {
-        *main_axis = 0;
+    } else {
+        *main_axis_delta = 0;
     }
 }
 
