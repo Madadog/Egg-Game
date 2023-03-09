@@ -49,6 +49,8 @@ impl<'a> Interactable<'a> {
     }
 }
 
+/// A 'scripting' API for the walkaround section of the game. Various interactables
+/// do one-off things, so they are all put inside this enum.
 #[derive(Debug)]
 pub enum InteractFn {
     ToggleDog,
@@ -57,4 +59,5 @@ pub enum InteractFn {
     Note(i32),
     Piano(Vec2),
     AddCreatures(usize),
+    Pet(Vec2),
 }

@@ -18,6 +18,7 @@ use crate::{
     camera::Camera,
     map::{Axis, MapSet},
     tic80_core::SpriteOptions,
+    tic80_helpers::DrawParams,
     Flip, Hitbox, Vec2,
 };
 
@@ -31,6 +32,7 @@ pub struct Player {
     pub walking: bool,
     pub walktime: u16,
     pub flip_controls: Axis,
+    pub pet_timer: Option<u8>,
 }
 impl Player {
     pub const fn const_default() -> Self {
@@ -42,22 +44,26 @@ impl Player {
             walktime: 0,
             walking: false,
             flip_controls: Axis::None,
+            pet_timer: None,
         }
     }
     pub fn sprite_index(&self) -> (i32, Flip, i32) {
         let timer = (self.walktime + 19) / 20;
         let y_offset = (timer % 2) as i32;
         let sprite_offset = if self.walktime > 0 { y_offset + 1 } else { 0 };
+        let flip = if self.dir.0 > 0 {
+            Flip::None
+        } else {
+            Flip::Horizontal
+        };
+        if let Some(t) = self.pet_timer {
+            return (774 + (t / 20 % 2) as i32, flip, 0);
+        }
         if self.dir.1 > 0 {
             (768 + sprite_offset, Flip::None, y_offset) // Up
         } else if self.dir.1 < 0 {
             (771 + sprite_offset, Flip::None, y_offset) // Down
         } else {
-            let flip = if self.dir.0 > 0 {
-                Flip::None
-            } else {
-                Flip::Horizontal
-            };
             let index = match timer % 4 {
                 0 | 2 => 832,
                 1 => 833,
@@ -65,6 +71,24 @@ impl Player {
             };
             (index, flip, y_offset) // Left
         }
+    }
+    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
+        let player_sprite = self.sprite_index();
+        DrawParams::new(
+            player_sprite.0,
+            i32::from(self.pos.x - offset.x),
+            i32::from(self.pos.y - offset.y) - player_sprite.2,
+            SpriteOptions {
+                w: 1,
+                h: 2,
+                transparent: &[0],
+                scale: 1,
+                flip: player_sprite.1,
+                ..Default::default()
+            },
+            Some(1),
+            1,
+        )
     }
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
@@ -242,7 +266,7 @@ impl Companion {
         direction: (i8, i8),
         walktime: u8,
         camera: &Camera,
-    ) -> (i32, i32, i32, SpriteOptions, Option<u8>, u8) {
+    ) -> DrawParams {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -253,7 +277,7 @@ impl Companion {
                     (_, _) => (1, 712 + t as i32, Flip::None),
                 };
                 let x_offset = if let Flip::Horizontal = flip { -8 } else { 0 };
-                (
+                DrawParams::new(
                     i,
                     position.x as i32 - camera.x() + x_offset,
                     position.y as i32 - camera.y() - 2,
@@ -267,7 +291,7 @@ impl Companion {
                     1,
                 )
             }
-            _ => (0, 0, 0, SpriteOptions::default(), None, 0),
+            _ => DrawParams::new(0, 0, 0, SpriteOptions::default(), None, 0),
         }
     }
 }

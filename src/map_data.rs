@@ -283,6 +283,11 @@ pub const BEDROOM: MapSet<'static> = MapSet {
             interaction: Interaction::EnumText(BEDROOM_WINDOW),
             sprite: None,
         },
+        Interactable {
+            hitbox: Hitbox::new(9 * 8, 5 * 8, 8, 8),
+            interaction: Interaction::Func(InteractFn::Pet(Vec2::new(9 * 8, 5 * 8))),
+            sprite: None,
+        },
     ],
     ..DEFAULT_MAP_SET
 };

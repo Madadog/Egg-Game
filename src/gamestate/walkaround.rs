@@ -1,14 +1,13 @@
-use crate::animation::{AnimFrame, Animation};
-use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::animation::Animation;
 use crate::gamestate::inventory::INVENTORY;
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
-use crate::map_data::{BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS, MapIndex};
+use crate::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
-use crate::position::{Hitbox, Vec2};
+use crate::position::Vec2;
 use crate::tic80_helpers::*;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
@@ -16,7 +15,9 @@ use crate::{dialogue_data::*, save};
 use crate::{sound, tic80_core::*};
 
 use self::creatures::Creature;
+use self::cutscene::Cutscene;
 mod creatures;
+mod cutscene;
 
 pub struct WalkaroundState<'a> {
     player: Player,
@@ -28,6 +29,7 @@ pub struct WalkaroundState<'a> {
     current_map: MapSet<'a>,
     dialogue: Dialogue,
     particles: ParticleList,
+    cutscene: Option<Cutscene>,
 }
 impl<'a> WalkaroundState<'a> {
     pub const fn new() -> Self {
@@ -41,6 +43,7 @@ impl<'a> WalkaroundState<'a> {
             current_map: DEFAULT_MAP_SET,
             dialogue: Dialogue::const_default(),
             particles: ParticleList::new(),
+            cutscene: None,
         }
     }
     pub fn load_map(&mut self, map_set: MapSet<'a>) {
@@ -56,7 +59,12 @@ impl<'a> WalkaroundState<'a> {
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
-        if map_set.bank != SYNC_HELPER.read().unwrap_or_else(|_| std::process::abort()).last_bank() {
+        if map_set.bank
+            != SYNC_HELPER
+                .read()
+                .unwrap_or_else(|_| std::process::abort())
+                .last_bank()
+        {
             let x = SYNC_HELPER
                 .write()
                 .unwrap()
@@ -155,7 +163,33 @@ impl<'a> WalkaroundState<'a> {
                 );
                 None
             }
+            InteractFn::Pet(vec) => {
+                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player.pos));
+                None
+            }
             _ => Some(HOUSE_BACKYARD_DOGHOUSE),
+        }
+    }
+
+    fn play_cutscene(&mut self) -> bool {
+        if self.cutscene.is_some() {
+            let mut intermediate = self
+                .cutscene
+                .clone()
+                .unwrap_or_else(|| std::process::abort());
+            match intermediate.next_stage(&self) {
+                cutscene::CutsceneState::Playing => {
+                    intermediate.advance(self);
+                    self.cutscene = Some(intermediate);
+                    true
+                }
+                cutscene::CutsceneState::Finished => {
+                    self.cutscene = None;
+                    false
+                }
+            }
+        } else {
+            false
         }
     }
 
@@ -183,6 +217,10 @@ impl<'a> Game for WalkaroundState<'a> {
             .for_each(|anim| anim.advance());
 
         self.particles.step();
+
+        if self.play_cutscene() {
+            return None;
+        }
 
         if keyp(28, -1, -1) {
             self.load_map(SUPERMARKET);
@@ -265,6 +303,8 @@ impl<'a> Game for WalkaroundState<'a> {
             false
         };
 
+        self.creatures.iter_mut().for_each(|x| x.step());
+
         let (dx, dy) = self.player.walk(dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
@@ -327,32 +367,17 @@ impl<'a> Game for WalkaroundState<'a> {
         None
     }
     fn draw(&self) {
-        // draw bg
+        // Draw BG
         palette_map_reset();
         cls(*crate::BG_COLOUR.read().unwrap());
         self.current_map.draw_bg(self.camera.pos);
 
         self.particles.draw(-self.cam_x(), -self.cam_y());
         blit_segment(4);
-        // draw sprites from least to greatest y
-        let mut sprites: Vec<(i32, i32, i32, SpriteOptions, Option<u8>, u8)> = Vec::new();
-        let player_sprite = self.player.sprite_index();
-        let (player_x, player_y): (i32, i32) = (self.player.pos.x.into(), self.player.pos.y.into());
-        sprites.push((
-            player_sprite.0,
-            player_x - self.cam_x(),
-            player_y - player_sprite.2 - self.cam_y(),
-            SpriteOptions {
-                w: 1,
-                h: 2,
-                transparent: &[0],
-                scale: 1,
-                flip: player_sprite.1,
-                ..Default::default()
-            },
-            Some(1),
-            1,
-        ));
+        // Collect sprites for drawing
+        let mut sprites: Vec<DrawParams> = Vec::new();
+
+        sprites.push(self.player.draw_params(self.camera.pos));
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
@@ -361,7 +386,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 .filter(|x| x.sprite.is_some())
                 .map(|x| x.hitbox),
         ) {
-            sprites.push((
+            sprites.push(DrawParams::new(
                 anim.current_frame().spr_id.into(),
                 anim.current_frame().pos.x as i32 + hitbox.x as i32 - self.cam_x(),
                 anim.current_frame().pos.y as i32 + hitbox.y as i32 - self.cam_y(),
@@ -370,16 +395,13 @@ impl<'a> Game for WalkaroundState<'a> {
                 anim.current_frame().palette_rotate,
             ));
         }
-        for creature in self.creatures.iter() {
-            sprites.push((
-                creature.sprite.into(),
-                creature.hitbox.x as i32 - self.cam_x(),
-                creature.hitbox.y as i32 - self.cam_y(),
-                SpriteOptions::transparent_zero(),
-                Some(1),
-                0,
-            ))
-        }
+
+        sprites.extend(
+            self.creatures
+                .iter()
+                .map(|x| x.draw_params(self.camera.pos)),
+        );
+
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
             if let Some(companion) = companion {
                 let (position, direction) = if i == 0 {
@@ -393,18 +415,15 @@ impl<'a> Game for WalkaroundState<'a> {
             }
         }
 
-        sprites.sort_by(|a, b| (a.2 + a.3.h * 8).partial_cmp(&(b.2 + b.3.h * 8)).unwrap());
+        // Sort sprites in order of Y index
+        sprites.sort_by(|a, b| a.bottom().partial_cmp(&b.bottom()).unwrap());
 
+        // Draw sprites
         for options in sprites {
-            palette_map_rotate(options.5);
-            if let Some(outline) = options.4 {
-                spr_outline(options.0, options.1, options.2, options.3, outline);
-            } else {
-                spr(options.0, options.1, options.2, options.3);
-            }
+            options.draw();
         }
 
-        // draw fg
+        // Draw FG
         palette_map_reset();
         self.current_map.draw_fg(self.camera.pos);
 

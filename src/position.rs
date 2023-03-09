@@ -16,7 +16,7 @@
 
 use std::ops::{Sub, Mul, Div, Add};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vec2 {
     pub x: i16,
     pub y: i16,
@@ -30,6 +30,10 @@ impl Vec2 {
     }
     pub fn draw(&self, colour: u8) {
         crate::pix(self.x.into(), self.y.into(), colour);
+    }
+    pub fn towards(&self, other: &Vec2) -> Vec2 {
+        let diff = *other - *self;
+        Vec2::new(diff.x.clamp(-1, 1), diff.y.clamp(-1, 1))
     }
 }
 

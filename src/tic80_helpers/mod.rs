@@ -249,6 +249,48 @@ impl SyncHelper {
     }
 }
 
+#[derive(Clone)]
+pub struct DrawParams<'a> {
+    // (i32, i32, i32, SpriteOptions, Option<u8>, u8)
+    pub index: i32,
+    pub x: i32,
+    pub y: i32,
+    pub options: SpriteOptions<'a>,
+    pub outline: Option<u8>,
+    pub palette_rotate: u8,
+}
+
+impl<'a> DrawParams<'a> {
+    pub fn new(
+        index: i32,
+        x: i32,
+        y: i32,
+        options: SpriteOptions<'a>,
+        outline: Option<u8>,
+        palette_rotate: u8,
+    ) -> Self {
+        Self {
+            index,
+            x,
+            y,
+            options,
+            outline,
+            palette_rotate,
+        }
+    }
+    pub fn draw(self) {
+        palette_map_rotate(self.palette_rotate);
+        if let Some(outline) = self.outline {
+            spr_outline(self.index, self.x, self.y, self.options, outline);
+        } else {
+            spr(self.index, self.x, self.y, self.options);
+        }
+    }
+    pub fn bottom(&self) -> i32 {
+        self.y + self.options.h * 8
+    }
+}
+
 pub const SWEETIE_16: [[u8; 3]; 16] = [
     [26, 28, 44],    // #1a1c2c
     [93, 39, 93],    // #5d275d
@@ -290,7 +332,7 @@ pub const B_W: [[u8; 3]; 16] = [
     [72, 64, 64],    // #484040
     [149, 141, 141], // #958d79
     [200, 200, 186], // #f6f6da
-    [246, 246, 218],  // #41a6f6
+    [246, 246, 218], // #41a6f6
     [115, 239, 247], // #73eff7
     [167, 240, 112], // #a7f070
     [56, 183, 100],  // #38b764
