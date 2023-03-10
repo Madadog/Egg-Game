@@ -49,6 +49,13 @@ impl<'a> AnimFrame<'a> {
             palette_rotate: 0,
         }
     }
+
+    pub const fn with_palette_rotate(self, palette_rotate: u8) -> Self {
+        Self {
+            palette_rotate,
+            ..self
+        }
+    }
 }
 
 #[derive(Debug)]

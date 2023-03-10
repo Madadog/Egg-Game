@@ -14,7 +14,10 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{fmt::format, sync::RwLock};
+use std::{
+    fmt::{format, Debug},
+    sync::RwLock,
+};
 
 use crate::{
     animation::{AnimFrame, Animation},
@@ -34,6 +37,7 @@ pub enum TextContent {
     Delay(u8),
     Sound(&'static SfxData),
     Portrait(Option<&'static PicContainer>),
+    PausePortrait(Option<&'static PicContainer>),
     Pause,
     AutoText(&'static str),
 }
@@ -105,7 +109,7 @@ pub struct Dialogue {
     pub width: usize,
     pub delay: usize,
     pub print_time: Option<usize>,
-    pub portrait: Option<Vec<PicContainer>>,
+    pub portrait: Option<PicContainer>,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
@@ -153,19 +157,19 @@ impl Dialogue {
             .rev()
             .map(|x| TextContent::Text(x))
             .collect();
-        self.next_text();
+        self.next_text(false);
     }
     pub fn set_enum_text(&mut self, dialogue: &[TextContent]) {
         self.next_text = dialogue.iter().rev().cloned().collect();
-        self.next_text();
+        self.next_text(false);
     }
-    pub fn next_text(&mut self) -> bool {
+    pub fn next_text(&mut self, manual_skip: bool) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(text_content);
+            let val = self.consume_text_content(text_content, manual_skip);
             if skip {
-                self.next_text()
+                self.next_text(manual_skip)
             } else {
                 val
             }
@@ -173,11 +177,13 @@ impl Dialogue {
             false
         }
     }
-    pub fn consume_text_content(&mut self, text_content: TextContent) -> bool {
+    pub fn consume_text_content(&mut self, text_content: TextContent, manual_skip: bool) -> bool {
         match text_content {
             TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(text),
             TextContent::Delay(x) => {
-                self.add_delay(x.into());
+                if !manual_skip {
+                    self.add_delay(x.into());
+                }
                 true
             }
             TextContent::Delayed(text, delay) => {
@@ -185,7 +191,9 @@ impl Dialogue {
                 if let Some(string) = &mut self.current_text {
                     string.push_str(text);
                     *string = fit_default_paragraph(string, wrap_width);
-                    self.add_delay(delay.into());
+                    if !manual_skip {
+                        self.add_delay(delay.into());
+                    }
                 } else {
                     self.add_text(text);
                 }
@@ -195,13 +203,9 @@ impl Dialogue {
                 x.clone().play();
                 true
             }
-            TextContent::Portrait(x) => {
+            TextContent::Portrait(x) | TextContent::PausePortrait(x) => {
                 if let Some(portrait) = x {
-                    if let Some(portraits) = &mut self.portrait {
-                        portraits.push(portrait.clone());
-                    } else {
-                        self.portrait = Some(vec![portrait.clone()]);
-                    }
+                    self.portrait = Some(portrait.clone());
                 } else {
                     self.portrait = None;
                 };
@@ -249,7 +253,7 @@ impl Dialogue {
             self.delay += 1;
         }
         if self.is_line_done() && self.can_autoadvance() {
-            self.next_text();
+            self.next_text(false);
         }
     }
     pub fn step_text(&mut self, amount: usize) {
@@ -267,7 +271,7 @@ impl Dialogue {
     }
     pub fn skip(&mut self) {
         while self.can_autoadvance() {
-            self.next_text();
+            self.next_text(true);
         }
         if let Some(text) = &mut self.current_text {
             self.characters = text.len() - 1;
@@ -329,7 +333,7 @@ impl Dialogue {
         // Portrait
         if let Some(portrait) = &self.portrait {
             rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
-            let frame = &portrait.get(0).unwrap_or_else(|| std::process::abort());
+            let frame = &portrait;
             x += 14;
             y -= 2;
             height += 4;
@@ -367,6 +371,20 @@ impl Dialogue {
     }
     pub fn draw_dialogue_box(&self, string: &str, timer: bool) {
         self.draw_dialogue_box_with_offset(string, timer, 0, 0, 0)
+    }
+}
+
+impl Debug for Dialogue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Dialogue")
+            .field("current_text", &self.current_text)
+            .field("characters", &self.characters)
+            .field("next_text", &self.next_text.len())
+            .field("width", &self.width)
+            .field("delay", &self.delay)
+            .field("print_time", &self.print_time)
+            .field("portrait", &self.portrait)
+            .finish()
     }
 }
 

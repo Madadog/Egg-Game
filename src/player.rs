@@ -205,16 +205,21 @@ impl Player {
         // Apply motion
         if dx == 0 && dy == 0 {
             trail.stop();
-            self.walktime = 0;
-            self.walking = false;
-            return;
+            self.animate_stop();
+        } else {
+            trail.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1));
+            self.pos.x += dx;
+            self.pos.y += dy;
+            self.animate_walk();
         }
-
-        trail.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1));
-        self.pos.x += dx;
-        self.pos.y += dy;
+    }
+    pub fn animate_walk(&mut self) {
         self.walktime = self.walktime.wrapping_add(1);
         self.walking = true;
+    }
+    pub fn animate_stop(&mut self) {
+        self.walktime = 0;
+        self.walking = false;
     }
 }
 impl Default for Player {

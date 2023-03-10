@@ -101,6 +101,10 @@ impl CutsceneItem {
                 let Vec2 { x, y } = walkaround.player.pos.towards(pos);
                 let (dx, dy) = walkaround.player.walk(x, y, true, &walkaround.current_map);
                 walkaround.player.pos = walkaround.player.pos + Vec2::new(dx, dy);
+                walkaround.player.animate_walk();
+                if self.is_done(walkaround) {
+                    walkaround.player.animate_stop();
+                }
             }
             CutsceneItem::PetDog(x) => {
                 walkaround.player.pet_timer = Some(*x);

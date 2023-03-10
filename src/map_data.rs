@@ -141,14 +141,28 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
             sprite: None,
         },
         Interactable {
-            hitbox: Hitbox::new(80, 35, 8, 8),
+            hitbox: Hitbox::new(80, 24, 16, 20),
             interaction: Interaction::EnumText(THING),
             sprite: Some(&[AnimFrame::new(
                 Vec2::splat(0),
-                625,
+                661,
                 30,
-                SpriteOptions::transparent_zero(),
-            )]),
+                SpriteOptions {
+                    w: 2,
+                    h: 2,
+                    ..SpriteOptions::transparent_zero()
+                },
+            ).with_palette_rotate(1),
+            AnimFrame::new(
+                Vec2::new(0, 1),
+                661,
+                30,
+                SpriteOptions {
+                    w: 2,
+                    h: 2,
+                    ..SpriteOptions::transparent_zero()
+                },
+            ).with_palette_rotate(1)]),
         },
     ],
     bg_colour: 1,

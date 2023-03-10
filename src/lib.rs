@@ -168,7 +168,7 @@ pub fn tic() {
         let acc = MEM_USAGE.load(Ordering::SeqCst);
         print_raw(
             &format!(
-                "{acc}/160kB used (heap). [n] to close.\nDisplaying address offset = {}\0",
+                "{acc}/160kB used (heap). [n] to close.\n[up] and [down] to scroll.\nDisplaying address offset = {}\0",
                 debug_info().memory_index
             ),
             1,

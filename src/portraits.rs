@@ -88,15 +88,15 @@ pub const Y_LOOK: Pic4x4 = Pic4x4 {
 };
 pub const Y_CLOSE: Pic4x4 = Pic4x4 {
     spr_ids: [982, 983, 1012, 1013],
-    offset: (3, 11),
+    offset: (8, 15),
 };
 pub const Y_OOF: Pic4x4 = Pic4x4 {
     spr_ids: [1014, 1015, 1012, 1013],
-    offset: (3, 11),
+    offset: (8, 15),
 };
 pub const Y_NO: Pic4x4 = Pic4x4 {
-    spr_ids: [984, 985, 1012, 1016],
-    offset: (3, 11),
+    spr_ids: [984, 985, 1016, 1013],
+    offset: (8, 15),
 };
 pub const Y_YELL: Pic4x4 = Pic4x4 {
     spr_ids: [986, 987, 1018, 1019],
@@ -120,5 +120,9 @@ pub const Y_HMM: PicSingle = PicSingle {
 };
 pub const Y_REGRET: PicSingle = PicSingle {
     spr_id: 922,
-    offset: (3, 7),
+    offset: (8, 13),
+};
+pub const HORROR: PicSingle = PicSingle {
+    spr_id: 661,
+    offset: (10, 10),
 };

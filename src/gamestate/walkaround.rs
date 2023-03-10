@@ -286,7 +286,7 @@ impl<'a> Game for WalkaroundState<'a> {
         }
         if mem_btnp(4) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text() {
+            if self.dialogue.next_text(false) {
                 interact = false;
             } else if matches!(self.dialogue.current_text, Some(_)) {
                 interact = false;
@@ -467,7 +467,7 @@ impl<'a> Game for WalkaroundState<'a> {
             );
             print!(
                 format!("Camera: {:#?}", self.camera),
-                64,
+                74,
                 0,
                 PrintOptions {
                     small_text: true,
