@@ -40,6 +40,7 @@ pub enum TextContent {
     PausePortrait(Option<&'static PicContainer>),
     Pause,
     AutoText(&'static str),
+    Flip(bool),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
@@ -52,7 +53,7 @@ impl TextContent {
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
         match self {
-            Sound(_) | Portrait(_) => true,
+            Sound(_) | Portrait(_) | Flip(_) => true,
             _ => false,
         }
     }
@@ -111,6 +112,7 @@ pub struct Dialogue {
     pub print_time: Option<usize>,
     pub portrait: Option<PicContainer>,
     pub dark_theme: bool,
+    pub flip_portrait: bool,
 }
 impl Dialogue {
     pub const fn const_default() -> Self {
@@ -123,6 +125,7 @@ impl Dialogue {
             print_time: None,
             portrait: None,
             dark_theme: false,
+            flip_portrait: false,
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -214,6 +217,10 @@ impl Dialogue {
                 true
             }
             TextContent::Pause => true,
+            TextContent::Flip(x) => {
+                self.flip_portrait = x;
+                true
+            },
         }
     }
     pub fn fit_text(&self, string: &str) -> String {
@@ -337,10 +344,16 @@ impl Dialogue {
         let bg_colour = if self.dark_theme {1} else {2};
         // Portrait
         if let Some(portrait) = &self.portrait {
+            let w = if self.flip_portrait {
+                x -= 12;
+                -w
+            } else {
+                x += 14;
+                w
+            };
+            y -= 2;
             rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, outline_colour);
             let frame = &portrait;
-            x += 14;
-            y -= 2;
             height += 4;
             blit_segment(4);
             palette_map_rotate(0);
