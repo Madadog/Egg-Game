@@ -23,7 +23,7 @@ use crate::{
 // null byte `\0`, while strings printed by the game's dialogue
 // system must not.
 pub const GAME_TITLE: &str = "super unfinished EGG GAME\0";
-pub const GAME_TITLE_BLURB: &str = "version 0.0.14\0";
+pub const GAME_TITLE_BLURB: &str = "version 0.0.15\0";
 pub const MENU_PLAY: &str = "Play\0";
 pub const MENU_OPTIONS: &str = "Options\0";
 pub const MENU_BACK: &str = "Back\0";
