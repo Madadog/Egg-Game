@@ -1,11 +1,11 @@
 use crate::camera::CameraBounds;
 use crate::dialogue::DIALOGUE_OPTIONS;
-use crate::dialogue_data::GAME_TITLE;
-use crate::dialogue_data::OPTIONS_TITLE;
+use crate::data::dialogue_data::GAME_TITLE;
+use crate::data::dialogue_data::OPTIONS_TITLE;
 use crate::frames;
 use crate::input_manager::*;
 use crate::position::*;
-use crate::sound;
+use crate::data::sound;
 use crate::tic80_core::*;
 use crate::tic80_helpers::*;
 
@@ -42,7 +42,7 @@ impl MenuState {
     pub fn debug_options() -> Self {
         let mut entries = vec![MenuEntry::Walk];
         entries.extend(
-            (0..crate::dialogue_data::MENU_DEBUG_CONTROLS.len()).map(|x| MenuEntry::Debug(x as u8)),
+            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len()).map(|x| MenuEntry::Debug(x as u8)),
         );
         Self {
             entries,
@@ -105,7 +105,7 @@ impl MenuState {
                 if *x == 0 {
                     *x += 1;
                 } else {
-                    crate::save::zero_pmem();
+                    crate::data::save::zero_pmem();
                     return Some(GameState::Animation(0));
                 }
             }
@@ -153,7 +153,7 @@ impl MenuState {
         }
     }
     fn hover(&self, index: usize) {
-        use crate::dialogue_data::OPTIONS_LOSE_DATA;
+        use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
         use MenuEntry::*;
         match self.entries[index] {
             Reset(_) => {
@@ -200,7 +200,7 @@ pub enum MenuEntry {
 }
 impl MenuEntry {
     pub fn text(&self) -> &'static str {
-        use crate::dialogue_data::*;
+        use crate::data::dialogue_data::*;
         use MenuEntry::*;
 
         match self {
@@ -270,7 +270,7 @@ pub fn step_menu(entries: usize, y: i16, index: &mut usize) -> (usize, bool) {
 }
 
 pub fn draw_title(x: i32, y: i32, game_title: &str) {
-    use crate::dialogue_data::GAME_TITLE_BLURB;
+    use crate::data::dialogue_data::GAME_TITLE_BLURB;
     let game_title = &format!("{game_title}\0");
     let title_width = print_raw(
         game_title,

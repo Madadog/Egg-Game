@@ -21,14 +21,17 @@ use std::{
 
 use crate::{
     animation::{AnimFrame, Animation},
-    portraits::PicContainer,
     position::Vec2,
-    print_alloc, save,
-    sound::{self, SfxData},
+    print_alloc,
     tic80_core::SpriteOptions,
     tic80_helpers::{blit_segment, palette_map_reset, palette_map_rotate, spr_outline},
     trace, PrintOptions,
 };
+use crate::data::{
+        portraits::PicContainer,
+        save,
+        sound::{self, SfxData},
+    };
 
 #[derive(Debug, Clone)]
 pub enum TextContent {
@@ -220,7 +223,7 @@ impl Dialogue {
             TextContent::Flip(x) => {
                 self.flip_portrait = x;
                 true
-            },
+            }
         }
     }
     pub fn fit_text(&self, string: &str) -> String {
@@ -340,8 +343,8 @@ impl Dialogue {
         let w = self.width as i32;
         let h = 24;
 
-        let outline_colour = if self.dark_theme {1} else {3};
-        let bg_colour = if self.dark_theme {1} else {2};
+        let outline_colour = if self.dark_theme { 1 } else { 3 };
+        let bg_colour = if self.dark_theme { 1 } else { 2 };
         // Portrait
         if let Some(portrait) = &self.portrait {
             let w = if self.flip_portrait {
@@ -352,7 +355,14 @@ impl Dialogue {
                 w
             };
             y -= 2;
-            rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, outline_colour);
+            rect_outline(
+                (WIDTH - w) / 2 - 13,
+                (HEIGHT - h) - 6,
+                h + 4,
+                h + 4,
+                0,
+                outline_colour,
+            );
             let frame = &portrait;
             height += 4;
             blit_segment(4);
@@ -362,15 +372,21 @@ impl Dialogue {
                 ((HEIGHT - h) - 8) as i16,
             ));
             palette_map_reset();
-            rectb((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, outline_colour);
+            rectb(
+                (WIDTH - w) / 2 - 13,
+                (HEIGHT - h) - 6,
+                h + 4,
+                h + 4,
+                outline_colour,
+            );
         }
         // Text box
         if self.dark_theme {
             rect_outline(
-                (WIDTH - w) / 2 + x-2,
-                (HEIGHT - h) - 4 + y-2,
-                w+4,
-                h + height+4,
+                (WIDTH - w) / 2 + x - 2,
+                (HEIGHT - h) - 4 + y - 2,
+                w + 4,
+                h + height + 4,
                 1,
                 0,
             );

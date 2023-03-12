@@ -6,15 +6,14 @@ use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
-use crate::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
+use crate::data::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
-use crate::{dialogue_data::*, save};
-use crate::{rand_u8, tic80_helpers::*};
-use crate::{sound, tic80_core::*};
+use crate::data::{dialogue_data::*, save, sound};
+use crate::{rand_u8, tic80_helpers::*, tic80_core::*};
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;

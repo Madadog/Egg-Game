@@ -17,25 +17,21 @@
 mod animation;
 mod camera;
 mod dialogue;
-mod dialogue_data;
 mod gamestate;
 mod interact;
 mod map;
-mod map_data;
 mod particles;
 mod player;
-mod portraits;
 mod position;
 mod rand;
-mod save;
-mod sound;
 mod tic80_core;
 mod tic80_helpers;
 mod packed;
+mod data;
 
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::GameState;
-use crate::map_data::*;
+use crate::data::map_data::*;
 use crate::position::{Hitbox, Vec2};
 use crate::rand::Pcg32;
 use crate::tic80_helpers::SyncHelper;

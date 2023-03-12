@@ -1,7 +1,7 @@
-use crate::dialogue_data::GAME_TITLE;
+use crate::data::dialogue_data::GAME_TITLE;
 use crate::gamestate::menu::draw_title;
 use crate::rand;
-use crate::save;
+use crate::data::save;
 use crate::tic80_core::*;
 use crate::tic80_helpers::*;
 

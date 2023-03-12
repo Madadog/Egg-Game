@@ -4,8 +4,8 @@ use once_cell::sync::Lazy;
 
 use crate::{
     dialogue::{print_width, Dialogue},
-    dialogue_data::*,
-    sound,
+    data::{dialogue_data::*,
+    sound},
     tic80_core::print_alloc,
     tic80_helpers::{print_alloc_centered, print_raw_centered, spr_blit_segment, blit_segment},
 };
@@ -238,7 +238,7 @@ impl<'a> InventoryUi<'a> {
         };
         cls(0);
         print_alloc_centered(
-            crate::dialogue_data::INVENTORY_TITLE,
+            crate::data::dialogue_data::INVENTORY_TITLE,
             120,
             37,
             PrintOptions {

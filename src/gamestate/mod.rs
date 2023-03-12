@@ -18,7 +18,7 @@ use std::process;
 
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use self::inventory::{InventoryUiState, INVENTORY};
-use crate::save;
+use crate::data::save;
 use crate::{tic80_core::*, WALKAROUND_STATE};
 
 use self::menu::MenuState;
@@ -98,7 +98,7 @@ pub trait Game {
 
 pub fn draw_instructions() {
     cls(0);
-    use crate::dialogue_data::{INSTRUCTIONS, INSTRUCTIONS_TITLE};
+    use crate::data::dialogue_data::{INSTRUCTIONS, INSTRUCTIONS_TITLE};
     let small_text = DIALOGUE_OPTIONS.small_text();
     rect_outline(6, 15, 228, 100, 0, 1);
     rect(8, 17, 224, 96, 1);

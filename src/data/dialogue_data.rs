@@ -16,7 +16,7 @@
 
 use crate::{
     dialogue::TextContent::{self, *},
-    portraits, sound,
+    data::{portraits, sound}
 };
 
 // Strings directly printed with `print_raw()` must end with a

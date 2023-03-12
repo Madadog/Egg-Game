@@ -1,4 +1,4 @@
-use crate::{position::Vec2, sound};
+use crate::{position::Vec2, data::sound};
 
 use super::WalkaroundState;
 

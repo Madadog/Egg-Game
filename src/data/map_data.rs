@@ -16,7 +16,7 @@
 
 use crate::animation::*;
 use crate::camera::CameraBounds;
-use crate::dialogue_data::*;
+use crate::data::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{Interactable, Interaction};
 use crate::map::MapLayer;

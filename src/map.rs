@@ -1,7 +1,7 @@
 use crate::{
     camera::CameraBounds,
     interact::Interactable,
-    map_data::MapIndex,
+    data::map_data::MapIndex,
     packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2},
     tic80_core::{mget, MapOptions},
