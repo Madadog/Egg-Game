@@ -1,19 +1,22 @@
 use std::fmt::format;
+use std::sync::atomic::Ordering;
 
 use crate::animation::Animation;
+use crate::data::map_data::{
+    MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
+};
+use crate::data::{dialogue_data::*, save, sound};
 use crate::gamestate::inventory::INVENTORY;
 use crate::gamestate::Game;
 use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
-use crate::data::map_data::{MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
-use crate::{debug_info, print, trace, BG_COLOUR, SYNC_HELPER};
-use crate::data::{dialogue_data::*, save, sound};
-use crate::{rand_u8, tic80_helpers::*, tic80_core::*};
+use crate::{print, trace, BG_COLOUR, DEBUG_INFO, SYNC_HELPER};
+use crate::{rand_u8, tic80_core::*, tic80_helpers::*};
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
@@ -22,7 +25,7 @@ mod cutscene;
 
 pub struct WalkaroundState<'a> {
     player: Player,
-    companion_trail: CompanionTrail,
+    companion_trail: CompanionTrail<16>,
     companion_list: CompanionList,
     map_animations: Vec<Animation<'a>>,
     creatures: Vec<Creature>,
@@ -56,20 +59,12 @@ impl<'a> WalkaroundState<'a> {
             let map_offset = map1.offset();
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        *BG_COLOUR.write().unwrap_or_else(|_| std::process::abort()) = map_set.bg_colour;
+        BG_COLOUR.store(map_set.bg_colour, Ordering::SeqCst);
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
-        if map_set.bank
-            != SYNC_HELPER
-                .read()
-                .unwrap_or_else(|_| std::process::abort())
-                .last_bank()
-        {
-            let x = SYNC_HELPER
-                .write()
-                .unwrap()
-                .sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
+        if map_set.bank != SYNC_HELPER.last_bank() {
+            let x = SYNC_HELPER.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
             if x.is_err() {
                 let bank = map_set.bank;
                 trace!(
@@ -197,7 +192,7 @@ impl<'a> WalkaroundState<'a> {
     }
 
     fn save(&self, new_map: &MapIndex) {
-        save::CURRENT_MAP.set(new_map.0.try_into().unwrap());
+        save::CURRENT_MAP.set(new_map.0 as u8);
         let x = self.player.pos.x.to_le_bytes();
         save::PLAYER_X[0].set(x[0]);
         save::PLAYER_X[1].set(x[1]);
@@ -268,7 +263,9 @@ impl<'a> Game for WalkaroundState<'a> {
                 dx += 1;
             }
             if mem_btnp(5) {
-                INVENTORY.write().unwrap().open();
+                if let Ok(mut inventory) = INVENTORY.write() {
+                    inventory.open()
+                }
                 return Some(GameState::Inventory);
             }
         } else {
@@ -344,7 +341,7 @@ impl<'a> Game for WalkaroundState<'a> {
                 .current_map
                 .interactables
                 .iter()
-                .chain({ self.companion_list.interact(&self.companion_trail).iter() })
+                .chain(self.companion_list.interact(&self.companion_trail).iter())
             {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
@@ -376,7 +373,7 @@ impl<'a> Game for WalkaroundState<'a> {
     fn draw(&self) {
         // Draw BG
         palette_map_reset();
-        cls(*crate::BG_COLOUR.read().unwrap());
+        cls(BG_COLOUR.load(Ordering::SeqCst));
         self.current_map.draw_bg(self.camera.pos);
 
         self.particles.draw(-self.cam_x(), -self.cam_y());
@@ -423,7 +420,7 @@ impl<'a> Game for WalkaroundState<'a> {
         }
 
         // Sort sprites in order of Y index
-        sprites.sort_by(|a, b| a.bottom().partial_cmp(&b.bottom()).unwrap());
+        sprites.sort_by(|a, b| a.bottom().partial_cmp(&b.bottom()).unwrap_or_else(|| std::process::abort()));
 
         // Draw sprites
         for options in sprites {
@@ -437,7 +434,7 @@ impl<'a> Game for WalkaroundState<'a> {
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(string, true);
         }
-        if debug_info().map_info {
+        if DEBUG_INFO.map_info() {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
@@ -453,9 +450,9 @@ impl<'a> Game for WalkaroundState<'a> {
                     .draw(14);
             }
         }
-        if debug_info().player_info {
-            print!(
-                format!("Player: {:#?}", self.player),
+        if DEBUG_INFO.player_info() {
+            print_raw(
+                &format!("Player: {:#?}\0", self.player),
                 0,
                 0,
                 PrintOptions {
@@ -464,8 +461,8 @@ impl<'a> Game for WalkaroundState<'a> {
                     ..Default::default()
                 }
             );
-            print!(
-                format!("Camera: {:#?}", self.camera),
+            print_raw(
+                &format!("Camera: {:#?}\0", self.camera),
                 74,
                 0,
                 PrintOptions {

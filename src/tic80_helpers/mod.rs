@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
 use crate::tic80_core::*;
 
 pub mod input_manager;
@@ -206,19 +208,19 @@ pub fn print_raw_shadow(string: &str, x: i32, y: i32, options: PrintOptions, sha
 }
 
 pub struct SyncHelper {
-    synced: bool,
-    last_bank: u8,
+    already_synced: AtomicBool,
+    last_bank: AtomicU8,
 }
 
 impl SyncHelper {
     pub const fn new() -> Self {
         SyncHelper {
-            synced: false,
-            last_bank: 0,
+            already_synced: AtomicBool::new(false),
+            last_bank: AtomicU8::new(0),
         }
     }
-    pub fn step(&mut self) {
-        self.synced = false;
+    pub fn step(&self) {
+        self.already_synced.store(false, Ordering::SeqCst);
     }
     /// Sync can only be called once per frame. Returns result to indicate failure or success.
     /// Mask lets you switch out sections of cart data:
@@ -231,21 +233,21 @@ impl SyncHelper {
     /// * palette = 1<<5 -- 32
     /// * flags   = 1<<6 -- 64
     /// * screen  = 1<<7 -- 128 (as of 0.90)
-    pub fn sync(&mut self, mask: i32, bank: u8) -> Result<(), ()> {
-        if self.synced {
+    pub fn sync(&self, mask: i32, bank: u8) -> Result<(), ()> {
+        if self.already_synced() {
             Err(())
         } else {
-            self.synced = true;
-            self.last_bank = bank;
+            self.already_synced.store(true, Ordering::SeqCst);
+            self.last_bank.store(bank, Ordering::SeqCst);
             unsafe { sync(mask, bank, false) };
             Ok(())
         }
     }
-    pub fn is_synced(&self) -> bool {
-        self.synced
+    pub fn already_synced(&self) -> bool {
+        self.already_synced.load(Ordering::SeqCst)
     }
     pub fn last_bank(&self) -> u8 {
-        self.last_bank
+        self.last_bank.load(Ordering::SeqCst)
     }
 }
 

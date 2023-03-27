@@ -125,23 +125,23 @@ impl fmt::Debug for Lcg64Xsh32 {
 }
 
 impl Lcg64Xsh32 {
-    /// We use a single 127-bit seed to initialise the state and select a stream.
-    /// One `seed` bit (lowest bit of `seed[8]`) is ignored.
-    fn from_seed(seed: [u8; 16]) -> Self {
-        let mut seed_u64 = [0u64; 2];
-        read_u64_into(&seed, &mut seed_u64);
+    // /// We use a single 127-bit seed to initialise the state and select a stream.
+    // /// One `seed` bit (lowest bit of `seed[8]`) is ignored.
+    // fn from_seed(seed: [u8; 16]) -> Self {
+    //     let mut seed_u64 = [0u64; 2];
+    //     read_u64_into(&seed, &mut seed_u64);
 
-        // The increment must be odd, hence we discard one bit:
-        Lcg64Xsh32::from_state_incr(seed_u64[0], seed_u64[1] | 1)
-    }
+    //     // The increment must be odd, hence we discard one bit:
+    //     Lcg64Xsh32::from_state_incr(seed_u64[0], seed_u64[1] | 1)
+    // }
 }
 
-fn read_u64_into(src: &[u8], dst: &mut [u64]) {
-    assert!(src.len() >= 8 * dst.len());
-    for (out, chunk) in dst.iter_mut().zip(src.chunks_exact(8)) {
-        *out = u64::from_le_bytes(chunk.try_into().unwrap());
-    }
-}
+// fn read_u64_into(src: &[u8], dst: &mut [u64]) {
+//     assert!(src.len() >= 8 * dst.len());
+//     for (out, chunk) in dst.iter_mut().zip(src.chunks_exact(8)) {
+//         *out = u64::from_le_bytes(chunk.try_into().unwrap());
+//     }
+// }
 
 impl Lcg64Xsh32 {
     #[inline]

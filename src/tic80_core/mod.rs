@@ -663,17 +663,21 @@ pub fn print_raw(text: &str, x: i32, y: i32, opts: PrintOptions) -> i32 {
 }
 
 pub fn print_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) -> i32 {
-    let text = CString::new(text.as_ref()).unwrap();
-    unsafe {
-        sys::print(
-            text.as_ptr() as *const u8,
-            x,
-            y,
-            opts.color,
-            opts.fixed,
-            opts.scale,
-            opts.small_text,
-        )
+    if let Ok(text) = CString::new(text.as_ref()) {
+        unsafe {
+            sys::print(
+                text.as_ptr() as *const u8,
+                x,
+                y,
+                opts.color,
+                opts.fixed,
+                opts.scale,
+                opts.small_text,
+            )
+        }
+    } else {
+        crate::trace!("print_alloc failed", 12);
+        0
     }
 }
 
@@ -728,20 +732,24 @@ pub fn font_raw(text: &str, x: i32, y: i32, opts: FontOptions) -> i32 {
 }
 
 pub fn font_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: FontOptions) -> i32 {
-    let text = CString::new(text.as_ref()).unwrap();
-    unsafe {
-        sys::font(
-            text.as_ptr() as *const u8,
-            x,
-            y,
-            opts.transparent.as_ptr(),
-            opts.transparent.len() as i8,
-            opts.char_width,
-            opts.char_height,
-            opts.fixed,
-            opts.scale,
-            opts.alt_font,
-        )
+    if let Ok(text) = CString::new(text.as_ref()) {
+        unsafe {
+            sys::font(
+                text.as_ptr() as *const u8,
+                x,
+                y,
+                opts.transparent.as_ptr(),
+                opts.transparent.len() as i8,
+                opts.char_width,
+                opts.char_height,
+                opts.fixed,
+                opts.scale,
+                opts.alt_font,
+            )
+        }
+    } else {
+        crate::trace!("font_alloc failed", 12);
+        0
     }
 }
 
@@ -758,8 +766,11 @@ macro_rules! font {
 }
 
 pub fn trace_alloc(text: impl AsRef<str>, color: u8) {
-    let text = CString::new(text.as_ref()).unwrap();
-    unsafe { sys::trace(text.as_ptr() as *const u8, color) }
+    if let Ok(text) = CString::new(text.as_ref()) {
+        unsafe { sys::trace(text.as_ptr() as *const u8, color) }
+    } else {
+        std::process::abort()
+    }
 }
 
 #[macro_export]

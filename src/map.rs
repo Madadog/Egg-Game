@@ -87,7 +87,7 @@ impl<'a> MapLayer<'a> {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
     pub fn draw(&self, offset: Vec2) {
-        use crate::debug_info;
+        use crate::DEBUG_INFO;
         use crate::tic80_core::{map, rectb};
         use crate::tic80_helpers::{blit_segment, palette_map_rotate};
 
@@ -96,7 +96,7 @@ impl<'a> MapLayer<'a> {
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);
         options.sy -= i32::from(offset.y);
-        if debug_info().map_info {
+        if DEBUG_INFO.map_info() {
             rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
         map(options);

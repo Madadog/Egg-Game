@@ -38,53 +38,75 @@ use crate::tic80_helpers::SyncHelper;
 use once_cell::sync::Lazy;
 use packed::{PackedI16, PackedU8};
 use std::fmt::format;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicI32, AtomicU8, AtomicUsize};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tic80_core::*;
 use tic80_helpers::input_manager;
 
 pub struct DebugInfo {
-    player_info: bool,
-    map_info: bool,
-    memory_info: bool,
-    memory_index: usize,
+    pub player_info: AtomicBool,
+    pub map_info: AtomicBool,
+    pub memory_info: AtomicBool,
+    pub memory_index: AtomicUsize,
 }
 impl DebugInfo {
     pub const fn const_default() -> Self {
         DebugInfo {
-            player_info: false,
-            map_info: false,
-            memory_info: false,
-            memory_index: 0,
+            player_info: AtomicBool::new(false),
+            map_info: AtomicBool::new(false),
+            memory_info: AtomicBool::new(false),
+            memory_index: AtomicUsize::new(0),
         }
+    }
+    pub fn player_info(&self) -> bool {
+        self.player_info.load(Ordering::SeqCst)
+    }
+    pub fn map_info(&self) -> bool {
+        self.map_info.load(Ordering::SeqCst)
+    }
+    pub fn memory_info(&self) -> bool {
+        self.memory_info.load(Ordering::SeqCst)
+    }
+    pub fn memory_index(&self) -> usize {
+        self.memory_index.load(Ordering::SeqCst)
+    }
+    pub fn set_player_info(&self, new: bool) {
+        self.player_info.store(new, Ordering::SeqCst);
+    }
+    pub fn set_map_info(&self, new: bool) {
+        self.map_info.store(new, Ordering::SeqCst);
+    }
+    pub fn set_memory_info(&self, new: bool) {
+        self.memory_info.store(new, Ordering::SeqCst);
+    }
+    pub fn set_memory_index(&self, new: usize) {
+        self.memory_index.store(new, Ordering::SeqCst);
     }
 }
 
 static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
-static TIME: RwLock<i32> = RwLock::new(0);
+static TIME: AtomicI32 = AtomicI32::new(0);
 static PAUSE: AtomicBool = AtomicBool::new(false);
 static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
-static DEBUG_INFO: RwLock<DebugInfo> = RwLock::new(DebugInfo::const_default());
+static DEBUG_INFO: DebugInfo = DebugInfo::const_default();
 static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
-static BG_COLOUR: RwLock<u8> = RwLock::new(0);
-static SYNC_HELPER: RwLock<SyncHelper> = RwLock::new(SyncHelper::new());
+static BG_COLOUR: AtomicU8 = AtomicU8::new(0);
+static SYNC_HELPER: SyncHelper = SyncHelper::new();
 
 // REMINDER: Heap maxes at 8192 u32.
 
 pub fn frames() -> i32 {
-    *TIME.read().unwrap()
-}
-pub fn debug_info_mut<'a>() -> RwLockWriteGuard<'a, DebugInfo> {
-    DEBUG_INFO.write().unwrap()
-}
-pub fn debug_info<'a>() -> RwLockReadGuard<'a, DebugInfo> {
-    DEBUG_INFO.read().unwrap()
+    TIME.load(Ordering::SeqCst)
 }
 pub fn rand() -> u32 {
-    RNG.write().unwrap().next_u32()
+    if let Ok(mut rng) = RNG.write() {
+        rng.next_u32()
+    } else {
+        0
+    }
 }
 pub fn rand_u8() -> u8 {
-    (rand() % 256).try_into().unwrap()
+    (rand() % 256) as u8
 }
 pub fn is_paused() -> bool {
     PAUSE.load(Ordering::Relaxed)
@@ -94,7 +116,9 @@ pub fn set_pause(pause: bool) {
 }
 
 pub fn run_gamestate() {
-    GAMESTATE.write().unwrap().run();
+    if let Ok(mut state) = GAMESTATE.write() {
+        state.run()
+    }
 }
 
 #[export_name = "BOOT"]
@@ -102,14 +126,15 @@ pub fn boot() {
     std::panic::set_hook(Box::new(|x| {
         trace!(format!("{x}"), 2);
     }));
-    WALKAROUND_STATE.write().unwrap().load_map(BEDROOM);
-    PackedU8::test();
+    if let Ok(mut walkaround) = WALKAROUND_STATE.write() {
+        walkaround.load_map(BEDROOM)
+    }
 }
 
 #[export_name = "TIC"]
 pub fn tic() {
-    SYNC_HELPER.write().unwrap().step();
-    *TIME.write().unwrap() += 1;
+    SYNC_HELPER.step();
+    TIME.fetch_add(1, Ordering::SeqCst);
 
     if keyp(16, -1, -1) {
         set_pause(!is_paused());
@@ -127,16 +152,16 @@ pub fn tic() {
         return;
     }
     if keyp(4, -1, -1) {
-        let p = debug_info().player_info;
-        debug_info_mut().player_info = !p;
+        let p = DEBUG_INFO.player_info();
+        DEBUG_INFO.set_player_info(!p);
     }
     if keyp(13, -1, -1) {
-        let p = debug_info().map_info;
-        debug_info_mut().map_info = !p;
+        let p = DEBUG_INFO.map_info();
+        DEBUG_INFO.set_map_info(!p);
     }
     if keyp(14, -1, -1) {
-        let p = debug_info().memory_info;
-        debug_info_mut().memory_info = !p;
+        let p = DEBUG_INFO.memory_info();
+        DEBUG_INFO.set_memory_info(!p);
     }
 
     run_gamestate();
@@ -153,9 +178,9 @@ pub fn tic() {
         );
     }
 
-    if debug_info().memory_info {
+    if DEBUG_INFO.memory_info.load(Ordering::SeqCst) {
         for i in 0i32..((163840 / 2).min(240 * 136)) {
-            let j = (i as usize + debug_info().memory_index).min(163839) as i32;
+            let j = (i as usize + DEBUG_INFO.memory_index()).min(163839) as i32;
             let x = unsafe { *((0x18000 + j) as *mut u8) };
             let (l, u) = (x % 16, x >> 4);
             pix((i * 2) % 240, i / 240, l);
@@ -165,21 +190,21 @@ pub fn tic() {
         print_raw(
             &format!(
                 "{acc}/160kB used (heap). [n] to close.\n[up] and [down] to scroll.\nDisplaying address offset = {}\0",
-                debug_info().memory_index
+                DEBUG_INFO.memory_index()
             ),
             1,
             1,
             PrintOptions::default().with_color(12),
         );
         if input_manager::mem_btn(0) {
-            let x = (debug_info().memory_index + 240 * 8).min(163840);
-            debug_info_mut().memory_index = x;
+            let x = (DEBUG_INFO.memory_index() + 240 * 8).min(163840);
+            DEBUG_INFO.set_memory_index(x);
         }
         if input_manager::mem_btn(1) {
-            let x = debug_info().memory_index.saturating_sub(240 * 8);
-            debug_info_mut().memory_index = x;
+            let x = DEBUG_INFO.memory_index().saturating_sub(240 * 8);
+            DEBUG_INFO.set_memory_index(x);
         }
-        if debug_info().memory_index == 163840 {
+        if DEBUG_INFO.memory_index() == 163840 {
             print_raw("End.\0", 1, 120, PrintOptions::default().with_color(12));
         }
     }

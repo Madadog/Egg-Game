@@ -564,15 +564,18 @@ pub const BACKYARD: MapSet<'static> = MapSet {
     ],
     ..DEFAULT_MAP_SET
 };
-//TODO: Pet the dog.
 //TODO: Somehow reduce code size...
 // Reduce necessary tracked state
 // Functionify
 // Zip strings if necessary...
 // serialize, zip, embed, unzip, deserialize...
 //TODO: Make intro animation
-//TODO: Creatures walk
+//TODO: Creatures collide
 //TODO: Chicken <-> egg loop
+//TODO: Plot out game middles
+//TODO: Bevy port
+//TODO: Soundtrack where relevent
+//TODO: Finale
 
 pub const WILDERNESS: MapSet<'static> = MapSet {
     maps: &[

@@ -1,11 +1,11 @@
 use crate::camera::CameraBounds;
-use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::dialogue_data::OPTIONS_TITLE;
+use crate::data::sound;
+use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::frames;
 use crate::input_manager::*;
 use crate::position::*;
-use crate::data::sound;
 use crate::tic80_core::*;
 use crate::tic80_helpers::*;
 
@@ -42,7 +42,8 @@ impl MenuState {
     pub fn debug_options() -> Self {
         let mut entries = vec![MenuEntry::Walk];
         entries.extend(
-            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len()).map(|x| MenuEntry::Debug(x as u8)),
+            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len())
+                .map(|x| MenuEntry::Debug(x as u8)),
         );
         Self {
             entries,
@@ -110,35 +111,35 @@ impl MenuState {
                 }
             }
             Inventory => {
-                crate::gamestate::inventory::INVENTORY
-                    .write()
-                    .unwrap()
-                    .state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
+                if let Ok(mut inventory) = crate::gamestate::inventory::INVENTORY.write() {
+                    inventory.state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
+                }
                 return Some(GameState::Inventory);
             }
             Space => {}
             Debug(x) => {
-                let walk = || crate::WALKAROUND_STATE.write().unwrap();
-                match x {
-                    0 => {
-                        set_palette(crate::tic80_helpers::SWEETIE_16);
+                if let Ok(mut walk) = crate::WALKAROUND_STATE.write() {
+                    match x {
+                        0 => {
+                            set_palette(crate::tic80_helpers::SWEETIE_16);
+                        }
+                        1 => {
+                            set_palette(crate::tic80_helpers::NIGHT_16);
+                        }
+                        2 => {
+                            set_palette(crate::tic80_helpers::B_W);
+                        }
+                        3 => {
+                            *walk.cam_state() = CameraBounds::free();
+                        }
+                        4 => {
+                            walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog);
+                        }
+                        5 => {
+                            walk.execute_interact_fn(&crate::interact::InteractFn::AddCreatures(1));
+                        }
+                        _ => {}
                     }
-                    1 => {
-                        set_palette(crate::tic80_helpers::NIGHT_16);
-                    }
-                    2 => {
-                        set_palette(crate::tic80_helpers::B_W);
-                    }
-                    3 => {
-                        *walk().cam_state() = CameraBounds::free();
-                    }
-                    4 => {
-                        walk().execute_interact_fn(&crate::interact::InteractFn::ToggleDog);
-                    }
-                    5 => {
-                        walk().execute_interact_fn(&crate::interact::InteractFn::AddCreatures(1));
-                    }
-                    _ => {}
                 }
             }
             Walk => return Some(GameState::Walkaround),

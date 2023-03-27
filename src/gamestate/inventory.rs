@@ -64,11 +64,12 @@ impl<'a> Inventory<'a> {
         self.items.swap(a, b);
     }
     pub fn take(&mut self, index: usize) -> Option<&'a InventoryItem<'a>> {
-        let x = self.items.get_mut(index).unwrap();
-        if x.is_some() {
-            let item = x.unwrap();
-            *x = None;
-            Some(item)
+        if let Some(slot) = self.items.get_mut(index) {
+            if slot.is_some() {
+                slot.take()
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -204,7 +205,7 @@ impl<'a> InventoryUi<'a> {
     pub fn draw(&self) {
         use crate::dialogue::DIALOGUE_OPTIONS;
         use crate::tic80_core::{
-            cls, print_raw, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
+            cls, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
         };
         use crate::tic80_helpers::{rect_outline, spr_outline};
         blit_segment(4);
@@ -214,11 +215,14 @@ impl<'a> InventoryUi<'a> {
             INVENTORY_OPTIONS,
             INVENTORY_BACK,
         ];
-        let width = entries
-            .iter()
-            .map(|x| print_width(x, false, DIALOGUE_OPTIONS.small_text()))
-            .max()
-            .unwrap();
+        // Entries is fixed-length so this can't fail
+        let width = unsafe {
+            entries
+                .iter()
+                .map(|x| print_width(x, false, DIALOGUE_OPTIONS.small_text()))
+                .max()
+                .unwrap_unchecked()
+        };
         let side_column = width + 3;
         let column_margin = 2;
         let scale = 2;

@@ -16,7 +16,7 @@
 
 use std::{
     fmt::{format, Debug},
-    sync::RwLock,
+    sync::{RwLock, atomic::{AtomicBool, AtomicUsize, Ordering}},
 };
 
 use crate::{
@@ -63,27 +63,27 @@ impl TextContent {
 }
 
 pub struct DialogueOptions {
-    pub fixed: RwLock<bool>,
-    pub box_width: RwLock<usize>,
+    pub fixed: AtomicBool,
+    pub box_width: AtomicUsize,
 }
 impl DialogueOptions {
     pub const fn new() -> Self {
         Self {
-            fixed: RwLock::new(false),
-            box_width: RwLock::new(200),
+            fixed: AtomicBool::new(false),
+            box_width: AtomicUsize::new(200),
         }
     }
     pub fn fixed(&self) -> bool {
-        *self.fixed.read().unwrap()
+        self.fixed.load(Ordering::SeqCst)
     }
     pub fn small_text(&self) -> bool {
         save::SMALL_TEXT_ON.is_true()
     }
     pub fn box_width(&self) -> usize {
-        *self.box_width.read().unwrap()
+        self.box_width.load(Ordering::SeqCst)
     }
     pub fn set_options(&self, fixed: bool, small_text: bool) {
-        *self.fixed.write().unwrap() = fixed;
+        self.fixed.store(fixed, Ordering::SeqCst);
         if small_text {
             save::SMALL_TEXT_ON.set_true()
         } else {
@@ -101,7 +101,7 @@ impl DialogueOptions {
         save::SMALL_TEXT_ON.toggle();
     }
     pub fn toggle_fixed(&self) {
-        *self.fixed.write().unwrap() = !self.fixed()
+        self.fixed.store(self.fixed.load(Ordering::SeqCst), Ordering::SeqCst);
     }
 }
 pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
@@ -257,9 +257,11 @@ impl Dialogue {
                     silent_char = true
                 }
             }
-            self.print_time = self.print_time.map(|x| x + 1);
-            if !silent_char && self.print_time.unwrap() % 2 == 0 && !self.is_line_done() {
-                sound::CLICK.with_volume(2).play();
+            if let Some(print_time) = &mut self.print_time {
+                *print_time += 1;
+                if !silent_char && *print_time % 2 == 0 && !self.is_line_done() {
+                    sound::CLICK.with_volume(2).play();
+                }
             }
             self.step_text(amount);
             self.delay += 1;

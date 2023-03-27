@@ -201,7 +201,7 @@ impl Player {
 
         (dx, dy)
     }
-    pub fn apply_motion(&mut self, dx: i16, dy: i16, trail: &mut CompanionTrail) {
+    pub fn apply_motion<const N: usize>(&mut self, dx: i16, dy: i16, trail: &mut CompanionTrail<N>) {
         // Apply motion
         if dx == 0 && dy == 0 {
             trail.stop();
@@ -345,28 +345,31 @@ impl Companion {
     }
 }
 
-pub struct CompanionTrail {
-    positions: [Vec2; 16],
-    directions: [(i8, i8); 16],
+pub struct CompanionTrail<const N: usize> {
+    positions: [Vec2; N],
+    directions: [(i8, i8); N],
     walktime: u8,
 }
-impl CompanionTrail {
+impl<const N: usize> CompanionTrail<N> {
     pub const fn new() -> Self {
         Self {
-            positions: [Vec2::new(0, 0); 16],
-            directions: [(0, 0); 16],
+            positions: [Vec2::new(0, 0); N],
+            directions: [(0, 0); N],
             walktime: 0,
         }
     }
     /// When player moves, rotate all positions towards start of buffer, add new position end of buffer.
     pub fn push(&mut self, position: Vec2, direction: (i8, i8)) {
-        assert_eq!(self.positions.len(), self.directions.len());
-        for i in 0..self.positions.len() - 1 {
-            self.positions[i] = self.positions[i + 1];
-            self.directions[i] = self.directions[i + 1];
+        unsafe {
+            // If this goes out of bounds, I'll eat my hat.
+            for i in 0..(N - 1) {
+                *self.positions.get_unchecked_mut(i) = *self.positions.get_unchecked(i + 1);
+                *self.directions.get_unchecked_mut(i) = *self.directions.get_unchecked(i + 1);
+            }
+            // It's an array, so there will always be a non-zero number of elements.
+            *self.positions.last_mut().unwrap_unchecked() = position;
+            *self.directions.last_mut().unwrap_unchecked() = direction;
         }
-        *self.positions.last_mut().unwrap() = position;
-        *self.directions.last_mut().unwrap() = direction;
         self.walktime = self.walktime.wrapping_add(1);
     }
     /// When player stops moving, tell animations to switch to idle pose.
@@ -388,10 +391,13 @@ impl CompanionTrail {
         (self.positions[0], self.directions[0])
     }
     pub fn latest(&self) -> (Vec2, (i8, i8)) {
-        (
-            *self.positions.last().unwrap(),
-            *self.directions.last().unwrap(),
-        )
+        unsafe {
+            // Array of non-null values
+            (
+                *self.positions.last().unwrap_unchecked(),
+                *self.directions.last().unwrap_unchecked(),
+            )
+        }
     }
     pub fn walktime(&self) -> u8 {
         self.walktime
@@ -411,7 +417,10 @@ impl CompanionList {
         if let Some(x) = self.companions.iter_mut().find(|x| x.is_none()) {
             *x = Some(companion);
         } else {
-            *self.companions.iter_mut().last().unwrap() = Some(companion);
+            // Array will always have a last element.
+            unsafe {
+                *self.companions.iter_mut().last().unwrap_unchecked() = Some(companion);
+            }
         }
     }
     pub fn has(&self, companion: Companion) -> bool {
@@ -435,7 +444,7 @@ impl CompanionList {
             .filter(|companion| companion.is_some())
             .count()
     }
-    pub fn interact(&self, positions: &CompanionTrail) -> Vec<Interactable<'static>> {
+    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<Interactable<'static>> {
         match self.companions {
             [Some(x), Some(y)] => vec![
                 x.interact(positions.mid().0, positions.mid().1, positions.latest().0),
