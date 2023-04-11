@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{SpriteOptions, Vec2};
+use tic80_api::core::SpriteOptions;
+use crate::position::Vec2;
+
 
 #[derive(Debug)]
 pub struct AnimFrame<'a> {

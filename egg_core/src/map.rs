@@ -4,8 +4,8 @@ use crate::{
     data::map_data::MapIndex,
     packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2},
-    tic80_core::{mget, MapOptions},
 };
+use tic80_api::core::{mget, MapOptions};
 
 #[derive(Clone)]
 pub struct MapSet<'a> {
@@ -19,11 +19,11 @@ pub struct MapSet<'a> {
     pub camera_bounds: Option<CameraBounds>,
 }
 impl<'a> MapSet<'a> {
-    pub fn draw_bg(&self, offset: Vec2) {
-        self.maps.iter().for_each(|layer| layer.draw(offset))
+    pub fn draw_bg(&self, offset: Vec2, debug: bool) {
+        self.maps.iter().for_each(|layer| layer.draw_tic80(offset, debug))
     }
-    pub fn draw_fg(&self, offset: Vec2) {
-        self.fg_maps.iter().for_each(|layer| layer.draw(offset))
+    pub fn draw_fg(&self, offset: Vec2, debug: bool) {
+        self.fg_maps.iter().for_each(|layer| layer.draw_tic80(offset, debug))
     }
 }
 
@@ -86,17 +86,16 @@ impl<'a> MapLayer<'a> {
     pub fn shift_sprite_flags(&self) -> bool {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
-    pub fn draw(&self, offset: Vec2) {
-        use crate::DEBUG_INFO;
-        use crate::tic80_core::{map, rectb};
-        use crate::tic80_helpers::{blit_segment, palette_map_rotate};
+    pub fn draw_tic80(&self, offset: Vec2, debug: bool) {
+        use tic80_api::core::{map, rectb};
+        use tic80_api::helpers::{blit_segment, palette_map_rotate};
 
         palette_map_rotate(self.palette_rotate());
         blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);
         options.sy -= i32::from(offset.y);
-        if DEBUG_INFO.map_info() {
+        if debug {
             rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
         map(options);
@@ -202,6 +201,7 @@ pub fn layer_collides(
     layer_hitbox: Hitbox,
     layer_x: i32,
     layer_y: i32,
+    flags: &[u8],
     spr_flag_offset: bool,
 ) -> bool {
     if layer_hitbox.touches_point(point) {
@@ -212,7 +212,7 @@ pub fn layer_collides(
         let spr_flag_offset = if spr_flag_offset { 256 } else { 0 };
         let id = mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         touches_tile(
-            id as usize,
+            *flags.get(id as usize).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
         )
     } else {

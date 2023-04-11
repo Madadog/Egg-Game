@@ -1,6 +1,6 @@
-use crate::{
-    tic80_core::PERSISTENT_RAM,
-    tic80_helpers::{get_pmem, set_pmem},
+use tic80_api::{
+    core::PERSISTENT_RAM,
+    helpers::{get_pmem, set_pmem},
 };
 
 /// Do not call this while reading or writing to persistent ram.

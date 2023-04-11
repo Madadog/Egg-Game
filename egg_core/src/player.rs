@@ -18,9 +18,11 @@ use crate::{
     camera::Camera,
     interact::Interactable,
     map::{Axis, MapSet},
-    tic80_core::SpriteOptions,
-    tic80_helpers::DrawParams,
-    Flip, Hitbox, Vec2, position,
+    position::{Hitbox, Vec2},
+};
+use tic80_api::{
+    core::{SpriteOptions, Flip},
+    helpers::DrawParams,
 };
 
 #[derive(Debug)]
@@ -100,6 +102,7 @@ impl Player {
         mut dy: i16,
         noclip: bool,
         current_map: &MapSet,
+        flags: &[u8],
     ) -> (i16, i16) {
         use crate::map::layer_collides;
 
@@ -159,6 +162,7 @@ impl Player {
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
+                flags,
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
                 [points_dy, points_dy_left, points_dy_right],
@@ -167,6 +171,7 @@ impl Player {
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
+                flags,
             );
             if let Some(point_diag) = point_diag {
                 if layer_collides(
@@ -174,6 +179,7 @@ impl Player {
                     layer_hitbox,
                     layer.origin.x().into(),
                     layer.origin.y().into(),
+                    &flags,
                     layer.shift_sprite_flags(),
                 ) {
                     diagonal_collision = true;
@@ -233,19 +239,20 @@ fn test_many_points(
     layer_x: i32,
     layer_y: i32,
     spr_flag_offset: bool,
-    mut flags: [bool; 3],
+    mut side_flags: [bool; 3],
+    map_flags: &[u8],
 ) -> [bool; 3] {
     use crate::map::layer_collides;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides(*point, layer_hitbox, layer_x, layer_y, spr_flag_offset) {
-                    flags[i] = true;
+                if layer_collides(*point, layer_hitbox, layer_x, layer_y, map_flags, spr_flag_offset) {
+                    side_flags[i] = true;
                 }
             });
         };
     }
-    flags
+    side_flags
 }
 
 /// Logic for sliding on 1 pixel ramps.

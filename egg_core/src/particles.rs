@@ -1,7 +1,5 @@
-use crate::{
-    position::Vec2,
-    tic80_core::{rect, rectb, spr, SpriteOptions, circ},
-};
+use crate::position::Vec2;
+use tic80_api::core::{rect, rectb, spr, SpriteOptions, circ};
 
 pub enum ParticleDraw {
     Rect(i32, i32, u8),
@@ -10,7 +8,7 @@ pub enum ParticleDraw {
     Spr(i32),
 }
 impl ParticleDraw {
-    pub fn draw(&self, x: i32, y: i32) {
+    pub fn draw_tic80(&self, x: i32, y: i32) {
         match &self {
             ParticleDraw::Rect(w, h, colour) => rect(x, y, *w, *h, *colour),
             ParticleDraw::RectB(w, h, colour) => rectb(x, y, *w, *h, *colour),
@@ -49,9 +47,9 @@ impl Particle {
     pub fn alive(&self) -> bool {
         self.lifetime <= self.max_life
     }
-    pub fn draw(&self, x_offset: i32, y_offset: i32) {
+    pub fn draw_tic80(&self, x_offset: i32, y_offset: i32) {
         let (x, y): (i32, i32) = (self.position.x.into(), self.position.y.into());
-        self.draw.draw(x + x_offset, y + y_offset);
+        self.draw.draw_tic80(x + x_offset, y + y_offset);
     }
 }
 
@@ -71,10 +69,10 @@ impl ParticleList {
     pub fn shrink_to_fit(&mut self) {
         self.particles.shrink_to_fit();
     }
-    pub fn draw(&self, x_offset: i32, y_offset: i32) {
+    pub fn draw_tic80(&self, x_offset: i32, y_offset: i32) {
         self.particles
             .iter()
-            .for_each(|x| x.draw(x_offset, y_offset));
+            .for_each(|x| x.draw_tic80(x_offset, y_offset));
     }
     pub fn add(&mut self, particle: Particle) {
         self.particles.push(particle)

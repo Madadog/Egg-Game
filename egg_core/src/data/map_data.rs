@@ -24,7 +24,7 @@ use crate::map::MapSet;
 use crate::map::Warp;
 use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
-use crate::SpriteOptions;
+use tic80_api::core::SpriteOptions;
 
 pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     maps: &[],

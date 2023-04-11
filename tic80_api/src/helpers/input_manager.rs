@@ -1,6 +1,6 @@
 use crate::{
-    tic80_core::{mouse, sys::MouseInput, GAMEPADS},
-    trace,
+    core::{mouse, sys::MouseInput, GAMEPADS},
+    trace_tic80,
 };
 use std::sync::RwLock;
 
@@ -46,7 +46,7 @@ pub fn mem_btnp(id: u8) -> bool {
         let previous = old_gamepad[controller];
         (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
     } else {
-        trace!("mem_btnp failed", 12);
+        trace_tic80!("mem_btnp failed", 12);
         false
     }
 }
@@ -60,7 +60,7 @@ pub fn any_btnp() -> bool {
         }
         flag
     } else {
-        trace!("any_btnp failed", 12);
+        trace_tic80!("any_btnp failed", 12);
         false
     }
 }
@@ -70,7 +70,7 @@ pub fn any_btnpr() -> bool {
     if let Ok(previous) = GAMEPAD_HELPER.read() {
         buttons != *previous
     } else {
-        trace!("any_btnpr failed", 12);
+        trace_tic80!("any_btnpr failed", 12);
         false
     }
 }
@@ -86,7 +86,7 @@ pub fn mouse_delta() -> MouseInput {
             ..new
         }
     } else {
-        trace!("mouse_delta failed", 12);
+        trace_tic80!("mouse_delta failed", 12);
         MOUSE_INPUT_DEFAULT
     }
 }

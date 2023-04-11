@@ -1,47 +1,19 @@
-// Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
-//
-// This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
-//
-// This program is free software: you can redistribute it and/or modify it under
-// the terms of the GNU General Public License as published by the Free Software
-// Foundation, either version 3 of the License, or (at your option) any later
-// version.
-//
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License along with
-// this program. If not, see <https://www.gnu.org/licenses/>.
+mod alloc;
 
-mod animation;
-mod camera;
-mod dialogue;
-mod gamestate;
-mod interact;
-mod map;
-mod particles;
-mod player;
-mod position;
-mod rand;
-mod tic80_core;
-mod tic80_helpers;
-mod packed;
-mod data;
 
-use crate::gamestate::walkaround::WalkaroundState;
-use crate::gamestate::GameState;
-use crate::data::map_data::*;
-use crate::position::{Hitbox, Vec2};
-use crate::rand::Pcg32;
-use crate::tic80_helpers::SyncHelper;
+use egg_core::gamestate::walkaround::WalkaroundState;
+use egg_core::gamestate::GameState;
+use egg_core::data::map_data::*;
+use egg_core::position::{Hitbox, Vec2};
+use egg_core::rand::Pcg32;
+use egg_core::tic80_helpers::SyncHelper;
 use once_cell::sync::Lazy;
-use packed::{PackedI16, PackedU8};
+use egg_core::packed::{PackedI16, PackedU8};
 use std::fmt::format;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicI32, AtomicU8, AtomicUsize};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use tic80_core::*;
-use tic80_helpers::input_manager;
+use tic80_api::core::*;
+use tic80_api::helpers::input_manager;
 
 pub struct DebugInfo {
     pub player_info: AtomicBool,

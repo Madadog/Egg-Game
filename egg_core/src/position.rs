@@ -28,8 +28,8 @@ impl Vec2 {
     pub const fn splat(value: i16) -> Self {
         Vec2::new(value, value)
     }
-    pub fn draw(&self, colour: u8) {
-        crate::pix(self.x.into(), self.y.into(), colour);
+    pub fn draw_tic80(&self, colour: u8) {
+        tic80_api::core::pix(self.x.into(), self.y.into(), colour);
     }
     pub fn towards(&self, other: &Vec2) -> Vec2 {
         let diff = *other - *self;
@@ -210,7 +210,7 @@ impl Hitbox {
         }
     }
     pub fn draw(&self, colour: u8) {
-        crate::rectb(
+        tic80_api::core::rectb(
             self.x.into(),
             self.y.into(),
             self.w.into(),
@@ -220,11 +220,8 @@ impl Hitbox {
     }
 }
 
-pub fn touches_tile(id: usize, point: Vec2) -> bool {
-    use crate::SPRITE_FLAGS;
-    let id = id % 512;
+pub fn touches_tile(flags: u8, point: Vec2) -> bool {
     let point = Vec2::new(point.x % 8, point.y % 8);
-    let flags = unsafe { (*SPRITE_FLAGS)[id] };
     // Tile flag corresponds to collision type
     match flags {
         0b0 => false,                           // Walkable

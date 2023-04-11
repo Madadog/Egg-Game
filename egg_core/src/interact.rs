@@ -15,7 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::animation::*;
-use crate::Hitbox;
+use crate::position::Hitbox;
 use crate::dialogue::TextContent;
 use crate::position::Vec2;
 

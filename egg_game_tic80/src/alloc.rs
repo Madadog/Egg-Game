@@ -43,10 +43,11 @@
 
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::RefCell;
+use std::sync::atomic::AtomicUsize;
 
 use buddy_alloc::{BuddyAllocParam, FastAllocParam, NonThreadsafeAlloc};
 
-use super::MEM_USAGE;
+pub static MEM_USAGE: AtomicUsize = AtomicUsize::new(0);
 
 extern "C" {
     static __heap_base: u8;

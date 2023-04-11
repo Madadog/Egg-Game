@@ -22,11 +22,13 @@ use std::{
 use crate::{
     animation::{AnimFrame, Animation},
     position::Vec2,
-    print_alloc,
-    tic80_core::SpriteOptions,
-    tic80_helpers::{blit_segment, palette_map_reset, palette_map_rotate, spr_outline},
-    trace, PrintOptions,
 };
+
+use tic80_api::{
+    core::{print_alloc, SpriteOptions, PrintOptions},
+    helpers::{blit_segment, palette_map_reset, palette_map_rotate, spr_outline},
+};
+
 use crate::data::{
         portraits::PicContainer,
         save,
@@ -307,8 +309,8 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use crate::tic80_helpers::rect_outline;
-        use crate::{spr, HEIGHT, WIDTH};
+        use tic80_api::helpers::rect_outline;
+        use tic80_api::core::{spr, HEIGHT, WIDTH};
 
         let w = self.width as i32;
         let h = 24;
@@ -337,9 +339,8 @@ impl Dialogue {
         mut y: i32,
         mut height: i32,
     ) {
-        use crate::tic80_core::rectb;
-        use crate::tic80_helpers::rect_outline;
-        use crate::{HEIGHT, WIDTH};
+        use tic80_api::core::{HEIGHT, WIDTH, rectb};
+        use tic80_api::helpers::rect_outline;
 
         let print_timer = self.characters;
         let w = self.width as i32;

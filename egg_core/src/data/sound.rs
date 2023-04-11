@@ -1,4 +1,4 @@
-use crate::tic80_core::{sfx, SfxOptions};
+use tic80_api::core::{sfx, SfxOptions};
 
 #[derive(Debug, Clone)]
 pub struct SfxData {

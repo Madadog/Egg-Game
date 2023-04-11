@@ -23,13 +23,10 @@
 // Because this isn't in a separate crate, we have to allow unused code to silence the warnings.
 #![allow(dead_code, unused_macros)]
 
-use std::{ffi::CString, sync::atomic::AtomicUsize};
+use std::ffi::CString;
+use crate::trace_tic80;
 
 pub use sys::MouseInput;
-
-mod alloc;
-
-pub static MEM_USAGE: AtomicUsize = AtomicUsize::new(0);
 
 // Constants
 pub const WIDTH: i32 = 240;
@@ -676,19 +673,42 @@ pub fn print_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) ->
             )
         }
     } else {
-        crate::trace!("print_alloc failed", 12);
+        trace_tic80!("print_alloc failed", 12);
         0
     }
 }
 
+
 // "use tic80::*" causes this to shadow std::print, but that isn't useful here anyway.
 #[macro_export]
-macro_rules! print {
+macro_rules! print_tic80 {
     ($text: literal, $($args: expr), *) => {
         $crate::tic80_core::print_raw(concat!($text, "\0"), $($args), *);
     };
     ($text: expr, $($args: expr), *) => {
         $crate::tic80_core::print_alloc($text, $($args), *);
+    };
+}
+
+// Print a string, avoiding allocation if a literal is passed.
+// NOTE: "use tic80::*" causes this to shadow std::print, but that isn't useful here anyway.
+#[macro_export]
+macro_rules! font_tic80 {
+    ($text: literal, $($args: expr), *) => {
+        $crate::tic80_core::font_raw(concat!($text, "\0"), $($args), *);
+    };
+    ($text: expr, $($args: expr), *) => {
+        $crate::tic80_core::font_alloc($text, $($args), *);
+    };
+}
+
+#[macro_export]
+macro_rules! trace_tic80 {
+    ($text: literal, $color: expr) => {
+        unsafe { crate::core::sys::trace(concat!($text, "\0").as_ptr(), $color) }
+    };
+    ($text: expr, $color: expr) => {
+        crate::core::trace_alloc($text, $color);
     };
 }
 
@@ -748,21 +768,9 @@ pub fn font_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: FontOptions) -> i
             )
         }
     } else {
-        crate::trace!("font_alloc failed", 12);
+        crate::trace_tic80!("font_alloc failed", 12);
         0
     }
-}
-
-// Print a string, avoiding allocation if a literal is passed.
-// NOTE: "use tic80::*" causes this to shadow std::print, but that isn't useful here anyway.
-#[macro_export]
-macro_rules! font {
-    ($text: literal, $($args: expr), *) => {
-        $crate::tic80_core::font_raw(concat!($text, "\0"), $($args), *);
-    };
-    ($text: expr, $($args: expr), *) => {
-        $crate::tic80_core::font_alloc($text, $($args), *);
-    };
 }
 
 pub fn trace_alloc(text: impl AsRef<str>, color: u8) {
@@ -771,16 +779,6 @@ pub fn trace_alloc(text: impl AsRef<str>, color: u8) {
     } else {
         std::process::abort()
     }
-}
-
-#[macro_export]
-macro_rules! trace {
-    ($text: literal, $color: expr) => {
-        unsafe { crate::tic80_core::sys::trace(concat!($text, "\0").as_ptr(), $color) }
-    };
-    ($text: expr, $color: expr) => {
-        crate::tic80_core::trace_alloc($text, $color);
-    };
 }
 
 // Memory Access

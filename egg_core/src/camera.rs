@@ -1,8 +1,7 @@
-use crate::Vec2;
-use crate::{trace, HEIGHT as TIC_HEIGHT, WIDTH as TIC_WIDTH};
+use crate::position::Vec2;
 
-const HEIGHT: i16 = TIC_HEIGHT as i16;
-const WIDTH: i16 = TIC_WIDTH as i16;
+const HEIGHT: i16 = 136;
+const WIDTH: i16 = 240;
 
 #[derive(Debug)]
 pub struct Camera {

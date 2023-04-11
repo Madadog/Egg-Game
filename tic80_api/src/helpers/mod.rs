@@ -16,7 +16,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::tic80_core::*;
+use crate::core::*;
 
 pub mod input_manager;
 

@@ -1,5 +1,5 @@
 use std::fmt::format;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{Ordering, AtomicU8};
 
 use crate::animation::Animation;
 use crate::data::map_data::{
@@ -8,15 +8,14 @@ use crate::data::map_data::{
 use crate::data::{dialogue_data::*, save, sound};
 use crate::gamestate::inventory::INVENTORY;
 use crate::gamestate::Game;
-use crate::input_manager::{any_btnpr, mem_btn, mem_btnp};
+use tic80_api::helpers::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
-use crate::{print, trace, BG_COLOUR, DEBUG_INFO, SYNC_HELPER};
-use crate::{rand_u8, tic80_core::*, tic80_helpers::*};
+use tic80_api::{core::*, helpers::*};
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
@@ -34,6 +33,8 @@ pub struct WalkaroundState<'a> {
     dialogue: Dialogue,
     particles: ParticleList,
     cutscene: Option<Cutscene>,
+    bg_colour: AtomicU8,
+    sync_helper: SyncHelper,
 }
 impl<'a> WalkaroundState<'a> {
     pub const fn new() -> Self {
@@ -50,7 +51,7 @@ impl<'a> WalkaroundState<'a> {
             cutscene: None,
         }
     }
-    pub fn load_map(&mut self, map_set: MapSet<'a>) {
+    pub fn load_map(&mut self, map_set: MapSet<'a>, bg_colour: AtomicU8, sync_helper: &mut SyncHelper) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
@@ -59,15 +60,15 @@ impl<'a> WalkaroundState<'a> {
             let map_offset = map1.offset();
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        BG_COLOUR.store(map_set.bg_colour, Ordering::SeqCst);
+        bg_colour.store(map_set.bg_colour, Ordering::SeqCst);
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
-        if map_set.bank != SYNC_HELPER.last_bank() {
-            let x = SYNC_HELPER.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
+        if map_set.bank != sync_helper.last_bank() {
+            let x = sync_helper.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
             if x.is_err() {
                 let bank = map_set.bank;
-                trace!(
+                tic80_api::trace_tic80!(
                     format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),
                     12
                 );
@@ -201,8 +202,8 @@ impl<'a> WalkaroundState<'a> {
         save::PLAYER_Y[1].set(y[1]);
     }
 
-    pub fn load_pmem(&mut self) {
-        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map());
+    pub fn load_pmem(&mut self, bg_colour: AtomicU8, sync_helper: &mut SyncHelper) {
+        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map(), bg_colour, sync_helper);
         self.player.pos.x = i16::from_le_bytes([save::PLAYER_X[0].get(), save::PLAYER_X[1].get()]);
         self.player.pos.y = i16::from_le_bytes([save::PLAYER_Y[0].get(), save::PLAYER_Y[1].get()]);
     }
@@ -222,7 +223,7 @@ impl<'a> Game for WalkaroundState<'a> {
         }
 
         if keyp(28, -1, -1) {
-            self.load_map(SUPERMARKET);
+            self.load_map(SUPERMARKET, bg_colour, sync_helper);
         }
         if keyp(29, -1, -1) {
             self.load_map(WILDERNESS);

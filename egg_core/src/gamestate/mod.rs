@@ -18,12 +18,13 @@ use std::process;
 
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use self::inventory::{InventoryUiState, INVENTORY};
+use self::walkaround::WalkaroundState;
 use crate::data::save;
-use crate::{tic80_core::*, WALKAROUND_STATE};
+use tic80_api::core::*;
 
 use self::menu::MenuState;
-use crate::input_manager::{any_btnp, mem_btn};
-use crate::tic80_helpers::*;
+use tic80_api::helpers::input_manager::{any_btnp, mem_btn};
+use tic80_api::helpers::*;
 
 mod intro;
 mod menu;
@@ -39,22 +40,20 @@ pub enum GameState {
     Inventory,
 }
 impl GameState {
-    pub fn run(&mut self) {
+    pub fn run(&mut self, walkaround_state: &mut WalkaroundState) {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
                 if (*i > 60 || save::INSTRUCTIONS_READ.is_true()) && any_btnp() {
                     save::INSTRUCTIONS_READ.set_true();
-                    if let Ok(mut walkaround) = WALKAROUND_STATE.write() {
-                        walkaround.load_pmem();
-                    }
+                    walkaround_state.load_pmem();
                     *self = Self::Walkaround;
                 }
                 draw_instructions();
             }
             Self::Walkaround => {
-                let next = WALKAROUND_STATE.write().unwrap_or_else(|_| process::abort()).step();
-                WALKAROUND_STATE.read().unwrap_or_else(|_| process::abort()).draw();
+                let next = walkaround_state.step();
+                walkaround_state.draw();
                 if let Some(state) = next {
                     *self = state;
                 }

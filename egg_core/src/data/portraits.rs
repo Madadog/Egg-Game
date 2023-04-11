@@ -1,7 +1,8 @@
 use crate::{
     position::Vec2,
-    tic80_core::{spr, SpriteOptions}, tic80_helpers::{draw_outline, palette_map_rotate, spr_outline},
 };
+use tic80_api::core::{spr, SpriteOptions};
+use tic80_api::helpers::{draw_outline, palette_map_rotate, spr_outline};
 
 #[derive(Debug, Clone)]
 pub enum PicContainer {
