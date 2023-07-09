@@ -1,60 +1,18 @@
 mod alloc;
 
-
+use egg_core::data::map_data::*;
 use egg_core::gamestate::walkaround::WalkaroundState;
 use egg_core::gamestate::GameState;
-use egg_core::data::map_data::*;
+use egg_core::packed::{PackedI16, PackedU8};
 use egg_core::position::{Hitbox, Vec2};
 use egg_core::rand::Pcg32;
 use egg_core::tic80_helpers::SyncHelper;
 use once_cell::sync::Lazy;
-use egg_core::packed::{PackedI16, PackedU8};
 use std::fmt::format;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicI32, AtomicU8, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tic80_api::core::*;
 use tic80_api::helpers::input_manager;
-
-pub struct DebugInfo {
-    pub player_info: AtomicBool,
-    pub map_info: AtomicBool,
-    pub memory_info: AtomicBool,
-    pub memory_index: AtomicUsize,
-}
-impl DebugInfo {
-    pub const fn const_default() -> Self {
-        DebugInfo {
-            player_info: AtomicBool::new(false),
-            map_info: AtomicBool::new(false),
-            memory_info: AtomicBool::new(false),
-            memory_index: AtomicUsize::new(0),
-        }
-    }
-    pub fn player_info(&self) -> bool {
-        self.player_info.load(Ordering::SeqCst)
-    }
-    pub fn map_info(&self) -> bool {
-        self.map_info.load(Ordering::SeqCst)
-    }
-    pub fn memory_info(&self) -> bool {
-        self.memory_info.load(Ordering::SeqCst)
-    }
-    pub fn memory_index(&self) -> usize {
-        self.memory_index.load(Ordering::SeqCst)
-    }
-    pub fn set_player_info(&self, new: bool) {
-        self.player_info.store(new, Ordering::SeqCst);
-    }
-    pub fn set_map_info(&self, new: bool) {
-        self.map_info.store(new, Ordering::SeqCst);
-    }
-    pub fn set_memory_info(&self, new: bool) {
-        self.memory_info.store(new, Ordering::SeqCst);
-    }
-    pub fn set_memory_index(&self, new: usize) {
-        self.memory_index.store(new, Ordering::SeqCst);
-    }
-}
 
 static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
 static TIME: AtomicI32 = AtomicI32::new(0);
@@ -70,16 +28,6 @@ static SYNC_HELPER: SyncHelper = SyncHelper::new();
 pub fn frames() -> i32 {
     TIME.load(Ordering::SeqCst)
 }
-pub fn rand() -> u32 {
-    if let Ok(mut rng) = RNG.write() {
-        rng.next_u32()
-    } else {
-        0
-    }
-}
-pub fn rand_u8() -> u8 {
-    (rand() % 256) as u8
-}
 pub fn is_paused() -> bool {
     PAUSE.load(Ordering::Relaxed)
 }
@@ -88,8 +36,10 @@ pub fn set_pause(pause: bool) {
 }
 
 pub fn run_gamestate() {
-    if let Ok(mut state) = GAMESTATE.write() {
-        state.run()
+    if let (Ok(game_state), Ok(walk_state)) =
+        (GAMESTATE.get_mut(), WALKAROUND_STATE.get_mut())
+    {
+        state.run(walk_state)
     }
 }
 
@@ -98,8 +48,8 @@ pub fn boot() {
     std::panic::set_hook(Box::new(|x| {
         trace!(format!("{x}"), 2);
     }));
-    if let Ok(mut walkaround) = WALKAROUND_STATE.write() {
-        walkaround.load_map(BEDROOM)
+    if let (Ok(mut walkaround), Ok(sync_helper)) = (WALKAROUND_STATE.get_mut(), SYNC_HELPER.get_mut()) {
+        walkaround.load_map(BEDROOM, sync_helper)
     }
 }
 

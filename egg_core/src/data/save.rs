@@ -13,11 +13,15 @@ pub fn zero_pmem() {
 }
 
 /// A 1-byte Pmem slot. When set, it will be saved to the player's storage device and persist across runs.
+#[derive(Copy, Clone)]
 pub struct PmemU8(usize);
 impl PmemU8 {
     pub const fn new(i: usize) -> Self {
         assert!(i < 1024);
         Self(i)
+    }
+    pub fn index(&self) -> usize {
+        self.0
     }
     /// Get whole inner value as u8
     pub fn get(&self) -> u8 {
@@ -30,6 +34,7 @@ impl PmemU8 {
 }
 
 /// 1 bit from a Pmem slot.
+#[derive(Copy, Clone)]
 pub struct PmemBit {
     index: usize,
     bit: u8,
@@ -63,6 +68,27 @@ impl PmemBit {
     pub fn toggle(&self) {
         let value = self.get_byte() ^ self.bit;
         set_pmem(self.index, value);
+    }
+}
+// Mocking interface
+impl PmemBit {
+    pub fn get_byte_with(&self, memory: &[u8]) -> u8 {
+        memory[self.index]
+    }
+    pub fn is_true_with(&self, memory: &[u8]) -> bool {
+        (memory[self.index] & self.bit) == self.bit
+    }
+    pub fn set_true_with(&self, memory: &mut [u8]) {
+        let value = memory[self.index] | self.bit;
+        memory[self.index] = value;
+    }
+    pub fn set_false_with(&self, memory: &mut [u8]) {
+        let value = memory[self.index] & (self.bit ^ 255);
+        memory[self.index] = value;
+    }
+    pub fn toggle_with(&self, memory: &mut [u8]) {
+        let value = memory[self.index] ^ self.bit;
+        memory[self.index] = value;
     }
 }
 

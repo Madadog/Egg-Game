@@ -1,8 +1,8 @@
 use crate::{
     position::{Hitbox, Vec2},
-    rand_u8, tic80_core,
-    tic80_helpers::DrawParams,
 };
+use tic80_api::helpers::DrawParams;
+// use tic80_api::core;
 
 #[derive(Clone)]
 pub struct Creature {
@@ -27,6 +27,7 @@ impl Creature {
         }
     }
     pub fn step(&mut self) {
+        fn rand_u8() -> u8 {0}
         match &mut self.state {
             CreatureState::Idle(timer) => {
                 if timer.tick() {
@@ -56,16 +57,16 @@ impl Creature {
         };
         let offset = offset * Vec2::new(-1, -1);
         let flip = match self.flip_h {
-            true => tic80_core::Flip::Horizontal,
-            false => tic80_core::Flip::None,
+            true => tic80_api::core::Flip::Horizontal,
+            false => tic80_api::core::Flip::None,
         };
         DrawParams::new(
             sprite,
             self.hitbox.offset(offset).x.into(),
             self.hitbox.offset(offset).y.into(),
-            tic80_core::SpriteOptions {
+            tic80_api::core::SpriteOptions {
                 flip,
-                ..tic80_core::SpriteOptions::transparent_zero()
+                ..tic80_api::core::SpriteOptions::transparent_zero()
             },
             Some(1),
             1,

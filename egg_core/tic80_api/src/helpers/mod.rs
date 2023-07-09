@@ -116,7 +116,7 @@ pub fn screen_offset(horizontal: i8, vertical: i8) {
     }
 }
 
-pub fn draw_ovr<T: Fn()>(draw: T) {
+pub fn draw_ovr<T: FnMut()>(mut draw: T) {
     unsafe {
         vbank(1);
     }

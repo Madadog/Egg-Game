@@ -108,6 +108,7 @@ impl DialogueOptions {
 }
 pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
 
+#[derive(Clone)]
 pub struct Dialogue {
     pub current_text: Option<String>,
     pub characters: usize,

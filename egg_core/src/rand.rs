@@ -159,6 +159,10 @@ impl Lcg64Xsh32 {
         let xsh = (((state >> XSHIFT) ^ state) >> SPARE) as u32;
         xsh.rotate_right(rot)
     }
+    #[inline]
+    pub fn rand_u8(&mut self) -> u8 {
+        (self.next_u32() % 256) as u8
+    }
     /*
     #[inline]
     fn next_u64(&mut self) -> u64 {

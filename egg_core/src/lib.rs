@@ -26,3 +26,5 @@ pub mod position;
 pub mod rand;
 pub mod packed;
 pub mod data;
+pub mod debug;
+pub use tic80_api;

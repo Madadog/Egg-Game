@@ -18,7 +18,7 @@ use tic80_api::core::SpriteOptions;
 use crate::position::Vec2;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnimFrame<'a> {
     pub pos: Vec2,
     pub spr_id: u16,
@@ -60,7 +60,7 @@ impl<'a> AnimFrame<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Animation<'a> {
     pub tick: u16,
     pub index: usize,

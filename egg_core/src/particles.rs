@@ -1,6 +1,7 @@
 use crate::position::Vec2;
 use tic80_api::core::{rect, rectb, spr, SpriteOptions, circ};
 
+#[derive(Clone)]
 pub enum ParticleDraw {
     Rect(i32, i32, u8),
     RectB(i32, i32, u8),
@@ -18,6 +19,7 @@ impl ParticleDraw {
     }
 }
 
+#[derive(Clone)]
 pub struct Particle {
     draw: ParticleDraw,
     lifetime: usize,
@@ -53,6 +55,7 @@ impl Particle {
     }
 }
 
+#[derive(Clone)]
 pub struct ParticleList {
     particles: Vec<Particle>,
 }

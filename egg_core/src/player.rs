@@ -21,11 +21,11 @@ use crate::{
     position::{Hitbox, Vec2},
 };
 use tic80_api::{
-    core::{SpriteOptions, Flip},
+    core::{Flip, SpriteOptions},
     helpers::DrawParams,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Player {
     /// coords are (x, y)
     pub dir: (i8, i8),
@@ -96,16 +96,7 @@ impl Player {
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
     }
-    pub fn walk(
-        &mut self,
-        mut dx: i16,
-        mut dy: i16,
-        noclip: bool,
-        current_map: &MapSet,
-        flags: &[u8],
-    ) -> (i16, i16) {
-        use crate::map::layer_collides;
-
+    pub fn apply_walk_direction(&mut self, mut dx: i16, mut dy: i16) -> (i16, i16) {
         if dx == 0 && dy == 0 {
             return (dx, dy);
         };
@@ -123,6 +114,24 @@ impl Player {
         // Face direction
         self.dir.1 = dy as i8;
         self.dir.0 = dx as i8;
+
+        (dx, dy)
+    }
+    pub fn walk(
+        &mut self,
+        mut dx: i16,
+        mut dy: i16,
+        noclip: bool,
+        current_map: &MapSet,
+        map_flags: &[u8],
+    ) -> (i16, i16) {
+        use crate::map::layer_collides;
+
+        if dx == 0 && dy == 0 {
+            return (dx, dy);
+        };
+        
+        (dx, dy) = self.apply_walk_direction(dx, dy);
 
         if noclip {
             return (dx, dy);
@@ -162,7 +171,7 @@ impl Player {
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
-                flags,
+                map_flags,
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
                 [points_dy, points_dy_left, points_dy_right],
@@ -171,7 +180,7 @@ impl Player {
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
-                flags,
+                map_flags,
             );
             if let Some(point_diag) = point_diag {
                 if layer_collides(
@@ -179,7 +188,7 @@ impl Player {
                     layer_hitbox,
                     layer.origin.x().into(),
                     layer.origin.y().into(),
-                    &flags,
+                    &map_flags,
                     layer.shift_sprite_flags(),
                 ) {
                     diagonal_collision = true;
@@ -207,7 +216,12 @@ impl Player {
 
         (dx, dy)
     }
-    pub fn apply_motion<const N: usize>(&mut self, dx: i16, dy: i16, trail: &mut CompanionTrail<N>) {
+    pub fn apply_motion<const N: usize>(
+        &mut self,
+        dx: i16,
+        dy: i16,
+        trail: &mut CompanionTrail<N>,
+    ) {
         // Apply motion
         if dx == 0 && dy == 0 {
             trail.stop();
@@ -246,7 +260,14 @@ fn test_many_points(
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides(*point, layer_hitbox, layer_x, layer_y, map_flags, spr_flag_offset) {
+                if layer_collides(
+                    *point,
+                    layer_hitbox,
+                    layer_x,
+                    layer_y,
+                    map_flags,
+                    spr_flag_offset,
+                ) {
                     side_flags[i] = true;
                 }
             });
@@ -352,6 +373,7 @@ impl Companion {
     }
 }
 
+#[derive(Clone)]
 pub struct CompanionTrail<const N: usize> {
     positions: [Vec2; N],
     directions: [(i8, i8); N],
@@ -411,6 +433,7 @@ impl<const N: usize> CompanionTrail<N> {
     }
 }
 
+#[derive(Clone)]
 pub struct CompanionList {
     pub companions: [Option<Companion>; 2],
 }
@@ -451,7 +474,10 @@ impl CompanionList {
             .filter(|companion| companion.is_some())
             .count()
     }
-    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<Interactable<'static>> {
+    pub fn interact<const N: usize>(
+        &self,
+        positions: &CompanionTrail<N>,
+    ) -> Vec<Interactable<'static>> {
         match self.companions {
             [Some(x), Some(y)] => vec![
                 x.interact(positions.mid().0, positions.mid().1, positions.latest().0),

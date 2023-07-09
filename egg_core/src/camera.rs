@@ -3,7 +3,7 @@ use crate::position::Vec2;
 const HEIGHT: i16 = 136;
 const WIDTH: i16 = 240;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Camera {
     pub pos: Vec2,
     pub bounds: CameraBounds,

@@ -1,14 +1,10 @@
-use std::sync::RwLock;
-
-use once_cell::sync::Lazy;
-
 use crate::{
     dialogue::{print_width, Dialogue},
     data::{dialogue_data::*,
     sound},
-    tic80_core::print_alloc,
-    tic80_helpers::{print_alloc_centered, print_raw_centered, spr_blit_segment, blit_segment},
 };
+use tic80_api::core::print_alloc;
+use tic80_api::helpers::{print_alloc_centered, spr_blit_segment, blit_segment};
 
 static ITEM_FF: InventoryItem = InventoryItem {
     sprite: 513,
@@ -26,25 +22,23 @@ static ITEM_CHEGG: InventoryItem = InventoryItem {
     desc: ITEM_CHEGG_DESC,
 };
 
-pub static INVENTORY: RwLock<Lazy<InventoryUi>> = RwLock::new(Lazy::new(|| InventoryUi::new()));
-
 #[derive(Debug)]
-pub struct InventoryItem<'a> {
+pub struct InventoryItem {
     pub sprite: i32,
-    pub name: &'a str,
-    pub desc: &'a str,
+    pub name: &'static str,
+    pub desc: &'static str,
 }
-impl<'a> InventoryItem<'a> {
+impl InventoryItem {
     pub const fn new(sprite: i32, name: &'static str, desc: &'static str) -> Self {
         Self { sprite, name, desc }
     }
 }
 
-pub struct Inventory<'a> {
-    pub items: [Option<&'a InventoryItem<'static>>; 8],
+pub struct Inventory {
+    pub items: [Option<&'static InventoryItem>; 8],
     pub unlocks: [bool; 4],
 }
-impl<'a> Inventory<'a> {
+impl Inventory {
     pub fn new() -> Self {
         Self {
             items: [
@@ -63,7 +57,7 @@ impl<'a> Inventory<'a> {
     pub fn swap(&mut self, a: usize, b: usize) {
         self.items.swap(a, b);
     }
-    pub fn take(&mut self, index: usize) -> Option<&'a InventoryItem<'a>> {
+    pub fn take(&mut self, index: usize) -> Option<&'static InventoryItem> {
         if let Some(slot) = self.items.get_mut(index) {
             if slot.is_some() {
                 slot.take()
@@ -76,14 +70,14 @@ impl<'a> Inventory<'a> {
     }
 }
 
-pub enum InventoryUiState<'a> {
+pub enum InventoryUiState {
     PageSelect(i32),
-    Items(usize, Option<(usize, &'a InventoryItem<'static>)>),
+    Items(usize, Option<(usize, &'static InventoryItem)>),
     Eggs(usize),
     Options,
     Close,
 }
-impl<'a> InventoryUiState<'a> {
+impl InventoryUiState {
     pub fn page(&self) -> i32 {
         match self {
             Self::PageSelect(x) => *x,
@@ -148,12 +142,12 @@ impl<'a> InventoryUiState<'a> {
     }
 }
 
-pub struct InventoryUi<'a> {
-    pub inventory: Inventory<'a>,
-    pub state: InventoryUiState<'a>,
+pub struct InventoryUi {
+    pub inventory: Inventory,
+    pub state: InventoryUiState,
     pub dialogue: Dialogue,
 }
-impl<'a> InventoryUi<'a> {
+impl InventoryUi {
     pub fn new() -> Self {
         Self {
             inventory: Inventory::new(),
@@ -204,10 +198,10 @@ impl<'a> InventoryUi<'a> {
     }
     pub fn draw(&self) {
         use crate::dialogue::DIALOGUE_OPTIONS;
-        use crate::tic80_core::{
+        use tic80_api::core::{
             cls, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
         };
-        use crate::tic80_helpers::{rect_outline, spr_outline};
+        use tic80_api::helpers::{rect_outline, spr_outline};
         blit_segment(4);
         let entries = [
             INVENTORY_ITEMS,
@@ -356,7 +350,6 @@ impl<'a> InventoryUi<'a> {
         };
         match &self.state {
             InventoryUiState::Items(current_index, selected) => {
-                use crate::print;
                 let (sx, sy) = (
                     x_offset
                         + side_column
@@ -394,7 +387,7 @@ impl<'a> InventoryUi<'a> {
                         12,
                     );
                     rect_outline(7, 98, 70, 9, 2, 3);
-                    print!(
+                    tic80_api::core::print_alloc(
                         selected_item.name,
                         9,
                         100,
@@ -415,7 +408,7 @@ impl<'a> InventoryUi<'a> {
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
                         rect_outline(7, 98, 70, 9, 2, 3);
-                        print!(
+                        tic80_api::core::print_alloc(
                             item.name,
                             9,
                             100,
@@ -451,7 +444,7 @@ impl<'a> InventoryUi<'a> {
         };
     }
     pub fn step(&mut self) {
-        use crate::tic80_helpers::input_manager::mem_btnp;
+        use tic80_api::helpers::input_manager::mem_btnp;
         let (mut dx, mut dy) = (0, 0);
         if mem_btnp(0) {
             dy -= 1

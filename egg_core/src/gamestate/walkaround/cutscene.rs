@@ -85,7 +85,7 @@ impl CutsceneItem {
         match self {
             CutsceneItem::WalkPlayer(pos) => {
                 let Vec2 { x, y } = walkaround.player.pos.towards(pos);
-                let (dx, dy) = walkaround.player.walk(x, y, true, &walkaround.current_map);
+                let (dx, dy) = walkaround.player.apply_walk_direction(x, y);
 
                 walkaround
                     .player
@@ -99,7 +99,7 @@ impl CutsceneItem {
             }
             CutsceneItem::MovePlayer(pos) => {
                 let Vec2 { x, y } = walkaround.player.pos.towards(pos);
-                let (dx, dy) = walkaround.player.walk(x, y, true, &walkaround.current_map);
+                let (dx, dy) = walkaround.player.apply_walk_direction(x, y);
                 walkaround.player.pos = walkaround.player.pos + Vec2::new(dx, dy);
                 walkaround.player.animate_walk();
                 if self.is_done(walkaround) {

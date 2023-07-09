@@ -24,7 +24,6 @@
 #![allow(dead_code, unused_macros)]
 
 use std::ffi::CString;
-use crate::trace_tic80;
 
 pub use sys::MouseInput;
 
@@ -74,8 +73,10 @@ pub const BLIT_SEGMENT: *mut u8 = 0x3FFC as *mut u8;
 
 // The functions in the sys module follow the signatures as given in wasm.c.
 // The wrapper functions are designed to be similar to the usual TIC-80 api.
+
+#[cfg(feature = "tic80_link")]
 pub mod sys {
-    #[derive(Default, Clone)]
+    #[derive(Default, Clone, Debug)]
     #[repr(C)]
     pub struct MouseInput {
         pub x: i16,
@@ -216,6 +217,148 @@ pub mod sys {
         );
         pub fn vbank(bank: u8) -> u8;
     }
+}
+
+#[cfg(not(feature = "tic80_link"))]
+pub mod sys {
+    #[derive(Default, Clone, Debug)]
+    pub struct MouseInput {
+        pub x: i16,
+        pub y: i16,
+        pub scroll_x: i8,
+        pub scroll_y: i8,
+        pub left: bool,
+        pub middle: bool,
+        pub right: bool,
+    }
+
+    pub fn btn(index: i32) -> i32 {0}
+    pub fn btnp(index: i32, hold: i32, period: i32) -> bool {false}
+    pub fn clip(x: i32, y: i32, width: i32, height: i32) {}
+    pub fn cls(color: u8) {}
+    pub fn circ(x: i32, y: i32, radius: i32, color: u8) {}
+    pub fn circb(x: i32, y: i32, radius: i32, color: u8) {}
+    pub fn elli(x: i32, y: i32, a: i32, b: i32, color: u8) {}
+    pub fn ellib(x: i32, y: i32, a: i32, b: i32, color: u8) {}
+    pub fn exit() {}
+    pub fn fget(sprite_index: i32, flag: i8) -> bool {false}
+    pub fn fset(sprite_index: i32, flag: i8, value: bool) {}
+    pub fn font(
+        text: *const u8,
+        x: i32,
+        y: i32,
+        trans_colors: *const u8,
+        trans_count: i8,
+        char_width: i8,
+        char_height: i8,
+        fixed: bool,
+        scale: i32,
+        alt: bool,
+    ) -> i32 {0}
+    pub fn key(index: i32) -> bool {false}
+    pub fn keyp(index: i32, hold: i32, period: i32) -> bool {false}
+    pub fn line(x0: f32, y0: f32, x1: f32, y1: f32, color: u8) {}
+    // `remap` is not yet implemented by the TIC-80 WASM runtime, so for now its type is a raw i32.
+    pub fn map(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        sx: i32,
+        sy: i32,
+        trans_colors: *const u8,
+        color_count: i8,
+        scale: i8,
+        remap: i32,
+    ) {}
+    // These clash with rustc builtins, so they are reimplemented in the wrappers.
+    // pub fn memcpy(dest: i32, src: i32, length: i32);
+    // pub fn memset(address: i32, value: i32, length: i32);
+
+    #[cfg(not(feature = "reimplement_mget"))]
+    pub fn mget(x: i32, y: i32) -> i32 {0}
+    pub fn mset(x: i32, y: i32, value: i32) {}
+    pub fn mouse(mouse: *mut MouseInput) {}
+    pub fn music(
+        track: i32,
+        frame: i32,
+        row: i32,
+        repeat: bool,
+        sustain: bool,
+        tempo: i32,
+        speed: i32,
+    ) {}
+    pub fn pix(x: i32, y: i32, color: i8) -> u8 {0}
+    pub fn peek(address: i32, bits: u8) -> u8 {0}
+    pub fn peek4(address: i32) -> u8 {0}
+    pub fn peek2(address: i32) -> u8 {0}
+    pub fn peek1(address: i32) -> u8 {0}
+    pub fn pmem(address: i32, value: i64) -> i32 {0}
+    pub fn poke(address: i32, value: u8, bits: u8) {}
+    pub fn poke4(address: i32, value: u8) {}
+    pub fn poke2(address: i32, value: u8) {}
+    pub fn poke1(address: i32, value: u8) {}
+    pub fn print(
+        text: *const u8,
+        x: i32,
+        y: i32,
+        color: i32,
+        fixed: bool,
+        scale: i32,
+        alt: bool,
+    ) -> i32 {0}
+    pub fn rect(x: i32, y: i32, w: i32, h: i32, color: u8) {}
+    pub fn rectb(x: i32, y: i32, w: i32, h: i32, color: u8) {}
+    pub fn sfx(
+        sfx_id: i32,
+        note: i32,
+        octave: i32,
+        duration: i32,
+        channel: i32,
+        volume_left: i32,
+        volume_right: i32,
+        speed: i32,
+    ) {}
+    pub fn spr(
+        id: i32,
+        x: i32,
+        y: i32,
+        trans_colors: *const u8,
+        color_count: i8,
+        scale: i32,
+        flip: i32,
+        rotate: i32,
+        w: i32,
+        h: i32,
+    ) {}
+    pub fn sync(mask: i32, bank: u8, to_cart: bool) {}
+    pub fn time() -> f32 {0.0}
+    pub fn tstamp() -> u32 {0}
+    pub fn trace(text: *const u8, color: u8) {}
+    pub fn tri(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8) {}
+    pub fn trib(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8) {}
+    pub fn ttri(
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        x3: f32,
+        y3: f32,
+        u1: f32,
+        v1: f32,
+        u2: f32,
+        v2: f32,
+        u3: f32,
+        v3: f32,
+        tex_src: i32,
+        trans_colors: *const u8,
+        color_count: i8,
+        z1: f32,
+        z2: f32,
+        z3: f32,
+        depth: bool,
+    ) {}
+    pub fn vbank(bank: u8) -> u8 {0}
 }
 
 // Input
@@ -673,7 +816,7 @@ pub fn print_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) ->
             )
         }
     } else {
-        trace_tic80!("print_alloc failed", 12);
+        crate::trace_tic80!("print_alloc failed", 12);
         0
     }
 }
@@ -689,6 +832,8 @@ macro_rules! print_tic80 {
         $crate::tic80_core::print_alloc($text, $($args), *);
     };
 }
+
+pub use print_tic80;
 
 // Print a string, avoiding allocation if a literal is passed.
 // NOTE: "use tic80::*" causes this to shadow std::print, but that isn't useful here anyway.
@@ -708,9 +853,10 @@ macro_rules! trace_tic80 {
         unsafe { crate::core::sys::trace(concat!($text, "\0").as_ptr(), $color) }
     };
     ($text: expr, $color: expr) => {
-        crate::core::trace_alloc($text, $color);
+        tic80_api::core::trace_alloc($text, $color);
     };
 }
+pub use trace_tic80;
 
 pub struct FontOptions<'a> {
     pub transparent: &'a [u8],

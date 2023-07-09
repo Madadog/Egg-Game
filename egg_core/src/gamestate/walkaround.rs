@@ -1,40 +1,44 @@
 use std::fmt::format;
-use std::sync::atomic::{Ordering, AtomicU8};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::animation::Animation;
 use crate::data::map_data::{
     MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
 };
 use crate::data::{dialogue_data::*, save, sound};
-use crate::gamestate::inventory::INVENTORY;
+use crate::debug::DebugInfo;
 use crate::gamestate::Game;
-use tic80_api::helpers::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, WarpMode};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
+use log::{error, info};
+use tic80_api::helpers::input_manager::{any_btnpr, mem_btn, mem_btnp};
 use tic80_api::{core::*, helpers::*};
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
+
+use super::inventory::InventoryUi;
+use super::{EggInput, EggMemory};
 mod creatures;
 mod cutscene;
 
+#[derive(Clone)]
 pub struct WalkaroundState<'a> {
-    player: Player,
-    companion_trail: CompanionTrail<16>,
-    companion_list: CompanionList,
-    map_animations: Vec<Animation<'a>>,
-    creatures: Vec<Creature>,
-    camera: Camera,
-    current_map: MapSet<'a>,
-    dialogue: Dialogue,
-    particles: ParticleList,
-    cutscene: Option<Cutscene>,
-    bg_colour: AtomicU8,
-    sync_helper: SyncHelper,
+    pub player: Player,
+    pub companion_trail: CompanionTrail<16>,
+    pub companion_list: CompanionList,
+    pub map_animations: Vec<Animation<'a>>,
+    pub creatures: Vec<Creature>,
+    pub camera: Camera,
+    pub current_map: MapSet<'a>,
+    pub dialogue: Dialogue,
+    pub particles: ParticleList,
+    pub cutscene: Option<Cutscene>,
+    pub bg_colour: u8,
 }
 impl<'a> WalkaroundState<'a> {
     pub const fn new() -> Self {
@@ -49,9 +53,10 @@ impl<'a> WalkaroundState<'a> {
             dialogue: Dialogue::const_default(),
             particles: ParticleList::new(),
             cutscene: None,
+            bg_colour: 0,
         }
     }
-    pub fn load_map(&mut self, map_set: MapSet<'a>, bg_colour: AtomicU8, sync_helper: &mut SyncHelper) {
+    pub fn load_map(&mut self, map_set: MapSet<'a>, sync_helper: &mut SyncHelper) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
@@ -60,7 +65,7 @@ impl<'a> WalkaroundState<'a> {
             let map_offset = map1.offset();
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
-        bg_colour.store(map_set.bg_colour, Ordering::SeqCst);
+        self.bg_colour = map_set.bg_colour;
         if let Some(track) = map_set.music_track {
             music(track as i32, MusicOptions::default());
         };
@@ -68,10 +73,7 @@ impl<'a> WalkaroundState<'a> {
             let x = sync_helper.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
             if x.is_err() {
                 let bank = map_set.bank;
-                tic80_api::trace_tic80!(
-                    format!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW"),
-                    12
-                );
+                error!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW",);
             }
         }
 
@@ -101,7 +103,11 @@ impl<'a> WalkaroundState<'a> {
     pub fn cam_state(&mut self) -> &mut crate::camera::CameraBounds {
         &mut self.camera.bounds
     }
-    pub fn execute_interact_fn(&mut self, interact: &InteractFn) -> Option<&'static str> {
+    pub fn execute_interact_fn(
+        &mut self,
+        interact: &InteractFn,
+        memory: &mut EggMemory,
+    ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
                 self.companion_trail.fill(self.player.pos, self.player.dir);
@@ -202,15 +208,41 @@ impl<'a> WalkaroundState<'a> {
         save::PLAYER_Y[1].set(y[1]);
     }
 
-    pub fn load_pmem(&mut self, bg_colour: AtomicU8, sync_helper: &mut SyncHelper) {
-        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map(), bg_colour, sync_helper);
-        self.player.pos.x = i16::from_le_bytes([save::PLAYER_X[0].get(), save::PLAYER_X[1].get()]);
-        self.player.pos.y = i16::from_le_bytes([save::PLAYER_Y[0].get(), save::PLAYER_Y[1].get()]);
+    pub fn load_pmem(&mut self, sync_helper: &mut SyncHelper, memory: &EggMemory) {
+        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map(), sync_helper);
+        self.player.pos.x = i16::from_le_bytes([
+            memory.get_byte(save::PLAYER_X[0]),
+            memory.get_byte(save::PLAYER_X[1]),
+        ]);
+        self.player.pos.y = i16::from_le_bytes([
+            memory.get_byte(save::PLAYER_Y[0]),
+            memory.get_byte(save::PLAYER_Y[1]),
+        ]);
     }
 }
 
-impl<'a> Game for WalkaroundState<'a> {
-    fn step(&mut self) -> Option<GameState> {
+impl<'a>
+    Game<
+        (
+            &mut SyncHelper,
+            &[u8],
+            &mut InventoryUi,
+            &mut EggMemory,
+            &EggInput,
+        ),
+        &DebugInfo,
+    > for WalkaroundState<'a>
+{
+    fn step(
+        &mut self,
+        (sync_helper, map_flags, inventory_ui, memory, input): (
+            &mut SyncHelper,
+            &[u8],
+            &mut InventoryUi,
+            &mut EggMemory,
+            &EggInput,
+        ),
+    ) -> Option<GameState> {
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
@@ -222,51 +254,49 @@ impl<'a> Game for WalkaroundState<'a> {
             return None;
         }
 
-        if keyp(28, -1, -1) {
-            self.load_map(SUPERMARKET, bg_colour, sync_helper);
+        if input.keyp(28, -1, -1) {
+            self.load_map(SUPERMARKET, sync_helper);
         }
-        if keyp(29, -1, -1) {
-            self.load_map(WILDERNESS);
+        if input.keyp(29, -1, -1) {
+            self.load_map(WILDERNESS, sync_helper);
         }
-        if keyp(30, -1, -1) {
-            self.load_map(TEST_PEN);
+        if input.keyp(30, -1, -1) {
+            self.load_map(TEST_PEN, sync_helper);
         }
-        if keyp(31, -1, -1) {
-            self.load_map(BEDROOM);
+        if input.keyp(31, -1, -1) {
+            self.load_map(BEDROOM, sync_helper);
         }
-        if keyp(32, -1, -1) {
-            self.load_pmem();
+        if input.keyp(32, -1, -1) {
+            self.load_pmem(sync_helper, memory);
         }
-        if keyp(33, -1, -1) {
-            set_palette(crate::tic80_helpers::SWEETIE_16);
+        if input.keyp(33, -1, -1) {
+            set_palette(tic80_api::helpers::SWEETIE_16);
         }
-        if keyp(34, -1, -1) {
-            set_palette(crate::tic80_helpers::NIGHT_16);
+        if input.keyp(34, -1, -1) {
+            set_palette(tic80_api::helpers::NIGHT_16);
         }
-        if keyp(35, -1, -1) {
-            set_palette(crate::tic80_helpers::B_W);
+        if input.keyp(35, -1, -1) {
+            set_palette(tic80_api::helpers::B_W);
         }
 
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
         if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
-            if mem_btn(0) {
+            if input.mem_btn(0) {
                 dy -= 1;
             }
-            if mem_btn(1) {
+            if input.mem_btn(1) {
                 dy += 1;
             }
-            if mem_btn(2) {
+            if input.mem_btn(2) {
                 dx -= 1;
             }
-            if mem_btn(3) {
+            if input.mem_btn(3) {
                 dx += 1;
             }
-            if mem_btnp(5) {
-                if let Ok(mut inventory) = INVENTORY.write() {
-                    inventory.open()
-                }
+            if input.mem_btnp(5) {
+                inventory_ui.open();
                 return Some(GameState::Inventory);
             }
         } else {
@@ -274,14 +304,14 @@ impl<'a> Game for WalkaroundState<'a> {
                 sound::INTERACT.play();
             }
             self.dialogue.tick(1);
-            if mem_btn(4) {
+            if input.mem_btn(4) {
                 self.dialogue.tick(2);
             }
-            if mem_btnp(5) {
+            if input.mem_btnp(5) {
                 self.dialogue.skip();
             }
         }
-        if mem_btnp(4) && self.dialogue.is_line_done() {
+        if input.mem_btnp(4) && self.dialogue.is_line_done() {
             interact = true;
             if self.dialogue.next_text(false) {
                 interact = false;
@@ -289,15 +319,15 @@ impl<'a> Game for WalkaroundState<'a> {
                 interact = false;
                 self.dialogue.close();
             }
-            trace!("Attempting interact...", 11);
+            info!("Attempting interact...");
         }
-        if mem_btnp(6) {
+        if input.mem_btnp(6) {
             return Some(GameState::MainMenu(super::menu::MenuState::debug_options()));
         }
-        if any_btnpr() {
+        if input.any_btnpr() {
             self.player.flip_controls = Axis::None
         }
-        let noclip = if key(63) && key(64) {
+        let noclip = if input.key(63) && input.key(64) {
             dy *= 3;
             dx *= 4;
             true
@@ -305,7 +335,9 @@ impl<'a> Game for WalkaroundState<'a> {
             false
         };
 
-        let (dx, dy) = self.player.walk(dx, dy, noclip, &self.current_map);
+        let (dx, dy) = self
+            .player
+            .walk(dx, dy, noclip, &self.current_map, map_flags);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
@@ -335,7 +367,7 @@ impl<'a> Game for WalkaroundState<'a> {
             self.companion_trail.fill(self.player.pos, self.player.dir);
             if let Some(new_map) = target.map {
                 self.save(&new_map);
-                self.load_map(new_map.map());
+                self.load_map(new_map.map(), sync_helper);
             }
         } else if interact {
             for item in self
@@ -356,7 +388,7 @@ impl<'a> Game for WalkaroundState<'a> {
                             self.dialogue.set_enum_text(x);
                         }
                         Interaction::Func(x) => {
-                            if let Some(dialogue) = self.execute_interact_fn(x) {
+                            if let Some(dialogue) = self.execute_interact_fn(x, memory) {
                                 self.dialogue.add_text(dialogue);
                             };
                         }
@@ -371,13 +403,13 @@ impl<'a> Game for WalkaroundState<'a> {
             .center_on(self.player.pos.x + 4, self.player.pos.y + 8);
         None
     }
-    fn draw(&self) {
+    fn draw(&self, debug_info: &DebugInfo) {
         // Draw BG
         palette_map_reset();
-        cls(BG_COLOUR.load(Ordering::SeqCst));
-        self.current_map.draw_bg(self.camera.pos);
+        cls(self.bg_colour);
+        self.current_map.draw_bg(self.camera.pos, false);
 
-        self.particles.draw(-self.cam_x(), -self.cam_y());
+        self.particles.draw_tic80(-self.cam_x(), -self.cam_y());
         blit_segment(4);
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
@@ -421,7 +453,11 @@ impl<'a> Game for WalkaroundState<'a> {
         }
 
         // Sort sprites in order of Y index
-        sprites.sort_by(|a, b| a.bottom().partial_cmp(&b.bottom()).unwrap_or_else(|| std::process::abort()));
+        sprites.sort_by(|a, b| {
+            a.bottom()
+                .partial_cmp(&b.bottom())
+                .unwrap_or_else(|| std::process::abort())
+        });
 
         // Draw sprites
         for options in sprites {
@@ -430,12 +466,12 @@ impl<'a> Game for WalkaroundState<'a> {
 
         // Draw FG
         palette_map_reset();
-        self.current_map.draw_fg(self.camera.pos);
+        self.current_map.draw_fg(self.camera.pos, false);
 
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(string, true);
         }
-        if DEBUG_INFO.map_info() {
+        if debug_info.map_info() {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
@@ -451,7 +487,7 @@ impl<'a> Game for WalkaroundState<'a> {
                     .draw(14);
             }
         }
-        if DEBUG_INFO.player_info() {
+        if debug_info.player_info() {
             print_raw(
                 &format!("Player: {:#?}\0", self.player),
                 0,
@@ -460,7 +496,7 @@ impl<'a> Game for WalkaroundState<'a> {
                     small_text: true,
                     color: 11,
                     ..Default::default()
-                }
+                },
             );
             print_raw(
                 &format!("Camera: {:#?}\0", self.camera),
@@ -470,7 +506,7 @@ impl<'a> Game for WalkaroundState<'a> {
                     small_text: true,
                     color: 11,
                     ..Default::default()
-                }
+                },
             );
         }
     }
