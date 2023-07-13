@@ -1,8 +1,8 @@
+use crate::system::{ConsoleApi, ConsoleHelper};
 use crate::{
     position::Vec2,
 };
-use tic80_api::core::{spr, SpriteOptions};
-use tic80_api::helpers::{draw_outline, palette_map_rotate, spr_outline};
+use tic80_api::core::SpriteOptions;
 
 #[derive(Debug, Clone)]
 pub enum PicContainer {
@@ -10,10 +10,10 @@ pub enum PicContainer {
     PicSingle(&'static PicSingle),
 }
 impl PicContainer {
-    pub fn draw_offset(&self, offset: Vec2) {
+    pub fn draw_offset(&self, system: &mut impl ConsoleApi, offset: Vec2) {
         match self {
-            Self::Pic4x4(x) => x.draw_offset(offset),
-            Self::PicSingle(x) => x.draw_offset(offset),
+            Self::Pic4x4(x) => x.draw_offset(system, offset),
+            Self::PicSingle(x) => x.draw_offset(system, offset),
         }
     }
 }
@@ -24,25 +24,25 @@ pub struct Pic4x4 {
     offset: (i8, i8),
 }
 impl Pic4x4 {
-    pub fn draw_offset(&self, offset: Vec2) {
+    pub fn draw_offset(&self, system: &mut impl ConsoleApi, offset: Vec2) {
         for (i, id) in self.spr_ids.iter().enumerate() {
             let i = i as i32;
             let (x, y): (i32, i32) = (
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
             );
-            draw_outline((*id).into(), x, y, SpriteOptions::transparent_zero(), 1);
+            system.draw_outline((*id).into(), x, y, SpriteOptions::transparent_zero(), 1);
         }
-        palette_map_rotate(1);
+        system.palette_map_rotate(1);
         for (i, id) in self.spr_ids.iter().enumerate() {
             let i = i as i32;
             let (x, y): (i32, i32) = (
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
             );
-            spr((*id).into(), x, y, SpriteOptions::transparent_zero());
+            system.spr((*id).into(), x, y, SpriteOptions::transparent_zero());
         }
-        palette_map_rotate(0);
+        system.palette_map_rotate(0);
     }
     pub const fn to(&'static self) -> PicContainer {
         PicContainer::Pic4x4(self)
@@ -55,13 +55,13 @@ pub struct PicSingle {
     offset: (i8, i8),
 }
 impl PicSingle {
-    pub fn draw_offset(&self, offset: Vec2) {
+    pub fn draw_offset(&self, system: &mut impl ConsoleApi, offset: Vec2) {
         let (x, y): (i32, i32) = (
             i32::from(self.offset.0) + i32::from(offset.x),
             i32::from(self.offset.1) + i32::from(offset.y),
         );
-        palette_map_rotate(1);
-        spr_outline(
+        system.palette_map_rotate(1);
+        system.spr_outline(
             self.spr_id.into(),
             x,
             y,
@@ -72,7 +72,7 @@ impl PicSingle {
             },
             1,
         );
-        palette_map_rotate(0);
+        system.palette_map_rotate(0);
     }
     pub const fn to(&'static self) -> PicContainer {
         PicContainer::PicSingle(self)

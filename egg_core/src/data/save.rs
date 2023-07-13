@@ -3,6 +3,7 @@ use tic80_api::{
     helpers::{get_pmem, set_pmem},
 };
 
+#[deprecated]
 /// Do not call this while reading or writing to persistent ram.
 pub fn zero_pmem() {
     unsafe { 
@@ -23,10 +24,12 @@ impl PmemU8 {
     pub fn index(&self) -> usize {
         self.0
     }
+    #[deprecated]
     /// Get whole inner value as u8
     pub fn get(&self) -> u8 {
         get_pmem(self.0)
     }
+    #[deprecated]
     /// Set whole inner value with u8
     pub fn set(&self, value: u8) {
         set_pmem(self.0, value)
@@ -45,26 +48,31 @@ impl PmemBit {
         assert!(bit.is_power_of_two());
         Self { index, bit }
     }
+    #[deprecated]
     /// Returns the whole byte associated with this bit.
     ///
     /// To set it, use `set_pmem` directly.
     pub fn get_byte(&self) -> u8 {
         get_pmem(self.index)
     }
+    #[deprecated]
     /// Get inner value
     pub fn is_true(&self) -> bool {
         (self.get_byte() & self.bit) == self.bit
     }
+    #[deprecated]
     /// Set inner value to true
     pub fn set_true(&self) {
         let value = self.get_byte() | self.bit;
         set_pmem(self.index, value);
     }
+    #[deprecated]
     /// Set inner value to false
     pub fn set_false(&self) {
         let value = self.get_byte() & (self.bit ^ 255);
         set_pmem(self.index, value);
     }
+    #[deprecated]
     pub fn toggle(&self) {
         let value = self.get_byte() ^ self.bit;
         set_pmem(self.index, value);

@@ -1,6 +1,3 @@
-use std::fmt::format;
-use std::sync::atomic::{AtomicU8, Ordering};
-
 use crate::animation::Animation;
 use crate::data::map_data::{
     MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
@@ -13,16 +10,17 @@ use crate::map::{Axis, WarpMode};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use log::{error, info};
-use tic80_api::helpers::input_manager::{any_btnpr, mem_btn, mem_btnp};
-use tic80_api::{core::*, helpers::*};
+use tic80_api::core::{MusicOptions, PrintOptions};
+use tic80_api::helpers::SyncHelper;
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
 use super::inventory::InventoryUi;
-use super::{EggInput, EggMemory};
+// use super::{EggInput};
 mod creatures;
 mod cutscene;
 
@@ -56,7 +54,7 @@ impl<'a> WalkaroundState<'a> {
             bg_colour: 0,
         }
     }
-    pub fn load_map(&mut self, map_set: MapSet<'a>, sync_helper: &mut SyncHelper) {
+    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: MapSet<'a>) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
@@ -67,10 +65,10 @@ impl<'a> WalkaroundState<'a> {
         }
         self.bg_colour = map_set.bg_colour;
         if let Some(track) = map_set.music_track {
-            music(track as i32, MusicOptions::default());
+            system.music(track as i32, MusicOptions::default());
         };
-        if map_set.bank != sync_helper.last_bank() {
-            let x = sync_helper.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
+        if map_set.bank != system.sync_helper().last_bank() {
+            let x = system.sync_helper().sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
             if x.is_err() {
                 let bank = map_set.bank;
                 error!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW",);
@@ -106,34 +104,34 @@ impl<'a> WalkaroundState<'a> {
     pub fn execute_interact_fn(
         &mut self,
         interact: &InteractFn,
-        memory: &mut EggMemory,
+        system: &mut impl ConsoleApi,
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
                 self.companion_trail.fill(self.player.pos, self.player.dir);
                 if self.companion_list.has(Companion::Dog) {
                     self.companion_list.remove(Companion::Dog);
-                    sound::ALERT_DOWN.play();
+                    system.play_sound(sound::ALERT_DOWN);
                     Some(DOG_RELINQUISHED)
                 } else {
                     self.companion_list.add(Companion::Dog);
-                    sound::EQUIP_OBTAINED.play();
+                    system.play_sound(sound::EQUIP_OBTAINED);
                     Some(DOG_OBTAINED)
                 }
             }
             InteractFn::StairwellWindow => {
-                save::HOUSE_STAIRWELL_WINDOW_INTERACTED.set_true();
+                system.memory().set(save::HOUSE_STAIRWELL_WINDOW_INTERACTED);
                 Some(HOUSE_STAIRWELL_WINDOW)
             }
             InteractFn::StairwellPainting => {
-                if save::HOUSE_STAIRWELL_WINDOW_INTERACTED.is_true() {
+                if system.memory().is(save::HOUSE_STAIRWELL_WINDOW_INTERACTED) {
                     Some(HOUSE_STAIRWELL_PAINTING_AFTER)
                 } else {
                     Some(HOUSE_STAIRWELL_PAINTING_INIT)
                 }
             }
             InteractFn::Note(note) => {
-                sound::PIANO.with_note(*note).play();
+                system.play_sound(sound::PIANO.with_note(*note));
                 None
             }
             InteractFn::Piano(origin) => {
@@ -159,7 +157,7 @@ impl<'a> WalkaroundState<'a> {
                     )
                     .with_velocity(Vec2::new(0, -1)),
                 );
-                sound::PIANO.with_note(note as i32).play();
+                system.play_sound(sound::PIANO.with_note(note as i32));
                 None
             }
             InteractFn::AddCreatures(x) => {
@@ -176,7 +174,7 @@ impl<'a> WalkaroundState<'a> {
         }
     }
 
-    fn play_cutscene(&mut self) -> bool {
+    fn play_cutscene(&mut self, system: &mut impl ConsoleApi) -> bool {
         if self.cutscene.is_some() {
             let mut intermediate = self
                 .cutscene
@@ -184,7 +182,7 @@ impl<'a> WalkaroundState<'a> {
                 .unwrap_or_else(|| std::process::abort());
             match intermediate.next_stage(&self) {
                 cutscene::CutsceneState::Playing => {
-                    intermediate.advance(self);
+                    intermediate.advance(system, self);
                     self.cutscene = Some(intermediate);
                     true
                 }
@@ -198,49 +196,47 @@ impl<'a> WalkaroundState<'a> {
         }
     }
 
-    fn save(&self, new_map: &MapIndex) {
-        save::CURRENT_MAP.set(new_map.0 as u8);
+    fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
+        system.memory().set_byte(save::CURRENT_MAP, new_map.0 as u8);
         let x = self.player.pos.x.to_le_bytes();
-        save::PLAYER_X[0].set(x[0]);
-        save::PLAYER_X[1].set(x[1]);
+        system.memory().set_byte(save::PLAYER_X[0], x[0]);
+        system.memory().set_byte(save::PLAYER_X[1], x[1]);
         let y = self.player.pos.y.to_le_bytes();
-        save::PLAYER_Y[0].set(y[0]);
-        save::PLAYER_Y[1].set(y[1]);
+        system.memory().set_byte(save::PLAYER_Y[0], y[0]);
+        system.memory().set_byte(save::PLAYER_Y[1], y[1]);
     }
 
-    pub fn load_pmem(&mut self, sync_helper: &mut SyncHelper, memory: &EggMemory) {
-        self.load_map(MapIndex(save::CURRENT_MAP.get().into()).map(), sync_helper);
+    pub fn load_pmem(&mut self, system: &mut impl ConsoleApi) {
+        let current_map = system.memory().get_byte(save::CURRENT_MAP);
+        self.load_map(system, MapIndex(current_map.into()).map());
         self.player.pos.x = i16::from_le_bytes([
-            memory.get_byte(save::PLAYER_X[0]),
-            memory.get_byte(save::PLAYER_X[1]),
+            system.memory().get_byte(save::PLAYER_X[0]),
+            system.memory().get_byte(save::PLAYER_X[1]),
         ]);
         self.player.pos.y = i16::from_le_bytes([
-            memory.get_byte(save::PLAYER_Y[0]),
-            memory.get_byte(save::PLAYER_Y[1]),
+            system.memory().get_byte(save::PLAYER_Y[0]),
+            system.memory().get_byte(save::PLAYER_Y[1]),
         ]);
     }
 }
 
-impl<'a>
+impl<'a, T: ConsoleApi>
     Game<
         (
-            &mut SyncHelper,
-            &[u8],
+            &mut T,
             &mut InventoryUi,
-            &mut EggMemory,
-            &EggInput,
         ),
-        &DebugInfo,
+        (
+            &mut T,
+            &DebugInfo,
+        ),
     > for WalkaroundState<'a>
 {
     fn step(
         &mut self,
-        (sync_helper, map_flags, inventory_ui, memory, input): (
-            &mut SyncHelper,
-            &[u8],
+        (system, inventory_ui): (
+            &mut T,
             &mut InventoryUi,
-            &mut EggMemory,
-            &EggInput,
         ),
     ) -> Option<GameState> {
         self.map_animations
@@ -250,70 +246,70 @@ impl<'a>
         self.particles.step();
         self.creatures.iter_mut().for_each(|x| x.step());
 
-        if self.play_cutscene() {
+        if self.play_cutscene(system) {
             return None;
         }
 
-        if input.keyp(28, -1, -1) {
-            self.load_map(SUPERMARKET, sync_helper);
+        if system.keyp(28, -1, -1) {
+            self.load_map(system, SUPERMARKET);
         }
-        if input.keyp(29, -1, -1) {
-            self.load_map(WILDERNESS, sync_helper);
+        if system.keyp(29, -1, -1) {
+            self.load_map(system, WILDERNESS);
         }
-        if input.keyp(30, -1, -1) {
-            self.load_map(TEST_PEN, sync_helper);
+        if system.keyp(30, -1, -1) {
+            self.load_map(system, TEST_PEN);
         }
-        if input.keyp(31, -1, -1) {
-            self.load_map(BEDROOM, sync_helper);
+        if system.keyp(31, -1, -1) {
+            self.load_map(system, BEDROOM);
         }
-        if input.keyp(32, -1, -1) {
-            self.load_pmem(sync_helper, memory);
+        if system.keyp(32, -1, -1) {
+            self.load_pmem(system);
         }
-        if input.keyp(33, -1, -1) {
-            set_palette(tic80_api::helpers::SWEETIE_16);
+        if system.keyp(33, -1, -1) {
+            system.set_palette(tic80_api::helpers::SWEETIE_16);
         }
-        if input.keyp(34, -1, -1) {
-            set_palette(tic80_api::helpers::NIGHT_16);
+        if system.keyp(34, -1, -1) {
+            system.set_palette(tic80_api::helpers::NIGHT_16);
         }
-        if input.keyp(35, -1, -1) {
-            set_palette(tic80_api::helpers::B_W);
+        if system.keyp(35, -1, -1) {
+            system.set_palette(tic80_api::helpers::B_W);
         }
 
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
         if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
-            if input.mem_btn(0) {
+            if system.mem_btn(0) {
                 dy -= 1;
             }
-            if input.mem_btn(1) {
+            if system.mem_btn(1) {
                 dy += 1;
             }
-            if input.mem_btn(2) {
+            if system.mem_btn(2) {
                 dx -= 1;
             }
-            if input.mem_btn(3) {
+            if system.mem_btn(3) {
                 dx += 1;
             }
-            if input.mem_btnp(5) {
-                inventory_ui.open();
+            if system.mem_btnp(5) {
+                inventory_ui.open(system);
                 return Some(GameState::Inventory);
             }
         } else {
             if self.dialogue.characters == 0 {
-                sound::INTERACT.play();
+                system.play_sound(sound::INTERACT);
             }
-            self.dialogue.tick(1);
-            if input.mem_btn(4) {
-                self.dialogue.tick(2);
+            self.dialogue.tick(system, 1);
+            if system.mem_btn(4) {
+                self.dialogue.tick(system, 2);
             }
-            if input.mem_btnp(5) {
-                self.dialogue.skip();
+            if system.mem_btnp(5) {
+                self.dialogue.skip(system);
             }
         }
-        if input.mem_btnp(4) && self.dialogue.is_line_done() {
+        if system.mem_btnp(4) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text(false) {
+            if self.dialogue.next_text(system, false) {
                 interact = false;
             } else if matches!(self.dialogue.current_text, Some(_)) {
                 interact = false;
@@ -321,13 +317,13 @@ impl<'a>
             }
             info!("Attempting interact...");
         }
-        if input.mem_btnp(6) {
+        if system.mem_btnp(6) {
             return Some(GameState::MainMenu(super::menu::MenuState::debug_options()));
         }
-        if input.any_btnpr() {
+        if system.any_btnpr() {
             self.player.flip_controls = Axis::None
         }
-        let noclip = if input.key(63) && input.key(64) {
+        let noclip = if system.key(63) && system.key(64) {
             dy *= 3;
             dx *= 4;
             true
@@ -337,7 +333,7 @@ impl<'a>
 
         let (dx, dy) = self
             .player
-            .walk(dx, dy, noclip, &self.current_map, map_flags);
+            .walk(dx, dy, noclip, &self.current_map, system.get_sprite_flags());
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
@@ -353,7 +349,7 @@ impl<'a>
             {
                 match warp.mode {
                     WarpMode::Interact => {
-                        sound::DOOR.play();
+                        system.play_sound(sound::DOOR);
                     }
                     _ => {}
                 };
@@ -366,8 +362,8 @@ impl<'a>
             self.player.flip_controls = target.flip;
             self.companion_trail.fill(self.player.pos, self.player.dir);
             if let Some(new_map) = target.map {
-                self.save(&new_map);
-                self.load_map(new_map.map(), sync_helper);
+                self.save(&new_map, system);
+                self.load_map(system, new_map.map());
             }
         } else if interact {
             for item in self
@@ -379,17 +375,17 @@ impl<'a>
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
                         Interaction::Text(x) => {
-                            self.dialogue.add_text(x);
+                            self.dialogue.add_text(system, x);
                         }
                         Interaction::Dialogue(x) => {
-                            self.dialogue.set_dialogue(x);
+                            self.dialogue.set_dialogue(system, x);
                         }
                         Interaction::EnumText(x) => {
-                            self.dialogue.set_enum_text(x);
+                            self.dialogue.set_enum_text(system, x);
                         }
                         Interaction::Func(x) => {
-                            if let Some(dialogue) = self.execute_interact_fn(x, memory) {
-                                self.dialogue.add_text(dialogue);
+                            if let Some(dialogue) = self.execute_interact_fn(x, system) {
+                                self.dialogue.add_text(system, dialogue);
                             };
                         }
                         x => {}
@@ -403,14 +399,14 @@ impl<'a>
             .center_on(self.player.pos.x + 4, self.player.pos.y + 8);
         None
     }
-    fn draw(&self, debug_info: &DebugInfo) {
+    fn draw(&self, (system, debug_info): (&mut T, &DebugInfo)) {
         // Draw BG
-        palette_map_reset();
-        cls(self.bg_colour);
-        self.current_map.draw_bg(self.camera.pos, false);
+        system.palette_map_reset();
+        system.cls(self.bg_colour);
+        self.current_map.draw_bg(system, self.camera.pos, false);
 
-        self.particles.draw_tic80(-self.cam_x(), -self.cam_y());
-        blit_segment(4);
+        self.particles.draw_tic80(system, -self.cam_x(), -self.cam_y());
+        system.blit_segment(4);
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
@@ -461,15 +457,15 @@ impl<'a>
 
         // Draw sprites
         for options in sprites {
-            options.draw();
+            options.draw(system);
         }
 
         // Draw FG
-        palette_map_reset();
-        self.current_map.draw_fg(self.camera.pos, false);
+        system.palette_map_reset();
+        self.current_map.draw_fg(system, self.camera.pos, false);
 
         if let Some(string) = &self.dialogue.current_text {
-            self.dialogue.draw_dialogue_box(string, true);
+            self.dialogue.draw_dialogue_box(system, string, true);
         }
         if debug_info.map_info() {
             for warp in self.current_map.warps.iter() {
@@ -488,7 +484,7 @@ impl<'a>
             }
         }
         if debug_info.player_info() {
-            print_raw(
+            system.print_raw(
                 &format!("Player: {:#?}\0", self.player),
                 0,
                 0,
@@ -498,7 +494,7 @@ impl<'a>
                     ..Default::default()
                 },
             );
-            print_raw(
+            system.print_raw(
                 &format!("Camera: {:#?}\0", self.camera),
                 74,
                 0,

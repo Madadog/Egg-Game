@@ -1,10 +1,8 @@
 use crate::{
+    data::{dialogue_data::*, sound},
     dialogue::{print_width, Dialogue},
-    data::{dialogue_data::*,
-    sound},
+    system::{ConsoleApi, ConsoleHelper},
 };
-use tic80_api::core::print_alloc;
-use tic80_api::helpers::{print_alloc_centered, spr_blit_segment, blit_segment};
 
 static ITEM_FF: InventoryItem = InventoryItem {
     sprite: 513,
@@ -88,8 +86,8 @@ impl InventoryUiState {
             _ => 2,
         }
     }
-    pub fn change(&mut self) {
-        sound::CLICK.play();
+    pub fn change(&mut self, system: &mut impl ConsoleApi) {
+        system.play_sound(sound::CLICK);
         match self {
             Self::PageSelect(0) => *self = Self::Items(0, None),
             Self::PageSelect(1) => *self = Self::Eggs(0),
@@ -98,30 +96,30 @@ impl InventoryUiState {
             _ => *self = Self::PageSelect(self.page()),
         };
     }
-    pub fn back(&mut self) {
+    pub fn back(&mut self, system: &mut impl ConsoleApi) {
         match self {
             Self::PageSelect(_) => {
-                sound::INTERACT.with_note(-17).play();
+                system.play_sound(sound::INTERACT.with_note(-17));
                 *self = Self::Close
             }
             Self::Close => (),
-            _ => self.change(),
+            _ => self.change(system),
         }
     }
-    pub fn arrows(&mut self, dx: i32, dy: i32) {
+    pub fn arrows(&mut self, system: &mut impl ConsoleApi, dx: i32, dy: i32) {
         match self {
             Self::PageSelect(i) => {
                 if dx != 0 || dy != 0 {
-                    sound::CLICK.play()
+                    system.play_sound(sound::CLICK);
                 };
                 *i = (*i + dy % 3).clamp(0, 3);
                 if dx == 1 {
-                    self.change()
+                    self.change(system)
                 };
             }
             Self::Items(i, _) => {
                 if (*i == 0 || *i == 4) && dx == -1 {
-                    self.back();
+                    self.back(system);
                     return;
                 };
                 let dx = if *i == 3 { dx.min(0) } else { dx };
@@ -132,7 +130,7 @@ impl InventoryUiState {
             }
             Self::Eggs(i) => {
                 if *i == 0 && dx == -1 {
-                    self.back();
+                    self.back(system);
                     return;
                 };
                 *i = (*i as i32 + dx).clamp(0, 3) as usize;
@@ -155,18 +153,18 @@ impl InventoryUi {
             dialogue: Dialogue::const_default(),
         }
     }
-    pub fn open(&mut self) {
-        sound::INTERACT.with_note(-12).play();
+    pub fn open(&mut self, system: &mut impl ConsoleApi) {
+        system.play_sound(sound::INTERACT.with_note(-12));
         self.state = InventoryUiState::PageSelect(0);
     }
-    pub fn click(&mut self) {
+    pub fn click(&mut self, system: &mut impl ConsoleApi) {
         match &mut self.state {
-            InventoryUiState::PageSelect(_) => self.state.change(),
+            InventoryUiState::PageSelect(_) => self.state.change(system),
             InventoryUiState::Items(new_index, selected_item) => {
                 if let Some((old_index, id)) = selected_item {
                     // Put item back down
                     if old_index == new_index {
-                        sound::INTERACT.with_note(-5).play();
+                        system.play_sound(sound::INTERACT.with_note(-5));
                         *selected_item = None;
                         return;
                     };
@@ -174,19 +172,19 @@ impl InventoryUi {
                     // Swap items, pick up swapped item if present.
                     self.inventory.swap(*new_index, *old_index);
                     if let Some(Some(x)) = self.inventory.items.get(*old_index) {
-                        sound::INTERACT.with_note(0).play();
+                        system.play_sound(sound::INTERACT.with_note(0));
                         *id = *x;
                     } else {
-                        sound::INTERACT.with_note(-5).play();
+                        system.play_sound(sound::INTERACT.with_note(-5));
                         *selected_item = None;
                     };
                 } else {
                     // Pick up item
                     if let Some(Some(x)) = self.inventory.items.get(*new_index) {
-                        sound::INTERACT.play();
+                        system.play_sound(sound::INTERACT);
                         *selected_item = Some((*new_index, *x));
                     } else {
-                        sound::DENY.play();
+                        system.play_sound(sound::DENY);
                     };
                 }
             }
@@ -196,27 +194,24 @@ impl InventoryUi {
             _ => (),
         }
     }
-    pub fn draw(&self) {
+    pub fn draw(&self, system: &mut impl ConsoleApi) {
         use crate::dialogue::DIALOGUE_OPTIONS;
-        use tic80_api::core::{
-            cls, rect, rectb, spr, PrintOptions, SpriteOptions, HEIGHT, WIDTH,
-        };
-        use tic80_api::helpers::{rect_outline, spr_outline};
-        blit_segment(4);
+        use tic80_api::core::{PrintOptions, SpriteOptions, HEIGHT, WIDTH};
+        system.blit_segment(4);
         let entries = [
             INVENTORY_ITEMS,
             INVENTORY_SHELL,
             INVENTORY_OPTIONS,
             INVENTORY_BACK,
         ];
+        let small_text = DIALOGUE_OPTIONS.small_text(system);
         // Entries is fixed-length so this can't fail
-        let width = unsafe {
-            entries
-                .iter()
-                .map(|x| print_width(x, false, DIALOGUE_OPTIONS.small_text()))
-                .max()
-                .unwrap_unchecked()
-        };
+        let width = entries
+            .iter()
+            .map(|x| {
+                print_width(system, x, false, small_text)})
+            .max()
+            .unwrap();
         let side_column = width + 3;
         let column_margin = 2;
         let scale = 2;
@@ -234,19 +229,19 @@ impl InventoryUi {
                 main_colour += 2;
             }
         };
-        cls(0);
-        print_alloc_centered(
+        system.cls(0);
+        system.print_alloc_centered(
             crate::data::dialogue_data::INVENTORY_TITLE,
             120,
             37,
             PrintOptions {
                 color: 12,
-                small_text: DIALOGUE_OPTIONS.small_text(),
+                small_text,
                 ..Default::default()
             },
         );
         // draw side selection
-        rect_outline(
+        system.rect_outline(
             x_offset,
             y_offset,
             side_column,
@@ -254,7 +249,7 @@ impl InventoryUi {
             column_colour,
             column_colour + 1,
         );
-        rect(
+        system.rect(
             x_offset + 1,
             y_offset + 8 * self.state.page() + 3,
             side_column - 2,
@@ -262,20 +257,20 @@ impl InventoryUi {
             column_colour + 1,
         );
         for (i, string) in entries.iter().enumerate() {
-            print_alloc(
+            system.print_alloc(
                 string,
                 x_offset + 2,
                 y_offset + i as i32 * 8 + 4,
                 PrintOptions {
                     color: 12,
-                    small_text: DIALOGUE_OPTIONS.small_text(),
+                    small_text,
                     ..Default::default()
                 },
             );
         }
         match self.state.page() {
             0 => {
-                rect_outline(
+                system.rect_outline(
                     x_offset + side_column + column_margin,
                     y_offset,
                     main_width,
@@ -288,7 +283,7 @@ impl InventoryUi {
                         x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
                         y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    rect_outline(
+                    system.rect_outline(
                         sx,
                         sy,
                         item_slot_size - 1,
@@ -297,7 +292,7 @@ impl InventoryUi {
                         main_colour + 1,
                     );
                     if let Some(item) = item {
-                        spr(
+                        system.spr(
                             item.sprite,
                             sx + 2,
                             sy + 2,
@@ -311,7 +306,7 @@ impl InventoryUi {
                 }
             }
             1 => {
-                rect_outline(
+                system.rect_outline(
                     x_offset + side_column + column_margin,
                     y_offset,
                     main_width,
@@ -324,7 +319,7 @@ impl InventoryUi {
                         x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
                         y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    rect_outline(
+                    system.rect_outline(
                         sx,
                         sy,
                         item_slot_size - 1,
@@ -332,7 +327,7 @@ impl InventoryUi {
                         0,
                         main_colour + 1,
                     );
-                    spr_blit_segment(
+                    system.spr_blit_segment(
                         1086,
                         sx + 2,
                         sy + 2,
@@ -358,7 +353,7 @@ impl InventoryUi {
                         + (*current_index as i32 % 4) * item_slot_size,
                     y_offset + 3 + (*current_index as i32 / 4) * item_slot_size,
                 );
-                rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
+                system.rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
                 if let Some((selected_index, selected_item)) = selected {
                     let (old_sx, old_sy) = (
                         x_offset
@@ -368,14 +363,14 @@ impl InventoryUi {
                             + (*selected_index as i32 % 4) * item_slot_size,
                         y_offset + 3 + (*selected_index as i32 / 4) * item_slot_size,
                     );
-                    rect(
+                    system.rect(
                         old_sx + 1,
                         old_sy + 1,
                         item_slot_size - 3,
                         item_slot_size - 3,
                         0,
                     );
-                    spr_outline(
+                    system.spr_outline(
                         selected_item.sprite,
                         sx + 2,
                         sy + 2 - 4,
@@ -386,19 +381,21 @@ impl InventoryUi {
                         },
                         12,
                     );
-                    rect_outline(7, 98, 70, 9, 2, 3);
-                    tic80_api::core::print_alloc(
+                    system.rect_outline(7, 98, 70, 9, 2, 3);
+                    system.print_alloc(
                         selected_item.name,
                         9,
                         100,
                         PrintOptions {
-                            small_text: DIALOGUE_OPTIONS.small_text(),
+                            small_text,
                             color: 12,
                             ..Default::default()
-                        }
+                        },
                     );
+                    let string = &self.dialogue.fit_text(system, selected_item.desc);
                     self.dialogue.draw_dialogue_portrait(
-                        &self.dialogue.fit_text(selected_item.desc),
+                        system,
+                        string,
                         false,
                         selected_item.sprite,
                         3,
@@ -407,19 +404,21 @@ impl InventoryUi {
                     );
                 } else {
                     if let Some(item) = &self.inventory.items[*current_index] {
-                        rect_outline(7, 98, 70, 9, 2, 3);
-                        tic80_api::core::print_alloc(
+                        system.rect_outline(7, 98, 70, 9, 2, 3);
+                        system.print_alloc(
                             item.name,
                             9,
                             100,
                             PrintOptions {
-                                small_text: DIALOGUE_OPTIONS.small_text(),
+                                small_text,
                                 color: 12,
                                 ..Default::default()
-                            }
+                            },
                         );
+                        let string = &self.dialogue.fit_text(system, item.desc);
                         self.dialogue.draw_dialogue_portrait(
-                            &self.dialogue.fit_text(item.desc),
+                            system,
+                            string,
                             false,
                             item.sprite,
                             3,
@@ -438,32 +437,31 @@ impl InventoryUi {
                         + (*current_index as i32 % 4) * item_slot_size,
                     y_offset + 3,
                 );
-                rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
+                system.rectb(sx, sy, item_slot_size - 1, item_slot_size - 1, 12);
             }
             _ => {}
         };
     }
-    pub fn step(&mut self) {
-        use tic80_api::helpers::input_manager::mem_btnp;
+    pub fn step(&mut self, system: &mut impl ConsoleApi) {
         let (mut dx, mut dy) = (0, 0);
-        if mem_btnp(0) {
+        if system.mem_btnp(0) {
             dy -= 1
         }
-        if mem_btnp(1) {
+        if system.mem_btnp(1) {
             dy += 1
         }
-        if mem_btnp(2) {
+        if system.mem_btnp(2) {
             dx -= 1
         }
-        if mem_btnp(3) {
+        if system.mem_btnp(3) {
             dx += 1
         }
-        self.state.arrows(dx, dy);
-        if mem_btnp(4) {
-            self.click()
+        self.state.arrows(system, dx, dy);
+        if system.mem_btnp(4) {
+            self.click(system)
         };
-        if mem_btnp(5) {
-            self.state.back()
+        if system.mem_btnp(5) {
+            self.state.back(system)
         };
     }
 }

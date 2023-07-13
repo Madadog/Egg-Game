@@ -1,8 +1,6 @@
 use crate::{
-    position::{Hitbox, Vec2},
+    position::{Hitbox, Vec2}, system::DrawParams,
 };
-use tic80_api::helpers::DrawParams;
-// use tic80_api::core;
 
 #[derive(Clone)]
 pub struct Creature {

@@ -1,8 +1,10 @@
 use bevy::prelude::*;
-use egg_core::gamestate::{EggInput, EggMemory};
+use egg_core::gamestate::EggInput;
 use egg_core::gamestate::inventory::InventoryUi;
 use egg_core::gamestate::{self, walkaround::WalkaroundState, GameState};
+use egg_core::system::DrawParams;
 use egg_core::{debug::DebugInfo, rand::Pcg32, tic80_api::helpers::SyncHelper};
+use fantasy_console::FantasyConsole;
 
 // static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
 // static TIME: AtomicI32 = AtomicI32::new(0);
@@ -12,6 +14,7 @@ use egg_core::{debug::DebugInfo, rand::Pcg32, tic80_api::helpers::SyncHelper};
 // static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
 // static BG_COLOUR: AtomicU8 = AtomicU8::new(0);
 // static SYNC_HELPER: SyncHelper = SyncHelper::new();
+mod fantasy_console;
 
 #[derive(Resource)]
 pub struct EggState {
@@ -25,20 +28,16 @@ pub struct EggState {
     pub bg_colour: u8,
     pub sync_helper: SyncHelper,
     pub input: EggInput,
-    pub memory: EggMemory,
+    pub system: FantasyConsole,
 }
 impl EggState {
     pub fn run(&mut self) {
         self.gamestate.run(
             &mut self.walkaround,
-            &mut self.sync_helper,
             &mut self.debug_info,
-            &[],
             self.time,
             &mut self.inventory_ui,
-            &mut self.rng,
-            &self.input,
-            &mut self.memory,
+            &mut self.system,
         );
     }
 }
@@ -55,7 +54,7 @@ impl Default for EggState {
             bg_colour: 0,
             sync_helper: SyncHelper::new(),
             input: EggInput::new(),
-            memory: EggMemory::new(),
+            system: FantasyConsole::new(),
         }
     }
 }
@@ -164,7 +163,6 @@ fn draw_state(
     mut commands: Commands,
     sprites: Query<Entity, With<ImmediateMode>>,
 ) {
-    use egg_core::tic80_api::helpers::DrawParams;
     // // Draw BG
     // palette_map_reset();
     // cls(self.bg_colour.load(Ordering::SeqCst));

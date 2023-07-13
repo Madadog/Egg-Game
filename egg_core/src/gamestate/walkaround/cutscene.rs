@@ -1,4 +1,4 @@
-use crate::{position::Vec2, data::sound};
+use crate::{data::sound, position::Vec2, system::{ConsoleApi, ConsoleHelper}};
 
 use super::WalkaroundState;
 
@@ -50,10 +50,10 @@ impl Cutscene {
         }
         CutsceneState::Playing
     }
-    pub fn advance(&mut self, walkaround: &mut WalkaroundState) {
+    pub fn advance(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
         self.stages.get_mut(self.index).and_then(|x| {
             x.iter_mut().for_each(|x| {
-                x.advance(walkaround);
+                x.advance(system, walkaround);
             });
             Some(())
         });
@@ -81,7 +81,7 @@ impl CutsceneItem {
             CutsceneItem::PetDog(x) => *x > 90,
         }
     }
-    pub fn advance(&mut self, walkaround: &mut WalkaroundState) {
+    pub fn advance(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
         match self {
             CutsceneItem::WalkPlayer(pos) => {
                 let Vec2 { x, y } = walkaround.player.pos.towards(pos);
@@ -109,7 +109,7 @@ impl CutsceneItem {
             CutsceneItem::PetDog(x) => {
                 walkaround.player.pet_timer = Some(*x);
                 if *x % 20 == 0 {
-                    sound::POP.play();
+                    system.play_sound(sound::POP);
                 }
                 *x += 1;
                 if self.is_done(walkaround) {

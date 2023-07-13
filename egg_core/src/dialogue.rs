@@ -15,18 +15,16 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    fmt::{format, Debug},
-    sync::{RwLock, atomic::{AtomicBool, AtomicUsize, Ordering}},
+    fmt::{Debug},
+    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}},
 };
 
 use crate::{
-    animation::{AnimFrame, Animation},
-    position::Vec2,
+    position::Vec2, system::{ConsoleApi, ConsoleHelper},
 };
 
 use tic80_api::{
-    core::{print_alloc, SpriteOptions, PrintOptions},
-    helpers::{blit_segment, palette_map_reset, palette_map_rotate, spr_outline},
+    core::{SpriteOptions, PrintOptions},
 };
 
 use crate::data::{
@@ -78,29 +76,29 @@ impl DialogueOptions {
     pub fn fixed(&self) -> bool {
         self.fixed.load(Ordering::SeqCst)
     }
-    pub fn small_text(&self) -> bool {
-        save::SMALL_TEXT_ON.is_true()
+    pub fn small_text(&self, system: &mut impl ConsoleApi) -> bool {
+        system.memory().is(save::SMALL_TEXT_ON)
     }
     pub fn box_width(&self) -> usize {
         self.box_width.load(Ordering::SeqCst)
     }
-    pub fn set_options(&self, fixed: bool, small_text: bool) {
+    pub fn set_options(&self, system: &mut impl ConsoleApi, fixed: bool, small_text: bool) {
         self.fixed.store(fixed, Ordering::SeqCst);
         if small_text {
-            save::SMALL_TEXT_ON.set_true()
+            system.memory().set(save::SMALL_TEXT_ON)
         } else {
-            save::SMALL_TEXT_ON.set_false()
+            system.memory().clear(save::SMALL_TEXT_ON)
         }
     }
-    pub fn get_options(&self) -> PrintOptions {
+    pub fn get_options(&self, system: &mut impl ConsoleApi) -> PrintOptions {
         PrintOptions {
             fixed: self.fixed(),
-            small_text: self.small_text(),
+            small_text: self.small_text(system),
             ..Default::default()
         }
     }
-    pub fn toggle_small_text(&self) {
-        save::SMALL_TEXT_ON.toggle();
+    pub fn toggle_small_text(&self, system: &mut impl ConsoleApi) {
+        system.memory().toggle(save::SMALL_TEXT_ON)
     }
     pub fn toggle_fixed(&self) {
         self.fixed.store(self.fixed.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -143,44 +141,44 @@ impl Dialogue {
             None => true,
         }
     }
-    fn set_current_text(&mut self, string: &str) {
-        self.current_text = Some(self.fit_text(string));
+    fn set_current_text(&mut self, system: &mut impl ConsoleApi, string: &str) {
+        self.current_text = Some(self.fit_text(system, string));
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn add_text(&mut self, string: &'static str) -> bool {
+    pub fn add_text(&mut self, system: &mut impl ConsoleApi, string: &'static str) -> bool {
         if self.current_text.is_none() || self.is_line_done() {
-            self.set_current_text(string);
+            self.set_current_text(system, string);
             true
         } else {
             self.next_text.push(TextContent::Text(string));
             false
         }
     }
-    pub fn maybe_add_text(&mut self, string: &'static str) {
+    pub fn maybe_add_text(&mut self, system: &mut impl ConsoleApi, string: &'static str) {
         if self.current_text.is_none() {
-            self.set_current_text(string);
+            self.set_current_text(system, string);
         }
     }
-    pub fn set_dialogue(&mut self, dialogue: &[&'static str]) {
+    pub fn set_dialogue(&mut self, system: &mut impl ConsoleApi, dialogue: &[&'static str]) {
         self.next_text = dialogue
             .iter()
             .rev()
             .map(|x| TextContent::Text(x))
             .collect();
-        self.next_text(false);
+        self.next_text(system, false);
     }
-    pub fn set_enum_text(&mut self, dialogue: &[TextContent]) {
+    pub fn set_enum_text(&mut self, system: &mut impl ConsoleApi, dialogue: &[TextContent]) {
         self.next_text = dialogue.iter().rev().cloned().collect();
-        self.next_text(false);
+        self.next_text(system, false);
     }
-    pub fn next_text(&mut self, manual_skip: bool) -> bool {
+    pub fn next_text(&mut self, system: &mut impl ConsoleApi, manual_skip: bool) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(text_content, manual_skip);
+            let val = self.consume_text_content(system, text_content, manual_skip);
             if skip {
-                self.next_text(manual_skip)
+                self.next_text(system, manual_skip)
             } else {
                 val
             }
@@ -188,9 +186,9 @@ impl Dialogue {
             false
         }
     }
-    pub fn consume_text_content(&mut self, text_content: TextContent, manual_skip: bool) -> bool {
+    pub fn consume_text_content(&mut self, system: &mut impl ConsoleApi, text_content: TextContent, manual_skip: bool) -> bool {
         match text_content {
-            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(text),
+            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(system, text),
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());
@@ -201,17 +199,17 @@ impl Dialogue {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(text);
-                    *string = fit_default_paragraph(string, wrap_width);
+                    *string = fit_default_paragraph(system, string, wrap_width);
                     if !manual_skip {
                         self.add_delay(delay.into());
                     }
                 } else {
-                    self.add_text(text);
+                    self.add_text(system, text);
                 }
                 true
             }
             TextContent::Sound(x) => {
-                x.clone().play();
+                system.play_sound(x.clone());
                 true
             }
             TextContent::Portrait(x) | TextContent::PausePortrait(x) => {
@@ -229,8 +227,8 @@ impl Dialogue {
             }
         }
     }
-    pub fn fit_text(&self, string: &str) -> String {
-        fit_default_paragraph(string, self.wrap_width())
+    pub fn fit_text(&self, system: &mut impl ConsoleApi, string: &str) -> String {
+        fit_default_paragraph(system, string, self.wrap_width())
     }
     pub fn wrap_width(&self) -> usize {
         self.width - 3
@@ -245,7 +243,7 @@ impl Dialogue {
     pub fn text_len(&self) -> usize {
         self.current_text.as_ref().map_or(0, |x| x.len())
     }
-    pub fn tick(&mut self, amount: usize) {
+    pub fn tick(&mut self, system: &mut impl ConsoleApi, amount: usize) {
         if let Some(text) = &mut self.current_text {
             if self.delay != 0 {
                 self.delay = self.delay.saturating_sub(amount);
@@ -263,14 +261,14 @@ impl Dialogue {
             if let Some(print_time) = &mut self.print_time {
                 *print_time += 1;
                 if !silent_char && *print_time % 2 == 0 && !self.is_line_done() {
-                    sound::CLICK.with_volume(2).play();
+                    system.play_sound(sound::CLICK.with_volume(2));
                 }
             }
             self.step_text(amount);
             self.delay += 1;
         }
         if self.is_line_done() && self.can_autoadvance() {
-            self.next_text(false);
+            self.next_text(system, false);
         }
     }
     pub fn step_text(&mut self, amount: usize) {
@@ -286,23 +284,24 @@ impl Dialogue {
     pub fn add_delay(&mut self, amount: usize) {
         self.delay = self.delay.saturating_add(amount);
     }
-    pub fn skip(&mut self) {
+    pub fn skip(&mut self, system: &mut impl ConsoleApi) {
         while self.can_autoadvance() {
-            self.next_text(true);
+            self.next_text(system, true);
         }
         if let Some(text) = &mut self.current_text {
             self.characters = text.len() - 1;
         }
     }
-    pub fn set_options(&mut self, fixed: bool, small_text: bool) {
-        DIALOGUE_OPTIONS.set_options(fixed, small_text);
+    pub fn set_options(&mut self, system: &mut impl ConsoleApi, fixed: bool, small_text: bool) {
+        DIALOGUE_OPTIONS.set_options(system, fixed, small_text);
         let width = self.wrap_width();
         if let Some(text) = &mut self.current_text {
-            *text = fit_default_paragraph(text, width);
+            *text = fit_default_paragraph(system, text, width);
         }
     }
     pub fn draw_dialogue_portrait(
         &self,
+        system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
         portrait: i32,
@@ -315,7 +314,7 @@ impl Dialogue {
 
         let w = self.width as i32;
         let h = 24;
-        self.draw_dialogue_box_with_offset(string, timer, 14, -2, 4);
+        self.draw_dialogue_box_with_offset(system, string, timer, 14, -2, 4);
         rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
 
         spr(
@@ -334,14 +333,14 @@ impl Dialogue {
 
     pub fn draw_dialogue_box_with_offset(
         &self,
+        system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
         mut x: i32,
         mut y: i32,
         mut height: i32,
     ) {
-        use tic80_api::core::{HEIGHT, WIDTH, rectb};
-        use tic80_api::helpers::rect_outline;
+        use tic80_api::core::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;
         let w = self.width as i32;
@@ -359,7 +358,7 @@ impl Dialogue {
                 w
             };
             y -= 2;
-            rect_outline(
+            system.rect_outline(
                 (WIDTH - w) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
@@ -369,14 +368,15 @@ impl Dialogue {
             );
             let frame = &portrait;
             height += 4;
-            blit_segment(4);
-            palette_map_rotate(0);
-            frame.draw_offset(Vec2::new(
+            system.blit_segment(4);
+            system.palette_map_rotate(0);
+            frame.draw_offset(system,
+                Vec2::new(
                 ((WIDTH - w) / 2 - 15) as i16,
                 ((HEIGHT - h) - 8) as i16,
             ));
-            palette_map_reset();
-            rectb(
+            system.palette_map_reset();
+            system.rectb(
                 (WIDTH - w) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
@@ -386,7 +386,7 @@ impl Dialogue {
         }
         // Text box
         if self.dark_theme {
-            rect_outline(
+            system.rect_outline(
                 (WIDTH - w) / 2 + x - 2,
                 (HEIGHT - h) - 4 + y - 2,
                 w + 4,
@@ -395,7 +395,7 @@ impl Dialogue {
                 0,
             );
         }
-        rect_outline(
+        system.rect_outline(
             (WIDTH - w) / 2 + x,
             (HEIGHT - h) - 4 + y,
             w,
@@ -403,7 +403,8 @@ impl Dialogue {
             bg_colour,
             outline_colour,
         );
-        print_alloc(
+        let options = DIALOGUE_OPTIONS.get_options(system);
+        system.print_alloc(
             if timer {
                 &string[..=(print_timer)]
             } else {
@@ -413,12 +414,12 @@ impl Dialogue {
             (HEIGHT - h) - 4 + 3 + y,
             PrintOptions {
                 color: 12,
-                ..DIALOGUE_OPTIONS.get_options()
+                ..options
             },
         );
     }
-    pub fn draw_dialogue_box(&self, string: &str, timer: bool) {
-        self.draw_dialogue_box_with_offset(string, timer, 0, 0, 0)
+    pub fn draw_dialogue_box(&self, system: &mut impl ConsoleApi, string: &str, timer: bool) {
+        self.draw_dialogue_box_with_offset(system, string, timer, 0, 0, 0)
     }
 }
 
@@ -436,8 +437,8 @@ impl Debug for Dialogue {
     }
 }
 
-pub fn print_width(string: &str, fixed: bool, small_font: bool) -> i32 {
-    print_alloc(
+pub fn print_width(system: &mut impl ConsoleApi, string: &str, fixed: bool, small_font: bool) -> i32 {
+    system.print_alloc(
         string,
         250,
         200,
@@ -456,6 +457,7 @@ pub fn take_words(string: &str, count: usize, skip: usize) -> String {
 /// Clamps a string to the specified width (with the TIC-80 font). Returns a string,
 /// the number of fitting words, and a bool for if the whole string fit.
 pub fn fit_string(
+    system: &mut impl ConsoleApi,
     string: &str,
     wrap_width: usize,
     start_word: usize,
@@ -466,7 +468,7 @@ pub fn fit_string(
     let mut line_length = 0;
     for i in 1..=len {
         let taken = &take_words(string, i, start_word);
-        if print_width(taken, fixed, small_font) as usize > wrap_width {
+        if print_width(system, taken, fixed, small_font) as usize > wrap_width {
             break;
         } else {
             line_length = i
@@ -479,12 +481,12 @@ pub fn fit_string(
     )
 }
 
-pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {
+pub fn fit_paragraph(system: &mut impl ConsoleApi, string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {
     let len = string.split_inclusive(' ').count();
     let mut paragraph = String::new();
     let mut skip = 0;
     while skip < len {
-        let (string, x, all_fits) = fit_string(string, wrap_width, skip, fixed, small_font);
+        let (string, x, all_fits) = fit_string(system, string, wrap_width, skip, fixed, small_font);
         skip += x;
         paragraph.push_str(&string);
         if all_fits {
@@ -495,11 +497,13 @@ pub fn fit_paragraph(string: &str, wrap_width: usize, fixed: bool, small_font: b
     paragraph
 }
 
-pub fn fit_default_paragraph(string: &str, wrap_width: usize) -> String {
+pub fn fit_default_paragraph(system: &mut impl ConsoleApi, string: &str, wrap_width: usize) -> String {
+    let small_text = DIALOGUE_OPTIONS.small_text(system);
     fit_paragraph(
+        system,
         string,
         wrap_width,
         DIALOGUE_OPTIONS.fixed(),
-        DIALOGUE_OPTIONS.small_text(),
+        small_text,
     )
 }

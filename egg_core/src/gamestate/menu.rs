@@ -1,17 +1,14 @@
+use tic80_api::core::PrintOptions;
+use tic80_api::core::SpriteOptions;
+
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::dialogue_data::OPTIONS_TITLE;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::position::*;
-use tic80_api::core::*;
-use tic80_api::helpers::input_manager::*;
-use tic80_api::helpers::*;
+use crate::system::{ConsoleApi, ConsoleHelper};
 
-use super::EggInput;
-use super::EggMemory;
-use super::inventory;
-use super::inventory::Inventory;
 use super::inventory::InventoryUi;
 use super::walkaround::WalkaroundState;
 use super::GameState;
@@ -59,22 +56,25 @@ impl MenuState {
     }
     pub fn step_main_menu(
         &mut self,
+        system: &mut impl ConsoleApi,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
-        memory: &mut EggMemory,
-        input: &EggInput,
     ) -> Option<GameState> {
         println!("Stepping menu");
         let old_index = self.index;
-        let (menu_index, clicked) =
-            step_menu(self.entries.len(), self.entry_height(), &mut self.index, input);
+        let (menu_index, clicked) = step_menu(
+            self.entries.len(),
+            self.entry_height(),
+            &mut self.index,
+            system,
+        );
         if old_index != menu_index {
             self.exit_hover(old_index);
-            sound::CLICK.play()
+            system.play_sound(sound::CLICK);
         }
-        let (index, action) = if input.mem_btnp(4) || clicked {
+        let (index, action) = if system.mem_btnp(4) || clicked {
             (Some(menu_index), true)
-        } else if input.mem_btnp(5) && self.back_entry.is_some() {
+        } else if system.mem_btnp(5) && self.back_entry.is_some() {
             (None, true)
         } else {
             (None, false)
@@ -82,8 +82,8 @@ impl MenuState {
         println!("Stepping menu done");
         if action {
             println!("interaction");
-            sound::INTERACT.play();
-            self.click(index, walkaround_state, inventory_ui, memory)
+            system.play_sound(sound::INTERACT);
+            self.click(index, walkaround_state, inventory_ui, system)
         } else {
             println!("returning none");
             None
@@ -101,7 +101,7 @@ impl MenuState {
         index: Option<usize>,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
-        memory: &mut EggMemory
+        system: &mut impl ConsoleApi,
     ) -> Option<GameState> {
         use MenuEntry::*;
         let x = if let Some(index) = index {
@@ -122,12 +122,12 @@ impl MenuState {
             MainMenu | ExitToMenu => {
                 *self = MenuState::new();
             }
-            FontSize => DIALOGUE_OPTIONS.toggle_small_text(),
+            FontSize => DIALOGUE_OPTIONS.toggle_small_text(system),
             Reset(x) => {
                 if *x == 0 {
                     *x += 1;
                 } else {
-                    crate::data::save::zero_pmem();
+                    system.zero_pmem();
                     return Some(GameState::Animation(0));
                 }
             }
@@ -140,24 +140,24 @@ impl MenuState {
                 let mut walk = walkaround_state;
                 match x {
                     0 => {
-                        set_palette(tic80_api::helpers::SWEETIE_16);
+                        system.set_palette(tic80_api::helpers::SWEETIE_16);
                     }
                     1 => {
-                        set_palette(tic80_api::helpers::NIGHT_16);
+                        system.set_palette(tic80_api::helpers::NIGHT_16);
                     }
                     2 => {
-                        set_palette(tic80_api::helpers::B_W);
+                        system.set_palette(tic80_api::helpers::B_W);
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();
                     }
                     4 => {
-                        walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog, memory);
+                        walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog, system);
                     }
                     5 => {
                         walk.execute_interact_fn(
                             &crate::interact::InteractFn::AddCreatures(1),
-                            memory,
+                            system,
                         );
                     }
                     _ => {}
@@ -174,36 +174,37 @@ impl MenuState {
             _ => {}
         }
     }
-    fn hover(&self, index: usize) {
+    fn hover(&self, system: &mut impl ConsoleApi, index: usize) {
         use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
         use MenuEntry::*;
         match self.entries[index] {
             Reset(_) => {
-                rect(60, 10, 120, 11, 2);
-                print_raw_centered(
+                system.rect(60, 10, 120, 11, 2);
+                let options = DIALOGUE_OPTIONS.get_options(system);
+                system.print_raw_centered(
                     OPTIONS_LOSE_DATA,
                     120,
                     13,
                     PrintOptions {
                         color: 12,
-                        ..DIALOGUE_OPTIONS.get_options()
+                        ..options
                     },
                 );
             }
             _ => {}
         }
     }
-    pub fn draw_main_menu(&self, elapsed_frames: i32) {
-        cls(0);
+    pub fn draw_main_menu(&self, system: &mut impl ConsoleApi, elapsed_frames: i32) {
+        system.cls(0);
 
         if let Some(string) = self.draw_title {
-            draw_title(120, 53, string, elapsed_frames);
+            draw_title(system, 120, 53, string, elapsed_frames);
         }
 
         let strings: Vec<&str> = self.entries.iter().map(|x| x.text()).collect();
         let current_option = self.index;
-        draw_menu(&strings, 120, self.entry_height().into(), current_option);
-        self.hover(current_option);
+        draw_menu(system, &strings, 120, self.entry_height().into(), current_option);
+        self.hover(system, current_option);
     }
 }
 
@@ -246,29 +247,35 @@ impl MenuEntry {
     }
 }
 
-pub fn draw_menu(entries: &[&str], x: i32, y: i32, current_option: usize) {
+pub fn draw_menu(system: &mut impl ConsoleApi, entries: &[&str], x: i32, y: i32, current_option: usize) {
     for (i, string) in entries.iter().enumerate() {
         let color = if i == current_option { 4 } else { 3 };
         if i == current_option {
-            rect(0, y + i as i32 * 8 - 1, 240, 8, 1);
+            system.rect(0, y + i as i32 * 8 - 1, 240, 8, 1);
         }
-        print_raw_centered(
+        let options = DIALOGUE_OPTIONS.get_options(system);
+        system.print_raw_centered(
             string,
             x,
             y + i as i32 * 8,
             PrintOptions {
                 color,
-                ..DIALOGUE_OPTIONS.get_options()
+                ..options
             },
         );
     }
 }
 
-pub fn step_menu(entries: usize, y: i16, index: &mut usize, input: &EggInput) -> (usize, bool) {
+pub fn step_menu(
+    entries: usize,
+    y: i16,
+    index: &mut usize,
+    system: &mut impl ConsoleApi,
+) -> (usize, bool) {
     let old_index = *index;
 
-    let mouse_pos = Vec2::new(input.mouse().x, input.mouse().y);
-    let mouse_delta = input.mouse_delta();
+    let mouse_pos = Vec2::new(system.mouse().x, system.mouse().y);
+    let mouse_delta = system.mouse_delta();
     let mut clicked = false;
     for i in 0..entries {
         if Hitbox::new(0, y + 8 * i as i16, 240, 8).touches_point(mouse_pos) {
@@ -278,23 +285,29 @@ pub fn step_menu(entries: usize, y: i16, index: &mut usize, input: &EggInput) ->
             }
         }
     }
-    if input.mem_btnp(0) {
+    if system.mem_btnp(0) {
         match old_index.checked_sub(1) {
             Some(x) => *index = x,
             None => *index = entries - 1,
         }
     }
-    if input.mem_btnp(1) {
+    if system.mem_btnp(1) {
         *index = old_index.saturating_add(1) % entries;
     }
 
     (*index, clicked)
 }
 
-pub fn draw_title(x: i32, y: i32, game_title: &str, elapsed_frames: i32) {
+pub fn draw_title(
+    system: &mut impl ConsoleApi,
+    x: i32,
+    y: i32,
+    game_title: &str,
+    elapsed_frames: i32,
+) {
     use crate::data::dialogue_data::GAME_TITLE_BLURB;
     let game_title = &format!("{game_title}\0");
-    let title_width = print_raw(
+    let title_width = system.print_raw(
         game_title,
         999,
         999,
@@ -303,7 +316,7 @@ pub fn draw_title(x: i32, y: i32, game_title: &str, elapsed_frames: i32) {
             ..Default::default()
         },
     );
-    print_raw_centered(
+    system.print_raw_centered(
         game_title,
         x,
         y + 23,
@@ -313,7 +326,7 @@ pub fn draw_title(x: i32, y: i32, game_title: &str, elapsed_frames: i32) {
             ..Default::default()
         },
     );
-    print_raw(
+    system.print_raw(
         GAME_TITLE_BLURB,
         3,
         3,
@@ -325,10 +338,10 @@ pub fn draw_title(x: i32, y: i32, game_title: &str, elapsed_frames: i32) {
         },
     );
 
-    rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
+    system.rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
 
-    blit_segment(8);
-    spr(
+    system.blit_segment(8);
+    system.spr(
         1086,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
@@ -340,5 +353,5 @@ pub fn draw_title(x: i32, y: i32, game_title: &str, elapsed_frames: i32) {
             ..Default::default()
         },
     );
-    blit_segment(4);
+    system.blit_segment(4);
 }

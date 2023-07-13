@@ -18,11 +18,10 @@ use crate::{
     camera::Camera,
     interact::Interactable,
     map::{Axis, MapSet},
-    position::{Hitbox, Vec2},
+    position::{Hitbox, Vec2}, system::DrawParams,
 };
 use tic80_api::{
     core::{Flip, SpriteOptions},
-    helpers::DrawParams,
 };
 
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@ use crate::{
     interact::Interactable,
     data::map_data::MapIndex,
     packed::{PackedI16, PackedU8},
-    position::{touches_tile, Hitbox, Vec2},
+    position::{touches_tile, Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper},
 };
 use tic80_api::core::{mget, MapOptions};
 
@@ -19,11 +19,11 @@ pub struct MapSet<'a> {
     pub camera_bounds: Option<CameraBounds>,
 }
 impl<'a> MapSet<'a> {
-    pub fn draw_bg(&self, offset: Vec2, debug: bool) {
-        self.maps.iter().for_each(|layer| layer.draw_tic80(offset, debug))
+    pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+        self.maps.iter().for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
-    pub fn draw_fg(&self, offset: Vec2, debug: bool) {
-        self.fg_maps.iter().for_each(|layer| layer.draw_tic80(offset, debug))
+    pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+        self.fg_maps.iter().for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
 }
 
@@ -86,19 +86,16 @@ impl<'a> MapLayer<'a> {
     pub fn shift_sprite_flags(&self) -> bool {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
-    pub fn draw_tic80(&self, offset: Vec2, debug: bool) {
-        use tic80_api::core::{map, rectb};
-        use tic80_api::helpers::{blit_segment, palette_map_rotate};
-
-        palette_map_rotate(self.palette_rotate());
-        blit_segment(self.blit_segment());
+    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+        system.palette_map_rotate(self.palette_rotate());
+        system.blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);
         options.sy -= i32::from(offset.y);
         if debug {
-            rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
+            system.rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
-        map(options);
+        system.map(options);
     }
 }
 impl<'a> From<MapLayer<'a>> for MapOptions<'a> {

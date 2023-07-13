@@ -2,13 +2,14 @@ use tic80_api::core::{sfx, SfxOptions};
 
 #[derive(Debug, Clone)]
 pub struct SfxData {
-    id: i32,
-    options: SfxOptions,
+    pub id: i32,
+    pub options: SfxOptions,
 }
 impl SfxData {
     pub const fn new(id: i32, options: SfxOptions) -> Self {
         Self { id, options }
     }
+    #[deprecated]
     pub fn play(self) {
         //todo: check if channel is occupied and return bool
         sfx(self.id, self.options);

@@ -20,36 +20,42 @@ use crate::core::*;
 
 pub mod input_manager;
 
+#[deprecated]
 pub fn palette_map_swap(from: u8, to: u8) {
     let from: i32 = (from % 16).into();
     assert!(from >= 0);
     unsafe { poke4(PALETTE_MAP as i32 * 2 + from, to % 16) }
 }
 
+#[deprecated]
 pub fn palette_map_set_all(to: u8) {
     for i in 0..=15 {
         unsafe { poke4(PALETTE_MAP as i32 * 2 + i, to % 16) }
     }
 }
 
+#[deprecated]
 pub fn set_palette_map(map: [u8; 16]) {
     for (i, item) in map.into_iter().enumerate() {
         unsafe { poke4(PALETTE_MAP as i32 * 2 + i as i32, item % 16) }
     }
 }
 
+#[deprecated]
 pub fn palette_map_reset() {
     for i in 0..=15 {
         unsafe { poke4(PALETTE_MAP as i32 * 2 + i, i as u8) }
     }
 }
 
+#[deprecated]
 pub fn palette_map_rotate(amount: u8) {
     for i in 0..=15 {
         unsafe { poke4(PALETTE_MAP as i32 * 2 + i, i as u8 + amount) }
     }
 }
 
+#[deprecated]
 pub fn get_palette_map() -> [u8; 16] {
     let mut palette_map = [0; 16];
     for (i, x) in palette_map.iter_mut().enumerate() {
@@ -58,6 +64,7 @@ pub fn get_palette_map() -> [u8; 16] {
     palette_map
 }
 
+#[deprecated]
 pub fn set_palette_colour(index: u8, rgb: [u8; 3]) {
     let index: usize = (index % 16).into();
     for (i, colour) in rgb.into_iter().enumerate() {
@@ -65,12 +72,14 @@ pub fn set_palette_colour(index: u8, rgb: [u8; 3]) {
     }
 }
 
+#[deprecated]
 pub fn set_palette(colours: [[u8; 3]; 16]) {
     for (i, colour) in colours.iter().enumerate() {
         set_palette_colour(i as u8, *colour);
     }
 }
 
+#[deprecated]
 pub fn get_palette() -> [[u8; 3]; 16] {
     let mut palette = [[0; 3]; 16];
     for (from, to) in palette
@@ -84,6 +93,7 @@ pub fn get_palette() -> [[u8; 3]; 16] {
 }
 
 /// Lerps between 2 colour palettes. `amount` is an interpolation amount, ranging from `0..=256`.
+#[deprecated]
 pub fn fade_palette(from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
     let amount = amount.min(256);
     for (index, (colour1, colour2)) in from.iter().zip(to.iter()).enumerate() {
@@ -95,6 +105,7 @@ pub fn fade_palette(from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
         set_palette_colour(index as u8, rgb);
     }
 }
+#[deprecated]
 pub fn fade_palette_colour(index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
     let amount = amount.min(256);
     let index: usize = (index % 16).into();
@@ -105,10 +116,12 @@ pub fn fade_palette_colour(index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
     set_palette_colour(index as u8, rgb);
 }
 
+#[deprecated]
 pub fn set_border(colour: u8) {
     unsafe { *BORDER_COLOR = colour }
 }
 
+#[deprecated]
 pub fn screen_offset(horizontal: i8, vertical: i8) {
     unsafe {
         (*SCREEN_OFFSET)[0] = horizontal as u8;
@@ -116,6 +129,7 @@ pub fn screen_offset(horizontal: i8, vertical: i8) {
     }
 }
 
+#[deprecated]
 pub fn draw_ovr<T: FnMut()>(mut draw: T) {
     unsafe {
         vbank(1);
@@ -126,11 +140,13 @@ pub fn draw_ovr<T: FnMut()>(mut draw: T) {
     }
 }
 
+#[deprecated]
 pub fn get_pmem(address: usize) -> u8 {
     let address = address.min(1023);
     unsafe { (*PERSISTENT_RAM)[address] }
 }
 
+#[deprecated]
 pub fn set_pmem(address: usize, value: u8) {
     let address = address.min(1023);
     unsafe { (*PERSISTENT_RAM)[address] = value }
@@ -157,12 +173,15 @@ pub fn set_pmem(address: usize, value: u8) {
 /// 1101 1bpp FG Page 1
 /// 1110 1bpp FG Page 2
 /// 1111 1bpp FG Page 3
+#[deprecated]
 pub fn blit_segment(value: u8) {
     unsafe { *BLIT_SEGMENT = value }
 }
+#[deprecated]
 pub fn get_blit_segment() -> u8 {
     unsafe { *BLIT_SEGMENT }
 }
+#[deprecated]
 pub fn spr_blit_segment(id: i32, x: i32, y: i32, opts: SpriteOptions, blit_seg: u8) {
     let old = get_blit_segment();
     blit_segment(blit_seg);
@@ -170,6 +189,7 @@ pub fn spr_blit_segment(id: i32, x: i32, y: i32, opts: SpriteOptions, blit_seg: 
     blit_segment(old);
 }
 
+#[deprecated]
 pub fn draw_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
     let old_map = get_palette_map();
     palette_map_set_all(outline_colour);
@@ -179,25 +199,27 @@ pub fn draw_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outl
     spr(id, x, y - 1, sprite_options);
     set_palette_map(old_map);
 }
-
+#[deprecated]
 pub fn spr_outline(id: i32, x: i32, y: i32, sprite_options: SpriteOptions, outline_colour: u8) {
     draw_outline(id, x, y, sprite_options.clone(), outline_colour);
     spr(id, x, y, sprite_options);
 }
-
+#[deprecated]
 pub fn rect_outline(x: i32, y: i32, w: i32, h: i32, fill: u8, outline: u8) {
     rect(x, y, w, h, fill);
     rectb(x, y, w, h, outline);
 }
-
+#[deprecated]
 pub fn print_raw_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_raw(string, 999, 999, options.clone());
     print_raw(string, x - string_width / 2, y, options);
 }
+#[deprecated]
 pub fn print_alloc_centered(string: &str, x: i32, y: i32, options: PrintOptions) {
     let string_width = print_alloc(string, 999, 999, options.clone());
     print_alloc(string, x - string_width / 2, y, options);
 }
+#[deprecated]
 pub fn print_raw_shadow(string: &str, x: i32, y: i32, options: PrintOptions, shadow_colour: i32) {
     let shadow_options = PrintOptions {
         color: shadow_colour,
@@ -248,48 +270,6 @@ impl SyncHelper {
     }
     pub fn last_bank(&self) -> u8 {
         self.last_bank.load(Ordering::SeqCst)
-    }
-}
-
-#[derive(Clone)]
-pub struct DrawParams<'a> {
-    // (i32, i32, i32, SpriteOptions, Option<u8>, u8)
-    pub index: i32,
-    pub x: i32,
-    pub y: i32,
-    pub options: SpriteOptions<'a>,
-    pub outline: Option<u8>,
-    pub palette_rotate: u8,
-}
-
-impl<'a> DrawParams<'a> {
-    pub fn new(
-        index: i32,
-        x: i32,
-        y: i32,
-        options: SpriteOptions<'a>,
-        outline: Option<u8>,
-        palette_rotate: u8,
-    ) -> Self {
-        Self {
-            index,
-            x,
-            y,
-            options,
-            outline,
-            palette_rotate,
-        }
-    }
-    pub fn draw(self) {
-        palette_map_rotate(self.palette_rotate);
-        if let Some(outline) = self.outline {
-            spr_outline(self.index, self.x, self.y, self.options, outline);
-        } else {
-            spr(self.index, self.x, self.y, self.options);
-        }
-    }
-    pub fn bottom(&self) -> i32 {
-        self.y + self.options.h * 8
     }
 }
 
