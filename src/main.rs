@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use egg_core::gamestate::EggInput;
 use egg_core::gamestate::inventory::InventoryUi;
 use egg_core::gamestate::{self, walkaround::WalkaroundState, GameState};
-use egg_core::system::DrawParams;
-use egg_core::{debug::DebugInfo, rand::Pcg32, tic80_api::helpers::SyncHelper};
+use egg_core::system::{DrawParams, SyncHelper};
+use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 
 // static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());

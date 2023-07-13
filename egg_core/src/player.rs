@@ -18,7 +18,7 @@ use crate::{
     camera::Camera,
     interact::Interactable,
     map::{Axis, MapSet},
-    position::{Hitbox, Vec2}, system::DrawParams,
+    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi},
 };
 use tic80_api::{
     core::{Flip, SpriteOptions},
@@ -118,11 +118,11 @@ impl Player {
     }
     pub fn walk(
         &mut self,
+        system: &mut impl ConsoleApi,
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
         current_map: &MapSet,
-        map_flags: &[u8],
     ) -> (i16, i16) {
         use crate::map::layer_collides;
 
@@ -164,30 +164,30 @@ impl Player {
                 continue;
             }
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
+                system,
                 [points_dx, points_dx_up, points_dx_down],
                 layer_hitbox,
                 layer.origin.x().into(),
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
-                map_flags,
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
+                system,
                 [points_dy, points_dy_left, points_dy_right],
                 layer_hitbox,
                 layer.origin.x().into(),
                 layer.origin.y().into(),
                 layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
-                map_flags,
             );
             if let Some(point_diag) = point_diag {
                 if layer_collides(
+                    system,
                     point_diag,
                     layer_hitbox,
                     layer.origin.x().into(),
                     layer.origin.y().into(),
-                    &map_flags,
                     layer.shift_sprite_flags(),
                 ) {
                     diagonal_collision = true;
@@ -247,24 +247,24 @@ impl Default for Player {
     }
 }
 fn test_many_points(
+    system: &mut impl ConsoleApi,
     p: [Option<[Vec2; 2]>; 3],
     layer_hitbox: Hitbox,
     layer_x: i32,
     layer_y: i32,
     spr_flag_offset: bool,
     mut side_flags: [bool; 3],
-    map_flags: &[u8],
 ) -> [bool; 3] {
     use crate::map::layer_collides;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
                 if layer_collides(
+                    system,
                     *point,
                     layer_hitbox,
                     layer_x,
                     layer_y,
-                    map_flags,
                     spr_flag_offset,
                 ) {
                     side_flags[i] = true;

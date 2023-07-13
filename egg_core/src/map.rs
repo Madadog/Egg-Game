@@ -5,7 +5,7 @@ use crate::{
     packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper},
 };
-use tic80_api::core::{mget, MapOptions};
+use tic80_api::core::MapOptions;
 
 #[derive(Clone)]
 pub struct MapSet<'a> {
@@ -194,11 +194,11 @@ impl Axis {
 }
 
 pub fn layer_collides(
+    system: &mut impl ConsoleApi,
     point: Vec2,
     layer_hitbox: Hitbox,
     layer_x: i32,
     layer_y: i32,
-    flags: &[u8],
     spr_flag_offset: bool,
 ) -> bool {
     if layer_hitbox.touches_point(point) {
@@ -207,9 +207,9 @@ pub fn layer_collides(
             (point.y - layer_hitbox.y) / 8 + layer_y as i16,
         );
         let spr_flag_offset = if spr_flag_offset { 256 } else { 0 };
-        let id = mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
+        let id = system.mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         touches_tile(
-            *flags.get(id as usize).unwrap_or(&0),
+            *system.get_sprite_flags().get(id as usize).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
         )
     } else {

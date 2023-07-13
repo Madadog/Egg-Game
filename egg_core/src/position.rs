@@ -16,6 +16,8 @@
 
 use std::ops::{Sub, Mul, Div, Add};
 
+use crate::system::ConsoleApi;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vec2 {
     pub x: i16,
@@ -28,8 +30,8 @@ impl Vec2 {
     pub const fn splat(value: i16) -> Self {
         Vec2::new(value, value)
     }
-    pub fn draw_tic80(&self, colour: u8) {
-        tic80_api::core::pix(self.x.into(), self.y.into(), colour);
+    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, colour: u8) {
+        system.pix(self.x.into(), self.y.into(), colour);
     }
     pub fn towards(&self, other: &Vec2) -> Vec2 {
         let diff = *other - *self;
@@ -209,8 +211,8 @@ impl Hitbox {
             None
         }
     }
-    pub fn draw(&self, colour: u8) {
-        tic80_api::core::rectb(
+    pub fn draw(&self, system: &mut impl ConsoleApi, colour: u8) {
+        system.rectb(
             self.x.into(),
             self.y.into(),
             self.w.into(),

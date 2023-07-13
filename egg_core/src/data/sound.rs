@@ -1,4 +1,4 @@
-use tic80_api::core::{sfx, SfxOptions};
+use tic80_api::core::SfxOptions;
 
 #[derive(Debug, Clone)]
 pub struct SfxData {
@@ -8,11 +8,6 @@ pub struct SfxData {
 impl SfxData {
     pub const fn new(id: i32, options: SfxOptions) -> Self {
         Self { id, options }
-    }
-    #[deprecated]
-    pub fn play(self) {
-        //todo: check if channel is occupied and return bool
-        sfx(self.id, self.options);
     }
     pub fn with_note(self, note: i32) -> Self {
         Self {

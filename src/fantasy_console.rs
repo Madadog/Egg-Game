@@ -1,16 +1,47 @@
-use egg_core::{system::{ConsoleApi, EggMemory}, gamestate::EggInput, tic80_api::core::MouseInput};
+use std::mem;
+
+use egg_core::{
+    gamestate::EggInput,
+    system::{ConsoleApi, EggMemory, SyncHelper},
+    tic80_api::{core::MouseInput, helpers::SWEETIE_16}, rand::Lcg64Xsh32,
+};
+use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Stroke, Transform};
+
+use self::drawing::array_to_colour;
+
+mod drawing;
 
 pub struct FantasyConsole {
+    screen: Pixmap,
+    overlay_screen: Pixmap,
+    vbank: usize,
+    palette: [[u8; 3]; 16],
+    palette_map: [u8; 16],
+    music: Option<usize>,
     memory: EggMemory,
     input: EggInput,
+    rng: Lcg64Xsh32,
 }
 
 impl FantasyConsole {
     pub fn new() -> Self {
         Self {
+            screen: Pixmap::new(240, 136).unwrap(),
+            overlay_screen: Pixmap::new(240, 136).unwrap(),
+            vbank: 0,
+            palette: SWEETIE_16,
+            palette_map: [0; 16],
+            music: None,
             memory: EggMemory::new(),
             input: EggInput::new(),
+            rng: Lcg64Xsh32::default(),
         }
+    }
+    pub fn colour(&self, index: u8) -> Color {
+        if self.vbank == 0 && index == 0 {
+            return Color::from_rgba8(0, 0, 0, 0);
+        }
+        array_to_colour(self.palette[index as usize])
     }
 }
 
@@ -88,11 +119,11 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn get_palette(&mut self) -> &mut [[u8; 3]; 16] {
-        todo!()
+        &mut self.palette
     }
 
     fn get_palette_map(&mut self) -> &mut [u8; 16] {
-        todo!()
+        &mut self.palette_map
     }
 
     fn get_border_colour(&mut self) -> &mut u8 {
@@ -124,15 +155,38 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn cls(&mut self, color: u8) {
-        todo!()
+        self.screen.fill(self.colour(color))
     }
 
     fn circ(&mut self, x: i32, y: i32, radius: i32, color: u8) {
-        todo!()
+        let mut paint = Paint::default();
+        paint.set_color(self.colour(color));
+        let path = {
+            let mut pb = PathBuilder::new();
+            // pb.move_to(x as f32, y as f32);
+            pb.push_circle(x as f32, y as f32, radius as f32);
+            pb.finish().unwrap()
+        };
+        let fill = FillRule::default();
+
+        self.screen
+            .fill_path(&path, &paint, fill, Transform::identity(), None);
     }
 
     fn circb(&mut self, x: i32, y: i32, radius: i32, color: u8) {
-        todo!()
+        let mut paint = Paint::default();
+        paint.set_color(self.colour(color));
+        let path = {
+            let mut pb = PathBuilder::new();
+            // pb.move_to(x as f32, y as f32);
+            pb.push_circle(x as f32, y as f32, radius as f32);
+            pb.finish().unwrap()
+        };
+        let mut stroke = Stroke::default();
+        stroke.width = 1.0;
+
+        self.screen
+            .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
     fn elli(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8) {
@@ -159,7 +213,12 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn font_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: egg_core::tic80_api::core::FontOptions) -> i32 {
+    fn font_alloc(
+        text: impl AsRef<str>,
+        x: i32,
+        y: i32,
+        opts: egg_core::tic80_api::core::FontOptions,
+    ) -> i32 {
         todo!()
     }
 
@@ -191,12 +250,21 @@ impl ConsoleApi for FantasyConsole {
         self.input.mouse.clone()
     }
 
-    fn music(&mut self, track: i32, opts: egg_core::tic80_api::core::MusicOptions) {
-        todo!()
+    fn music(&mut self, track: i32, _opts: egg_core::tic80_api::core::MusicOptions) {
+        if track == -1 {
+            self.music = None;
+        } else {
+            self.music = Some(track as usize);
+        }
     }
 
-    fn pix(&mut self, x: i32, y: i32, color: i8) -> u8 {
-        todo!()
+    fn pix(&mut self, x: i32, y: i32, color: u8) -> u8 {
+        let i = (y * self.screen.width() as i32 + x) as usize;
+        if i > self.screen.pixels().len() {
+            return 0;
+        }
+        self.screen.pixels_mut()[i] = self.colour(color).premultiply().to_color_u8();
+        0
     }
 
     fn peek(&self, address: i32, bits: u8) -> u8 {
@@ -235,11 +303,23 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn print_alloc(&mut self, text: impl AsRef<str>, x: i32, y: i32, opts: egg_core::tic80_api::core::PrintOptions) -> i32 {
+    fn print_alloc(
+        &mut self,
+        text: impl AsRef<str>,
+        x: i32,
+        y: i32,
+        opts: egg_core::tic80_api::core::PrintOptions,
+    ) -> i32 {
         todo!()
     }
 
-    fn print_raw(&mut self, text: &str, x: i32, y: i32, opts: egg_core::tic80_api::core::PrintOptions) -> i32 {
+    fn print_raw(
+        &mut self,
+        text: &str,
+        x: i32,
+        y: i32,
+        opts: egg_core::tic80_api::core::PrintOptions,
+    ) -> i32 {
         todo!()
     }
 
@@ -303,21 +383,26 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn vbank(&mut self, bank: u8) -> u8 {
-        todo!()
+        if bank > 1 {return 0}
+        if self.vbank != bank as usize {
+            mem::swap(&mut self.screen, &mut self.overlay_screen);
+        }
+        self.vbank = bank.into();
+        0
     }
 
-    fn sync_helper(&mut self) -> &mut egg_core::tic80_api::helpers::SyncHelper {
+    fn sync_helper(&mut self) -> &mut SyncHelper {
         todo!()
     }
 
     fn rng(&mut self) -> &mut egg_core::rand::Lcg64Xsh32 {
-        todo!()
+        &mut self.rng
     }
 
     fn previous_gamepad(&mut self) -> &mut [u8; 4] {
         &mut self.input.previous_gamepads
     }
-    
+
     fn previous_mouse(&mut self) -> &mut MouseInput {
         &mut self.input.previous_mouse
     }

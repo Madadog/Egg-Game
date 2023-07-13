@@ -67,11 +67,7 @@ impl<'a> WalkaroundState<'a> {
             system.music(track as i32, MusicOptions::default());
         };
         if map_set.bank != system.sync_helper().last_bank() {
-            let x = system.sync_helper().sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank);
-            if x.is_err() {
-                let bank = map_set.bank;
-                error!("COULD NOT SYNC TO BANK {bank} THIS IS A BUG BTW",);
-            }
+            system.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank, false);
         }
 
         self.map_animations = map_set
@@ -332,7 +328,7 @@ impl<'a, T: ConsoleApi>
 
         let (dx, dy) = self
             .player
-            .walk(dx, dy, noclip, &self.current_map, system.get_sprite_flags());
+            .walk(system, dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
@@ -470,16 +466,16 @@ impl<'a, T: ConsoleApi>
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(12);
+                    .draw(system, 12);
             }
             self.player
                 .hitbox()
                 .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                .draw(12);
+                .draw(system, 12);
             for item in self.current_map.interactables.iter() {
                 item.hitbox
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(14);
+                    .draw(system, 14);
             }
         }
         if debug_info.player_info() {

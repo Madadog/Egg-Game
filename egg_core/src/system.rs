@@ -3,10 +3,54 @@ use tic80_api::{
         FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
         TTriOptions,
     },
-    helpers::SyncHelper,
 };
 
 use crate::{rand::Lcg64Xsh32, data::{save, sound::SfxData}};
+
+
+pub struct SyncHelper {
+    already_synced: bool,
+    last_bank: u8,
+}
+
+impl SyncHelper {
+    pub const fn new() -> Self {
+        SyncHelper {
+            already_synced: false,
+            last_bank: 0,
+        }
+    }
+    pub fn step(&mut self) {
+        self.already_synced = false;
+    }
+    /// Sync can only be called once per frame. Returns result to indicate failure or success.
+    /// Mask lets you switch out sections of cart data:
+    /// * all     = 0    -- 0
+    /// * tiles   = 1<<0 -- 1
+    /// * sprites = 1<<1 -- 2
+    /// * map     = 1<<2 -- 4
+    /// * sfx     = 1<<3 -- 8
+    /// * music   = 1<<4 -- 16
+    /// * palette = 1<<5 -- 32
+    /// * flags   = 1<<6 -- 64
+    /// * screen  = 1<<7 -- 128 (as of 0.90)
+    pub fn sync(&mut self, system: &mut impl ConsoleApi, mask: i32, bank: u8) -> Result<(), ()> {
+        if self.already_synced() {
+            Err(())
+        } else {
+            self.already_synced = true;
+            self.last_bank = bank;
+            system.sync(mask, bank, false);
+            Ok(())
+        }
+    }
+    pub fn already_synced(&self) -> bool {
+        self.already_synced
+    }
+    pub fn last_bank(&self) -> u8 {
+        self.last_bank
+    }
+}
 
 
 #[derive(Clone, Copy, Debug)]
@@ -141,7 +185,7 @@ pub trait ConsoleApi {
     fn mset(&mut self, x: i32, y: i32, value: i32);
     fn mouse(&self) -> MouseInput;
     fn music(&mut self, track: i32, opts: MusicOptions);
-    fn pix(&mut self, x: i32, y: i32, color: i8) -> u8;
+    fn pix(&mut self, x: i32, y: i32, color: u8) -> u8;
     fn peek(&self, address: i32, bits: u8) -> u8;
     fn peek4(&self, address: i32) -> u8;
     fn peek2(&self, address: i32) -> u8;
