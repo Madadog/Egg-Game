@@ -189,7 +189,7 @@ impl InventoryUi {
                 }
             }
             InventoryUiState::Eggs(_index) => {
-                sound::DENY.play();
+                system.play_sound(sound::DENY);
             }
             _ => (),
         }

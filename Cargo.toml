@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 bevy = "0.11.0"
+tiny-skia = "0.11.1"
 egg_core = { path = "egg_core" }
 
 [workspace]

@@ -1,12 +1,16 @@
-use egg_core::system::ConsoleApi;
+use egg_core::{system::{ConsoleApi, EggMemory}, gamestate::EggInput, tic80_api::core::MouseInput};
 
 pub struct FantasyConsole {
-
+    memory: EggMemory,
+    input: EggInput,
 }
 
 impl FantasyConsole {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            memory: EggMemory::new(),
+            input: EggInput::new(),
+        }
     }
 }
 
@@ -28,11 +32,11 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn get_gamepads(&mut self) -> &mut [u8; 4] {
-        todo!()
+        &mut self.input.gamepads
     }
 
-    fn get_mouse(&mut self) -> &mut egg_core::tic80_api::core::MouseInput {
-        todo!()
+    fn get_mouse(&mut self) -> &mut MouseInput {
+        &mut self.input.mouse
     }
 
     fn get_keyboard(&mut self) -> &mut [u8; 4] {
@@ -71,8 +75,8 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn memory(&mut self) -> &mut egg_core::system::EggMemory {
-        todo!()
+    fn memory(&mut self) -> &mut EggMemory {
+        &mut self.memory
     }
 
     fn get_sprite_flags(&mut self) -> &mut [u8; 512] {
@@ -183,8 +187,8 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn mouse(&self) -> egg_core::tic80_api::core::MouseInput {
-        todo!()
+    fn mouse(&self) -> MouseInput {
+        self.input.mouse.clone()
     }
 
     fn music(&mut self, track: i32, opts: egg_core::tic80_api::core::MusicOptions) {
@@ -268,7 +272,7 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn trace_alloc(text: impl AsRef<str>, color: u8) {
-        todo!()
+        println!("{}", text.as_ref());
     }
 
     fn tri(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8) {
@@ -311,10 +315,10 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn previous_gamepad(&mut self) -> &mut [u8; 4] {
-        todo!()
+        &mut self.input.previous_gamepads
     }
-
-    fn previous_mouse(&mut self) -> &mut egg_core::tic80_api::core::MouseInput {
-        todo!()
+    
+    fn previous_mouse(&mut self) -> &mut MouseInput {
+        &mut self.input.previous_mouse
     }
 }

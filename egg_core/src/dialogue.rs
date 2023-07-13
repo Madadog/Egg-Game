@@ -309,15 +309,14 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use tic80_api::helpers::rect_outline;
-        use tic80_api::core::{spr, HEIGHT, WIDTH};
+        use tic80_api::core::{HEIGHT, WIDTH};
 
         let w = self.width as i32;
         let h = 24;
         self.draw_dialogue_box_with_offset(system, string, timer, 14, -2, 4);
-        rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
+        system.rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
 
-        spr(
+        system.spr(
             portrait,
             (WIDTH - w) / 2 - 13 + 2,
             (HEIGHT - h) - 6 + 2,

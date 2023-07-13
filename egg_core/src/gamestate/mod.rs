@@ -141,13 +141,14 @@ impl GameState {
                     *x += 1000;
                 }
                 println!("Drawing frame...");
-                // if intro::draw_animation(*x, rng) {
-                if false {
-                    println!("Drew frame...");
-                    *x += 1;
-                } else {
-                    println!("Animation done...");
-                    *self = Self::MainMenu(MenuState::new());
+                if intro::draw_animation(*x, system) {
+                    if false {
+                        println!("Drew frame...");
+                        *x += 1;
+                    } else {
+                        println!("Animation done...");
+                        *self = Self::MainMenu(MenuState::new());
+                    }
                 }
             }
             Self::MainMenu(state) => {
@@ -171,7 +172,7 @@ impl GameState {
 }
 
 pub trait Game<T, U> {
-    fn step(&mut self, state: T) -> Option<GameState> {
+    fn step(&mut self, _state: T) -> Option<GameState> {
         None
     }
     fn draw(&self, state: U);

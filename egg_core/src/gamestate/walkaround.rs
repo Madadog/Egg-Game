@@ -14,7 +14,6 @@ use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
 use log::{error, info};
 use tic80_api::core::{MusicOptions, PrintOptions};
-use tic80_api::helpers::SyncHelper;
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;

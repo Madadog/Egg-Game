@@ -137,7 +137,7 @@ impl MenuState {
             }
             Space => {}
             Debug(x) => {
-                let mut walk = walkaround_state;
+                let walk = walkaround_state;
                 match x {
                     0 => {
                         system.set_palette(tic80_api::helpers::SWEETIE_16);
