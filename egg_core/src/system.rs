@@ -7,7 +7,6 @@ use tic80_api::{
 
 use crate::{rand::Lcg64Xsh32, data::{save, sound::SfxData}};
 
-
 pub struct SyncHelper {
     already_synced: bool,
     last_bank: u8,
@@ -159,7 +158,7 @@ pub trait ConsoleApi {
     fn get_blit_segment(&mut self) -> &mut u8;
 
     // TIC-80 API
-    fn btn(&self, index: i32) -> i32;
+    fn btn(&self, index: i32) -> bool;
     fn btnp(&self, index: i32, hold: i32, period: i32) -> bool;
     fn clip(&mut self, x: i32, y: i32, width: i32, height: i32);
     fn cls(&mut self, color: u8);

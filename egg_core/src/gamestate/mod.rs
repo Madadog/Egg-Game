@@ -50,6 +50,16 @@ impl EggInput {
             previous_mouse: MouseInput::default(),
         }
     }
+    pub fn press(&mut self, id: u8) {
+        let id: usize = id.into();
+        self.gamepads[id/8] |= 1 << (id % 8);
+    }
+    pub fn refresh(&mut self) {
+        self.previous_gamepads = self.gamepads;
+        self.previous_keyboard = self.keyboard;
+        self.previous_mouse = self.mouse.clone();
+        self.gamepads = [0; 4];
+    }
     pub fn mem_btn(&self, id: u8) -> bool {
         let controller: usize = (id / 8).min(3).into();
         let id = id % 8;
@@ -142,13 +152,11 @@ impl GameState {
                 }
                 println!("Drawing frame...");
                 if intro::draw_animation(*x, system) {
-                    if false {
-                        println!("Drew frame...");
-                        *x += 1;
-                    } else {
-                        println!("Animation done...");
-                        *self = Self::MainMenu(MenuState::new());
-                    }
+                    println!("Drew frame...");
+                    *x += 1;
+                } else {
+                    println!("Animation done...");
+                    *self = Self::MainMenu(MenuState::new());
                 }
             }
             Self::MainMenu(state) => {

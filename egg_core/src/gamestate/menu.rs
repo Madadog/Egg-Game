@@ -342,7 +342,7 @@ pub fn draw_title(
 
     system.blit_segment(8);
     system.spr(
-        1086,
+        534,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
         SpriteOptions {

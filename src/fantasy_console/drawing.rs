@@ -1,3 +1,4 @@
+use bevy::prelude::info;
 use tiny_skia::Color;
 
 pub fn array_to_colour(array: [u8; 3]) -> Color {

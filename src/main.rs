@@ -1,8 +1,10 @@
+use bevy::asset::LoadState;
 use bevy::prelude::*;
-use egg_core::gamestate::EggInput;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::gamestate::inventory::InventoryUi;
+use egg_core::gamestate::EggInput;
 use egg_core::gamestate::{self, walkaround::WalkaroundState, GameState};
-use egg_core::system::{DrawParams, SyncHelper};
+use egg_core::system::{ConsoleApi, DrawParams, SyncHelper};
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 
@@ -26,9 +28,8 @@ pub struct EggState {
     pub debug_info: DebugInfo,
     pub gamestate: GameState,
     pub bg_colour: u8,
-    pub sync_helper: SyncHelper,
-    pub input: EggInput,
     pub system: FantasyConsole,
+    pub loaded: bool,
 }
 impl EggState {
     pub fn run(&mut self) {
@@ -52,16 +53,10 @@ impl Default for EggState {
             debug_info: DebugInfo::const_default(),
             gamestate: GameState::Animation(0),
             bg_colour: 0,
-            sync_helper: SyncHelper::new(),
-            input: EggInput::new(),
             system: FantasyConsole::new(),
+            loaded: false,
         }
     }
-}
-
-#[derive(Resource)]
-pub struct Palette {
-    pub palette: [Color; 16],
 }
 
 #[derive(Component)]
@@ -80,32 +75,144 @@ impl TicSpriteLayer {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .add_systems(Startup, setup)
-        .add_systems(Update, (read_state, step_state, draw_state).chain())
         .init_resource::<EggState>()
+        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_systems(Startup, (setup, setup_assets))
+        .add_systems(Update, load_assets)
+        .add_systems(Update, (read_state, step_state, update_texture).chain())
         .run();
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+) {
     commands.spawn(Camera2dBundle::default());
     commands.spawn((SpriteBundle {
-        texture: asset_server.load("test.png"),
-        transform: Transform::from_xyz(100., 0., 0.),
+        texture: assets.load("test.png"),
+        transform: Transform::from_xyz(500., 0., 1.),
         ..default()
     },));
+    let screen = Image::new_fill(
+        Extent3d {
+            width: 240,
+            height: 136,
+            ..default()
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+    );
+    commands.spawn((
+        SpriteBundle {
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(240., 136.) * 4.0),
+                ..default()
+            },
+            texture: images.add(screen),
+            transform: Transform::from_xyz(0., 0., 0.),
+            ..default()
+        },
+        GameScreenSprite,
+    ));
+}
+
+#[derive(Debug, Resource)]
+pub struct GameAssets {
+    pub font: Handle<Image>,
+    pub sheet: Handle<Image>,
+}
+impl GameAssets {
+    pub fn new(assets: &AssetServer) -> Self {
+        let maps = assets.load_folder("map").unwrap();
+        Self {
+            font: assets.load("fonts/tic80_font.png"),
+            sheet: assets.load("sprites/sheet.png"),
+        }
+    }
+    pub fn load_state(&self, assets: &AssetServer) -> LoadState {
+        assets.get_group_load_state([self.font.id(), self.sheet.id()])
+    }
+}
+
+fn setup_assets(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+) {
+    commands.insert_resource(GameAssets::new(&assets));
+}
+
+fn load_assets(
+    mut commands: Commands,
+    game_assets: Option<Res<GameAssets>>,
+    assets: Res<AssetServer>,
+    images: Res<Assets<Image>>,
+    mut state: ResMut<EggState>,
+) {
+    if let Some(game_assets) = game_assets {
+        match game_assets.load_state(&assets) {
+            LoadState::Loaded => {
+                let font = images.get(&game_assets.font).unwrap();
+                let sheet = images.get(&game_assets.sheet).unwrap();
+                state.system.set_font(font);
+                state.system.set_sheet(sheet);
+                state.loaded = true;
+                info!("Finished loading assets.");
+                commands.remove_resource::<GameAssets>();
+            },
+            LoadState::Loading => info!("Loading assets..."),
+            x => panic!("Could not load assets: {x:?}"),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct GameScreenSprite;
+
+// #[derive(Resource)]
+// pub struct GameScreen(pub Image);
+
+fn update_texture(
+    mut state: ResMut<EggState>,
+    mut images: ResMut<Assets<Image>>,
+    sprite: Query<&Handle<Image>, With<GameScreenSprite>>,
+) {
+    for sprite in sprite.iter() {
+        state
+            .system
+            .to_texture(&mut images.get_mut(sprite).unwrap());
+    }
 }
 
 fn read_state(state: Res<EggState>) {
     // info!("Time: {}", state.time);
 }
 
+// fn zoom_camera()
+
 fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
-    info!("Stepping state");
-    info!("Time: {}", state.time);
-    info!("running sync helper");
-    state.sync_helper.step();
+    state.system.sync_helper().step();
     state.time += 1;
+
+    if keys.pressed(KeyCode::Up) {
+        state.system.input().press(0);
+    }
+    if keys.pressed(KeyCode::Down) {
+        state.system.input().press(1);
+    }
+    if keys.pressed(KeyCode::Left) {
+        state.system.input().press(2);
+    }
+    if keys.pressed(KeyCode::Right) {
+        state.system.input().press(3);
+    }
+    if keys.pressed(KeyCode::Z) {
+        state.system.input().press(4);
+    }
+    if keys.pressed(KeyCode::X) {
+        state.system.input().press(5);
+    }
 
     if keys.just_pressed(KeyCode::P) {
         state.pause = !state.pause;
@@ -136,7 +243,6 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
     }
 
     // state.gamestate.run(&mut state.walkaround);
-    info!("running game...");
     state.run();
     if keys.pressed(KeyCode::N) {
         state.run();
@@ -151,6 +257,7 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
         //     );
         // }
     }
+    state.system.input().refresh();
     // input_manager::step_gamepad_helper();
     // input_manager::step_mouse_helper();
 }

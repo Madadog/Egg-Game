@@ -60,20 +60,18 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
             }
             Some(0) => {
                 system.cls(0);
-                system.set_palette([[0; 3]; 16]);
                 system.music(3, MusicOptions::default());
                 system.draw_ovr2(|system| {
                     system.cls(0);
-                    system.set_palette([[0; 3]; 16]);
                     system.circb(90, 38, 4, 4);
                     system.circb(90, 36, 3, 4);
                     system.circ(90, 38, 3, 12);
                     system.circ(90, 36, 2, 12);
-                    let (x, y) = (
-                        system.rng().next_u32() as i32 % 240,
-                        system.rng().next_u32() as i32 % 136,
-                    );
                     for _ in 0..420 {
+                        let (x, y) = (
+                            system.rng().next_u32() as i32 % 240,
+                            system.rng().next_u32() as i32 % 136,
+                        );
                         system.pix(
                             x,
                             y,
