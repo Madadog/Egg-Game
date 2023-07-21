@@ -12,6 +12,8 @@ use tiny_skia::{
     Transform, Path,
 };
 
+use crate::tiled::TiledMap;
+
 use self::drawing::array_to_colour;
 
 mod drawing;
@@ -23,6 +25,7 @@ pub struct FantasyConsole {
 
     font: Pixmap,
     sprites: Pixmap,
+    maps: Vec<TiledMap>,
 
     vbank: usize,
     palette: [[u8; 3]; 16],
@@ -47,6 +50,7 @@ impl FantasyConsole {
 
             font: Pixmap::new(128, 128).unwrap(),
             sprites: Pixmap::new(1, 1).unwrap(),
+            maps: Vec::new(),
 
             vbank: 0,
             palette: SWEETIE_16,

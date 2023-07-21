@@ -17,6 +17,7 @@ use fantasy_console::FantasyConsole;
 // static BG_COLOUR: AtomicU8 = AtomicU8::new(0);
 // static SYNC_HELPER: SyncHelper = SyncHelper::new();
 mod fantasy_console;
+mod tiled;
 
 #[derive(Resource)]
 pub struct EggState {
