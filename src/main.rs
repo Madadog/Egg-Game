@@ -2,9 +2,9 @@ use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::gamestate::inventory::InventoryUi;
-use egg_core::gamestate::EggInput;
-use egg_core::gamestate::{self, walkaround::WalkaroundState, GameState};
-use egg_core::system::{ConsoleApi, DrawParams, SyncHelper};
+
+use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
+use egg_core::system::{ConsoleApi, DrawParams};
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 
@@ -84,11 +84,7 @@ fn main() {
         .run();
 }
 
-fn setup(
-    mut commands: Commands,
-    assets: Res<AssetServer>,
-    mut images: ResMut<Assets<Image>>,
-) {
+fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2dBundle::default());
     commands.spawn((SpriteBundle {
         texture: assets.load("test.png"),
@@ -126,7 +122,7 @@ pub struct GameAssets {
 }
 impl GameAssets {
     pub fn new(assets: &AssetServer) -> Self {
-        let maps = assets.load_folder("map").unwrap();
+        let _maps = assets.load_folder("map").unwrap();
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
@@ -137,10 +133,7 @@ impl GameAssets {
     }
 }
 
-fn setup_assets(
-    mut commands: Commands,
-    assets: Res<AssetServer>,
-) {
+fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(GameAssets::new(&assets));
 }
 
@@ -161,7 +154,7 @@ fn load_assets(
                 state.loaded = true;
                 info!("Finished loading assets.");
                 commands.remove_resource::<GameAssets>();
-            },
+            }
             LoadState::Loading => info!("Loading assets..."),
             x => panic!("Could not load assets: {x:?}"),
         }
@@ -180,13 +173,11 @@ fn update_texture(
     sprite: Query<&Handle<Image>, With<GameScreenSprite>>,
 ) {
     for sprite in sprite.iter() {
-        state
-            .system
-            .to_texture(&mut images.get_mut(sprite).unwrap());
+        state.system.to_texture(images.get_mut(sprite).unwrap());
     }
 }
 
-fn read_state(state: Res<EggState>) {
+fn read_state(_state: Res<EggState>) {
     // info!("Time: {}", state.time);
 }
 

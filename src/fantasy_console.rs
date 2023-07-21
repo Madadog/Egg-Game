@@ -1,15 +1,16 @@
-
-
 use bevy::prelude::Image;
 use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, SyncHelper},
-    tic80_api::{core::{MouseInput, SfxOptions}, helpers::SWEETIE_16},
+    tic80_api::{
+        core::{MouseInput, SfxOptions},
+        helpers::SWEETIE_16,
+    },
 };
 use tiny_skia::{
     Color, FillRule, IntSize, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, Rect, Stroke,
-    Transform, Path,
+    Transform,
 };
 
 use crate::tiled::TiledMap;
@@ -264,11 +265,11 @@ impl ConsoleApi for FantasyConsole {
         self.input.mem_btn(index as u8)
     }
 
-    fn btnp(&self, index: i32, hold: i32, period: i32) -> bool {
+    fn btnp(&self, index: i32, _hold: i32, _period: i32) -> bool {
         self.input.mem_btnp(index as u8)
     }
 
-    fn clip(&mut self, x: i32, y: i32, width: i32, height: i32) {
+    fn clip(&mut self, _x: i32, _y: i32, _width: i32, _height: i32) {
         todo!()
     }
 
@@ -315,8 +316,10 @@ impl ConsoleApi for FantasyConsole {
             pb.push_circle(x as f32, y as f32, radius as f32);
             pb.finish().unwrap()
         };
-        let mut stroke = Stroke::default();
-        stroke.width = 1.0;
+        let stroke = Stroke {
+            width: 1.0,
+            ..Default::default()
+        };
 
         match self.vbank {
             0 => &mut self.screen,
@@ -326,11 +329,11 @@ impl ConsoleApi for FantasyConsole {
         .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    fn elli(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8) {
+    fn elli(&mut self, _x: i32, _y: i32, _a: i32, _b: i32, _color: u8) {
         todo!()
     }
 
-    fn ellib(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8) {
+    fn ellib(&mut self, _x: i32, _y: i32, _a: i32, _b: i32, _color: u8) {
         todo!()
     }
 
@@ -338,23 +341,28 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn fget(&self, sprite_index: i32, flag: i8) -> bool {
+    fn fget(&self, _sprite_index: i32, _flag: i8) -> bool {
         todo!()
     }
 
-    fn fset(&mut self, sprite_index: i32, flag: i8, value: bool) {
+    fn fset(&mut self, _sprite_index: i32, _flag: i8, _value: bool) {
         todo!()
     }
 
-    fn font_raw(text: &str, x: i32, y: i32, opts: egg_core::tic80_api::core::FontOptions) -> i32 {
+    fn font_raw(
+        _text: &str,
+        _x: i32,
+        _y: i32,
+        _opts: egg_core::tic80_api::core::FontOptions,
+    ) -> i32 {
         todo!()
     }
 
     fn font_alloc(
-        text: impl AsRef<str>,
-        x: i32,
-        y: i32,
-        opts: egg_core::tic80_api::core::FontOptions,
+        _text: impl AsRef<str>,
+        _x: i32,
+        _y: i32,
+        _opts: egg_core::tic80_api::core::FontOptions,
     ) -> i32 {
         todo!()
     }
@@ -389,15 +397,13 @@ impl ConsoleApi for FantasyConsole {
         .fill_path(&path, &paint, fill, Transform::identity(), None);
     }
 
-    fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
-        ()
-    }
+    fn map(&mut self, _opts: egg_core::tic80_api::core::MapOptions) {}
 
-    fn mget(&self, x: i32, y: i32) -> i32 {
+    fn mget(&self, _x: i32, _y: i32) -> i32 {
         0
     }
 
-    fn mset(&mut self, x: i32, y: i32, value: i32) {
+    fn mset(&mut self, _x: i32, _y: i32, _value: i32) {
         todo!()
     }
 
@@ -427,39 +433,39 @@ impl ConsoleApi for FantasyConsole {
         0
     }
 
-    fn peek(&self, address: i32, bits: u8) -> u8 {
+    fn peek(&self, _address: i32, _bits: u8) -> u8 {
         todo!()
     }
 
-    fn peek4(&self, address: i32) -> u8 {
+    fn peek4(&self, _address: i32) -> u8 {
         todo!()
     }
 
-    fn peek2(&self, address: i32) -> u8 {
+    fn peek2(&self, _address: i32) -> u8 {
         todo!()
     }
 
-    fn peek1(&self, address: i32) -> u8 {
+    fn peek1(&self, _address: i32) -> u8 {
         todo!()
     }
 
-    fn pmem(&mut self, address: i32, value: i64) -> i32 {
+    fn pmem(&mut self, _address: i32, _value: i64) -> i32 {
         todo!()
     }
 
-    fn poke(&mut self, address: i32, value: u8, bits: u8) {
+    fn poke(&mut self, _address: i32, _value: u8, _bits: u8) {
         todo!()
     }
 
-    fn poke4(&mut self, address: i32, value: u8) {
+    fn poke4(&mut self, _address: i32, _value: u8) {
         todo!()
     }
 
-    fn poke2(&mut self, address: i32, value: u8) {
+    fn poke2(&mut self, _address: i32, _value: u8) {
         todo!()
     }
 
-    fn poke1(&mut self, address: i32, value: u8) {
+    fn poke1(&mut self, _address: i32, _value: u8) {
         todo!()
     }
 
@@ -478,7 +484,7 @@ impl ConsoleApi for FantasyConsole {
         text: &str,
         x: i32,
         y: i32,
-        opts: egg_core::tic80_api::core::PrintOptions,
+        _opts: egg_core::tic80_api::core::PrintOptions,
     ) -> i32 {
         let mut max_width = 0;
         let mut dx = x;
@@ -549,9 +555,7 @@ impl ConsoleApi for FantasyConsole {
         }
     }
 
-    fn sync(&mut self, mask: i32, bank: u8, to_cart: bool) {
-        ()
-    }
+    fn sync(&mut self, _mask: i32, _bank: u8, _to_cart: bool) {}
 
     fn time(&self) -> f32 {
         todo!()
@@ -561,33 +565,33 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn trace_alloc(text: impl AsRef<str>, color: u8) {
+    fn trace_alloc(text: impl AsRef<str>, _color: u8) {
         println!("{}", text.as_ref());
     }
 
-    fn tri(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8) {
+    fn tri(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _x3: f32, _y3: f32, _color: u8) {
         todo!()
     }
 
-    fn trib(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8) {
+    fn trib(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _x3: f32, _y3: f32, _color: u8) {
         todo!()
     }
 
     fn ttri(
         &mut self,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        x3: f32,
-        y3: f32,
-        u1: f32,
-        v1: f32,
-        u2: f32,
-        v2: f32,
-        u3: f32,
-        v3: f32,
-        opts: egg_core::tic80_api::core::TTriOptions,
+        _x1: f32,
+        _y1: f32,
+        _x2: f32,
+        _y2: f32,
+        _x3: f32,
+        _y3: f32,
+        _u1: f32,
+        _v1: f32,
+        _u2: f32,
+        _v2: f32,
+        _u3: f32,
+        _v3: f32,
+        _opts: egg_core::tic80_api::core::TTriOptions,
     ) {
         todo!()
     }

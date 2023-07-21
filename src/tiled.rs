@@ -1,5 +1,4 @@
-use serde::{Serialize, Deserialize};
-use serde_json::{self, Value};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TiledLayer {
@@ -16,15 +15,16 @@ pub struct TiledMap {
 }
 impl TiledMap {
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
-        self.layers.get(layer).and_then(|layer| {
-            layer.data.get(y * layer.width + x).cloned()
-        })
+        self.layers
+            .get(layer)
+            .and_then(|layer| layer.data.get(y * layer.width + x).cloned())
     }
 }
 
 // Tests for map serialization/deserialization:
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::tiled::TiledMap;
 
     #[test]
     fn test_map_serialization() {
