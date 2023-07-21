@@ -4,7 +4,7 @@ use egg_core::{
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, SyncHelper},
     tic80_api::{
-        core::{MouseInput, SfxOptions},
+        core::{MouseInput, SfxOptions, SpriteOptions},
         helpers::SWEETIE_16,
     },
 };
@@ -156,11 +156,16 @@ impl FantasyConsole {
                     Transform::from_translate(-(tx as f32) + x as f32, -(ty as f32) + y as f32),
                 ),
                 anti_alias: false,
+                
                 ..Default::default()
             },
             Transform::identity(),
             None,
         )
+    }
+
+    pub fn set_map(&mut self, map: &TiledMap) {
+        self.maps = vec![map.clone()];
     }
 }
 
@@ -397,7 +402,29 @@ impl ConsoleApi for FantasyConsole {
         .fill_path(&path, &paint, fill, Transform::identity(), None);
     }
 
-    fn map(&mut self, _opts: egg_core::tic80_api::core::MapOptions) {}
+    fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
+        if self.maps.is_empty() {
+            return;
+        }
+        for j in 0..opts.h {
+            for i in 0..opts.w {
+                let mut index = self.maps[0]
+                    .get(0, (opts.x + i) as usize, (opts.y + j) as usize)
+                    .unwrap();
+                if index == 0 {
+                    continue;
+                } else {
+                    index -= 1;
+                }
+                self.spr(
+                    index as i32,
+                    opts.sx + i * 8,
+                    opts.sy + j * 8,
+                    SpriteOptions::const_default(),
+                );
+            }
+        }
+    }
 
     fn mget(&self, _x: i32, _y: i32) -> i32 {
         0
@@ -498,7 +525,7 @@ impl ConsoleApi for FantasyConsole {
                 }
                 _ => {
                     self.draw_letter(char, dx, dy);
-                    dx += 8;
+                    dx += 6;
                 }
             };
             max_width = max_width.max(dx - x);
@@ -528,14 +555,23 @@ impl ConsoleApi for FantasyConsole {
             ..Default::default()
         };
         paint.set_color(self.colour(color));
-        let rect = Rect::from_xywh(x as f32, y as f32, w as f32, h as f32).unwrap();
+        let path = {
+            let mut pb = PathBuilder::new();
+            // pb.move_to(x as f32, y as f32);
+            pb.push_rect(Rect::from_xywh(x as f32, y as f32, w as f32, h as f32).unwrap());
+            pb.finish().unwrap()
+        };
+        let stroke = Stroke {
+            width: 1.0,
+            ..Default::default()
+        };
 
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .fill_rect(rect, &paint, Transform::identity(), None);
+        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
     fn sfx(&mut self, sfx_id: i32, opts: egg_core::tic80_api::core::SfxOptions) {

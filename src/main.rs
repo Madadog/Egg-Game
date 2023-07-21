@@ -7,6 +7,7 @@ use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
 use egg_core::system::{ConsoleApi, DrawParams};
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
+use tiled::{TiledMap, TiledMapPlugin};
 
 // static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
 // static TIME: AtomicI32 = AtomicI32::new(0);
@@ -78,6 +79,7 @@ fn main() {
     App::new()
         .init_resource::<EggState>()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_plugin(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets))
         .add_systems(Update, load_assets)
         .add_systems(Update, (read_state, step_state, update_texture).chain())
@@ -119,13 +121,15 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<As
 pub struct GameAssets {
     pub font: Handle<Image>,
     pub sheet: Handle<Image>,
+    pub map: Handle<TiledMap>,
 }
 impl GameAssets {
     pub fn new(assets: &AssetServer) -> Self {
-        let _maps = assets.load_folder("map").unwrap();
+        let _maps = assets.load_folder("maps").unwrap();
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
+            map: assets.load("maps/bank1.tmj"),
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
@@ -142,6 +146,7 @@ fn load_assets(
     game_assets: Option<Res<GameAssets>>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
+    maps: Res<Assets<TiledMap>>,
     mut state: ResMut<EggState>,
 ) {
     if let Some(game_assets) = game_assets {
@@ -149,8 +154,10 @@ fn load_assets(
             LoadState::Loaded => {
                 let font = images.get(&game_assets.font).unwrap();
                 let sheet = images.get(&game_assets.sheet).unwrap();
+                let map = maps.get(&game_assets.map).unwrap();
                 state.system.set_font(font);
                 state.system.set_sheet(sheet);
+                state.system.set_map(map);
                 state.loaded = true;
                 info!("Finished loading assets.");
                 commands.remove_resource::<GameAssets>();

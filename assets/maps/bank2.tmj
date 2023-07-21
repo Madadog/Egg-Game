@@ -158,7 +158,7 @@
  "tilesets":[
         {
          "firstgid":1,
-         "source":"tiles.json"
+         "source":"tiles.tsj"
         }],
  "tilewidth":8,
  "type":"map",
