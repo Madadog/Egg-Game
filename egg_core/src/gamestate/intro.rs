@@ -32,8 +32,8 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
                     system.circ(120, 68, t, 15);
                     system.circb(120, 68, t, 2);
                     let (horizontal, vertical) = (
-                        (system.rng().next_u32() % 2 - 1) as i8,
-                        (system.rng().next_u32() % 2 - 1) as i8,
+                        (system.rng().next_u32() % 2) as i8 - 1,
+                        (system.rng().next_u32() % 2) as i8 - 1,
                     );
                     if local_time > 400 {
                         if local_time < 450 {

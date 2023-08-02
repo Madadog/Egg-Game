@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use log::trace;
 use tic80_api::core::{MouseInput, PrintOptions};
 
 use self::inventory::{InventoryUi, InventoryUiState};
@@ -52,13 +53,17 @@ impl EggInput {
     }
     pub fn press(&mut self, id: u8) {
         let id: usize = id.into();
-        self.gamepads[id/8] |= 1 << (id % 8);
+        self.gamepads[id / 8] |= 1 << (id % 8);
+    }
+    pub fn press_key(&mut self, id: usize) {
+        self.keyboard[id - 1] = true;
     }
     pub fn refresh(&mut self) {
         self.previous_gamepads = self.gamepads;
         self.previous_keyboard = self.keyboard;
         self.previous_mouse = self.mouse.clone();
         self.gamepads = [0; 4];
+        self.keyboard = [false; 65];
     }
     pub fn mem_btn(&self, id: u8) -> bool {
         let controller: usize = (id / 8).min(3).into();
@@ -84,10 +89,10 @@ impl EggInput {
         self.previous_gamepads != self.gamepads
     }
     pub fn keyp(&self, index: usize, _: i32, _: i32) -> bool {
-        self.keyboard[index] && !self.previous_keyboard[index]
+        self.keyboard[index - 1] && !self.previous_keyboard[index - 1]
     }
     pub fn key(&self, index: usize) -> bool {
-        self.keyboard[index]
+        self.keyboard[index - 1]
     }
     pub fn mouse(&self) -> MouseInput {
         self.mouse.clone()
@@ -123,7 +128,7 @@ impl GameState {
         inventory_ui: &mut InventoryUi,
         system: &mut impl ConsoleApi,
     ) {
-        println!("Game state: {self:?}");
+        trace!("Game state: {self:?}");
         match self {
             Self::Instructions(i) => {
                 *i += 1;
@@ -142,7 +147,7 @@ impl GameState {
                 }
             }
             Self::Animation(x) => {
-                println!("Intro frame {x}");
+                trace!("Intro frame {x}");
                 if system.memory().is(save::INTRO_ANIM_SEEN) {
                     *self = Self::MainMenu(MenuState::new());
                     return;
@@ -150,12 +155,12 @@ impl GameState {
                 if system.mem_btn(5) {
                     *x += 1000;
                 }
-                println!("Drawing frame...");
+                trace!("Drawing frame...");
                 if intro::draw_animation(*x, system) {
-                    println!("Drew frame...");
+                    trace!("Drew frame...");
                     *x += 1;
                 } else {
-                    println!("Animation done...");
+                    trace!("Animation done...");
                     *self = Self::MainMenu(MenuState::new());
                 }
             }

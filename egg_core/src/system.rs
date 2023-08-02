@@ -1,9 +1,7 @@
-use tic80_api::{
-    core::{
+use tic80_api::core::{
         FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
         TTriOptions,
-    },
-};
+    };
 
 use crate::{rand::Lcg64Xsh32, data::{save, sound::SfxData}};
 
@@ -40,6 +38,15 @@ impl SyncHelper {
             self.already_synced = true;
             self.last_bank = bank;
             system.sync(mask, bank, false);
+            Ok(())
+        }
+    }
+    pub fn sync2(&mut self, mask: i32, bank: u8) -> Result<(), ()> {
+        if self.already_synced() {
+            Err(())
+        } else {
+            self.already_synced = true;
+            self.last_bank = bank;
             Ok(())
         }
     }
@@ -85,7 +92,7 @@ impl EggMemory {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DrawParams<'a> {
     // (i32, i32, i32, SpriteOptions, Option<u8>, u8)
     pub index: i32,
@@ -146,7 +153,7 @@ pub trait ConsoleApi {
     fn get_sound_state(&mut self) -> &mut [u8; 4];
     fn get_stereo_volume(&mut self) -> &mut [u8; 4];
     fn memory(&mut self) -> &mut EggMemory;
-    fn get_sprite_flags(&mut self) -> &mut [u8; 512];
+    fn get_sprite_flags(&mut self) -> &mut [u8];
     fn get_system_font(&mut self) -> &mut [u8; 2048];
 
     // TIC-80 VRAM
@@ -229,6 +236,58 @@ pub trait ConsoleApi {
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;
+
+    // helpers
+    fn palette_map_swap(&mut self, from: u8, to: u8) {
+        let from: i32 = (from % 16).into();
+        assert!(from >= 0);
+        self.get_palette_map()[from as usize] = to;
+    }
+    fn palette_map_set_all(&mut self, to: u8) {
+        for i in 0..=15 {
+            self.get_palette_map()[i] = to;
+        }
+    }
+    fn set_palette_map(&mut self, map: [u8; 16]) {
+        for (i, item) in map.into_iter().enumerate() {
+            self.get_palette_map()[i] = item;
+        }
+    }
+    fn palette_map_reset(&mut self) {
+        for i in 0..=15 {
+            self.get_palette_map()[i] = i as u8;
+        }
+    }
+    fn palette_map_rotate(&mut self, amount: u8) {
+        for i in 0..=15 {
+            self.get_palette_map()[i] = i as u8 + amount;
+        }
+    }
+    fn set_palette_colour(&mut self, index: u8, rgb: [u8; 3]) {
+        let index: usize = (index % 16).into();
+        self.get_palette()[index] = rgb;
+    }
+    fn set_palette(&mut self, colours: [[u8; 3]; 16]) {
+        for (i, colour) in colours.iter().enumerate() {
+            self.set_palette_colour(i as u8, *colour);
+        }
+    }
+    fn draw_outline(
+        &mut self,
+        id: i32,
+        x: i32,
+        y: i32,
+        sprite_options: SpriteOptions,
+        outline_colour: u8,
+    ) {
+        let old_map = *self.get_palette_map();
+        self.palette_map_set_all(outline_colour);
+        self.spr(id, x + 1, y, sprite_options.clone());
+        self.spr(id, x - 1, y, sprite_options.clone());
+        self.spr(id, x, y + 1, sprite_options.clone());
+        self.spr(id, x, y - 1, sprite_options);
+        self.set_palette_map(old_map);
+    }
 }
 
 impl<T: ConsoleApi> ConsoleHelper for T {}
@@ -289,40 +348,6 @@ pub trait ConsoleHelper: ConsoleApi {
     }
     fn zero_pmem(&mut self) {
         self.memory().memory.fill(0);
-    }
-    fn palette_map_swap(&mut self, from: u8, to: u8) {
-        let from: i32 = (from % 16).into();
-        assert!(from >= 0);
-        self.get_palette_map()[from as usize] = to;
-    }
-    fn palette_map_set_all(&mut self, to: u8) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = to;
-        }
-    }
-    fn set_palette_map(&mut self, map: [u8; 16]) {
-        for (i, item) in map.into_iter().enumerate() {
-            self.get_palette_map()[i] = item;
-        }
-    }
-    fn palette_map_reset(&mut self) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = i as u8;
-        }
-    }
-    fn palette_map_rotate(&mut self, amount: u8) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = i as u8 + amount;
-        }
-    }
-    fn set_palette_colour(&mut self, index: u8, rgb: [u8; 3]) {
-        let index: usize = (index % 16).into();
-        self.get_palette()[index] = rgb;
-    }
-    fn set_palette(&mut self, colours: [[u8; 3]; 16]) {
-        for (i, colour) in colours.iter().enumerate() {
-            self.set_palette_colour(i as u8, *colour);
-        }
     }
     fn fade_palette(&mut self, from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
         let amount = amount.min(256);
@@ -399,22 +424,6 @@ pub trait ConsoleHelper: ConsoleApi {
         self.blit_segment(blit_seg);
         self.spr(id, x, y, opts);
         self.blit_segment(old);
-    }
-    fn draw_outline(
-        &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        sprite_options: SpriteOptions,
-        outline_colour: u8,
-    ) {
-        let old_map = *self.get_palette_map();
-        self.palette_map_set_all(outline_colour);
-        self.spr(id, x + 1, y, sprite_options.clone());
-        self.spr(id, x - 1, y, sprite_options.clone());
-        self.spr(id, x, y + 1, sprite_options.clone());
-        self.spr(id, x, y - 1, sprite_options);
-        self.set_palette_map(old_map);
     }
     fn spr_outline(
         &mut self,

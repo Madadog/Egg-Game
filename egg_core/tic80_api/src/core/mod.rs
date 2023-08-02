@@ -110,7 +110,7 @@ impl Default for TTriOptions<'_> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapOptions<'a> {
     pub x: i32,
     pub y: i32,

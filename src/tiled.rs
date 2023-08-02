@@ -24,7 +24,10 @@ impl TiledMap {
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
         self.layers
             .get(layer)
-            .and_then(|layer| layer.data.get(y * layer.width + x).cloned())
+            .and_then(|layer| layer.data.get(y.checked_mul(layer.width).unwrap_or_else(|| {
+                println!("layer.width: {}, y: {}", layer.width, y);
+                1
+            }) + x).cloned())
     }
 }
 

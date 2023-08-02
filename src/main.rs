@@ -79,7 +79,7 @@ fn main() {
     App::new()
         .init_resource::<EggState>()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .add_plugin(TiledMapPlugin)
+        .add_plugins(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets))
         .add_systems(Update, load_assets)
         .add_systems(Update, (read_state, step_state, update_texture).chain())
@@ -121,19 +121,23 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<As
 pub struct GameAssets {
     pub font: Handle<Image>,
     pub sheet: Handle<Image>,
-    pub map: Handle<TiledMap>,
+    pub maps: Vec<Handle<TiledMap>>,
 }
 impl GameAssets {
     pub fn new(assets: &AssetServer) -> Self {
-        let _maps = assets.load_folder("maps").unwrap();
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
-            map: assets.load("maps/bank1.tmj"),
+            maps: vec![assets.load("maps/bank1.tmj"), assets.load("maps/bank2.tmj")],
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
-        assets.get_group_load_state([self.font.id(), self.sheet.id()])
+        assets.get_group_load_state([
+            self.font.id(),
+            self.sheet.id(),
+            self.maps[0].id(),
+            self.maps[1].id(),
+        ])
     }
 }
 
@@ -154,15 +158,21 @@ fn load_assets(
             LoadState::Loaded => {
                 let font = images.get(&game_assets.font).unwrap();
                 let sheet = images.get(&game_assets.sheet).unwrap();
-                let map = maps.get(&game_assets.map).unwrap();
+                // let maps = maps.get(&game_assets.maps).unwrap();
+                let maps = game_assets
+                    .maps
+                    .iter()
+                    .map(|x| maps.get(x).cloned().unwrap())
+                    .collect();
                 state.system.set_font(font);
                 state.system.set_sheet(sheet);
-                state.system.set_map(map);
+                state.system.set_maps(maps);
                 state.loaded = true;
                 info!("Finished loading assets.");
                 commands.remove_resource::<GameAssets>();
             }
             LoadState::Loading => info!("Loading assets..."),
+            LoadState::NotLoaded => info!("Not yet loaded..."),
             x => panic!("Could not load assets: {x:?}"),
         }
     }
@@ -211,6 +221,15 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
     }
     if keys.pressed(KeyCode::X) {
         state.system.input().press(5);
+    }
+    if keys.pressed(KeyCode::ControlLeft) {
+        state.system.input().press_key(63);
+    }
+    if keys.pressed(KeyCode::ShiftLeft) {
+        state.system.input().press_key(64);
+    }
+    if keys.pressed(KeyCode::AltLeft) {
+        state.system.input().press_key(65);
     }
 
     if keys.just_pressed(KeyCode::P) {

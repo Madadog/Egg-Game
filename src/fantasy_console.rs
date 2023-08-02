@@ -4,13 +4,13 @@ use egg_core::{
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, SyncHelper},
     tic80_api::{
-        core::{MouseInput, SfxOptions, SpriteOptions},
+        core::{Flip, MouseInput, SfxOptions, SpriteOptions},
         helpers::SWEETIE_16,
     },
 };
 use tiny_skia::{
-    Color, FillRule, IntSize, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, Rect, Stroke,
-    Transform,
+    Color, FillRule, IntSize, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint,
+    PremultipliedColorU8, Rect, Stroke, Transform,
 };
 
 use crate::tiled::TiledMap;
@@ -33,7 +33,7 @@ pub struct FantasyConsole {
     palette_map: [u8; 16],
     blit_segment: u8,
     screen_offset: [i8; 2],
-    sprite_flags: [u8; 512],
+    sprite_flags: Vec<u8>,
     music: Option<usize>,
     memory: EggMemory,
     sounds: Vec<(i32, SfxOptions)>,
@@ -44,7 +44,7 @@ pub struct FantasyConsole {
 
 impl FantasyConsole {
     pub fn new() -> Self {
-        Self {
+        let mut x = Self {
             screen: Pixmap::new(240, 136).unwrap(),
             overlay_screen: Pixmap::new(240, 136).unwrap(),
             _output_screen: Pixmap::new(240, 136).unwrap(),
@@ -58,13 +58,31 @@ impl FantasyConsole {
             palette_map: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             blit_segment: 2,
             screen_offset: [0; 2],
-            sprite_flags: [0; 512],
+            sprite_flags: vec![0; 2048],
             music: None,
             sounds: Vec::new(),
             memory: EggMemory::new(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
             sync_helper: SyncHelper::new(),
+        };
+        x.load_sprite_flags();
+        x
+    }
+    pub fn load_sprite_flags(&mut self) {
+        let string = "00100000000000000000000000000000000000801000000000000000002020000010101010500000001000000000000000101030101000000000001010000000101010002000000000301010400000001000100000400010500000000000000010101010108020100000000000101010203000301080302000000000001010101010100000100010001010100000000010001000001000100010100000000000000000000010101030303010000010100000000000000000000000002030203000000000000000000000101010400000000000000010000000203010102000100000000000000000000000000010101000000000000000100010a060b0101020";
+        for i in 0..string.len() / 2 {
+            let (char1, char2) = (
+                string.chars().nth(i * 2).unwrap(),
+                string.chars().nth(i * 2 + 1).unwrap(),
+            );
+            let mut string = String::new();
+            string.push(char2);
+            string.push(char1);
+            let flag = u8::from_str_radix(&string, 16).unwrap();
+            let (x, y) = (i % 16, i / 16);
+            let index = x + y * 32 + 1;
+            self.sprite_flags[index] = flag;
         }
     }
     pub fn input(&mut self) -> &mut EggInput {
@@ -120,6 +138,7 @@ impl FantasyConsole {
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
+        let mask = Mask::from_pixmap(self.font.as_ref(), tiny_skia::MaskType::Alpha);
         screen.fill_rect(
             Rect::from_xywh(x as f32, y as f32, 8.0, 8.0).unwrap(),
             &Paint {
@@ -134,38 +153,112 @@ impl FantasyConsole {
                 ..Default::default()
             },
             Transform::identity(),
-            None,
+            Some(&mask),
         )
     }
-    pub fn draw_sprite(&mut self, index: i32, x: i32, y: i32) {
-        let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
-        // This can't be made a function until Rust gets good.
+    fn draw_colour_letter(&mut self, char: char, x: i32, y: i32, colour: Color) {
+        if x >= 240 || y >= 136 || x < 0 || y < 0 {
+            return;
+        }
+        let char_index = char as u8 as usize;
+        let pixel_index = (char_index % 16) * 8 + (char_index / 16) * 8 * 128;
         let screen = match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
-        screen.fill_rect(
-            Rect::from_xywh(x as f32, y as f32, 8.0, 8.0).unwrap(),
-            &Paint {
-                shader: Pattern::new(
-                    self.sprites.as_ref(),
-                    tiny_skia::SpreadMode::Repeat,
-                    tiny_skia::FilterQuality::Nearest,
-                    1.0,
-                    Transform::from_translate(-(tx as f32) + x as f32, -(ty as f32) + y as f32),
-                ),
-                anti_alias: false,
-                
-                ..Default::default()
-            },
-            Transform::identity(),
-            None,
-        )
+        for j in 0..8 {
+            for i in 0..8 {
+                let screen_index = (x + i) + 240 * (y + j);
+                let pixel = self.font.pixels()[pixel_index + (i + 128 * j) as usize];
+                if screen_index > screen.pixels().len() as i32 {
+                    return;
+                }
+                if pixel.alpha() == 0 {
+                    continue;
+                }
+                screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+            }
+        }
     }
-
-    pub fn set_map(&mut self, map: &TiledMap) {
-        self.maps = vec![map.clone()];
+    pub fn blit_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool) {
+        let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
+        let screen = match self.vbank {
+            0 => &mut self.screen,
+            1 => &mut self.overlay_screen,
+            _ => unreachable!(),
+        };
+        let x_offset = x.min(0).abs();
+        let y_offset = y.min(0).abs();
+        let x_start = x.max(0);
+        let y_start = y.max(0);
+        let y_end = (y + 8).min(136);
+        let x_end = (x + 8).min(240);
+        if !flip {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                    let screen_index = x + 240 * y;
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
+                        continue;
+                    }
+                    screen.pixels_mut()[screen_index as usize] =
+                        self.sprites.pixels()[sprite_index];
+                }
+            }
+        } else {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).rev().zip((x_offset..8)) {
+                    let screen_index = x + 240 * y;
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
+                        continue;
+                    }
+                    screen.pixels_mut()[screen_index as usize] =
+                        self.sprites.pixels()[sprite_index];
+                }
+            }
+        }
+    }
+    pub fn blit_mask(&mut self, index: i32, x: i32, y: i32, colour: Color, flip: bool) {
+        let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
+        let screen = match self.vbank {
+            0 => &mut self.screen,
+            1 => &mut self.overlay_screen,
+            _ => unreachable!(),
+        };
+        let x_offset = x.min(0).abs();
+        let y_offset = y.min(0).abs();
+        let x_start = x.max(0);
+        let y_start = y.max(0);
+        let y_end = (y + 8).min(136);
+        let x_end = (x + 8).min(240);
+        if !flip {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                    let screen_index = x + 240 * y;
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
+                        continue;
+                    }
+                    screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+                }
+            }
+        } else {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
+                    let screen_index = x + 240 * y;
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
+                        continue;
+                    }
+                    screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+                }
+            }
+        }
+    }
+    pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
+        self.maps = maps;
     }
 }
 
@@ -234,8 +327,8 @@ impl ConsoleApi for FantasyConsole {
         &mut self.memory
     }
 
-    fn get_sprite_flags(&mut self) -> &mut [u8; 512] {
-        &mut self.sprite_flags
+    fn get_sprite_flags(&mut self) -> &mut [u8] {
+        self.sprite_flags.as_mut_slice()
     }
 
     fn get_system_font(&mut self) -> &mut [u8; 2048] {
@@ -392,42 +485,98 @@ impl ConsoleApi for FantasyConsole {
             pb.line_to(x1, y1);
             pb.finish().unwrap()
         };
-        let fill = FillRule::default();
+        let stroke = Stroke {
+            width: 1.0,
+            ..Default::default()
+        };
 
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .fill_path(&path, &paint, fill, Transform::identity(), None);
+        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
-        if self.maps.is_empty() {
+    fn map(&mut self, mut opts: egg_core::tic80_api::core::MapOptions) {
+        if self.maps.is_empty()
+            || opts.sx + opts.w * 8 < 0
+            || opts.sy + opts.h * 8 < 0
+            || opts.sx > 240
+            || opts.sy > 132
+        {
             return;
         }
+        // Crop map
+        if opts.sx <= 0 || opts.sy <= 0 {
+            let (x_tiles, y_tiles) = (-(opts.sx / 8), -(opts.sy / 8));
+            opts.sx += x_tiles * 8;
+            opts.sy += y_tiles * 8;
+            opts.x += x_tiles;
+            opts.y += y_tiles;
+        }
+        opts.w = opts.w.min(31);
+        opts.h = opts.h.min(18);
+        // println!("Map Options: {opts:?}");
+        let map_bank = self.sync_helper.last_bank() as usize;
+        // This can't be made a function until Rust gets good.
+        let screen = match self.vbank {
+            0 => &mut self.screen,
+            1 => &mut self.overlay_screen,
+            _ => unreachable!(),
+        };
+        // let shader = Pattern::new(
+        //     self.sprites.as_ref(),
+        //     tiny_skia::SpreadMode::Repeat,
+        //     tiny_skia::FilterQuality::Nearest,
+        //     1.0,
+        //     Transform::identity(),
+        // );
         for j in 0..opts.h {
             for i in 0..opts.w {
-                let mut index = self.maps[0]
-                    .get(0, (opts.x + i) as usize, (opts.y + j) as usize)
-                    .unwrap();
-                if index == 0 {
-                    continue;
-                } else {
-                    index -= 1;
+                if let Some(mut index) = self.maps[map_bank].get(
+                    0,
+                    (opts.x + i).try_into().unwrap(),
+                    (opts.y + j).try_into().unwrap(),
+                ) {
+                    let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
+                    if index == 0 {
+                        continue;
+                    } else {
+                        index -= 1;
+                    }
+                    let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
+                    let transform = Transform::from_translate(
+                        (-(tx as i32) + x) as f32,
+                        (-(ty as i32) + y) as f32,
+                    );
+                    // if j == 0 && i == 0 { println!("transform: {:?}", transform); }
+                    // let mut shader = shader.clone();
+                    // shader.transform(transform);
+                    // let paint = Paint {
+                    //     shader,
+                    //     anti_alias: false,
+                    //     ..Default::default()
+                    // };
+                    self.blit_sprite(index as i32, x, y, false);
+                    // FantasyConsole::draw_sprite_with(
+                    //     screen,
+                    //     Rect::from_xywh(x as f32, y as f32, 6.0, 6.0).unwrap(),
+                    //     &paint,
+                    //     Transform::identity(),
+                    // );
                 }
-                self.spr(
-                    index as i32,
-                    opts.sx + i * 8,
-                    opts.sy + j * 8,
-                    SpriteOptions::const_default(),
-                );
             }
         }
     }
 
-    fn mget(&self, _x: i32, _y: i32) -> i32 {
-        0
+    fn mget(&self, x: i32, y: i32) -> i32 {
+        // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
+        // TODO: Add bank-switched map spr flags
+        // TODO: Load more Tiled maps
+        let i = self.maps[0].get(0, x as usize, y as usize).unwrap() as i32;
+        // println!("i = {}", self.sprite_flags[i as usize]);
+        i
     }
 
     fn mset(&mut self, _x: i32, _y: i32, _value: i32) {
@@ -511,7 +660,7 @@ impl ConsoleApi for FantasyConsole {
         text: &str,
         x: i32,
         y: i32,
-        _opts: egg_core::tic80_api::core::PrintOptions,
+        opts: egg_core::tic80_api::core::PrintOptions,
     ) -> i32 {
         let mut max_width = 0;
         let mut dx = x;
@@ -519,12 +668,13 @@ impl ConsoleApi for FantasyConsole {
         for char in text.chars() {
             // This is a bit of a hack to make lines wrap
             match char as u8 {
+                // Newline
                 10 => {
                     dx = x;
-                    dy += 8;
+                    dy += 7;
                 }
                 _ => {
-                    self.draw_letter(char, dx, dy);
+                    self.draw_colour_letter(char, dx, dy, self.colour(opts.color as u8));
                     dx += 6;
                 }
             };
@@ -579,19 +729,30 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::tic80_api::core::SpriteOptions) {
+        let flip = match opts.flip {
+            Flip::Horizontal => true,
+            _ => false,
+        };
         match (opts.w, opts.h) {
-            (1, 1) => self.draw_sprite(id, x, y),
+            (1, 1) => self.blit_sprite(id, x, y, flip),
             (w, h) => {
                 for j in 0..h {
                     for i in 0..w {
-                        self.draw_sprite(id + i + j * 32, x + i * 8, y + j * 8);
+                        let x_pos = if !flip {
+                            x + i * 8
+                        } else {
+                            x + (w - 1 - i) * 8
+                        };
+                        self.blit_sprite(id + i + j * 32, x_pos, y + j * 8, flip);
                     }
                 }
             }
         }
     }
 
-    fn sync(&mut self, _mask: i32, _bank: u8, _to_cart: bool) {}
+    fn sync(&mut self, mask: i32, bank: u8, _to_cart: bool) {
+        self.sync_helper.sync2(mask, bank).unwrap();
+    }
 
     fn time(&self) -> f32 {
         todo!()
@@ -653,5 +814,33 @@ impl ConsoleApi for FantasyConsole {
 
     fn previous_mouse(&mut self) -> &mut MouseInput {
         &mut self.input.previous_mouse
+    }
+    fn draw_outline(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, outline_colour: u8) {
+        let flip = match opts.flip {
+            egg_core::tic80_api::core::Flip::None => false,
+            egg_core::tic80_api::core::Flip::Horizontal => true,
+            _ => false,
+        };
+        match (opts.w, opts.h) {
+            (w, h) => {
+                for j in 0..h {
+                    for i in 0..w {
+                        let id = id + i + j * 32;
+                        let x = if !flip {
+                            x + i * 8
+                        } else {
+                            x + (w - 1 - i) * 8
+                        };
+                        let y = y + j * 8;
+                        let colour = self.colour(outline_colour);
+                        self.blit_mask(id, x + 1, y, colour, flip);
+                        self.blit_mask(id, x - 1, y, colour, flip);
+                        self.blit_mask(id, x, y + 1, colour, flip);
+                        self.blit_mask(id, x, y - 1, colour, flip);
+                        // self.blit_sprite(id, x, y, flip);
+                    }
+                }
+            }
+        }
     }
 }
