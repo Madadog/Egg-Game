@@ -612,7 +612,7 @@ pub const TOWN: MapSet<'static> = MapSet {
         //ground
         MapLayer::new(0, 0, 30 * 4, 17 * 4)
             .with_trans(&[0])
-            .with_blit_rot_flags(5, 0, 1),
+            .with_blit_rot_flags(5, 0, 0),
     ],
     fg_maps: &[
         //foreground
