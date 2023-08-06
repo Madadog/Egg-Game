@@ -91,6 +91,9 @@ impl FantasyConsole {
     pub fn input(&mut self) -> &mut EggInput {
         &mut self.input
     }
+    pub fn sounds(&mut self) -> &mut Vec<(i32, SfxOptions)> {
+        &mut self.sounds
+    }
     pub fn colour(&self, index: u8) -> Color {
         if self.vbank == 1 && index == 0 {
             return Color::from_rgba8(0, 0, 0, 0);
@@ -98,27 +101,25 @@ impl FantasyConsole {
         array_to_colour(self.palette[index as usize])
     }
     pub fn to_texture(&mut self, image: &mut Image) {
-        let list = [self.screen.as_ref(), self.overlay_screen.as_ref()];
-        for i in list {
-            self._output_screen.draw_pixmap(
-                0,
-                0,
-                i,
-                &PixmapPaint::default(),
-                Transform::identity(),
-                None,
-            );
-        }
+        self._output_screen.clone_from(&self.screen);
+        self._output_screen.draw_pixmap(
+            0,
+            0,
+            self.overlay_screen.as_ref(),
+            &PixmapPaint::default(),
+            Transform::identity(),
+            None,
+        );
         image.data.copy_from_slice(self._output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {
-        assert!(font.size().x >= 128.0);
+        assert!(font.size().x == 128.0);
         assert!(font.size().y >= 128.0);
         for (i, c) in self.font.data_mut().iter_mut().zip(font.data.iter()) {
             *i = *c;
         }
     }
-    pub fn set_sheet(&mut self, sheet: &Image) {
+    pub fn set_sprites(&mut self, sheet: &Image) {
         self.sprites = Pixmap::from_vec(
             sheet.data.clone(),
             IntSize::from_wh(sheet.size().x as u32, sheet.size().y as u32).unwrap(),
@@ -132,37 +133,7 @@ impl FantasyConsole {
             _ => unreachable!(),
         }
     }
-    pub fn draw_letter(&mut self, char: char, x: i32, y: i32) {
-        let char_index = char as u8;
-        let (tx, ty) = ((char_index % 16) * 8, (char_index / 16) * 8);
-        // This can't be made a function until Rust gets good.
-        let screen = match self.vbank {
-            0 => &mut self.screen,
-            1 => &mut self.overlay_screen,
-            _ => unreachable!(),
-        };
-        let mask = Mask::from_pixmap(self.font.as_ref(), tiny_skia::MaskType::Alpha);
-        screen.fill_rect(
-            Rect::from_xywh(x as f32, y as f32, 8.0, 8.0).unwrap(),
-            &Paint {
-                shader: Pattern::new(
-                    self.font.as_ref(),
-                    tiny_skia::SpreadMode::Repeat,
-                    tiny_skia::FilterQuality::Nearest,
-                    1.0,
-                    Transform::from_translate(-(tx as f32) + x as f32, -(ty as f32) + y as f32),
-                ),
-                anti_alias: false,
-                ..Default::default()
-            },
-            Transform::identity(),
-            Some(&mask),
-        )
-    }
-    fn draw_colour_letter(&mut self, char: char, x: i32, y: i32, colour: Color) {
-        if x >= 240 || y >= 136 || x < 0 || y < 0 {
-            return;
-        }
+    fn draw_colour_letter(&mut self, char: char, x: i32, y: i32, colour: Color) -> i32 {
         let char_index = char as u8 as usize;
         let pixel_index = (char_index % 16) * 8 + (char_index / 16) * 8 * 128;
         let screen = match self.vbank {
@@ -170,19 +141,24 @@ impl FantasyConsole {
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
+        let mut letter_width = 0;
         for j in 0..8 {
             for i in 0..8 {
                 let screen_index = (x + i) + 240 * (y + j);
                 let pixel = self.font.pixels()[pixel_index + (i + 128 * j) as usize];
-                if screen_index > screen.pixels().len() as i32 {
-                    return;
-                }
                 if pixel.alpha() == 0 {
                     continue;
                 }
-                screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+                letter_width = letter_width.max(i + 1);
+                if x + i >= 240 || y + j >= 136 {
+                    continue;
+                }
+                if let Some(x) = screen.pixels_mut().get_mut(screen_index as usize) {
+                    *x = colour.premultiply().to_color_u8();
+                }
             }
         }
+        letter_width
     }
     pub fn blit_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
@@ -520,21 +496,7 @@ impl ConsoleApi for FantasyConsole {
         }
         opts.w = opts.w.min(31);
         opts.h = opts.h.min(18);
-        // println!("Map Options: {opts:?}");
         let map_bank = self.sync_helper.last_bank() as usize;
-        // This can't be made a function until Rust gets good.
-        let screen = match self.vbank {
-            0 => &mut self.screen,
-            1 => &mut self.overlay_screen,
-            _ => unreachable!(),
-        };
-        // let shader = Pattern::new(
-        //     self.sprites.as_ref(),
-        //     tiny_skia::SpreadMode::Repeat,
-        //     tiny_skia::FilterQuality::Nearest,
-        //     1.0,
-        //     Transform::identity(),
-        // );
         for j in 0..opts.h {
             for i in 0..opts.w {
                 if let Some(mut index) = self.maps[map_bank].get(
@@ -548,26 +510,7 @@ impl ConsoleApi for FantasyConsole {
                     } else {
                         index -= 1;
                     }
-                    let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
-                    let transform = Transform::from_translate(
-                        (-(tx as i32) + x) as f32,
-                        (-(ty as i32) + y) as f32,
-                    );
-                    // if j == 0 && i == 0 { println!("transform: {:?}", transform); }
-                    // let mut shader = shader.clone();
-                    // shader.transform(transform);
-                    // let paint = Paint {
-                    //     shader,
-                    //     anti_alias: false,
-                    //     ..Default::default()
-                    // };
                     self.blit_sprite(index as i32, x, y, false);
-                    // FantasyConsole::draw_sprite_with(
-                    //     screen,
-                    //     Rect::from_xywh(x as f32, y as f32, 6.0, 6.0).unwrap(),
-                    //     &paint,
-                    //     Transform::identity(),
-                    // );
                 }
             }
         }
@@ -676,11 +619,17 @@ impl ConsoleApi for FantasyConsole {
                 // Newline
                 10 => {
                     dx = x;
-                    dy += 7;
+                    dy += 6;
                 }
+                32 => {
+                    dx += 5;
+                }
+                // Null
+                0 => {}
                 _ => {
-                    self.draw_colour_letter(char, dx, dy, self.colour(opts.color as u8));
-                    dx += 6;
+                    let width =
+                        self.draw_colour_letter(char, dx, dy, self.colour(opts.color as u8));
+                    dx += width + 1;
                 }
             };
             max_width = max_width.max(dx - x);

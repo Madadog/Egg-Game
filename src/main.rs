@@ -1,4 +1,5 @@
 use bevy::asset::LoadState;
+use bevy::audio::VolumeLevel;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::gamestate::inventory::InventoryUi;
@@ -82,7 +83,10 @@ fn main() {
         .add_plugins(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets))
         .add_systems(Update, load_assets)
-        .add_systems(Update, (read_state, step_state, update_texture).chain())
+        .add_systems(
+            Update,
+            (read_state, step_state, play_sounds, update_texture).chain(),
+        )
         .run();
 }
 
@@ -143,6 +147,7 @@ impl GameAssets {
 
 fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(GameAssets::new(&assets));
+    commands.insert_resource(SfxAssets::new(&assets));
 }
 
 fn load_assets(
@@ -165,7 +170,7 @@ fn load_assets(
                     .map(|x| maps.get(x).cloned().unwrap())
                     .collect();
                 state.system.set_font(font);
-                state.system.set_sheet(sheet);
+                state.system.set_sprites(sheet);
                 state.system.set_maps(maps);
                 state.loaded = true;
                 info!("Finished loading assets.");
@@ -176,6 +181,43 @@ fn load_assets(
             x => panic!("Could not load assets: {x:?}"),
         }
     }
+}
+
+#[derive(Debug, Resource)]
+pub struct SfxAssets {
+    pub sounds: Vec<Option<Handle<AudioSource>>>,
+}
+impl SfxAssets {
+    pub fn new(assets: &AssetServer) -> Self {
+        let mut sounds = vec![None; 32];
+        for i in 0..11 {
+            let path = format!("sfx/{}.ogg", 32 + i);
+            sounds.push(Some(assets.load(path)));
+        }
+        Self {
+            sounds
+        }
+    }
+}
+
+fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggState>) {
+    for (i, options) in state.system.sounds() {
+        if let Some(sound) = game_assets.sounds.get(*i as usize).and_then(|x| x.clone()) {
+            let speed = dbg!(2.0_f32.powf((options.note as f32 + (options.octave as f32 - 6.0) * 12.0) / 12.0));
+            commands.spawn(AudioBundle {
+                source: sound,
+                settings: PlaybackSettings {
+                    mode: bevy::audio::PlaybackMode::Despawn,
+                    volume: bevy::audio::Volume::Relative(VolumeLevel::new(0.5)),
+                    speed,
+                    paused: false,
+                },
+            });
+        } else {
+            panic!("Unknown sound {i:?} with {options:?}")
+        }
+    }
+    state.system.sounds().clear();
 }
 
 #[derive(Component)]
