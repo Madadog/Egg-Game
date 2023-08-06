@@ -518,7 +518,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        // TODO: Add bank-switched map spr flags
         // TODO: Load more Tiled maps
         let i = dbg!(self.maps[self.sync_helper.last_bank() as usize]
             .get(0, x as usize, y as usize)
@@ -622,11 +621,20 @@ impl ConsoleApi for FantasyConsole {
                     dy += 6;
                 }
                 32 => {
-                    dx += 5;
+                    dx += if opts.small_text {
+                        3
+                    } else {
+                        5
+                    };
                 }
                 // Null
                 0 => {}
                 _ => {
+                    let char = if opts.small_text {
+                        (char as u8 + 128) as char
+                    } else {
+                        char
+                    };
                     let width =
                         self.draw_colour_letter(char, dx, dy, self.colour(opts.color as u8));
                     dx += width + 1;
