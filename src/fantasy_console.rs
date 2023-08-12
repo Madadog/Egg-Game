@@ -1,4 +1,4 @@
-use bevy::prelude::Image;
+use bevy::prelude::{Image, info};
 use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
@@ -34,9 +34,9 @@ pub struct FantasyConsole {
     blit_segment: u8,
     screen_offset: [i8; 2],
     sprite_flags: Vec<u8>,
-    music: Option<usize>,
+    music: Option<(usize, bool)>,
     memory: EggMemory,
-    sounds: Vec<(i32, SfxOptions)>,
+    sounds: Vec<(String, SfxOptions)>,
     input: EggInput,
     rng: Lcg64Xsh32,
     sync_helper: SyncHelper,
@@ -91,8 +91,11 @@ impl FantasyConsole {
     pub fn input(&mut self) -> &mut EggInput {
         &mut self.input
     }
-    pub fn sounds(&mut self) -> &mut Vec<(i32, SfxOptions)> {
+    pub fn sounds(&mut self) -> &mut Vec<(String, SfxOptions)> {
         &mut self.sounds
+    }
+    pub fn music_track(&mut self) -> &mut Option<(usize, bool)> {
+        &mut self.music
     }
     pub fn colour(&self, index: u8) -> Color {
         if self.vbank == 1 && index == 0 {
@@ -142,6 +145,7 @@ impl FantasyConsole {
             _ => unreachable!(),
         };
         let mut letter_width = 0;
+        let colour = colour.premultiply().to_color_u8();
         for j in 0..8 {
             for i in 0..8 {
                 let screen_index = (x + i) + 240 * (y + j);
@@ -154,7 +158,7 @@ impl FantasyConsole {
                     continue;
                 }
                 if let Some(x) = screen.pixels_mut().get_mut(screen_index as usize) {
-                    *x = colour.premultiply().to_color_u8();
+                    *x = colour;
                 }
             }
         }
@@ -212,6 +216,7 @@ impl FantasyConsole {
         let y_start = y.max(0);
         let y_end = (y + 8).min(136);
         let x_end = (x + 8).min(240);
+        let colour = colour.premultiply().to_color_u8();
         if !flip {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
                 for (x, i) in (x_start..x_end).zip(x_offset..8) {
@@ -220,7 +225,7 @@ impl FantasyConsole {
                     if self.sprites.pixels()[sprite_index].alpha() == 0 {
                         continue;
                     }
-                    screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+                    screen.pixels_mut()[screen_index as usize] = colour;
                 }
             }
         } else {
@@ -231,13 +236,79 @@ impl FantasyConsole {
                     if self.sprites.pixels()[sprite_index].alpha() == 0 {
                         continue;
                     }
-                    screen.pixels_mut()[screen_index as usize] = colour.premultiply().to_color_u8();
+                    screen.pixels_mut()[screen_index as usize] = colour;
                 }
             }
         }
     }
     pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
         self.maps = maps;
+    }
+    pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
+        if x >= 240 || y >= 136 || x < 0 || y < 0 {
+            return;
+        }
+        let colour = colour.premultiply().to_color_u8();
+        let over = (x + width - 240).max(0);
+        let width = width - over;
+        for i in 0..width {
+            let screen_index = x + 240 * y + i;
+            self.screen.pixels_mut()[screen_index as usize] = colour;
+        }
+    }
+    pub fn vertical_line(&mut self, x: i32, y: i32, height: i32, colour: Color) {
+        if x >= 240 || y >= 136 || x < 0 || y < 0 {
+            return;
+        }
+        let colour = colour.premultiply().to_color_u8();
+        let over = (y + height - 136).max(0);
+        let height = height - over;
+        for i in 0..height {
+            let screen_index = x + 240 * (y + i);
+            self.screen.pixels_mut()[screen_index as usize] = colour;
+        }
+    }
+    pub fn draw_rect(
+        &mut self,
+        mut x: i32,
+        mut y: i32,
+        mut width: i32,
+        mut height: i32,
+        colour: Color,
+    ) {
+        if x >= 240 || y >= 136 {
+            return;
+        }
+        if x < 0 {
+            width += x;
+            x = 0;
+        }
+        if y < 0 {
+            height += y;
+            y = 0;
+        }
+        if x + width > 240 {
+            width = 240 - x;
+        }
+        for i in 0..height {
+            self.horizontal_line(x, y + i, width, colour);
+        }
+    }
+    pub fn draw_rect_border(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        colour: Color,
+    ) {
+        if x >= 240 || y >= 136 {
+            return;
+        }
+        self.horizontal_line(x, y, width, colour);
+        self.horizontal_line(x, y + height - 1, width, colour);
+        self.vertical_line(x, y, height, colour);
+        self.vertical_line(x + width - 1, y, height, colour);
     }
 }
 
@@ -519,10 +590,9 @@ impl ConsoleApi for FantasyConsole {
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
         // TODO: Load more Tiled maps
-        let i = dbg!(self.maps[self.sync_helper.last_bank() as usize]
+        let i = self.maps[self.sync_helper.last_bank() as usize]
             .get(0, x as usize, y as usize)
-            .unwrap() as i32);
-        println!("i = {}", self.sprite_flags[i as usize]);
+            .unwrap() as i32;
         i
     }
 
@@ -538,7 +608,8 @@ impl ConsoleApi for FantasyConsole {
         if track == -1 {
             self.music = None;
         } else {
-            self.music = Some(track as usize);
+            info!("Playing track {}", track);
+            self.music = Some((track as usize, false));
         }
     }
 
@@ -621,11 +692,7 @@ impl ConsoleApi for FantasyConsole {
                     dy += 6;
                 }
                 32 => {
-                    dx += if opts.small_text {
-                        3
-                    } else {
-                        5
-                    };
+                    dx += if opts.small_text { 3 } else { 5 };
                 }
                 // Null
                 0 => {}
@@ -646,48 +713,17 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
-        let mut paint = Paint {
-            anti_alias: false,
-            ..Default::default()
-        };
-        paint.set_color(self.colour(color));
-        if let Some(rect) = Rect::from_xywh(x as f32, y as f32, w as f32, h as f32) {
-            match self.vbank {
-                0 => &mut self.screen,
-                1 => &mut self.overlay_screen,
-                _ => unreachable!(),
-            }
-            .fill_rect(rect, &paint, Transform::identity(), None);
-        }
+        let colour = self.colour(color);
+        self.draw_rect(x, y, w, h, colour);
     }
 
     fn rectb(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
-        let mut paint = Paint {
-            anti_alias: false,
-            ..Default::default()
-        };
-        paint.set_color(self.colour(color));
-        let path = {
-            let mut pb = PathBuilder::new();
-            // pb.move_to(x as f32, y as f32);
-            pb.push_rect(Rect::from_xywh(x as f32, y as f32, w as f32, h as f32).unwrap());
-            pb.finish().unwrap()
-        };
-        let stroke = Stroke {
-            width: 1.0,
-            ..Default::default()
-        };
-
-        match self.vbank {
-            0 => &mut self.screen,
-            1 => &mut self.overlay_screen,
-            _ => unreachable!(),
-        }
-        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        let colour = self.colour(color);
+        self.draw_rect_border(x, y, w, h, colour)
     }
 
-    fn sfx(&mut self, sfx_id: i32, opts: egg_core::tic80_api::core::SfxOptions) {
-        self.sounds.push((sfx_id, opts));
+    fn sfx(&mut self, sfx_id: &str, opts: egg_core::tic80_api::core::SfxOptions) {
+        self.sounds.push((sfx_id.to_string(), opts));
     }
 
     fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::tic80_api::core::SpriteOptions) {

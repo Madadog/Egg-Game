@@ -60,7 +60,6 @@ impl MenuState {
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
     ) -> Option<GameState> {
-        println!("Stepping menu");
         let old_index = self.index;
         let (menu_index, clicked) = step_menu(
             self.entries.len(),
@@ -79,13 +78,10 @@ impl MenuState {
         } else {
             (None, false)
         };
-        println!("Stepping menu done");
         if action {
-            println!("interaction");
             system.play_sound(sound::INTERACT);
             self.click(index, walkaround_state, inventory_ui, system)
         } else {
-            println!("returning none");
             None
         }
     }

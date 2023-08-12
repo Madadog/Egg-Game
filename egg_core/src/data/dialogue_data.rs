@@ -292,8 +292,10 @@ pub const HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
 ];
 pub const HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
 pub const HOUSE_KITCHEN_SINK: &[TextContent] = &[
-    Sound(&sound::ALERT_UP),
-    Delayed("Found something down the drain...!\n", 0),
+    Sound(&sound::GAIN),
+    Text("Found something down the drain...!\n"),
+    Pause,
+    Sound(&sound::LOSS),
     Text("... You left it there."),
 ];
 pub const HOUSE_KITCHEN_WINDOW: &str =

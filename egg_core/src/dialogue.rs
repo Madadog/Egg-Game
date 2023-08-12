@@ -261,7 +261,7 @@ impl Dialogue {
             if let Some(print_time) = &mut self.print_time {
                 *print_time += 1;
                 if !silent_char && *print_time % 2 == 0 && !self.is_line_done() {
-                    system.play_sound(sound::CLICK.with_volume(2));
+                    system.play_sound(sound::POP);
                 }
             }
             self.step_text(amount);

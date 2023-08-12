@@ -205,7 +205,7 @@ pub trait ConsoleApi {
     fn print_raw(&mut self, text: &str, x: i32, y: i32, opts: PrintOptions) -> i32;
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
     fn rectb(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
-    fn sfx(&mut self, sfx_id: i32, opts: SfxOptions);
+    fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
     fn spr(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions);
     fn sync(&mut self, mask: i32, bank: u8, to_cart: bool);
     fn time(&self) -> f32;

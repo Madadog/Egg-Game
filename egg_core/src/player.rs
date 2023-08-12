@@ -20,9 +20,7 @@ use crate::{
     map::{Axis, MapSet},
     position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi},
 };
-use tic80_api::{
-    core::{Flip, SpriteOptions},
-};
+use tic80_api::core::{Flip, SpriteOptions};
 
 #[derive(Debug, Clone)]
 pub struct Player {

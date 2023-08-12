@@ -99,7 +99,7 @@ impl InventoryUiState {
     pub fn back(&mut self, system: &mut impl ConsoleApi) {
         match self {
             Self::PageSelect(_) => {
-                system.play_sound(sound::INTERACT.with_note(-17));
+                system.play_sound(sound::INTERACT);
                 *self = Self::Close
             }
             Self::Close => (),
@@ -154,7 +154,7 @@ impl InventoryUi {
         }
     }
     pub fn open(&mut self, system: &mut impl ConsoleApi) {
-        system.play_sound(sound::INTERACT.with_note(-12));
+        system.play_sound(sound::INTERACT);
         self.state = InventoryUiState::PageSelect(0);
     }
     pub fn click(&mut self, system: &mut impl ConsoleApi) {
@@ -164,7 +164,7 @@ impl InventoryUi {
                 if let Some((old_index, id)) = selected_item {
                     // Put item back down
                     if old_index == new_index {
-                        system.play_sound(sound::INTERACT.with_note(-5));
+                        system.play_sound(sound::ITEM_DOWN);
                         *selected_item = None;
                         return;
                     };
@@ -172,16 +172,16 @@ impl InventoryUi {
                     // Swap items, pick up swapped item if present.
                     self.inventory.swap(*new_index, *old_index);
                     if let Some(Some(x)) = self.inventory.items.get(*old_index) {
-                        system.play_sound(sound::INTERACT.with_note(0));
+                        system.play_sound(sound::ITEM_SWAP);
                         *id = *x;
                     } else {
-                        system.play_sound(sound::INTERACT.with_note(-5));
+                        system.play_sound(sound::ITEM_DOWN);
                         *selected_item = None;
                     };
                 } else {
                     // Pick up item
                     if let Some(Some(x)) = self.inventory.items.get(*new_index) {
-                        system.play_sound(sound::INTERACT);
+                        system.play_sound(sound::ITEM_UP);
                         *selected_item = Some((*new_index, *x));
                     } else {
                         system.play_sound(sound::DENY);
@@ -327,8 +327,8 @@ impl InventoryUi {
                         0,
                         main_colour + 1,
                     );
-                    system.spr_blit_segment(
-                        1086,
+                    system.spr(
+                        534,
                         sx + 2,
                         sy + 2,
                         SpriteOptions {
@@ -337,7 +337,6 @@ impl InventoryUi {
                             h: 2,
                             ..Default::default()
                         },
-                        8,
                     );
                 }
             }

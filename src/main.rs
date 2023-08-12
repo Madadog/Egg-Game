@@ -2,6 +2,7 @@ use bevy::asset::LoadState;
 use bevy::audio::VolumeLevel;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::utils::HashMap;
 use egg_core::gamestate::inventory::InventoryUi;
 
 use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
@@ -85,7 +86,14 @@ fn main() {
         .add_systems(Update, load_assets)
         .add_systems(
             Update,
-            (read_state, step_state, play_sounds, update_texture).chain(),
+            (
+                read_state,
+                step_state,
+                play_sounds,
+                play_music,
+                update_texture,
+            )
+                .chain(),
         )
         .run();
 }
@@ -185,27 +193,44 @@ fn load_assets(
 
 #[derive(Debug, Resource)]
 pub struct SfxAssets {
-    pub sounds: Vec<Option<Handle<AudioSource>>>,
+    pub sounds: HashMap<String, Handle<AudioSource>>,
 }
 impl SfxAssets {
     pub fn new(assets: &AssetServer) -> Self {
-        let mut sounds = vec![None; 32];
-        for i in 0..11 {
-            let path = format!("sfx/{}.ogg", 32 + i);
-            sounds.push(Some(assets.load(path)));
-        }
-        Self {
-            sounds
-        }
+        let sfx = |name: &str| -> (String, Handle<AudioSource>) {
+            (name.to_string(), assets.load(format!("sfx/{}.ogg", name)))
+        };
+        let sounds = HashMap::from_iter([
+            sfx("1_piano"),
+            sfx("2_obtained"),
+            sfx("3_deny"),
+            sfx("4_alert_up"),
+            sfx("5_alert_down"),
+            sfx("6_save"),
+            sfx("7_reject"),
+            sfx("8_item_up"),
+            sfx("9_item_swap"),
+            sfx("10_item_down"),
+            sfx("11_interact"),
+            sfx("12_bip"),
+            sfx("13_door"),
+            sfx("14_pop"),
+            sfx("15_click_pop"),
+            sfx("16_fanfare"),
+            sfx("17_gain"),
+            sfx("18_loss"),
+        ]);
+        Self { sounds }
     }
 }
 
 fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggState>) {
-    for (i, options) in state.system.sounds() {
-        if let Some(sound) = game_assets.sounds.get(*i as usize).and_then(|x| x.clone()) {
-            let speed = dbg!(2.0_f32.powf((options.note as f32 + (options.octave as f32 - 6.0) * 12.0) / 12.0));
+    for (name, options) in state.system.sounds() {
+        if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
+            let speed =
+                2.0_f32.powf((options.note as f32 + (options.octave as f32 - 5.0) * 12.0) / 12.0);
             commands.spawn(AudioBundle {
-                source: sound,
+                source: sound.clone(),
                 settings: PlaybackSettings {
                     mode: bevy::audio::PlaybackMode::Despawn,
                     volume: bevy::audio::Volume::Relative(VolumeLevel::new(0.5)),
@@ -214,11 +239,45 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
                 },
             });
         } else {
-            panic!("Unknown sound {i:?} with {options:?}")
+            panic!("Unknown sound \"{name:?}\" with {options:?}")
         }
     }
     state.system.sounds().clear();
 }
+
+fn play_music(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut AudioSink), With<MusicPlayer>>,
+    mut state: ResMut<EggState>,
+    assets: Res<AssetServer>,
+) {
+    if let Some((x, playing)) = state.system.music_track() {
+        if query.iter().len() == 0 && !*playing {
+            commands.spawn((
+                AudioBundle {
+                    source: assets.load("music/filler.ogg"),
+                    settings: PlaybackSettings {
+                        mode: bevy::audio::PlaybackMode::Loop,
+                        volume: bevy::audio::Volume::Relative(VolumeLevel::new(1.0)),
+                        speed: 1.0,
+                        paused: false,
+                    },
+                },
+                MusicPlayer,
+            ));
+            *playing = true;
+        }
+    } else {
+        for (entity, sink) in query.iter_mut() {
+            info!("Stoppin mussic");
+            commands.entity(entity).despawn_recursive();
+            sink.stop();
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct MusicPlayer;
 
 #[derive(Component)]
 pub struct GameScreenSprite;

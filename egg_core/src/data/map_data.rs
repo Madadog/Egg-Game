@@ -573,7 +573,6 @@ pub const BACKYARD: MapSet<'static> = MapSet {
 //TODO: Creatures collide
 //TODO: Chicken <-> egg loop
 //TODO: Plot out game middles
-//TODO: Bevy port
 //TODO: Soundtrack where relevent
 //TODO: Finale
 
