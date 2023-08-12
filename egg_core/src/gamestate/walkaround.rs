@@ -63,9 +63,10 @@ impl<'a> WalkaroundState<'a> {
             self.camera = Camera::from_map_size(map_size, map_offset);
         }
         self.bg_colour = map_set.bg_colour;
-        if let Some(track) = map_set.music_track {
-            system.music(track as i32, MusicOptions::default());
-        };
+        // if let Some(track) = map_set.music_track {
+        //     system.music(Some(&track), MusicOptions::default());
+        // };
+        system.music(map_set.music_track.as_ref(), MusicOptions::default());
         if map_set.bank != system.sync_helper().last_bank() {
             system.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank, false);
         }

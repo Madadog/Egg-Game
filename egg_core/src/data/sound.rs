@@ -133,4 +133,21 @@ pub const LOSS: SfxData = SfxData::new(
     DEFAULT_SFX,
 );
 
-
+pub mod music {
+    #[derive(Debug, Clone)]
+    pub struct MusicTrack {
+        pub id: &'static str,
+        pub speed: f32,
+    }
+    impl MusicTrack {
+        pub const fn new(id: &'static str) -> Self {
+            Self {
+                id,
+                speed: 1.0,
+            }
+        }
+        pub const INTRO: MusicTrack = MusicTrack::new("intro");
+        pub const MENU: MusicTrack = MusicTrack::new("menu");
+        pub const SUPERMARKET: MusicTrack = MusicTrack::new("supermarket");
+    }
+}

@@ -3,7 +3,7 @@ use tic80_api::core::{
         TTriOptions,
     };
 
-use crate::{rand::Lcg64Xsh32, data::{save, sound::SfxData}};
+use crate::{rand::Lcg64Xsh32, data::{save, sound::{SfxData, music::MusicTrack}}};
 
 pub struct SyncHelper {
     already_synced: bool,
@@ -190,7 +190,7 @@ pub trait ConsoleApi {
     fn mget(&self, x: i32, y: i32) -> i32;
     fn mset(&mut self, x: i32, y: i32, value: i32);
     fn mouse(&self) -> MouseInput;
-    fn music(&mut self, track: i32, opts: MusicOptions);
+    fn music(&mut self, track: Option<&MusicTrack>, opts: MusicOptions);
     fn pix(&mut self, x: i32, y: i32, color: u8) -> u8;
     fn peek(&self, address: i32, bits: u8) -> u8;
     fn peek4(&self, address: i32) -> u8;

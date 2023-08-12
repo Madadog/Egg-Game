@@ -255,7 +255,7 @@ fn play_music(
         if query.iter().len() == 0 && !*playing {
             commands.spawn((
                 AudioBundle {
-                    source: assets.load("music/filler.ogg"),
+                    source: assets.load(format!("music/{}.ogg", x.id)),
                     settings: PlaybackSettings {
                         mode: bevy::audio::PlaybackMode::Loop,
                         volume: bevy::audio::Volume::Relative(VolumeLevel::new(1.0)),

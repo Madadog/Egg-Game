@@ -1,7 +1,7 @@
 use crate::{
     camera::CameraBounds,
     interact::Interactable,
-    data::map_data::MapIndex,
+    data::{map_data::MapIndex, sound::music::MusicTrack},
     packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper},
 };
@@ -14,7 +14,7 @@ pub struct MapSet<'a> {
     pub warps: &'a [Warp],
     pub interactables: &'a [Interactable<'a>],
     pub bg_colour: u8,
-    pub music_track: Option<u8>,
+    pub music_track: Option<MusicTrack>,
     pub bank: u8,
     pub camera_bounds: Option<CameraBounds>,
 }

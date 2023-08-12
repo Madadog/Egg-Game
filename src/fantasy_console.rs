@@ -6,7 +6,7 @@ use egg_core::{
     tic80_api::{
         core::{Flip, MouseInput, SfxOptions, SpriteOptions},
         helpers::SWEETIE_16,
-    },
+    }, data::sound::music::MusicTrack,
 };
 use tiny_skia::{
     Color, FillRule, IntSize, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint,
@@ -34,7 +34,7 @@ pub struct FantasyConsole {
     blit_segment: u8,
     screen_offset: [i8; 2],
     sprite_flags: Vec<u8>,
-    music: Option<(usize, bool)>,
+    music: Option<(MusicTrack, bool)>,
     memory: EggMemory,
     sounds: Vec<(String, SfxOptions)>,
     input: EggInput,
@@ -94,7 +94,7 @@ impl FantasyConsole {
     pub fn sounds(&mut self) -> &mut Vec<(String, SfxOptions)> {
         &mut self.sounds
     }
-    pub fn music_track(&mut self) -> &mut Option<(usize, bool)> {
+    pub fn music_track(&mut self) -> &mut Option<(MusicTrack, bool)> {
         &mut self.music
     }
     pub fn colour(&self, index: u8) -> Color {
@@ -604,12 +604,12 @@ impl ConsoleApi for FantasyConsole {
         self.input.mouse.clone()
     }
 
-    fn music(&mut self, track: i32, _opts: egg_core::tic80_api::core::MusicOptions) {
-        if track == -1 {
-            self.music = None;
+    fn music(&mut self, track: Option<&MusicTrack>, _opts: egg_core::tic80_api::core::MusicOptions) {
+        info!("Playing track \"{:?}\"", track);
+        if let Some(track) = track {
+            self.music = Some((track.clone(), false));
         } else {
-            info!("Playing track {}", track);
-            self.music = Some((track as usize, false));
+            self.music = None;
         }
     }
 

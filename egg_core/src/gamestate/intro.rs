@@ -3,6 +3,7 @@ use tic80_api::helpers::SWEETIE_16;
 
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::save;
+use crate::data::sound::music::MusicTrack;
 use crate::gamestate::menu::draw_title;
 use crate::system::ConsoleApi;
 use crate::system::ConsoleHelper;
@@ -60,7 +61,7 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
             }
             Some(0) => {
                 system.cls(0);
-                system.music(3, MusicOptions::default());
+                system.music(Some(&MusicTrack::INTRO), MusicOptions::default());
                 system.draw_ovr2(|system| {
                     system.cls(0);
                     system.circb(90, 38, 4, 4);
@@ -85,7 +86,7 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
         }
     } else {
         system.music(
-            -1,
+            None,
             MusicOptions {
                 frame: 1,
                 ..Default::default()
