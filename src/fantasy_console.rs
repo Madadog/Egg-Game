@@ -104,10 +104,11 @@ impl FantasyConsole {
         array_to_colour(self.palette[index as usize])
     }
     pub fn to_texture(&mut self, image: &mut Image) {
+        let [x, y] = self.get_screen_offset().clone();
         self._output_screen.clone_from(&self.screen);
         self._output_screen.draw_pixmap(
-            0,
-            0,
+            x.into(),
+            y.into(),
             self.overlay_screen.as_ref(),
             &PixmapPaint::default(),
             Transform::identity(),

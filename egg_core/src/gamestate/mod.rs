@@ -19,7 +19,7 @@ use tic80_api::core::{MouseInput, PrintOptions};
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
-use crate::data::save;
+use crate::data::{save, map_data};
 use crate::debug::DebugInfo;
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use crate::system::{ConsoleApi, ConsoleHelper};
@@ -133,8 +133,12 @@ impl GameState {
             Self::Instructions(i) => {
                 *i += 1;
                 if (*i > 60 || system.memory().is(save::INSTRUCTIONS_READ)) && system.any_btnp() {
+                    if system.memory().is(save::INSTRUCTIONS_READ) {
+                        walkaround_state.load_pmem(system);
+                    } else {
+                        walkaround_state.load_map(system, map_data::BEDROOM);
+                    }
                     system.memory().set(save::INSTRUCTIONS_READ);
-                    walkaround_state.load_pmem(system);
                     *self = Self::Walkaround;
                 }
                 draw_instructions(system);

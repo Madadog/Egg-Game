@@ -80,10 +80,11 @@ impl TicSpriteLayer {
 fn main() {
     App::new()
         .init_resource::<EggState>()
+        .insert_resource(ClearColor(Color::rgb(0.102, 0.110, 0.173)))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugins(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets))
-        .add_systems(Update, load_assets)
+        .add_systems(Update, (load_assets, resize_screen))
         .add_systems(
             Update,
             (
@@ -100,11 +101,6 @@ fn main() {
 
 fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2dBundle::default());
-    commands.spawn((SpriteBundle {
-        texture: assets.load("test.png"),
-        transform: Transform::from_xyz(500., 0., 1.),
-        ..default()
-    },));
     let screen = Image::new_fill(
         Extent3d {
             width: 240,
@@ -117,10 +113,6 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<As
     );
     commands.spawn((
         SpriteBundle {
-            sprite: Sprite {
-                custom_size: Some(Vec2::new(240., 136.) * 4.0),
-                ..default()
-            },
             texture: images.add(screen),
             transform: Transform::from_xyz(0., 0., 0.),
             ..default()
@@ -295,13 +287,25 @@ fn update_texture(
     }
 }
 
+fn resize_screen(
+    mut sprite: Query<&mut Transform, With<GameScreenSprite>>,
+    window: Query<&Window>,
+) {
+    let x = window.get_single().unwrap().width() as f32 / 240.0;
+    let y = window.get_single().unwrap().height() as f32 / 136.0;
+    let size = x.min(y);
+    for mut transform in sprite.iter_mut() {
+        transform.scale = Vec3::new(size, size, 1.0);
+    }
+}
+
 fn read_state(_state: Res<EggState>) {
     // info!("Time: {}", state.time);
 }
 
 // fn zoom_camera()
 
-fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
+fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>, mut window: Query<&mut Window>) {
     state.system.sync_helper().step();
     state.time += 1;
 
@@ -331,6 +335,14 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>) {
     }
     if keys.pressed(KeyCode::AltLeft) {
         state.system.input().press_key(65);
+    }
+    if keys.pressed(KeyCode::F11) {
+        use bevy::window::WindowMode;
+        let mode = window.get_single_mut().unwrap().mode;
+        window.get_single_mut().unwrap().mode = match mode {
+            WindowMode::Windowed => WindowMode::Fullscreen,
+            _ => WindowMode::Windowed,
+        };
     }
 
     if keys.just_pressed(KeyCode::P) {

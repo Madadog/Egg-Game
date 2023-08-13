@@ -10,7 +10,7 @@ impl DebugInfo {
     pub const fn const_default() -> Self {
         DebugInfo {
             player_info: AtomicBool::new(false),
-            map_info: AtomicBool::new(true),
+            map_info: AtomicBool::new(false),
             memory_info: AtomicBool::new(false),
             memory_index: AtomicUsize::new(0),
         }

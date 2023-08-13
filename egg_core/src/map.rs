@@ -7,7 +7,7 @@ use crate::{
 };
 use tic80_api::core::MapOptions;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapSet<'a> {
     pub maps: &'a [MapLayer<'a>],
     pub fg_maps: &'a [MapLayer<'a>],
@@ -27,7 +27,7 @@ impl<'a> MapSet<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapLayer<'a> {
     pub origin: PackedI16,
     pub size: PackedI16,
@@ -113,8 +113,8 @@ impl<'a> From<MapLayer<'a>> for MapOptions<'a> {
     }
 }
 
-#[derive(Clone)]
 /// Defines how a warp is interacted with.
+#[derive(Clone, Debug)]
 pub enum WarpMode {
     /// Automatically used when touched.
     Auto,
@@ -123,7 +123,7 @@ pub enum WarpMode {
     Interact,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Warp {
     pub from: (PackedI16, PackedI16),
     pub map: Option<MapIndex>,
