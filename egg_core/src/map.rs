@@ -87,7 +87,7 @@ impl<'a> MapLayer<'a> {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
     pub fn draw_tic80(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        system.palette_map_rotate(self.palette_rotate());
+        system.palette_map_rotate(self.palette_rotate().into());
         system.blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);

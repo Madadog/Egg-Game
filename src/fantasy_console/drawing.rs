@@ -23,6 +23,21 @@ impl IndexedImage {
             pixel.copy_from_slice(&colour);
         }
     }
+    pub fn from_image(image: &Image, palette: &[[u8; 3]]) -> Self {
+        let width = image.size().x as usize;
+        let height = image.size().y as usize;
+        let mut data = Vec::new();
+        'outer: for pixel in image.data.chunks_exact(4) {
+            for (i, colour) in palette.iter().enumerate() {
+                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
+                    data.push(i.try_into().unwrap());
+                    continue 'outer;
+                }
+            }
+            data.push(0);
+        }
+        Self { width, height, data }
+    }
 }
 impl Index<(usize, usize)> for IndexedImage {
     type Output = u8;

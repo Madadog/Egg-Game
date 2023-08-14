@@ -171,6 +171,7 @@ fn load_assets(
                     .collect();
                 state.system.set_font(font);
                 state.system.set_sprites(sheet);
+                state.system.set_indexed_sprites(sheet);
                 state.system.set_maps(maps);
                 state.loaded = true;
                 info!("Finished loading assets.");

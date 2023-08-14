@@ -122,7 +122,7 @@ impl<'a> DrawParams<'a> {
         }
     }
     pub fn draw(self, system: &mut impl ConsoleApi) {
-        system.palette_map_rotate(self.palette_rotate);
+        system.palette_map_rotate(self.palette_rotate.into());
         if let Some(outline) = self.outline {
             system.spr_outline(self.index, self.x, self.y, self.options, outline);
         } else {
@@ -157,8 +157,8 @@ pub trait ConsoleApi {
     fn get_system_font(&mut self) -> &mut [u8; 2048];
 
     // TIC-80 VRAM
-    fn get_palette(&mut self) -> &mut [[u8; 3]; 16];
-    fn get_palette_map(&mut self) -> &mut [u8; 16];
+    fn get_palette(&mut self) -> &mut [[u8; 3]];
+    fn get_palette_map(&mut self) -> &mut [usize];
     fn get_border_colour(&mut self) -> &mut u8;
     fn get_screen_offset(&mut self) -> &mut [i8; 2];
     fn get_mouse_cursor(&mut self) -> &mut u8;
@@ -238,29 +238,29 @@ pub trait ConsoleApi {
     fn previous_mouse(&mut self) -> &mut MouseInput;
 
     // helpers
-    fn palette_map_swap(&mut self, from: u8, to: u8) {
-        let from: i32 = (from % 16).into();
+    fn palette_map_swap(&mut self, from: usize, to: usize) {
+        let from: i32 = i32::try_from(from % 16).unwrap();
         assert!(from >= 0);
         self.get_palette_map()[from as usize] = to;
     }
-    fn palette_map_set_all(&mut self, to: u8) {
+    fn palette_map_set_all(&mut self, to: usize) {
         for i in 0..=15 {
             self.get_palette_map()[i] = to;
         }
     }
-    fn set_palette_map(&mut self, map: [u8; 16]) {
-        for (i, item) in map.into_iter().enumerate() {
-            self.get_palette_map()[i] = item;
+    fn set_palette_map(&mut self, map: &[usize]) {
+        for (map, target) in map.into_iter().zip(self.get_palette_map()) {
+            *target = *map;
         }
     }
     fn palette_map_reset(&mut self) {
         for i in 0..=15 {
-            self.get_palette_map()[i] = i as u8;
+            self.get_palette_map()[i] = i as usize;
         }
     }
-    fn palette_map_rotate(&mut self, amount: u8) {
+    fn palette_map_rotate(&mut self, amount: usize) {
         for i in 0..=15 {
-            self.get_palette_map()[i] = i as u8 + amount;
+            self.get_palette_map()[i] = i as usize + amount;
         }
     }
     fn set_palette_colour(&mut self, index: u8, rgb: [u8; 3]) {
@@ -280,13 +280,13 @@ pub trait ConsoleApi {
         sprite_options: SpriteOptions,
         outline_colour: u8,
     ) {
-        let old_map = *self.get_palette_map();
-        self.palette_map_set_all(outline_colour);
+        let old_map: Vec<usize> = self.get_palette_map().into_iter().map(|x| *x).collect();
+        self.palette_map_set_all(outline_colour.into());
         self.spr(id, x + 1, y, sprite_options.clone());
         self.spr(id, x - 1, y, sprite_options.clone());
         self.spr(id, x, y + 1, sprite_options.clone());
         self.spr(id, x, y - 1, sprite_options);
-        self.set_palette_map(old_map);
+        self.set_palette_map(&old_map);
     }
 }
 
