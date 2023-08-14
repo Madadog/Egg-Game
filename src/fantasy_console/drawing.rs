@@ -7,11 +7,10 @@ pub fn array_to_colour(array: [u8; 3]) -> Color {
     Color::from_rgba8(array[0], array[1], array[2], 255)
 }
 
-// TODO: Used IndexedImage for palette effects.
 pub struct IndexedImage {
     width: usize,
     height: usize,
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 impl IndexedImage {
     pub fn new(width: usize, height: usize) -> Self {
@@ -31,6 +30,9 @@ impl IndexedImage {
             for (i, colour) in palette.iter().enumerate() {
                 if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
                     data.push(i.try_into().unwrap());
+                    if i >= 16 {
+                        // bevy::prelude::info!("Palette index: {}, {:?}", i, colour);
+                    }
                     continue 'outer;
                 }
             }

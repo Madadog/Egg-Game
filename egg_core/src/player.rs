@@ -87,7 +87,7 @@ impl Player {
                 ..Default::default()
             },
             Some(1),
-            1,
+            0,
         )
     }
     pub fn hitbox(&self) -> Hitbox {

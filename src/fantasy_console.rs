@@ -48,7 +48,7 @@ impl FantasyConsole {
     pub fn new() -> Self {
         let palette_size = 256;
         let palette_map = (0..palette_size).collect();
-        let palette: Vec<[u8; 3]> = SWEETIE_16.into_iter().chain((0..).map(|x| [x; 3]).take(palette_size - 16)).collect();
+        let palette: Vec<[u8; 3]> = SWEETIE_16.into_iter().chain(([255].into_iter().cycle()).map(|x| [x; 3]).take(palette_size - 16)).collect();
         assert_eq!(palette.len(), palette_size);
         let mut x = Self {
             screen: Pixmap::new(240, 136).unwrap(),
@@ -325,6 +325,45 @@ impl FantasyConsole {
         self.vertical_line(x, y, height, colour);
         self.vertical_line(x + width - 1, y, height, colour);
     }
+    #[inline]
+    pub fn draw_indexed_pixel(&mut self, index: usize, x: i32, y: i32) {
+        let colour_index = self.indexed_sprites.data[index];
+        let colour_index = self.palette_map[colour_index as usize];
+        let colour = array_to_colour(self.palette[colour_index]).premultiply().to_color_u8();
+        let screen = &mut self.screen;
+        let screen_index = x + 240 * y;
+        screen.pixels_mut()[screen_index as usize] = colour;
+    }
+    pub fn draw_indexed_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool, transparent_colour: u8) {
+        let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
+        let x_offset = x.min(0).abs();
+        let y_offset = y.min(0).abs();
+        let x_start = x.max(0);
+        let y_start = y.max(0);
+        let y_end = (y + 8).min(136);
+        let x_end = (x + 8).min(240);
+        if !flip {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.indexed_sprites.data[sprite_index] == transparent_colour {
+                        continue;
+                    }
+                    self.draw_indexed_pixel(sprite_index, x, y);
+                }
+            }
+        } else {
+            for (y, j) in (y_start..y_end).zip(y_offset..8) {
+                for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
+                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                    if self.indexed_sprites.data[sprite_index] == transparent_colour {
+                        continue;
+                    }
+                    self.draw_indexed_pixel(sprite_index, x, y);
+                }
+            }
+        }
+    }
 }
 
 impl ConsoleApi for FantasyConsole {
@@ -596,7 +635,7 @@ impl ConsoleApi for FantasyConsole {
                     } else {
                         index -= 1;
                     }
-                    self.blit_sprite(index as i32, x, y, false);
+                    self.draw_indexed_sprite(index as i32, x, y, false, opts.transparent.get(0).cloned().unwrap_or(255));
                 }
             }
         }
@@ -604,7 +643,7 @@ impl ConsoleApi for FantasyConsole {
 
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        // TODO: Load more Tiled maps, indexed sprites, add the rest of town, add intro, 
+        // TODO: Load more Tiled maps, fix text wrap issue, add sprite scale, add the rest of town, add intro, fix offscreen map bug, optimise drawing, remove tiny_skia
         let i = self.maps[self.sync_helper.last_bank() as usize]
             .get(0, x as usize, y as usize)
             .unwrap() as i32;
@@ -747,7 +786,7 @@ impl ConsoleApi for FantasyConsole {
             _ => false,
         };
         match (opts.w, opts.h) {
-            (1, 1) => self.blit_sprite(id, x, y, flip),
+            (1, 1) => self.draw_indexed_sprite(id, x, y, flip, opts.transparent.get(0).cloned().unwrap_or(255)),
             (w, h) => {
                 for j in 0..h {
                     for i in 0..w {
@@ -756,7 +795,7 @@ impl ConsoleApi for FantasyConsole {
                         } else {
                             x + (w - 1 - i) * 8
                         };
-                        self.blit_sprite(id + i + j * 32, x_pos, y + j * 8, flip);
+                        self.draw_indexed_sprite(id + i + j * 32, x_pos, y + j * 8, flip, opts.transparent.get(0).cloned().unwrap_or(255));
                     }
                 }
             }
