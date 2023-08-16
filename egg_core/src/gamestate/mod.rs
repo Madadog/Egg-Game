@@ -151,20 +151,17 @@ impl GameState {
                 }
             }
             Self::Animation(x) => {
-                trace!("Intro frame {x}");
                 if system.memory().is(save::INTRO_ANIM_SEEN) {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
+                // Press X to skip cutscene
                 if system.mem_btn(5) {
                     *x += 1000;
                 }
-                trace!("Drawing frame...");
                 if intro::draw_animation(*x, system) {
-                    trace!("Drew frame...");
                     *x += 1;
                 } else {
-                    trace!("Animation done...");
                     *self = Self::MainMenu(MenuState::new());
                 }
             }

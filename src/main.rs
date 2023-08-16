@@ -317,22 +317,22 @@ fn step_state(
     state.system.sync_helper().step();
     state.time += 1;
 
-    if keys.pressed(KeyCode::Up) {
+    if keys.any_pressed([KeyCode::Up, KeyCode::W]) {
         state.system.input().press(0);
     }
-    if keys.pressed(KeyCode::Down) {
+    if keys.any_pressed([KeyCode::Down, KeyCode::S]) {
         state.system.input().press(1);
     }
-    if keys.pressed(KeyCode::Left) {
+    if keys.any_pressed([KeyCode::Left, KeyCode::A]) {
         state.system.input().press(2);
     }
-    if keys.pressed(KeyCode::Right) {
+    if keys.any_pressed([KeyCode::Right, KeyCode::D]) {
         state.system.input().press(3);
     }
-    if keys.pressed(KeyCode::Z) {
+    if keys.any_pressed([KeyCode::Z, KeyCode::Space, KeyCode::Return, KeyCode::E]) {
         state.system.input().press(4);
     }
-    if keys.pressed(KeyCode::X) {
+    if keys.any_pressed([KeyCode::X, KeyCode::Escape, KeyCode::Q]) {
         state.system.input().press(5);
     }
     if keys.pressed(KeyCode::ControlLeft) {
@@ -373,7 +373,7 @@ fn step_state(
         );
         return;
     }
-    if keys.just_pressed(KeyCode::D) {
+    if keys.just_pressed(KeyCode::D) && keys.pressed(KeyCode::ShiftLeft) {
         let x = !state.debug_info.player_info();
         state.debug_info.set_player_info(x);
     }
