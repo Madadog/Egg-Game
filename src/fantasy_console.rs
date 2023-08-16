@@ -643,7 +643,7 @@ impl ConsoleApi for FantasyConsole {
 
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        // TODO: Load more Tiled maps, fix text wrap issue, add sprite scale, add the rest of town, add intro, fix offscreen map bug, optimise drawing, remove tiny_skia
+        // TODO: Load more Tiled maps, add sprite scale, add the rest of town, add intro, fix offscreen map bug, optimise drawing, remove tiny_skia
         let i = self.maps[self.sync_helper.last_bank() as usize]
             .get(0, x as usize, y as usize)
             .unwrap() as i32;
@@ -746,7 +746,7 @@ impl ConsoleApi for FantasyConsole {
                     dy += 6;
                 }
                 32 => {
-                    dx += if opts.small_text { 3 } else { 5 };
+                    dx += if opts.small_text { 3 } else { 4 };
                 }
                 // Null
                 0 => {}

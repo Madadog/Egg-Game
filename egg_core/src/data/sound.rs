@@ -114,7 +114,7 @@ pub const POP: SfxData = SfxData::new(
 );
 
 pub const CLICK_POP: SfxData = SfxData::new(
-    "15_click_pup",
+    "15_click_pop",
     DEFAULT_SFX,
 );
 
@@ -130,6 +130,21 @@ pub const GAIN: SfxData = SfxData::new(
 
 pub const LOSS: SfxData = SfxData::new(
     "18_loss",
+    DEFAULT_SFX,
+);
+
+pub const STAIRS_DOWN: SfxData = SfxData::new(
+    "19_stairs_down",
+    DEFAULT_SFX,
+);
+
+pub const STAIRS_UP: SfxData = SfxData::new(
+    "20_stairs_up",
+    DEFAULT_SFX,
+);
+
+pub const FOOTSTEP_PLAIN: SfxData = SfxData::new(
+    "21_footstep_plain",
     DEFAULT_SFX,
 );
 

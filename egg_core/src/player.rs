@@ -18,7 +18,7 @@ use crate::{
     camera::Camera,
     interact::Interactable,
     map::{Axis, MapSet},
-    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi},
+    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi, ConsoleHelper}, data::sound,
 };
 use tic80_api::core::{Flip, SpriteOptions};
 
@@ -133,6 +133,10 @@ impl Player {
         if noclip {
             return (dx, dy);
         };
+
+        if (self.walktime+15) % 20 == 0 {
+            system.play_sound(sound::FOOTSTEP_PLAIN.with_note(17));
+        }
 
         // Player position + intended movement
         let player_hitbox = self.hitbox();

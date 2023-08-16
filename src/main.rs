@@ -212,6 +212,9 @@ impl SfxAssets {
             sfx("16_fanfare"),
             sfx("17_gain"),
             sfx("18_loss"),
+            sfx("19_stairs_down"),
+            sfx("20_stairs_up"),
+            sfx("21_footstep_plain"),
         ]);
         Self { sounds }
     }
@@ -306,7 +309,11 @@ fn read_state(_state: Res<EggState>) {
 
 // fn zoom_camera()
 
-fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>, mut window: Query<&mut Window>) {
+fn step_state(
+    mut state: ResMut<EggState>,
+    keys: Res<Input<KeyCode>>,
+    mut window: Query<&mut Window>,
+) {
     state.system.sync_helper().step();
     state.time += 1;
 
@@ -337,7 +344,7 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>, mut window
     if keys.pressed(KeyCode::AltLeft) {
         state.system.input().press_key(65);
     }
-    if keys.pressed(KeyCode::F11) {
+    if keys.just_pressed(KeyCode::F11) {
         use bevy::window::WindowMode;
         let mode = window.get_single_mut().unwrap().mode;
         window.get_single_mut().unwrap().mode = match mode {
@@ -348,17 +355,22 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>, mut window
 
     if keys.just_pressed(KeyCode::P) {
         state.pause = !state.pause;
-        //     print!(
-        //         "Paused",
-        //         100,
-        //         62,
-        //         PrintOptions {
-        //             color: 12,
-        //             ..Default::default()
-        //         }
-        //     );
     }
     if state.pause {
+        if keys.just_pressed(KeyCode::N) {
+            state.run();
+            state.system.input().refresh();
+            info!("state was {} bytes in size", std::mem::size_of_val(&(*state)));
+        }
+        state.system.print_raw(
+            "Paused\n[P] to unpause\n[N] to step forward",
+            100,
+            62,
+            egg_core::tic80_api::core::PrintOptions {
+                color: 12,
+                ..Default::default()
+            },
+        );
         return;
     }
     if keys.just_pressed(KeyCode::D) {
@@ -374,154 +386,18 @@ fn step_state(mut state: ResMut<EggState>, keys: Res<Input<KeyCode>>, mut window
         state.debug_info.set_memory_info(x);
     }
 
-    // state.gamestate.run(&mut state.walkaround);
     state.run();
     if keys.pressed(KeyCode::N) {
         state.run();
-        //     print_raw(
-        //         "Fast-Forward\0",
-        //         100,
-        //         62,
-        //         PrintOptions {
-        //             color: 12,
-        //             ..Default::default()
-        //         },
-        //     );
-        // }
+        state.system.print_raw(
+            "Fast-Forward",
+            100,
+            62,
+            egg_core::tic80_api::core::PrintOptions {
+                color: 12,
+                ..Default::default()
+            },
+        );
     }
     state.system.input().refresh();
-    // input_manager::step_gamepad_helper();
-    // input_manager::step_mouse_helper();
-}
-
-#[derive(Clone, Debug, Component)]
-pub struct ImmediateMode;
-
-fn draw_state(
-    state: Res<EggState>,
-    mut commands: Commands,
-    sprites: Query<Entity, With<ImmediateMode>>,
-) {
-    // // Draw BG
-    // palette_map_reset();
-    // cls(self.bg_colour.load(Ordering::SeqCst));
-    // self.current_map.draw_bg(self.camera.pos, false);
-
-    for entity in sprites.iter() {
-        commands.entity(entity).despawn_recursive();
-    }
-
-    // self.particles.draw_tic80(-self.cam_x(), -self.cam_y());
-    // blit_segment(4);
-    // // Collect sprites for drawing
-    let mut sprites: Vec<DrawParams> = Vec::new();
-
-    let walk = state.walkaround.clone();
-
-    sprites.push(walk.player.draw_params(walk.camera.pos));
-
-    for (anim, hitbox) in walk.map_animations.iter().zip(
-        walk.current_map
-            .interactables
-            .iter()
-            .filter(|x| x.sprite.is_some())
-            .map(|x| x.hitbox),
-    ) {
-        sprites.push(DrawParams::new(
-            anim.current_frame().spr_id.into(),
-            anim.current_frame().pos.x as i32 + hitbox.x as i32 - walk.cam_x(),
-            anim.current_frame().pos.y as i32 + hitbox.y as i32 - walk.cam_y(),
-            anim.current_frame().options.clone(),
-            anim.current_frame().outline_colour,
-            anim.current_frame().palette_rotate,
-        ));
-    }
-
-    sprites.extend(
-        walk.creatures
-            .iter()
-            .map(|x| x.draw_params(walk.camera.pos)),
-    );
-
-    for (i, companion) in walk.companion_list.companions.iter().enumerate() {
-        if let Some(companion) = companion {
-            let (position, direction) = if i == 0 {
-                walk.companion_trail.oldest()
-            } else {
-                walk.companion_trail.mid()
-            };
-            let walktime = walk.companion_trail.walktime();
-            let params = companion.spr_params(position, direction, walktime, &walk.camera);
-            sprites.push(params);
-        }
-    }
-
-    // Sort sprites in order of Y index
-    sprites.sort_by(|a, b| a.bottom().partial_cmp(&b.bottom()).unwrap());
-
-    // // Draw sprites
-    for (i, options) in sprites.into_iter().enumerate() {
-        commands.spawn((
-            SpriteBundle {
-                sprite: Sprite {
-                    color: Color::RED,
-                    custom_size: Some(Vec2::splat(8.0)),
-                    ..default()
-                },
-                transform: Transform::from_translation(Vec3::new(
-                    options.x as f32,
-                    options.y as f32,
-                    i as f32 / 10.0,
-                )),
-                ..default()
-            },
-            ImmediateMode,
-        ));
-    }
-
-    // // Draw FG
-    // palette_map_reset();
-    // self.current_map.draw_fg(self.camera.pos, false);
-
-    // if let Some(string) = &self.dialogue.current_text {
-    //     self.dialogue.draw_dialogue_box(string, true);
-    // }
-    // if debug_info.map_info() {
-    //     for warp in self.current_map.warps.iter() {
-    //         warp.hitbox()
-    //             .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-    //             .draw(12);
-    //     }
-    //     self.player
-    //         .hitbox()
-    //         .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-    //         .draw(12);
-    //     for item in self.current_map.interactables.iter() {
-    //         item.hitbox
-    //             .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-    //             .draw(14);
-    //     }
-    // }
-    // if debug_info.player_info() {
-    //     print_raw(
-    //         &format!("Player: {:#?}\0", self.player),
-    //         0,
-    //         0,
-    //         PrintOptions {
-    //             small_text: true,
-    //             color: 11,
-    //             ..Default::default()
-    //         },
-    //     );
-    //     print_raw(
-    //         &format!("Camera: {:#?}\0", self.camera),
-    //         74,
-    //         0,
-    //         PrintOptions {
-    //             small_text: true,
-    //             color: 11,
-    //             ..Default::default()
-    //         },
-    //     );
-    // }
 }

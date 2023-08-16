@@ -343,12 +343,9 @@ impl<'a, T: ConsoleApi>
             if self.player.hitbox().touches(warp.hitbox())
                 || (interact && interact_hitbox.touches(warp.hitbox()))
             {
-                match warp.mode {
-                    WarpMode::Interact => {
-                        system.play_sound(sound::DOOR);
-                    }
-                    _ => {}
-                };
+                if let Some(sound) = &warp.sound {
+                    system.play_sound(sound.clone());
+                }
                 warp_target = Some(warp.clone());
                 break;
             }

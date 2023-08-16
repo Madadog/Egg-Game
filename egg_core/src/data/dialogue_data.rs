@@ -288,7 +288,7 @@ pub const HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. Th
 pub const HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
 pub const HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
     Text("You harbour some very strong feelings about gothic windows.\n"),
-    Delayed("None of them are good.", 30),
+    Delayed("None of which are good.", 30),
 ];
 pub const HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
 pub const HOUSE_KITCHEN_SINK: &[TextContent] = &[

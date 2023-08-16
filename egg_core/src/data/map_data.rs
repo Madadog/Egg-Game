@@ -26,6 +26,8 @@ use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use tic80_api::core::SpriteOptions;
 
+use super::sound;
+
 pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
     maps: &[],
     fg_maps: &[],
@@ -95,13 +97,14 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
             .with_offset(13 * 8, 5 * 4),
     ],
     warps: &[
-        Warp::new_tile(17, 4, Some(MapIndex::SUPERMARKET_HALL), 9, 4),
-        Warp::new_tile(8, 4, Some(MapIndex::SUPERMARKET_HALL), 3, 4),
+        Warp::new_tile(17, 4, Some(MapIndex::SUPERMARKET_HALL), 9, 4).with_sound(sound::DOOR),
+        Warp::new_tile(8, 4, Some(MapIndex::SUPERMARKET_HALL), 3, 4).with_sound(sound::DOOR),
         Warp::new(
             Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
             Some(MapIndex::TOWN),
             Vec2::new(51 * 4, 15 * 8),
         )
+        .with_sound(sound::DOOR)
         .with_mode(WarpMode::Auto),
     ],
     interactables: &[
@@ -143,26 +146,30 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
         Interactable {
             hitbox: Hitbox::new(80, 24, 16, 20),
             interaction: Interaction::EnumText(THING),
-            sprite: Some(&[AnimFrame::new(
-                Vec2::splat(0),
-                661,
-                30,
-                SpriteOptions {
-                    w: 2,
-                    h: 2,
-                    ..SpriteOptions::transparent_zero()
-                },
-            ).with_palette_rotate(1),
-            AnimFrame::new(
-                Vec2::new(0, 1),
-                661,
-                30,
-                SpriteOptions {
-                    w: 2,
-                    h: 2,
-                    ..SpriteOptions::transparent_zero()
-                },
-            ).with_palette_rotate(1)]),
+            sprite: Some(&[
+                AnimFrame::new(
+                    Vec2::splat(0),
+                    661,
+                    30,
+                    SpriteOptions {
+                        w: 2,
+                        h: 2,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                )
+                .with_palette_rotate(1),
+                AnimFrame::new(
+                    Vec2::new(0, 1),
+                    661,
+                    30,
+                    SpriteOptions {
+                        w: 2,
+                        h: 2,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                )
+                .with_palette_rotate(1),
+            ]),
         },
     ],
     bg_colour: 1,
@@ -185,9 +192,13 @@ pub const SUPERMARKET_HALL: MapSet<'static> = MapSet {
             .with_offset(11 * 8, 2 * 8),
     ],
     warps: &[
-        Warp::new_tile(9, 6, Some(MapIndex::SUPERMARKET), 17, 4).with_mode(WarpMode::Auto),
-        Warp::new_tile(3, 6, Some(MapIndex::SUPERMARKET), 8, 4).with_mode(WarpMode::Auto),
-        Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3),
+        Warp::new_tile(9, 6, Some(MapIndex::SUPERMARKET), 17, 4)
+            .with_mode(WarpMode::Auto)
+            .with_sound(sound::DOOR),
+        Warp::new_tile(3, 6, Some(MapIndex::SUPERMARKET), 8, 4)
+            .with_mode(WarpMode::Auto)
+            .with_sound(sound::DOOR),
+        Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3).with_sound(sound::DOOR),
     ],
     interactables: &[
         Interactable {
@@ -223,7 +234,9 @@ pub const SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
             .with_trans(&[0])
             .with_offset(2 * 8, 0),
     ],
-    warps: &[Warp::new_tile(2, 5, Some(MapIndex::SUPERMARKET_HALL), 4, 2).with_mode(WarpMode::Auto)],
+    warps: &[Warp::new_tile(2, 5, Some(MapIndex::SUPERMARKET_HALL), 4, 2)
+        .with_mode(WarpMode::Auto)
+        .with_sound(sound::DOOR)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(53, 28, 8, 10),
@@ -275,7 +288,8 @@ pub const BEDROOM: MapSet<'static> = MapSet {
         Hitbox::new(15 * 8, 6 * 8, 8, 8),
         Some(MapIndex::HOUSE_STAIRWELL),
         Vec2::new(1 * 8 + 1, 2 * 8),
-    )],
+    )
+    .with_sound(sound::DOOR)],
     interactables: &[
         Interactable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
@@ -319,12 +333,14 @@ pub const HOUSE_STAIRWELL: MapSet<'static> = MapSet {
             Hitbox::new(1, 3 * 8, 8, 8),
             Some(MapIndex::BEDROOM),
             Vec2::new(14 * 8, 5 * 8),
-        ),
+        )
+        .with_sound(sound::DOOR),
         Warp::new(
             Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
             Some(MapIndex::HOUSE_LIVING_ROOM),
             Vec2::new(21 * 4, 4 * 8),
         )
+        .with_sound(sound::STAIRS_DOWN)
         .with_mode(WarpMode::Auto),
     ],
     interactables: &[
@@ -377,23 +393,27 @@ pub const HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
             Some(MapIndex::HOUSE_STAIRWELL),
             Vec2::new(15 * 4, 7 * 8),
         )
+        .with_sound(sound::STAIRS_UP)
         .with_mode(WarpMode::Auto),
         Warp::new(
             Hitbox::new(3 * 8, 9 * 8, 8, 8),
             Some(MapIndex::TOWN),
             Vec2::new(17 * 8, 13 * 8),
         )
+        .with_sound(sound::DOOR)
         .with_flip(Axis::Y),
         Warp::new(
             Hitbox::new(14 * 8, 5 * 8, 8, 8),
             Some(MapIndex::HOUSE_KITCHEN),
             Vec2::new(7 * 4, 7 * 8),
-        ),
+        )
+        .with_sound(sound::DOOR),
         Warp::new(
             Hitbox::new(8 * 8, 5 * 8, 8, 8),
             Some(MapIndex::PIANO_ROOM),
             Vec2::new(19 * 4, 6 * 8),
-        ),
+        )
+        .with_sound(sound::DOOR),
     ],
     interactables: &[
         Interactable {
@@ -470,12 +490,14 @@ pub const HOUSE_KITCHEN: MapSet<'static> = MapSet {
             Some(MapIndex::HOUSE_LIVING_ROOM),
             Vec2::new(14 * 8, 5 * 8),
         )
+        .with_sound(sound::DOOR)
         .with_mode(WarpMode::Auto),
         Warp::new(
             Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
             Some(MapIndex::BACKYARD),
             Vec2::new(15 * 8, 5 * 8),
-        ),
+        )
+        .with_sound(sound::DOOR),
     ],
     interactables: &[
         Interactable {
@@ -513,6 +535,7 @@ pub const BACKYARD: MapSet<'static> = MapSet {
             Some(MapIndex::HOUSE_KITCHEN),
             Vec2::new(10 * 8 - 3, 5 * 8 + 3),
         )
+        .with_sound(sound::DOOR)
         .with_flip(Axis::Y),
         Warp::new(
             Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
@@ -625,12 +648,14 @@ pub const TOWN: MapSet<'static> = MapSet {
             Hitbox::new(17 * 8, 13 * 8, 8, 8),
             Some(MapIndex::HOUSE_LIVING_ROOM),
             Vec2::new(4 * 9, 8 * 8),
-        ),
+        )
+        .with_sound(sound::DOOR),
         Warp::new(
             Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
             Some(MapIndex::SUPERMARKET),
             Vec2::new(97, 73),
-        ),
+        )
+        .with_sound(sound::DOOR),
     ],
     interactables: &[
         Interactable {
@@ -666,6 +691,7 @@ pub const PIANO_ROOM: MapSet<'static> = MapSet {
         Some(MapIndex::HOUSE_LIVING_ROOM),
         Vec2::new(8 * 8, 5 * 8),
     )
+    .with_sound(sound::DOOR)
     .with_mode(WarpMode::Auto)],
     interactables: &[
         Interactable {

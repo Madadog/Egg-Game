@@ -1,7 +1,7 @@
 use crate::{
     camera::CameraBounds,
     interact::Interactable,
-    data::{map_data::MapIndex, sound::music::MusicTrack},
+    data::{map_data::MapIndex, sound::{music::MusicTrack, SfxData, self}},
     packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper},
 };
@@ -130,6 +130,7 @@ pub struct Warp {
     pub to: PackedI16,
     pub flip: Axis,
     pub mode: WarpMode,
+    pub sound: Option<SfxData>,
 }
 
 impl Warp {
@@ -145,6 +146,7 @@ impl Warp {
             to,
             flip: Axis::None,
             mode: WarpMode::Interact,
+            sound: None,
         }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
@@ -160,6 +162,9 @@ impl Warp {
     }
     pub const fn with_mode(self, mode: WarpMode) -> Self {
         Self { mode, ..self }
+    }
+    pub const fn with_sound(self, sound: SfxData) -> Self {
+        Self { sound: Some(sound), ..self }
     }
     pub fn map(&'static self) -> Option<MapIndex> {
         self.map
