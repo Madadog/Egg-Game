@@ -240,7 +240,7 @@ impl<'a, T: ConsoleApi>
             .for_each(|anim| anim.advance());
 
         self.particles.step();
-        self.creatures.iter_mut().for_each(|x| x.step());
+        self.creatures.iter_mut().for_each(|x| x.step(system));
 
         if self.play_cutscene(system) {
             return None;

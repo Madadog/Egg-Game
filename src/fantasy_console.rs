@@ -1,12 +1,13 @@
-use bevy::prelude::{Image, info};
+use bevy::prelude::{info, Image};
 use egg_core::{
+    data::sound::music::MusicTrack,
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, SyncHelper},
     tic80_api::{
         core::{Flip, MouseInput, SfxOptions, SpriteOptions},
         helpers::SWEETIE_16,
-    }, data::sound::music::MusicTrack,
+    },
 };
 use tiny_skia::{
     Color, FillRule, IntSize, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint,
@@ -48,7 +49,14 @@ impl FantasyConsole {
     pub fn new() -> Self {
         let palette_size = 256;
         let palette_map = (0..palette_size).collect();
-        let palette: Vec<[u8; 3]> = SWEETIE_16.into_iter().chain(([255].into_iter().cycle()).map(|x| [x; 3]).take(palette_size - 16)).collect();
+        let palette: Vec<[u8; 3]> = SWEETIE_16
+            .into_iter()
+            .chain(
+                ([255].into_iter().cycle())
+                    .map(|x| [x; 3])
+                    .take(palette_size - 16),
+            )
+            .collect();
         assert_eq!(palette.len(), palette_size);
         let mut x = Self {
             screen: Pixmap::new(240, 136).unwrap(),
@@ -139,10 +147,7 @@ impl FantasyConsole {
         .unwrap();
     }
     pub fn set_indexed_sprites(&mut self, sheet: &Image) {
-        self.indexed_sprites = IndexedImage::from_image(
-            sheet,
-            &self.palette,
-        );
+        self.indexed_sprites = IndexedImage::from_image(sheet, &self.palette);
     }
     pub fn get_screen(&mut self) -> &mut Pixmap {
         match self.vbank {
@@ -309,14 +314,7 @@ impl FantasyConsole {
             self.horizontal_line(x, y + i, width, colour);
         }
     }
-    pub fn draw_rect_border(
-        &mut self,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-        colour: Color,
-    ) {
+    pub fn draw_rect_border(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Color) {
         if x >= 240 || y >= 136 {
             return;
         }
@@ -329,12 +327,21 @@ impl FantasyConsole {
     pub fn draw_indexed_pixel(&mut self, index: usize, x: i32, y: i32) {
         let colour_index = self.indexed_sprites.data[index];
         let colour_index = self.palette_map[colour_index as usize];
-        let colour = array_to_colour(self.palette[colour_index]).premultiply().to_color_u8();
+        let colour = array_to_colour(self.palette[colour_index])
+            .premultiply()
+            .to_color_u8();
         let screen = &mut self.screen;
         let screen_index = x + 240 * y;
         screen.pixels_mut()[screen_index as usize] = colour;
     }
-    pub fn draw_indexed_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool, transparent_colour: u8) {
+    pub fn draw_indexed_sprite(
+        &mut self,
+        index: i32,
+        x: i32,
+        y: i32,
+        flip: bool,
+        transparent_colour: u8,
+    ) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
         let x_offset = x.min(0).abs();
         let y_offset = y.min(0).abs();
@@ -360,6 +367,42 @@ impl FantasyConsole {
                         continue;
                     }
                     self.draw_indexed_pixel(sprite_index, x, y);
+                }
+            }
+        }
+    }
+    pub fn draw_scaled_sprite(
+        &mut self,
+        index: i32,
+        x: i32,
+        y: i32,
+        flip: bool,
+        transparent_colour: u8,
+        scale: i32,
+    ) {
+        let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
+        let x_offset = x.min(0).abs();
+        let y_offset = y.min(0).abs();
+        let x_start = x.max(0);
+        let y_start = y.max(0);
+        for j in y_offset..8 {
+            for i in x_offset..8 {
+                let sprite_index = if flip {
+                    (tx + 7 - i + (ty + j) * 8 * 32) as usize
+                } else {
+                    (tx + i + (ty + j) * 8 * 32) as usize
+                };
+                if self.indexed_sprites.data[sprite_index] == transparent_colour {
+                    continue;
+                }
+                for sx in 0..scale {
+                    for sy in 0..scale {
+                        self.draw_indexed_pixel(
+                            sprite_index,
+                            x_start + i * scale + sx,
+                            y_start + j * scale + sy,
+                        );
+                    }
                 }
             }
         }
@@ -635,7 +678,13 @@ impl ConsoleApi for FantasyConsole {
                     } else {
                         index -= 1;
                     }
-                    self.draw_indexed_sprite(index as i32, x, y, false, opts.transparent.get(0).cloned().unwrap_or(255));
+                    self.draw_indexed_sprite(
+                        index as i32,
+                        x,
+                        y,
+                        false,
+                        opts.transparent.get(0).cloned().unwrap_or(255),
+                    );
                 }
             }
         }
@@ -658,7 +707,11 @@ impl ConsoleApi for FantasyConsole {
         self.input.mouse.clone()
     }
 
-    fn music(&mut self, track: Option<&MusicTrack>, _opts: egg_core::tic80_api::core::MusicOptions) {
+    fn music(
+        &mut self,
+        track: Option<&MusicTrack>,
+        _opts: egg_core::tic80_api::core::MusicOptions,
+    ) {
         info!("Playing track \"{:?}\"", track);
         if let Some(track) = track {
             self.music = Some((track.clone(), false));
@@ -785,8 +838,13 @@ impl ConsoleApi for FantasyConsole {
             Flip::Horizontal => true,
             _ => false,
         };
+        let transparent = opts.transparent.get(0).cloned().unwrap_or(255);
+        if opts.scale > 1 {
+            self.draw_scaled_sprite(id, x, y, flip, transparent, opts.scale);
+            return;
+        }
         match (opts.w, opts.h) {
-            (1, 1) => self.draw_indexed_sprite(id, x, y, flip, opts.transparent.get(0).cloned().unwrap_or(255)),
+            (1, 1) => self.draw_indexed_sprite(id, x, y, flip, transparent),
             (w, h) => {
                 for j in 0..h {
                     for i in 0..w {
@@ -795,7 +853,13 @@ impl ConsoleApi for FantasyConsole {
                         } else {
                             x + (w - 1 - i) * 8
                         };
-                        self.draw_indexed_sprite(id + i + j * 32, x_pos, y + j * 8, flip, opts.transparent.get(0).cloned().unwrap_or(255));
+                        self.draw_indexed_sprite(
+                            id + i + j * 32,
+                            x_pos,
+                            y + j * 8,
+                            flip,
+                            transparent,
+                        );
                     }
                 }
             }
@@ -873,6 +937,17 @@ impl ConsoleApi for FantasyConsole {
             egg_core::tic80_api::core::Flip::Horizontal => true,
             _ => false,
         };
+        if opts.scale > 1 {
+            let transparent = opts.transparent.get(0).cloned().unwrap_or(255);
+            self.palette_map_set_all(outline_colour.into());
+            let scale = opts.scale;
+            self.draw_scaled_sprite(id, x + 1, y, flip, transparent, scale);
+            self.draw_scaled_sprite(id, x - 1, y, flip, transparent, scale);
+            self.draw_scaled_sprite(id, x, y + 1, flip, transparent, scale);
+            self.draw_scaled_sprite(id, x, y - 1, flip, transparent, scale);
+            self.palette_map_reset();
+            return;
+        }
         match (opts.w, opts.h) {
             (w, h) => {
                 for j in 0..h {
@@ -889,7 +964,7 @@ impl ConsoleApi for FantasyConsole {
                         self.blit_mask(id, x - 1, y, colour, flip);
                         self.blit_mask(id, x, y + 1, colour, flip);
                         self.blit_mask(id, x, y - 1, colour, flip);
-                        // self.blit_sprite(id, x, y, flip);
+                        self.blit_sprite(id, x, y, flip);
                     }
                 }
             }

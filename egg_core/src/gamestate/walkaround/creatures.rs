@@ -1,5 +1,5 @@
 use crate::{
-    position::{Hitbox, Vec2}, system::DrawParams,
+    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi},
 };
 
 #[derive(Clone)]
@@ -24,21 +24,19 @@ impl Creature {
             ..self
         }
     }
-    pub fn step(&mut self) {
-        fn rand_u8() -> u8 {0}
+    pub fn step(&mut self, system: &mut impl ConsoleApi) {
         match &mut self.state {
             CreatureState::Idle(timer) => {
                 if timer.tick() {
-                    let rand_axis = || (rand_u8() % 3) as i16 - 1;
                     self.state = CreatureState::Walking(
-                        Timer(rand_u8().min(80)),
-                        Vec2::new(rand_axis(), rand_axis()),
+                        Timer(system.rng().rand_u8().min(80)),
+                        Vec2::new((system.rng().rand_u8() % 3) as i16 - 1, (system.rng().rand_u8() % 3) as i16 - 1),
                     );
                 }
             }
             CreatureState::Walking(timer, vec) => {
                 if timer.tick() {
-                    self.state = CreatureState::Idle(Timer(rand_u8().min(80)));
+                    self.state = CreatureState::Idle(Timer(system.rng().rand_u8().min(80)));
                 } else if timer.0 % 3 == 0 {
                     if vec.x != 0 {
                         self.flip_h = vec.x.is_negative()

@@ -335,6 +335,12 @@ fn step_state(
     if keys.any_pressed([KeyCode::X, KeyCode::Escape, KeyCode::Q]) {
         state.system.input().press(5);
     }
+    if keys.any_pressed([KeyCode::C]) {
+        state.system.input().press(6);
+    }
+    if keys.any_pressed([KeyCode::V]) {
+        state.system.input().press(7);
+    }
     if keys.pressed(KeyCode::ControlLeft) {
         state.system.input().press_key(63);
     }
@@ -348,7 +354,7 @@ fn step_state(
         use bevy::window::WindowMode;
         let mode = window.get_single_mut().unwrap().mode;
         window.get_single_mut().unwrap().mode = match mode {
-            WindowMode::Windowed => WindowMode::Fullscreen,
+            WindowMode::Windowed => WindowMode::BorderlessFullscreen,
             _ => WindowMode::Windowed,
         };
     }

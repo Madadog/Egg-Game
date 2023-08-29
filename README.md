@@ -17,12 +17,25 @@ Controls are:
 * M: Toggle debug info
 
 ## Build / Run
-To build or run, first make sure you have [Rust installed](https://rustup.rs/). Then clone the repo and run with the following:
+To build or run, first make sure you have [Rust installed](https://rustup.rs/). 
+
+After that, clone the repository then enter the directory:
 
 ```
 git clone https://github.com/Madadog/Egg-Game
 cd Egg-Game
+```
+
+Run: 
+
+```
 cargo run --release
+```
+
+Build:
+
+```
+cargo build --release
 ```
 
 # Repo Layout
