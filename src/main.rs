@@ -26,13 +26,15 @@ mod tiled;
 pub struct EggState {
     pub walkaround: WalkaroundState<'static>,
     pub inventory_ui: InventoryUi,
+    pub gamestate: GameState,
+
+    pub system: FantasyConsole,
+
     pub time: i32,
     pub pause: bool,
     pub rng: Pcg32,
     pub debug_info: DebugInfo,
-    pub gamestate: GameState,
     pub bg_colour: u8,
-    pub system: FantasyConsole,
     pub loaded: bool,
 }
 impl EggState {
@@ -51,13 +53,15 @@ impl Default for EggState {
         EggState {
             walkaround: WalkaroundState::new(),
             inventory_ui: InventoryUi::new(),
+            gamestate: GameState::Animation(0),
+
+            system: FantasyConsole::new(),
+
             time: 0,
             pause: false,
             rng: Pcg32::default(),
             debug_info: DebugInfo::const_default(),
-            gamestate: GameState::Animation(0),
             bg_colour: 0,
-            system: FantasyConsole::new(),
             loaded: false,
         }
     }
@@ -86,9 +90,8 @@ fn main() {
         .add_systems(Startup, (setup, setup_assets))
         .add_systems(Update, (load_assets, resize_screen))
         .add_systems(
-            Update,
+            FixedUpdate,
             (
-                read_state,
                 step_state,
                 play_sounds,
                 play_music,
@@ -96,6 +99,8 @@ fn main() {
             )
                 .chain(),
         )
+        // 60 FPS
+        .insert_resource(FixedTime::new_from_secs(1.0 / 60.0))
         .run();
 }
 
@@ -132,7 +137,7 @@ impl GameAssets {
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
-            maps: vec![assets.load("maps/bank1.tmj"), assets.load("maps/bank2.tmj")],
+            maps: vec![assets.load("maps/bank1.tmj"), assets.load("maps/bank2.tmj"), assets.load("maps/office.tmj")],
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
@@ -303,12 +308,6 @@ fn resize_screen(
     }
 }
 
-fn read_state(_state: Res<EggState>) {
-    // info!("Time: {}", state.time);
-}
-
-// fn zoom_camera()
-
 fn step_state(
     mut state: ResMut<EggState>,
     keys: Res<Input<KeyCode>>,
@@ -366,7 +365,6 @@ fn step_state(
         if keys.just_pressed(KeyCode::N) {
             state.run();
             state.system.input().refresh();
-            info!("state was {} bytes in size", std::mem::size_of_val(&(*state)));
         }
         state.system.print_raw(
             "Paused\n[P] to unpause\n[N] to step forward",

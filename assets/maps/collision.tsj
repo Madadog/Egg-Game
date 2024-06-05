@@ -1,0 +1,14 @@
+{ "columns":16,
+ "image":"collision.png",
+ "imageheight":128,
+ "imagewidth":128,
+ "margin":0,
+ "name":"collision",
+ "spacing":0,
+ "tilecount":1024,
+ "tiledversion":"1.8.0",
+ "tileheight":8,
+ "tilewidth":8,
+ "type":"tileset",
+ "version":"1.8"
+}

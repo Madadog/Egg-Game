@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::prelude::{info, Image};
 use egg_core::{
     data::sound::music::MusicTrack,
@@ -29,6 +31,7 @@ pub struct FantasyConsole {
     sprites: Pixmap,
     indexed_sprites: IndexedImage,
     maps: Vec<TiledMap>,
+    files: HashMap<String, Vec<u8>>,
 
     vbank: usize,
     palette_size: usize,
@@ -67,6 +70,7 @@ impl FantasyConsole {
             sprites: Pixmap::new(1, 1).unwrap(),
             indexed_sprites: IndexedImage::new(1, 1),
             maps: Vec::new(),
+            files: HashMap::new(),
 
             vbank: 0,
             palette_size,
@@ -649,42 +653,49 @@ impl ConsoleApi for FantasyConsole {
         if self.maps.is_empty()
             || opts.sx + opts.w * 8 < 0
             || opts.sy + opts.h * 8 < 0
-            || opts.sx > 240
-            || opts.sy > 132
+            || opts.sx >= 240
+            || opts.sy >= 132
         {
             return;
         }
         // Crop map
-        if opts.sx <= 0 || opts.sy <= 0 {
-            let (x_tiles, y_tiles) = (-(opts.sx / 8), -(opts.sy / 8));
+        if opts.sx <= 0{
+            let x_tiles = -(opts.sx / 8);
             opts.sx += x_tiles * 8;
-            opts.sy += y_tiles * 8;
             opts.x += x_tiles;
+            opts.w -= x_tiles;
+        }
+        if opts.sy <= 0 {
+            let y_tiles = -(opts.sy / 8);
+            opts.sy += y_tiles * 8;
             opts.y += y_tiles;
+            opts.h -= y_tiles;
         }
         opts.w = opts.w.min(31);
         opts.h = opts.h.min(18);
         let map_bank = self.sync_helper.last_bank() as usize;
         for j in 0..opts.h {
             for i in 0..opts.w {
-                if let Some(mut index) = self.maps[map_bank].get(
-                    0,
-                    (opts.x + i).try_into().unwrap(),
-                    (opts.y + j).try_into().unwrap(),
-                ) {
-                    let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
-                    if index == 0 {
-                        continue;
-                    } else {
-                        index -= 1;
+                if let (Ok(x_index), Ok(y_index)) = ((opts.x + i).try_into(), (opts.y + j).try_into()) {
+                    if let Some(mut index) = self.maps[map_bank].get(
+                        0,
+                        x_index,
+                        y_index,
+                    ) {
+                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
+                        if index == 0 {
+                            continue;
+                        } else {
+                            index -= 1;
+                        }
+                        self.draw_indexed_sprite(
+                            index as i32,
+                            x,
+                            y,
+                            false,
+                            opts.transparent.get(0).cloned().unwrap_or(255),
+                        );
                     }
-                    self.draw_indexed_sprite(
-                        index as i32,
-                        x,
-                        y,
-                        false,
-                        opts.transparent.get(0).cloned().unwrap_or(255),
-                    );
                 }
             }
         }
@@ -692,11 +703,8 @@ impl ConsoleApi for FantasyConsole {
 
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        // TODO: Load more Tiled maps, add sprite scale, add the rest of town, add intro, fix offscreen map bug, optimise drawing, remove tiny_skia
-        let i = self.maps[self.sync_helper.last_bank() as usize]
-            .get(0, x as usize, y as usize)
-            .unwrap() as i32;
-        i
+        // TODO: Load more Tiled maps, add sprite scale, add the rest of town, add intro, remove tiny_skia, optimise drawing
+        self.map_get(self.sync_helper.last_bank() as usize, 0, x, y).try_into().unwrap()
     }
 
     fn mset(&mut self, _x: i32, _y: i32, _value: i32) {
@@ -931,6 +939,28 @@ impl ConsoleApi for FantasyConsole {
     fn previous_mouse(&mut self) -> &mut MouseInput {
         &mut self.input.previous_mouse
     }
+
+    fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
+        self.maps[bank].get(layer, x as usize, y as usize).unwrap()
+    }
+    fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize) {
+        self.maps[bank].set(layer, x as usize, y as usize, value);
+    }
+    fn write_file(&mut self, filename: String, data: &[u8]) {
+        self.files.insert(filename, data.into());
+    }
+    fn read_file(&mut self, filename: String) -> Option<&[u8]> {
+        self.files.get(&filename).map(|vec| (*vec).as_slice())
+    }
+    
+    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, palette_map: &[usize]) {
+        todo!()
+    }
+    
+    fn send(&mut self, channel: egg_core::system::DataChannel, data: &[u8]) {
+        todo!()
+    }
+
     fn draw_outline(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, outline_colour: u8) {
         let flip = match opts.flip {
             egg_core::tic80_api::core::Flip::None => false,

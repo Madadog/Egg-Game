@@ -134,6 +134,12 @@ impl<'a> DrawParams<'a> {
     }
 }
 
+/// Type of data being sent to the external environment
+pub enum DataChannel {
+    Binary,
+    String,
+}
+
 /// Abstracts away all static memory accesses
 pub trait ConsoleApi {
     // TIC-80 RAM
@@ -187,7 +193,9 @@ pub trait ConsoleApi {
     // fn memcpy(dest: i32, src: i32, length: i32);
     // fn memset(address: i32, value: i32, length: i32);
 
+    /// Gets a tile from some map. Old and deprecated. Use `ConsoleApi::map_get()` instead.
     fn mget(&self, x: i32, y: i32) -> i32;
+    /// Old and deprecated. Use `ConsoleApi::map_set()` instead.
     fn mset(&mut self, x: i32, y: i32, value: i32);
     fn mouse(&self) -> MouseInput;
     fn music(&mut self, track: Option<&MusicTrack>, opts: MusicOptions);
@@ -230,12 +238,26 @@ pub trait ConsoleApi {
         opts: TTriOptions,
     );
     fn vbank(&mut self, bank: u8) -> u8;
-
+    
     // Other things
     fn sync_helper(&mut self) -> &mut SyncHelper;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;
+    
+    // Proprietary extensions to the TIC80 API
+    /// Gets a tile from a specific map.
+    fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
+    /// Sets a tile on a specific map.
+    fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize);
+    /// Writes data to the virtual filesystem
+    fn write_file(&mut self, filename: String, data: &[u8]);
+    /// Reads data from the virtual filesystem
+    fn read_file(&mut self, filename: String) -> Option<&[u8]>;
+    /// Sprite with more options
+    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, palette_map: &[usize]);
+    /// Sends information to the outside world. Kinda sucks, I'll probably remove it.
+    fn send(&mut self, channel: DataChannel, data: &[u8]);
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {

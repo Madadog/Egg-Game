@@ -13,7 +13,7 @@ impl Creature {
     pub const fn const_default() -> Self {
         Self {
             hitbox: Hitbox::new(0, 0, 8, 8),
-            state: CreatureState::Idle(Timer(255)),
+            state: CreatureState::Egg(Timer(255)),
             sprite: 688,
             flip_h: false,
         }
@@ -44,12 +44,18 @@ impl Creature {
                     self.hitbox = self.hitbox.offset(*vec);
                 }
             }
+            CreatureState::Egg(timer) => {
+                if timer.tick() {
+                    self.state = CreatureState::Idle(Timer(system.rng().rand_u8().min(80)));
+                }
+            }
         }
     }
     pub fn draw_params(&self, offset: Vec2) -> DrawParams {
         let sprite: i32 = match &self.state {
             CreatureState::Idle(_) => self.sprite.into(),
             CreatureState::Walking(x, _) => i32::from(self.sprite) + i32::from(x.0 / 20) % 2,
+            CreatureState::Egg(_) => i32::from(self.sprite) - 32 * 5 - 4,
         };
         let offset = offset * Vec2::new(-1, -1);
         let flip = match self.flip_h {
@@ -87,6 +93,7 @@ impl Timer {
 pub enum CreatureState {
     Idle(Timer),
     Walking(Timer, Vec2),
+    Egg(Timer),
 }
 
 /*

@@ -22,12 +22,29 @@ pub struct TiledMap {
 }
 impl TiledMap {
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
-        self.layers
-            .get(layer)
-            .and_then(|layer| layer.data.get(y.checked_mul(layer.width).unwrap_or_else(|| {
-                println!("layer.width: {}, y: {}", layer.width, y);
-                1
-            }) + x).cloned())
+        self.layers.get(layer).and_then(|layer| {
+            layer
+                .data
+                .get(
+                    y.checked_mul(layer.width).unwrap_or_else(|| {
+                        println!("layer.width: {}, y: {}", layer.width, y);
+                        1
+                    }) + x,
+                )
+                .cloned()
+        })
+    }
+    pub fn set(&mut self, layer: usize, x: usize, y: usize, value: usize) {
+        if let Some(tile) = self.layers.get_mut(layer).and_then(|layer| {
+            layer.data.get_mut(
+                y.checked_mul(layer.width).unwrap_or_else(|| {
+                    println!("layer.width: {}, y: {}", layer.width, y);
+                    1
+                }) + x,
+            )
+        }) {
+            *tile = value;
+        };
     }
 }
 
