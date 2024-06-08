@@ -111,18 +111,18 @@ impl Default for TTriOptions<'_> {
 }
 
 #[derive(Clone, Debug)]
-pub struct MapOptions<'a> {
+pub struct MapOptions {
     pub x: i32,
     pub y: i32,
     pub w: i32,
     pub h: i32,
     pub sx: i32,
     pub sy: i32,
-    pub transparent: &'a [u8],
+    pub transparent: Option<u8>,
     pub scale: i8,
 }
 
-impl<'a> MapOptions<'a> {
+impl<'a> MapOptions {
     pub const fn new(
         x: i32,
         y: i32,
@@ -140,13 +140,13 @@ impl<'a> MapOptions<'a> {
             h,
             sx,
             sy,
-            transparent,
+            transparent: Some(transparent[0]),
             scale,
         }
     }
 }
 
-impl Default for MapOptions<'_> {
+impl Default for MapOptions {
     fn default() -> Self {
         Self {
             x: 0,
@@ -155,7 +155,7 @@ impl Default for MapOptions<'_> {
             h: 17,
             sx: 0,
             sy: 0,
-            transparent: &[],
+            transparent: None,
             scale: 1,
         }
     }
@@ -178,7 +178,7 @@ pub enum Rotate {
 }
 
 #[derive(Debug, Clone)]
-pub struct SpriteOptions<'a> {
+pub struct StaticSpriteOptions<'a> {
     pub transparent: &'a [u8],
     pub scale: i32,
     pub flip: Flip,
@@ -186,7 +186,7 @@ pub struct SpriteOptions<'a> {
     pub w: i32,
     pub h: i32,
 }
-impl<'a> SpriteOptions<'a> {
+impl<'a> StaticSpriteOptions<'a> {
     pub const fn default() -> Self {
         Self {
             transparent: &[],
@@ -204,7 +204,7 @@ impl<'a> SpriteOptions<'a> {
         }
     }
 }
-impl Default for SpriteOptions<'_> {
+impl Default for StaticSpriteOptions<'_> {
     fn default() -> Self {
         Self {
             transparent: &[],
@@ -213,6 +213,46 @@ impl Default for SpriteOptions<'_> {
             rotate: Rotate::None,
             w: 1,
             h: 1,
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct SpriteOptions {
+    pub transparent: Option<u8>,
+    pub scale: i32,
+    pub flip: Flip,
+    pub rotate: Rotate,
+    pub w: i32,
+    pub h: i32,
+}
+impl SpriteOptions {
+    pub const fn default() -> Self {
+        Self {
+            transparent: None,
+            scale: 1,
+            flip: Flip::None,
+            rotate: Rotate::None,
+            w: 1,
+            h: 1,
+        }
+    }
+    pub const fn transparent_zero() -> Self {
+        Self {
+            transparent: Some(0),
+            ..Self::default()
+        }
+    }
+}
+
+impl<'a> From<StaticSpriteOptions<'a>> for SpriteOptions {
+    fn from(other: StaticSpriteOptions) -> Self {
+        Self {
+            transparent: other.transparent.first().cloned(),
+            scale: other.scale,
+            flip: other.flip,
+            rotate: other.rotate,
+            w: other.w,
+            h: other.h,
         }
     }
 }

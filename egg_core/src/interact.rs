@@ -15,12 +15,12 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::animation::*;
-use crate::position::Hitbox;
 use crate::dialogue::TextContent;
+use crate::position::Hitbox;
 use crate::position::Vec2;
 
 #[derive(Debug, Clone)]
-pub enum Interaction<'a> {
+pub enum StaticInteraction<'a> {
     Text(&'static str),
     EnumText(&'a [TextContent]),
     Dialogue(&'a [&'static str]),
@@ -29,17 +29,17 @@ pub enum Interaction<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Interactable<'a> {
+pub struct StaticInteractable<'a> {
     pub hitbox: Hitbox,
-    pub interaction: Interaction<'a>,
-    pub sprite: Option<&'a [AnimFrame<'a>]>,
+    pub interaction: StaticInteraction<'a>,
+    pub sprite: Option<&'a [StaticAnimFrame<'a>]>,
 }
 
-impl<'a> Interactable<'a> {
+impl<'a> StaticInteractable<'a> {
     pub const fn new(
         hitbox: Hitbox,
-        interaction: Interaction<'a>,
-        sprite: Option<&'a [AnimFrame<'a>]>,
+        interaction: StaticInteraction<'a>,
+        sprite: Option<&'a [StaticAnimFrame<'a>]>,
     ) -> Self {
         Self {
             hitbox,
@@ -49,9 +49,65 @@ impl<'a> Interactable<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Interaction {
+    Text(String),
+    EnumText(Vec<TextContent>),
+    Dialogue(Vec<String>),
+    Func(InteractFn),
+    None,
+}
+
+impl<'a> From<StaticInteraction<'a>> for Interaction {
+    fn from(other: StaticInteraction<'a>) -> Self {
+        match other {
+            StaticInteraction::Text(x) => Self::Text(x.to_string()),
+            StaticInteraction::EnumText(x) => Self::EnumText(x.into()),
+            StaticInteraction::Dialogue(x) => {
+                Self::Dialogue(x.iter().map(|x| x.to_string()).collect())
+            }
+            StaticInteraction::Func(x) => Self::Func(x),
+            StaticInteraction::None => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Interactable {
+    pub hitbox: Hitbox,
+    pub interaction: Interaction,
+    pub sprite: Option<Vec<AnimFrame>>,
+}
+
+impl Interactable {
+    pub const fn new(
+        hitbox: Hitbox,
+        interaction: Interaction,
+        sprite: Option<Vec<AnimFrame>>,
+    ) -> Self {
+        Self {
+            hitbox,
+            interaction,
+            sprite,
+        }
+    }
+}
+
+impl<'a> From<StaticInteractable<'a>> for Interactable {
+    fn from(other: StaticInteractable) -> Self {
+        Self {
+            hitbox: other.hitbox,
+            interaction: other.interaction.into(),
+            sprite: other
+                .sprite
+                .map(|x| x.iter().map(|x| x.clone().into()).collect()),
+        }
+    }
+}
+
 /// A 'scripting' API for the walkaround section of the game. Various interactables
 /// do one-off things, so they are all put inside this enum.
-/// 
+///
 /// This probably doesn't scale well.
 #[derive(Debug, Clone)]
 pub enum InteractFn {

@@ -35,6 +35,11 @@ pub const MENU_DEBUG_CONTROLS: &[&str] = &[
     "Remove CameraBounds\0",
     "Toggle Dog\0",
     "Add creature\0",
+    "Map Test",
+    "Music Test",
+];
+pub const MENU_MAP_TEST: &[&str] = &[
+    "Map Bank: ",
 ];
 pub const OPTIONS_TITLE: &str = "super unfinished OPTIONS MENU\0";
 pub const OPTIONS_FONT_SIZE: &str = "Toggle Font Size\0";

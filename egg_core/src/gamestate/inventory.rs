@@ -196,7 +196,7 @@ impl InventoryUi {
     }
     pub fn draw(&self, system: &mut impl ConsoleApi) {
         use crate::dialogue::DIALOGUE_OPTIONS;
-        use tic80_api::core::{PrintOptions, SpriteOptions, HEIGHT, WIDTH};
+        use tic80_api::core::{PrintOptions, StaticSpriteOptions, HEIGHT, WIDTH};
         system.blit_segment(4);
         let entries = [
             INVENTORY_ITEMS,
@@ -296,7 +296,7 @@ impl InventoryUi {
                             item.sprite,
                             sx + 2,
                             sy + 2,
-                            SpriteOptions {
+                            StaticSpriteOptions {
                                 scale,
                                 transparent: &[0],
                                 ..Default::default()
@@ -331,7 +331,7 @@ impl InventoryUi {
                         534,
                         sx + 2,
                         sy + 2,
-                        SpriteOptions {
+                        StaticSpriteOptions {
                             transparent: &[0],
                             w: 2,
                             h: 2,
@@ -373,7 +373,7 @@ impl InventoryUi {
                         selected_item.sprite,
                         sx + 2,
                         sy + 2 - 4,
-                        SpriteOptions {
+                        StaticSpriteOptions {
                             scale,
                             transparent: &[0],
                             ..Default::default()

@@ -16,11 +16,11 @@
 
 use crate::{
     camera::Camera,
-    interact::Interactable,
-    map::{Axis, MapSet},
+    interact::StaticInteractable,
+    map::{Axis, StaticMapSet},
     position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi, ConsoleHelper}, data::sound,
 };
-use tic80_api::core::{Flip, SpriteOptions};
+use tic80_api::core::{Flip, StaticSpriteOptions};
 
 #[derive(Debug, Clone)]
 pub struct Player {
@@ -78,7 +78,7 @@ impl Player {
             player_sprite.0,
             i32::from(self.pos.x - offset.x),
             i32::from(self.pos.y - offset.y) - player_sprite.2,
-            SpriteOptions {
+            StaticSpriteOptions {
                 w: 1,
                 h: 2,
                 transparent: &[0],
@@ -120,7 +120,7 @@ impl Player {
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
-        current_map: &MapSet,
+        current_map: &StaticMapSet,
     ) -> (i16, i16) {
         use crate::map::layer_collides;
 
@@ -331,17 +331,17 @@ impl Companion {
                     i,
                     position.x as i32 - camera.x() + x_offset,
                     position.y as i32 - camera.y() - 2,
-                    SpriteOptions {
+                    StaticSpriteOptions {
                         w,
                         h: 2,
                         flip,
-                        ..SpriteOptions::transparent_zero()
+                        ..StaticSpriteOptions::transparent_zero()
                     },
                     Some(1),
                     1,
                 )
             }
-            _ => DrawParams::new(0, 0, 0, SpriteOptions::default(), None, 0),
+            _ => DrawParams::new(0, 0, 0, StaticSpriteOptions::default(), None, 0),
         }
     }
     pub fn interact(
@@ -349,8 +349,8 @@ impl Companion {
         position: Vec2,
         direction: (i8, i8),
         player_position: Vec2,
-    ) -> Interactable<'static> {
-        use crate::interact::{InteractFn, Interaction};
+    ) -> StaticInteractable<'static> {
+        use crate::interact::{InteractFn, StaticInteraction};
         match self {
             Companion::Dog => {
                 let mut pixel = 0;
@@ -364,9 +364,9 @@ impl Companion {
                     x
                 };
                 let position = position + Vec2::new(pixel, 0);
-                Interactable::new(
+                StaticInteractable::new(
                     Hitbox::new(position.x, position.y, 16, 16),
-                    Interaction::Func(InteractFn::Pet(position, Some(offset))),
+                    StaticInteraction::Func(InteractFn::Pet(position, Some(offset))),
                     None,
                 )
             }
@@ -478,7 +478,7 @@ impl CompanionList {
     pub fn interact<const N: usize>(
         &self,
         positions: &CompanionTrail<N>,
-    ) -> Vec<Interactable<'static>> {
+    ) -> Vec<StaticInteractable<'static>> {
         match self.companions {
             [Some(x), Some(y)] => vec![
                 x.interact(positions.mid().0, positions.mid().1, positions.latest().0),

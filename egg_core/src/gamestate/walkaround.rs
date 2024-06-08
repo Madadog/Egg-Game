@@ -1,17 +1,17 @@
-use crate::animation::Animation;
+use crate::animation::StaticAnimation;
 use crate::data::map_data::{
     MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
 };
 use crate::data::{dialogue_data::*, save, sound};
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
-use crate::interact::{InteractFn, Interaction};
+use crate::interact::{InteractFn, StaticInteraction};
 use crate::map::{Axis, WarpMode};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
-use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::MapSet};
+use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::StaticMapSet};
 use log::{error, info};
 use tic80_api::core::{MusicOptions, PrintOptions};
 
@@ -28,10 +28,10 @@ pub struct WalkaroundState<'a> {
     pub player: Player,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
-    pub map_animations: Vec<Animation<'a>>,
+    pub map_animations: Vec<StaticAnimation<'a>>,
     pub creatures: Vec<Creature>,
     pub camera: Camera,
-    pub current_map: MapSet<'a>,
+    pub current_map: StaticMapSet<'a>,
     pub dialogue: Dialogue,
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,
@@ -53,7 +53,7 @@ impl<'a> WalkaroundState<'a> {
             bg_colour: 0,
         }
     }
-    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: MapSet<'a>) {
+    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: StaticMapSet<'a>) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
@@ -75,9 +75,9 @@ impl<'a> WalkaroundState<'a> {
             .interactables
             .iter()
             .flat_map(|x| x.sprite)
-            .map(|frames| Animation {
+            .map(|frames| StaticAnimation {
                 frames,
-                ..Animation::const_default()
+                ..StaticAnimation::default()
             })
             .collect();
 
@@ -367,16 +367,16 @@ impl<'a, T: ConsoleApi>
             {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
-                        Interaction::Text(x) => {
+                        StaticInteraction::Text(x) => {
                             self.dialogue.add_text(system, x);
                         }
-                        Interaction::Dialogue(x) => {
+                        StaticInteraction::Dialogue(x) => {
                             self.dialogue.set_dialogue(system, x);
                         }
-                        Interaction::EnumText(x) => {
+                        StaticInteraction::EnumText(x) => {
                             self.dialogue.set_enum_text(system, x);
                         }
-                        Interaction::Func(x) => {
+                        StaticInteraction::Func(x) => {
                             if let Some(dialogue) = self.execute_interact_fn(x, system) {
                                 self.dialogue.add_text(system, dialogue);
                             };

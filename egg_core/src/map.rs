@@ -1,47 +1,97 @@
 use crate::{
     camera::CameraBounds,
-    interact::Interactable,
-    data::{map_data::MapIndex, sound::{music::MusicTrack, SfxData, self}},
+    data::{
+        map_data::MapIndex,
+        sound::{self, music::MusicTrack, SfxData},
+    },
+    interact::{Interactable, StaticInteractable},
     packed::{PackedI16, PackedU8},
-    position::{touches_tile, Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper},
+    position::{touches_tile, Hitbox, Vec2},
+    system::{ConsoleApi, ConsoleHelper},
 };
 use tic80_api::core::MapOptions;
 
 #[derive(Clone, Debug)]
-pub struct MapSet<'a> {
-    pub maps: &'a [MapLayer<'a>],
-    pub fg_maps: &'a [MapLayer<'a>],
+pub struct StaticMapSet<'a> {
+    pub maps: &'a [MapLayer],
+    pub fg_maps: &'a [MapLayer],
     pub warps: &'a [Warp],
-    pub interactables: &'a [Interactable<'a>],
+    pub interactables: &'a [StaticInteractable<'a>],
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
     pub bank: u8,
     pub camera_bounds: Option<CameraBounds>,
 }
-impl<'a> MapSet<'a> {
+impl<'a> StaticMapSet<'a> {
     pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.maps.iter().for_each(|layer| layer.draw_tic80(system, offset, debug))
+        self.maps
+            .iter()
+            .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
     pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.fg_maps.iter().for_each(|layer| layer.draw_tic80(system, offset, debug))
+        self.fg_maps
+            .iter()
+            .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct MapLayer<'a> {
+pub struct MapSet {
+    pub maps: Vec<MapLayer>,
+    pub fg_maps: Vec<MapLayer>,
+    pub warps: Vec<Warp>,
+    pub interactables: Vec<Interactable>,
+    pub bg_colour: u8,
+    pub music_track: Option<MusicTrack>,
+    pub bank: u8,
+    pub camera_bounds: Option<CameraBounds>,
+}
+impl MapSet {
+    pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+        self.maps
+            .iter()
+            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+    }
+    pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+        self.fg_maps
+            .iter()
+            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+    }
+}
+impl From<StaticMapSet<'static>> for MapSet {
+    fn from(value: StaticMapSet) -> Self {
+        MapSet {
+            maps: value.maps.into(),
+            fg_maps: value.fg_maps.into(),
+            warps: value.warps.into(),
+            interactables: value
+                .interactables
+                .iter()
+                .map(|x| x.clone().into())
+                .collect(),
+            bg_colour: value.bg_colour,
+            music_track: value.music_track,
+            bank: value.bank,
+            camera_bounds: value.camera_bounds,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MapLayer {
     pub origin: PackedI16,
     pub size: PackedI16,
     pub offset: PackedI16,
-    pub transparent: &'a [u8],
+    pub transparent: Option<u8>,
     /// (blit_segment, rotate_palette, shift_sprite_flags, UNUSED)
     pub blit_rotate_and_flags: PackedU8,
 }
-impl<'a> MapLayer<'a> {
+impl MapLayer {
     pub const DEFAULT_MAP: Self = Self {
         origin: PackedI16::from_i16(0, 0),
         size: PackedI16::from_i16(30, 17),
         offset: PackedI16::from_i16(0, 0),
-        transparent: &[],
+        transparent: None,
         blit_rotate_and_flags: PackedU8::from_u8((4, 0, 0, 0)),
     };
     pub const fn new(x: i16, y: i16, w: i16, h: i16) -> Self {
@@ -59,7 +109,7 @@ impl<'a> MapLayer<'a> {
     }
     pub const fn with_trans(self, transparent: &'static [u8]) -> Self {
         Self {
-            transparent,
+            transparent: Some(transparent[0]),
             ..self
         }
     }
@@ -98,8 +148,8 @@ impl<'a> MapLayer<'a> {
         system.map(options);
     }
 }
-impl<'a> From<MapLayer<'a>> for MapOptions<'a> {
-    fn from(map: MapLayer<'a>) -> Self {
+impl<'a> From<MapLayer> for MapOptions {
+    fn from(map: MapLayer) -> Self {
         MapOptions {
             x: map.origin.x().into(),
             y: map.origin.y().into(),
@@ -164,7 +214,10 @@ impl Warp {
         Self { mode, ..self }
     }
     pub const fn with_sound(self, sound: SfxData) -> Self {
-        Self { sound: Some(sound), ..self }
+        Self {
+            sound: Some(sound),
+            ..self
+        }
     }
     pub fn map(&'static self) -> Option<MapIndex> {
         self.map

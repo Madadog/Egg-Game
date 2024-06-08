@@ -18,17 +18,17 @@ use crate::animation::*;
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::*;
 use crate::interact::InteractFn;
-use crate::interact::{Interactable, Interaction};
+use crate::interact::{StaticInteractable, StaticInteraction};
 use crate::map::MapLayer;
-use crate::map::MapSet;
+use crate::map::StaticMapSet;
 use crate::map::Warp;
 use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
-use tic80_api::core::SpriteOptions;
+use tic80_api::core::StaticSpriteOptions;
 
 use super::sound;
 
-pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
+pub(crate) const DEFAULT_MAP_SET: StaticMapSet = StaticMapSet {
     maps: &[],
     fg_maps: &[],
     warps: &[],
@@ -42,7 +42,7 @@ pub(crate) const DEFAULT_MAP_SET: MapSet = MapSet {
 #[derive(Debug, Clone, Copy)]
 pub struct MapIndex(pub usize);
 impl MapIndex {
-    pub fn map(&self) -> MapSet<'static> {
+    pub fn map(&self) -> StaticMapSet<'static> {
         match self.0 {
             0 => SUPERMARKET,
             1 => SUPERMARKET_HALL,
@@ -73,7 +73,7 @@ impl MapIndex {
     pub const PIANO_ROOM: Self = MapIndex(11);
 }
 
-pub const SUPERMARKET: MapSet<'static> = MapSet {
+pub const SUPERMARKET: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //bg
         MapLayer::new(60, 17, 26, 12)
@@ -108,64 +108,64 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
         .with_mode(WarpMode::Auto),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3),
-            interaction: Interaction::Text(SM_COIN_RETURN),
+            interaction: StaticInteraction::Text(SM_COIN_RETURN),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2),
-            interaction: Interaction::Text(SM_FRUIT_BASKET),
+            interaction: StaticInteraction::Text(SM_FRUIT_BASKET),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(4 * 8, 5 * 8, 8, 20),
-            interaction: Interaction::Text(SM_MAIN_WINDOW),
+            interaction: StaticInteraction::Text(SM_MAIN_WINDOW),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(19 * 8, 5 * 8, 8, 15),
-            interaction: Interaction::Text(SM_FRIDGE_1),
+            interaction: StaticInteraction::Text(SM_FRIDGE_1),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(20 * 8, 6 * 8, 8, 15),
-            interaction: Interaction::Text(SM_FRIDGE_2),
+            interaction: StaticInteraction::Text(SM_FRIDGE_2),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(21 * 8, 7 * 8, 8, 16),
-            interaction: Interaction::Text(SM_VENDING_MACHINE),
+            interaction: StaticInteraction::Text(SM_VENDING_MACHINE),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8),
-            interaction: Interaction::Text(CONSTRUCTION_1),
+            interaction: StaticInteraction::Text(CONSTRUCTION_1),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(80, 24, 16, 20),
-            interaction: Interaction::EnumText(THING),
+            interaction: StaticInteraction::EnumText(THING),
             sprite: Some(&[
-                AnimFrame::new(
+                StaticAnimFrame::new(
                     Vec2::splat(0),
                     661,
                     30,
-                    SpriteOptions {
+                    StaticSpriteOptions {
                         w: 2,
                         h: 2,
-                        ..SpriteOptions::transparent_zero()
+                        ..StaticSpriteOptions::transparent_zero()
                     },
                 )
                 .with_palette_rotate(1),
-                AnimFrame::new(
+                StaticAnimFrame::new(
                     Vec2::new(0, 1),
                     661,
                     30,
-                    SpriteOptions {
+                    StaticSpriteOptions {
                         w: 2,
                         h: 2,
-                        ..SpriteOptions::transparent_zero()
+                        ..StaticSpriteOptions::transparent_zero()
                     },
                 )
                 .with_palette_rotate(1),
@@ -176,7 +176,7 @@ pub const SUPERMARKET: MapSet<'static> = MapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const SUPERMARKET_HALL: MapSet<'static> = MapSet {
+pub const SUPERMARKET_HALL: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //bg
         MapLayer::new(86, 17, 13, 7)
@@ -201,31 +201,31 @@ pub const SUPERMARKET_HALL: MapSet<'static> = MapSet {
         Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3).with_sound(sound::DOOR),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(11 * 8, 4 * 8, 8, 8),
-            interaction: Interaction::Text(EMERGENCY_EXIT),
+            interaction: StaticInteraction::Text(EMERGENCY_EXIT),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(8 * 8, 3 * 8, 8, 8),
-            interaction: Interaction::Text(CONSTRUCTION_2),
+            interaction: StaticInteraction::Text(CONSTRUCTION_2),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4),
-            interaction: Interaction::Text(SM_HALL_SHELF),
+            interaction: StaticInteraction::Text(SM_HALL_SHELF),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(8, 3 * 8, 12, 16),
-            interaction: Interaction::Text(SM_HALL_WINDOW),
+            interaction: StaticInteraction::Text(SM_HALL_WINDOW),
             sprite: None,
         },
     ],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
-pub const SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
+pub const SUPERMARKET_STOREROOM: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         MapLayer::new(86, 28, 9, 6)
             .with_trans(&[0])
@@ -238,17 +238,17 @@ pub const SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
         .with_mode(WarpMode::Auto)
         .with_sound(sound::DOOR)],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(53, 28, 8, 10),
-            interaction: Interaction::Text(EGG_1),
+            interaction: StaticInteraction::Text(EGG_1),
             sprite: Some(&[
-                AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
-                AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(Vec2::new(0, 0), 524, 30, StaticSpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(Vec2::new(0, -1), 524, 30, StaticSpriteOptions::transparent_zero()),
             ]),
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(16, 0, 5 * 8, 4 * 7),
-            interaction: Interaction::Text(SM_STOREROOM_SHELF),
+            interaction: StaticInteraction::Text(SM_STOREROOM_SHELF),
             sprite: None,
         },
     ],
@@ -256,22 +256,22 @@ pub const SUPERMARKET_STOREROOM: MapSet<'static> = MapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const TEST_PEN: MapSet<'static> = MapSet {
+pub const TEST_PEN: StaticMapSet<'static> = StaticMapSet {
     maps: &[MapLayer::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
     warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
-    interactables: &[Interactable {
+    interactables: &[StaticInteractable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
-        interaction: Interaction::Text(EGG_1),
+        interaction: StaticInteraction::Text(EGG_1),
         sprite: Some(&[
-            AnimFrame::new(Vec2::new(0, 0), 524, 30, SpriteOptions::transparent_zero()),
-            AnimFrame::new(Vec2::new(0, -1), 524, 30, SpriteOptions::transparent_zero()),
+            StaticAnimFrame::new(Vec2::new(0, 0), 524, 30, StaticSpriteOptions::transparent_zero()),
+            StaticAnimFrame::new(Vec2::new(0, -1), 524, 30, StaticSpriteOptions::transparent_zero()),
         ]),
     }],
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
 
-pub const BEDROOM: MapSet<'static> = MapSet {
+pub const BEDROOM: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //room
         MapLayer::new(30, 0, 21, 10),
@@ -291,31 +291,31 @@ pub const BEDROOM: MapSet<'static> = MapSet {
     )
     .with_sound(sound::DOOR)],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
-            interaction: Interaction::Text(BEDROOM_MATTRESS),
+            interaction: StaticInteraction::Text(BEDROOM_MATTRESS),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8),
-            interaction: Interaction::Text(BEDROOM_CLOSET),
+            interaction: StaticInteraction::Text(BEDROOM_CLOSET),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8),
-            interaction: Interaction::Text(BEDROOM_TROLLEY),
+            interaction: StaticInteraction::Text(BEDROOM_TROLLEY),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: Interaction::EnumText(BEDROOM_WINDOW),
+            interaction: StaticInteraction::EnumText(BEDROOM_WINDOW),
             sprite: None,
         },
     ],
     ..DEFAULT_MAP_SET
 };
 
-pub const HOUSE_STAIRWELL: MapSet<'static> = MapSet {
+pub const HOUSE_STAIRWELL: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //room
         MapLayer::new(51, 0, 16, 9),
@@ -344,31 +344,31 @@ pub const HOUSE_STAIRWELL: MapSet<'static> = MapSet {
         .with_mode(WarpMode::Auto),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 2 * 8, 8, 8),
-            interaction: Interaction::Func(InteractFn::StairwellWindow),
+            interaction: StaticInteraction::Func(InteractFn::StairwellWindow),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8),
-            interaction: Interaction::Func(InteractFn::StairwellPainting),
+            interaction: StaticInteraction::Func(InteractFn::StairwellPainting),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(13 * 8, 2 * 8, 8, 8),
-            interaction: Interaction::Text(HOUSE_STAIRWELL_WINDOW2),
+            interaction: StaticInteraction::Text(HOUSE_STAIRWELL_WINDOW2),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(15 * 8, 3 * 8, 8, 8),
-            interaction: Interaction::Text(HOUSE_STAIRWELL_DOOR),
+            interaction: StaticInteraction::Text(HOUSE_STAIRWELL_DOOR),
             sprite: None,
         },
     ],
     ..DEFAULT_MAP_SET
 };
 
-pub const HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
+pub const HOUSE_LIVING_ROOM: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //room
         MapLayer::new(67, 0, 23, 13),
@@ -416,58 +416,58 @@ pub const HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
         .with_sound(sound::DOOR),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_COUCH),
+            interaction: StaticInteraction::Text(HOUSE_LIVING_ROOM_COUCH),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_LIVING_ROOM_TV_1),
+            interaction: StaticInteraction::Text(HOUSE_LIVING_ROOM_TV_1),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
-            interaction: Interaction::EnumText(HOUSE_LIVING_ROOM_WINDOW),
+            interaction: StaticInteraction::EnumText(HOUSE_LIVING_ROOM_WINDOW),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
-            interaction: Interaction::None,
-            sprite: Some(&[AnimFrame::new(
+            interaction: StaticInteraction::None,
+            sprite: Some(&[StaticAnimFrame::new(
                 Vec2::new(0, 0),
                 35,
                 30,
-                SpriteOptions {
+                StaticSpriteOptions {
                     w: 3,
                     h: 2,
-                    ..SpriteOptions::transparent_zero()
+                    ..StaticSpriteOptions::transparent_zero()
                 },
             )
             .with_outline(None)]),
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
-            interaction: Interaction::None,
+            interaction: StaticInteraction::None,
             sprite: Some(&[
-                AnimFrame::new(
+                StaticAnimFrame::new(
                     Vec2::new(0, 0),
                     576,
                     30,
-                    SpriteOptions {
+                    StaticSpriteOptions {
                         w: 2,
                         h: 3,
-                        ..SpriteOptions::transparent_zero()
+                        ..StaticSpriteOptions::transparent_zero()
                     },
                 ),
-                AnimFrame::new(
+                StaticAnimFrame::new(
                     Vec2::new(0, 0),
                     578,
                     30,
-                    SpriteOptions {
+                    StaticSpriteOptions {
                         w: 2,
                         h: 3,
-                        ..SpriteOptions::transparent_zero()
+                        ..StaticSpriteOptions::transparent_zero()
                     },
                 ),
             ]),
@@ -475,7 +475,7 @@ pub const HOUSE_LIVING_ROOM: MapSet<'static> = MapSet {
     ],
     ..DEFAULT_MAP_SET
 };
-pub const HOUSE_KITCHEN: MapSet<'static> = MapSet {
+pub const HOUSE_KITCHEN: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //room
         MapLayer::new(90, 0, 13, 10),
@@ -500,31 +500,31 @@ pub const HOUSE_KITCHEN: MapSet<'static> = MapSet {
         .with_sound(sound::DOOR),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_KITCHEN_CUPBOARD),
+            interaction: StaticInteraction::Text(HOUSE_KITCHEN_CUPBOARD),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8),
-            interaction: Interaction::EnumText(HOUSE_KITCHEN_SINK),
+            interaction: StaticInteraction::EnumText(HOUSE_KITCHEN_SINK),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
-            interaction: Interaction::Text(HOUSE_KITCHEN_MICROWAVE),
+            interaction: StaticInteraction::Text(HOUSE_KITCHEN_MICROWAVE),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_KITCHEN_WINDOW),
+            interaction: StaticInteraction::Text(HOUSE_KITCHEN_WINDOW),
             sprite: None,
         },
     ],
     ..DEFAULT_MAP_SET
 };
 
-pub const BACKYARD: MapSet<'static> = MapSet {
+pub const BACKYARD: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //room
         MapLayer::new(120, 0, 30, 17),
@@ -546,42 +546,42 @@ pub const BACKYARD: MapSet<'static> = MapSet {
         .with_flip(Axis::Y),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_BASEMENT),
+            interaction: StaticInteraction::Text(HOUSE_BACKYARD_BASEMENT),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(20 * 8, 8 * 8, 1 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_SHED),
+            interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(22 * 8, 8 * 8, 1 * 8, 2 * 8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_SHED_WINDOW),
+            interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED_WINDOW),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(24 * 8, 10 * 8, 1 * 8, 6 * 8),
-            interaction: Interaction::Dialogue(HOUSE_BACKYARD_NEIGHBOURS),
+            interaction: StaticInteraction::Dialogue(HOUSE_BACKYARD_NEIGHBOURS),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(21 * 8, 13 * 8, 1 * 8, 1 * 8),
-            interaction: Interaction::Func(InteractFn::ToggleDog),
+            interaction: StaticInteraction::Func(InteractFn::ToggleDog),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 0, 1 * 8, 16 * 8),
-            interaction: Interaction::Text(HOUSE_BACKYARD_STORMDRAIN),
+            interaction: StaticInteraction::Text(HOUSE_BACKYARD_STORMDRAIN),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(3, 2 * 8, 8, 8),
-            interaction: Interaction::Text(DEFAULT),
+            interaction: StaticInteraction::Text(DEFAULT),
             sprite: Some(&[
-                AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
-                AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(Vec2::new(0, 0), 646, 30, StaticSpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(Vec2::new(0, 0), 647, 30, StaticSpriteOptions::transparent_zero()),
             ]),
         },
     ],
@@ -599,7 +599,7 @@ pub const BACKYARD: MapSet<'static> = MapSet {
 //TODO: Soundtrack where relevent
 //TODO: Finale
 
-pub const WILDERNESS: MapSet<'static> = MapSet {
+pub const WILDERNESS: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //ground
         MapLayer::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
@@ -629,7 +629,7 @@ pub const WILDERNESS: MapSet<'static> = MapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const TOWN: MapSet<'static> = MapSet {
+pub const TOWN: StaticMapSet<'static> = StaticMapSet {
     maps: &[
         //ground
         MapLayer::new(0, 0, 30 * 4, 17 * 4)
@@ -658,24 +658,24 @@ pub const TOWN: MapSet<'static> = MapSet {
         .with_sound(sound::DOOR),
     ],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(8 * 6, 17 * 8, 1 * 8, 6 * 8),
-            interaction: Interaction::Text(TOWN_TRAFFIC),
+            interaction: StaticInteraction::Text(TOWN_TRAFFIC),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(8 * 8, 17 * 8, 1 * 8, 1 * 8),
-            interaction: Interaction::Text(TOWN_LAMPPOST),
+            interaction: StaticInteraction::Text(TOWN_LAMPPOST),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(14 * 8, 13 * 8, 8, 8),
-            interaction: Interaction::Text(TOWN_HOME_WINDOW),
+            interaction: StaticInteraction::Text(TOWN_HOME_WINDOW),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(224, 142, 8 * 2, 8),
-            interaction: Interaction::EnumText(TOWN_WIDE),
+            interaction: StaticInteraction::EnumText(TOWN_WIDE),
             sprite: None,
         },
     ],
@@ -683,7 +683,7 @@ pub const TOWN: MapSet<'static> = MapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const PIANO_ROOM: MapSet<'static> = MapSet {
+pub const PIANO_ROOM: StaticMapSet<'static> = StaticMapSet {
     maps: &[MapLayer::new(99, 15, 21, 10)],
     bg_colour: 0,
     warps: &[Warp::new(
@@ -694,14 +694,14 @@ pub const PIANO_ROOM: MapSet<'static> = MapSet {
     .with_sound(sound::DOOR)
     .with_mode(WarpMode::Auto)],
     interactables: &[
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(4 * 8, 1 * 8, 4 * 25, 4 * 9),
-            interaction: Interaction::Func(InteractFn::Piano(Vec2::new(4 * 8, 1 * 8))),
+            interaction: StaticInteraction::Func(InteractFn::Piano(Vec2::new(4 * 8, 1 * 8))),
             sprite: None,
         },
-        Interactable {
+        StaticInteractable {
             hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8 * 1),
-            interaction: Interaction::Text(UNKNOWN_3),
+            interaction: StaticInteraction::Text(UNKNOWN_3),
             sprite: None,
         },
     ],

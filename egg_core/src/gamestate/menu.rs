@@ -1,11 +1,14 @@
 use tic80_api::core::PrintOptions;
-use tic80_api::core::SpriteOptions;
+use tic80_api::core::StaticSpriteOptions;
 
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::dialogue_data::OPTIONS_TITLE;
+use crate::data::map_data::MapIndex;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::map::MapSet;
+use crate::map::StaticMapSet;
 use crate::position::*;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
@@ -45,8 +48,24 @@ impl MenuState {
         let mut entries = vec![MenuEntry::Walk];
         entries.extend(
             (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len())
+                .map(|x| MenuEntry::Debug(x as u8))
+                .chain([MenuEntry::MapTest, MenuEntry::MusicTest]),
+        );
+        Self {
+            entries,
+            draw_title: None,
+            back_entry: Some(MenuEntry::Walk),
+            ..Self::new()
+        }
+    }
+    pub fn map_select() -> Self {
+        let mut entries = vec![MenuEntry::Walk];
+        entries.extend(
+            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len())
                 .map(|x| MenuEntry::Debug(x as u8)),
         );
+        entries.push(MenuEntry::MapTest);
+        entries.push(MenuEntry::MusicTest);
         Self {
             entries,
             draw_title: None,
@@ -156,10 +175,18 @@ impl MenuState {
                             system,
                         );
                     }
+                    6 => return Some(GameState::MainMenu(MenuState::map_select())),
+                    7 => return Some(GameState::MainMenu(MenuState::debug_options())),
                     _ => {}
                 }
             }
             Walk => return Some(GameState::Walkaround),
+            MapTest => return Some(GameState::MainMenu(MenuState::map_select())),
+            MapBankSelect(x, _) => {
+                walkaround_state.load_map(system, MapIndex((*x).into()).map().into())
+            }
+            MusicTest => todo!(),
+            MusicSelect(x, _) => todo!(),
         };
         None
     }
@@ -199,7 +226,13 @@ impl MenuState {
 
         let strings: Vec<&str> = self.entries.iter().map(|x| x.text()).collect();
         let current_option = self.index;
-        draw_menu(system, &strings, 120, self.entry_height().into(), current_option);
+        draw_menu(
+            system,
+            &strings,
+            120,
+            self.entry_height().into(),
+            current_option,
+        );
         self.hover(system, current_option);
     }
 }
@@ -215,10 +248,14 @@ pub enum MenuEntry {
     ExitToMenu,
     Space,
     Debug(u8),
+    MapTest,
+    MapBankSelect(u8, String),
+    MusicTest,
+    MusicSelect(u8, String),
     Walk,
 }
 impl MenuEntry {
-    pub fn text(&self) -> &'static str {
+    pub fn text(&self) -> &str {
         use crate::data::dialogue_data::*;
         use MenuEntry::*;
 
@@ -238,12 +275,22 @@ impl MenuEntry {
             ExitToMenu => MENU_EXIT,
             Space => "\0",
             Debug(x) => MENU_DEBUG_CONTROLS[usize::from(*x)],
+            MapTest => MENU_DEBUG_CONTROLS[6],
+            MusicTest => MENU_DEBUG_CONTROLS[7],
             Walk => MENU_PLAY,
+            MapBankSelect(_, string) => &string,
+            MusicSelect(_, string) => &string,
         }
     }
 }
 
-pub fn draw_menu(system: &mut impl ConsoleApi, entries: &[&str], x: i32, y: i32, current_option: usize) {
+pub fn draw_menu(
+    system: &mut impl ConsoleApi,
+    entries: &[&str],
+    x: i32,
+    y: i32,
+    current_option: usize,
+) {
     for (i, string) in entries.iter().enumerate() {
         let color = if i == current_option { 4 } else { 3 };
         if i == current_option {
@@ -254,10 +301,7 @@ pub fn draw_menu(system: &mut impl ConsoleApi, entries: &[&str], x: i32, y: i32,
             string,
             x,
             y + i as i32 * 8,
-            PrintOptions {
-                color,
-                ..options
-            },
+            PrintOptions { color, ..options },
         );
     }
 }
@@ -341,7 +385,7 @@ pub fn draw_title(
         534,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
-        SpriteOptions {
+        StaticSpriteOptions {
             transparent: &[0],
             scale: 1,
             w: 2,

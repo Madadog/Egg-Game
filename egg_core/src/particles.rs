@@ -1,5 +1,5 @@
 use crate::{position::Vec2, system::ConsoleApi};
-use tic80_api::core::SpriteOptions;
+use tic80_api::core::StaticSpriteOptions;
 
 #[derive(Clone)]
 pub enum ParticleDraw {
@@ -14,7 +14,7 @@ impl ParticleDraw {
             ParticleDraw::Rect(w, h, colour) => system.rect(x, y, *w, *h, *colour),
             ParticleDraw::RectB(w, h, colour) => system.rectb(x, y, *w, *h, *colour),
             ParticleDraw::Circ(radius, colour) => system.circ(x, y, *radius, *colour),
-            ParticleDraw::Spr(id) => system.spr(*id, x, y, SpriteOptions::transparent_zero()),
+            ParticleDraw::Spr(id) => system.spr(*id, x, y, StaticSpriteOptions::transparent_zero()),
         }
     }
 }

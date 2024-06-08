@@ -66,9 +66,9 @@ impl Creature {
             sprite,
             self.hitbox.offset(offset).x.into(),
             self.hitbox.offset(offset).y.into(),
-            tic80_api::core::SpriteOptions {
+            tic80_api::core::StaticSpriteOptions {
                 flip,
-                ..tic80_api::core::SpriteOptions::transparent_zero()
+                ..tic80_api::core::StaticSpriteOptions::transparent_zero()
             },
             Some(1),
             1,

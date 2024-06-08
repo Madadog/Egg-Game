@@ -1,5 +1,5 @@
 use tic80_api::core::{
-        FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
+        FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, StaticSpriteOptions,
         TTriOptions,
     };
 
@@ -98,7 +98,7 @@ pub struct DrawParams<'a> {
     pub index: i32,
     pub x: i32,
     pub y: i32,
-    pub options: SpriteOptions<'a>,
+    pub options: StaticSpriteOptions<'a>,
     pub outline: Option<u8>,
     pub palette_rotate: u8,
 }
@@ -108,7 +108,7 @@ impl<'a> DrawParams<'a> {
         index: i32,
         x: i32,
         y: i32,
-        options: SpriteOptions<'a>,
+        options: StaticSpriteOptions<'a>,
         outline: Option<u8>,
         palette_rotate: u8,
     ) -> Self {
@@ -214,7 +214,7 @@ pub trait ConsoleApi {
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
     fn rectb(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
-    fn spr(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions);
+    fn spr(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions);
     fn sync(&mut self, mask: i32, bank: u8, to_cart: bool);
     fn time(&self) -> f32;
     fn tstamp(&self) -> u32;
@@ -255,7 +255,7 @@ pub trait ConsoleApi {
     /// Reads data from the virtual filesystem
     fn read_file(&mut self, filename: String) -> Option<&[u8]>;
     /// Sprite with more options
-    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, palette_map: &[usize]);
+    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]);
     /// Sends information to the outside world. Kinda sucks, I'll probably remove it.
     fn send(&mut self, channel: DataChannel, data: &[u8]);
 
@@ -299,7 +299,7 @@ pub trait ConsoleApi {
         id: i32,
         x: i32,
         y: i32,
-        sprite_options: SpriteOptions,
+        sprite_options: StaticSpriteOptions,
         outline_colour: u8,
     ) {
         let old_map: Vec<usize> = self.get_palette_map().into_iter().map(|x| *x).collect();
@@ -441,7 +441,7 @@ pub trait ConsoleHelper: ConsoleApi {
     fn blit_segment(&mut self, value: u8) {
         *self.get_blit_segment() = value;
     }
-    fn spr_blit_segment(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, blit_seg: u8) {
+    fn spr_blit_segment(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, blit_seg: u8) {
         let old = *self.get_blit_segment();
         self.blit_segment(blit_seg);
         self.spr(id, x, y, opts);
@@ -452,7 +452,7 @@ pub trait ConsoleHelper: ConsoleApi {
         id: i32,
         x: i32,
         y: i32,
-        sprite_options: SpriteOptions,
+        sprite_options: StaticSpriteOptions,
         outline_colour: u8,
     ) {
         self.draw_outline(id, x, y, sprite_options.clone(), outline_colour);

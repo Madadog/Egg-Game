@@ -7,7 +7,7 @@ use egg_core::{
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, SyncHelper},
     tic80_api::{
-        core::{Flip, MouseInput, SfxOptions, SpriteOptions},
+        core::{Flip, MouseInput, SfxOptions, StaticSpriteOptions},
         helpers::SWEETIE_16,
     },
 };
@@ -693,7 +693,7 @@ impl ConsoleApi for FantasyConsole {
                             x,
                             y,
                             false,
-                            opts.transparent.get(0).cloned().unwrap_or(255),
+                            opts.transparent.unwrap_or(255),
                         );
                     }
                 }
@@ -841,7 +841,7 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.push((sfx_id.to_string(), opts));
     }
 
-    fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::tic80_api::core::SpriteOptions) {
+    fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::tic80_api::core::StaticSpriteOptions) {
         let flip = match opts.flip {
             Flip::Horizontal => true,
             _ => false,
@@ -953,7 +953,7 @@ impl ConsoleApi for FantasyConsole {
         self.files.get(&filename).map(|vec| (*vec).as_slice())
     }
     
-    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, palette_map: &[usize]) {
+    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]) {
         todo!()
     }
     
@@ -961,7 +961,7 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn draw_outline(&mut self, id: i32, x: i32, y: i32, opts: SpriteOptions, outline_colour: u8) {
+    fn draw_outline(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, outline_colour: u8) {
         let flip = match opts.flip {
             egg_core::tic80_api::core::Flip::None => false,
             egg_core::tic80_api::core::Flip::Horizontal => true,

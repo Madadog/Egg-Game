@@ -2,7 +2,7 @@ use crate::system::{ConsoleApi, ConsoleHelper};
 use crate::{
     position::Vec2,
 };
-use tic80_api::core::SpriteOptions;
+use tic80_api::core::StaticSpriteOptions;
 
 #[derive(Debug, Clone)]
 pub enum PicContainer {
@@ -31,7 +31,7 @@ impl Pic4x4 {
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
             );
-            system.draw_outline((*id).into(), x, y, SpriteOptions::transparent_zero(), 1);
+            system.draw_outline((*id).into(), x, y, StaticSpriteOptions::transparent_zero(), 1);
         }
         system.palette_map_rotate(1);
         for (i, id) in self.spr_ids.iter().enumerate() {
@@ -40,7 +40,7 @@ impl Pic4x4 {
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
             );
-            system.spr((*id).into(), x, y, SpriteOptions::transparent_zero());
+            system.spr((*id).into(), x, y, StaticSpriteOptions::transparent_zero());
         }
         system.palette_map_rotate(0);
     }
@@ -65,10 +65,10 @@ impl PicSingle {
             self.spr_id.into(),
             x,
             y,
-            SpriteOptions {
+            StaticSpriteOptions {
                 w: 2,
                 h: 2,
-                ..SpriteOptions::transparent_zero()
+                ..StaticSpriteOptions::transparent_zero()
             },
             1,
         );

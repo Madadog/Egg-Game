@@ -24,7 +24,7 @@ use crate::{
 };
 
 use tic80_api::{
-    core::{SpriteOptions, PrintOptions},
+    core::{StaticSpriteOptions, PrintOptions},
 };
 
 use crate::data::{
@@ -320,7 +320,7 @@ impl Dialogue {
             portrait,
             (WIDTH - w) / 2 - 13 + 2,
             (HEIGHT - h) - 6 + 2,
-            SpriteOptions {
+            StaticSpriteOptions {
                 scale,
                 transparent: &[0],
                 w: sw,

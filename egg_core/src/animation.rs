@@ -14,21 +14,94 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use tic80_api::core::SpriteOptions;
+use tic80_api::core::{SpriteOptions, StaticSpriteOptions};
 use crate::position::Vec2;
 
+// TODO: Static and allocated variants of all map structs
 
 #[derive(Debug, Clone)]
-pub struct AnimFrame<'a> {
+pub struct StaticAnimFrame<'a> {
     pub pos: Vec2,
     pub spr_id: u16,
     pub duration: u16,
-    pub options: SpriteOptions<'a>,
+    pub options: StaticSpriteOptions<'a>,
     pub outline_colour: Option<u8>,
     pub palette_rotate: u8,
 }
-impl<'a> AnimFrame<'a> {
-    pub const fn new(pos: Vec2, spr_id: u16, duration: u16, options: SpriteOptions<'a>) -> Self {
+impl<'a> StaticAnimFrame<'a> {
+    pub const fn new(pos: Vec2, spr_id: u16, duration: u16, options: StaticSpriteOptions<'a>) -> Self {
+        Self {
+            pos,
+            spr_id,
+            duration,
+            options,
+            outline_colour: Some(1),
+            palette_rotate: 0,
+        }
+    }
+    pub const fn with_outline(self, outline: Option<u8>) -> Self {
+        Self { outline_colour: outline, ..self }
+    }
+    pub const fn default() -> Self {
+        Self {
+            pos: Vec2::new(0, 0),
+            spr_id: 0,
+            duration: 1,
+            options: StaticSpriteOptions::transparent_zero(),
+            outline_colour: Some(1),
+            palette_rotate: 0,
+        }
+    }
+
+    pub const fn with_palette_rotate(self, palette_rotate: u8) -> Self {
+        Self {
+            palette_rotate,
+            ..self
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StaticAnimation<'a> {
+    pub tick: u16,
+    pub index: usize,
+    pub frames: &'a [StaticAnimFrame<'a>],
+}
+impl<'a> StaticAnimation<'a> {
+    pub const fn new(frames: &'a [StaticAnimFrame<'a>]) -> Self {
+        Self { frames, ..Self::default() }
+    }
+    pub const fn default() -> Self {
+        Self {
+            tick: 0,
+            index: 0,
+            frames: &[],
+        }
+    }
+    pub fn current_frame(&self) -> &StaticAnimFrame<'a> {
+        &self.frames.get(self.index).expect("Couldn't find animation frame!")
+    }
+    pub fn advance(&mut self) {
+        if self.tick >= self.current_frame().duration {
+            self.index = (self.index + 1) % self.frames.len();
+            self.tick = 0;
+        } else {
+            self.tick += 1;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AnimFrame {
+    pub pos: Vec2,
+    pub spr_id: u16,
+    pub duration: u16,
+    pub options: SpriteOptions,
+    pub outline_colour: Option<u8>,
+    pub palette_rotate: u8,
+}
+impl AnimFrame {
+    pub const fn new(pos: Vec2, spr_id: u16, duration: u16, options: SpriteOptions) -> Self {
         Self {
             pos,
             spr_id,
@@ -60,32 +133,16 @@ impl<'a> AnimFrame<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Animation<'a> {
-    pub tick: u16,
-    pub index: usize,
-    pub frames: &'a [AnimFrame<'a>],
-}
-impl<'a> Animation<'a> {
-    pub const fn new(frames: &'a [AnimFrame<'a>]) -> Self {
-        Self { frames, ..Self::const_default() }
-    }
-    pub const fn const_default() -> Self {
+
+impl<'a> From<StaticAnimFrame<'a>> for AnimFrame {
+    fn from(other: StaticAnimFrame) -> Self {
         Self {
-            tick: 0,
-            index: 0,
-            frames: &[],
-        }
-    }
-    pub fn current_frame(&self) -> &AnimFrame<'a> {
-        &self.frames.get(self.index).expect("Couldn't find animation frame!")
-    }
-    pub fn advance(&mut self) {
-        if self.tick >= self.current_frame().duration {
-            self.index = (self.index + 1) % self.frames.len();
-            self.tick = 0;
-        } else {
-            self.tick += 1;
+            pos: other.pos,
+            spr_id: other.spr_id,
+            duration: other.duration,
+            options: other.options.into(),
+            outline_colour: other.outline_colour,
+            palette_rotate: other.palette_rotate,
         }
     }
 }
