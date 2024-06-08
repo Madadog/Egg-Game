@@ -35,7 +35,7 @@ pub struct Player {
     pub pet_timer: Option<u8>,
 }
 impl Player {
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         Self {
             pos: Vec2::new(62, 23),
             local_hitbox: Hitbox::new(0, 10, 7, 5),
@@ -245,7 +245,7 @@ impl Player {
 }
 impl Default for Player {
     fn default() -> Self {
-        Self::const_default()
+        Self::default()
     }
 }
 fn test_many_points(

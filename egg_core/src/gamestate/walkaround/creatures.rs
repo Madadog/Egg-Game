@@ -10,7 +10,7 @@ pub struct Creature {
     pub flip_h: bool,
 }
 impl Creature {
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         Self {
             hitbox: Hitbox::new(0, 0, 8, 8),
             state: CreatureState::Egg(Timer(255)),

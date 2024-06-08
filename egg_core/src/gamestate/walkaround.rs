@@ -40,14 +40,14 @@ pub struct WalkaroundState<'a> {
 impl<'a> WalkaroundState<'a> {
     pub const fn new() -> Self {
         Self {
-            player: Player::const_default(),
+            player: Player::default(),
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
             creatures: Vec::new(),
-            camera: Camera::const_default(),
+            camera: Camera::default(),
             current_map: DEFAULT_MAP_SET,
-            dialogue: Dialogue::const_default(),
+            dialogue: Dialogue::default(),
             particles: ParticleList::new(),
             cutscene: None,
             bg_colour: 0,
@@ -158,7 +158,7 @@ impl<'a> WalkaroundState<'a> {
             }
             InteractFn::AddCreatures(x) => {
                 self.creatures.extend(
-                    (0..=*x).map(|_| Creature::const_default().with_offset(self.player.pos)),
+                    (0..=*x).map(|_| Creature::default().with_offset(self.player.pos)),
                 );
                 None
             }

@@ -12,7 +12,7 @@ impl Camera {
     pub const fn new(pos: Vec2, bounds: CameraBounds) -> Self {
         Self { pos, bounds }
     }
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         Camera::new(Vec2::new(0, 0), CameraBounds::bounded((0, 300), (0, 200)))
     }
     pub fn bound(&self, focus_x: Option<i16>, focus_y: Option<i16>) -> Vec2 {

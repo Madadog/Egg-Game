@@ -15,7 +15,7 @@ use tiled::{TiledMap, TiledMapPlugin};
 // static TIME: AtomicI32 = AtomicI32::new(0);
 // static PAUSE: AtomicBool = AtomicBool::new(false);
 // static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
-// static DEBUG_INFO: DebugInfo = DebugInfo::const_default();
+// static DEBUG_INFO: DebugInfo = DebugInfo::default();
 // static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
 // static BG_COLOUR: AtomicU8 = AtomicU8::new(0);
 // static SYNC_HELPER: SyncHelper = SyncHelper::new();
@@ -60,7 +60,7 @@ impl Default for EggState {
             time: 0,
             pause: false,
             rng: Pcg32::default(),
-            debug_info: DebugInfo::const_default(),
+            debug_info: DebugInfo::default(),
             bg_colour: 0,
             loaded: false,
         }

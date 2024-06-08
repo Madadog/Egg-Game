@@ -41,7 +41,7 @@ impl<'a> AnimFrame<'a> {
     pub const fn with_outline(self, outline: Option<u8>) -> Self {
         Self { outline_colour: outline, ..self }
     }
-    pub fn const_default() -> Self {
+    pub const fn default() -> Self {
         Self {
             pos: Vec2::new(0, 0),
             spr_id: 0,

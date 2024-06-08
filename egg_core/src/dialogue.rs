@@ -119,7 +119,7 @@ pub struct Dialogue {
     pub flip_portrait: bool,
 }
 impl Dialogue {
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         Self {
             current_text: None,
             next_text: Vec::new(),
@@ -236,7 +236,7 @@ impl Dialogue {
     pub fn close(&mut self) {
         *self = Self {
             width: self.width,
-            ..Self::const_default()
+            ..Self::default()
         };
         self.next_text.shrink_to_fit();
     }

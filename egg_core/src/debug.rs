@@ -7,7 +7,7 @@ pub struct DebugInfo {
     pub memory_index: AtomicUsize,
 }
 impl DebugInfo {
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         DebugInfo {
             player_info: AtomicBool::new(false),
             map_info: AtomicBool::new(false),

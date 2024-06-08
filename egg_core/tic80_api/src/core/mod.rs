@@ -187,7 +187,7 @@ pub struct SpriteOptions<'a> {
     pub h: i32,
 }
 impl<'a> SpriteOptions<'a> {
-    pub const fn const_default() -> Self {
+    pub const fn default() -> Self {
         Self {
             transparent: &[],
             scale: 1,
@@ -200,7 +200,7 @@ impl<'a> SpriteOptions<'a> {
     pub const fn transparent_zero() -> Self {
         Self {
             transparent: &[0],
-            ..Self::const_default()
+            ..Self::default()
         }
     }
 }

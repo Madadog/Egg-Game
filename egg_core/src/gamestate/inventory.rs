@@ -150,7 +150,7 @@ impl InventoryUi {
         Self {
             inventory: Inventory::new(),
             state: InventoryUiState::PageSelect(0),
-            dialogue: Dialogue::const_default(),
+            dialogue: Dialogue::default(),
         }
     }
     pub fn open(&mut self, system: &mut impl ConsoleApi) {
