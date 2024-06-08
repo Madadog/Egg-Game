@@ -11,6 +11,7 @@ pub struct TiledLayer {
     pub width: usize,
     pub height: usize,
     pub data: Vec<usize>,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TypeUuid, TypePath)]
@@ -98,7 +99,7 @@ mod tests {
     }
     #[test]
     fn test_map_deserialization() {
-        let json = std::fs::read_to_string("assets/map/bank1.json").unwrap();
+        let json = std::fs::read_to_string("assets/maps/bank1.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
         assert_eq!(map.width, 240);
         assert_eq!(map.height, 136);
