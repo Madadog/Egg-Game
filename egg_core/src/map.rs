@@ -12,9 +12,9 @@ use crate::{
 use tic80_api::core::MapOptions;
 
 #[derive(Clone, Debug)]
-pub struct StaticMapSet<'a> {
-    pub maps: &'a [MapLayer],
-    pub fg_maps: &'a [MapLayer],
+pub struct StaticMapInfo<'a> {
+    pub maps: &'a [LayerInfo],
+    pub fg_maps: &'a [LayerInfo],
     pub warps: &'a [Warp],
     pub interactables: &'a [StaticInteractable<'a>],
     pub bg_colour: u8,
@@ -22,7 +22,7 @@ pub struct StaticMapSet<'a> {
     pub bank: u8,
     pub camera_bounds: Option<CameraBounds>,
 }
-impl<'a> StaticMapSet<'a> {
+impl<'a> StaticMapInfo<'a> {
     pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
         self.maps
             .iter()
@@ -35,10 +35,11 @@ impl<'a> StaticMapSet<'a> {
     }
 }
 
+/// Metadata necessary to load a map into Walkaround.
 #[derive(Clone, Debug)]
-pub struct MapSet {
-    pub maps: Vec<MapLayer>,
-    pub fg_maps: Vec<MapLayer>,
+pub struct MapInfo {
+    pub layers: Vec<LayerInfo>,
+    pub fg_layers: Vec<LayerInfo>,
     pub warps: Vec<Warp>,
     pub interactables: Vec<Interactable>,
     pub bg_colour: u8,
@@ -46,23 +47,23 @@ pub struct MapSet {
     pub bank: u8,
     pub camera_bounds: Option<CameraBounds>,
 }
-impl MapSet {
+impl MapInfo {
     pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.maps
+        self.layers
             .iter()
             .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
     pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.fg_maps
+        self.fg_layers
             .iter()
             .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
 }
-impl From<StaticMapSet<'static>> for MapSet {
-    fn from(value: StaticMapSet) -> Self {
-        MapSet {
-            maps: value.maps.into(),
-            fg_maps: value.fg_maps.into(),
+impl From<StaticMapInfo<'static>> for MapInfo {
+    fn from(value: StaticMapInfo) -> Self {
+        MapInfo {
+            layers: value.maps.into(),
+            fg_layers: value.fg_maps.into(),
             warps: value.warps.into(),
             interactables: value
                 .interactables
@@ -77,16 +78,21 @@ impl From<StaticMapSet<'static>> for MapSet {
     }
 }
 
+/// Layers defined by map metadata. Separate from `TiledMap` layers.
 #[derive(Clone, Debug)]
-pub struct MapLayer {
+pub struct LayerInfo {
     pub origin: PackedI16,
     pub size: PackedI16,
     pub offset: PackedI16,
     pub transparent: Option<u8>,
     /// (blit_segment, rotate_palette, shift_sprite_flags, UNUSED)
     pub blit_rotate_and_flags: PackedU8,
+    // pub source_bank: usize,
+    // pub source_layer: usize,
+    // pub visible: bool,
+    // pub display_mode: BG, FG, Object
 }
-impl MapLayer {
+impl LayerInfo {
     pub const DEFAULT_MAP: Self = Self {
         origin: PackedI16::from_i16(0, 0),
         size: PackedI16::from_i16(30, 17),
@@ -148,8 +154,8 @@ impl MapLayer {
         system.map(options);
     }
 }
-impl<'a> From<MapLayer> for MapOptions {
-    fn from(map: MapLayer) -> Self {
+impl<'a> From<LayerInfo> for MapOptions {
+    fn from(map: LayerInfo) -> Self {
         MapOptions {
             x: map.origin.x().into(),
             y: map.origin.y().into(),

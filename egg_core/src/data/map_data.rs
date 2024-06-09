@@ -19,8 +19,8 @@ use crate::camera::CameraBounds;
 use crate::data::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{StaticInteractable, StaticInteraction};
-use crate::map::MapLayer;
-use crate::map::StaticMapSet;
+use crate::map::LayerInfo;
+use crate::map::StaticMapInfo;
 use crate::map::Warp;
 use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
@@ -28,7 +28,7 @@ use tic80_api::core::StaticSpriteOptions;
 
 use super::sound;
 
-pub(crate) const DEFAULT_MAP_SET: StaticMapSet = StaticMapSet {
+pub(crate) const DEFAULT_MAP_SET: StaticMapInfo = StaticMapInfo {
     maps: &[],
     fg_maps: &[],
     warps: &[],
@@ -42,7 +42,7 @@ pub(crate) const DEFAULT_MAP_SET: StaticMapSet = StaticMapSet {
 #[derive(Debug, Clone, Copy)]
 pub struct MapIndex(pub usize);
 impl MapIndex {
-    pub fn map(&self) -> StaticMapSet<'static> {
+    pub fn map(&self) -> StaticMapInfo<'static> {
         match self.0 {
             0 => SUPERMARKET,
             1 => SUPERMARKET_HALL,
@@ -73,26 +73,26 @@ impl MapIndex {
     pub const PIANO_ROOM: Self = MapIndex(11);
 }
 
-pub const SUPERMARKET: StaticMapSet<'static> = StaticMapSet {
+pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //bg
-        MapLayer::new(60, 17, 26, 12)
+        LayerInfo::new(60, 17, 26, 12)
             .with_trans(&[0])
             .with_blit_rot_flags(4, 1, 0),
         //fruit stand
-        MapLayer::new(61, 29, 3, 2)
+        LayerInfo::new(61, 29, 3, 2)
             .with_trans(&[0])
             .with_offset(2 * 8, 8 * 8),
         //vending machines
-        MapLayer::new(70, 29, 4, 5)
+        LayerInfo::new(70, 29, 4, 5)
             .with_trans(&[0])
             .with_offset(19 * 8, 4 * 8),
         //counter
-        MapLayer::new(60, 31, 8, 3)
+        LayerInfo::new(60, 31, 8, 3)
             .with_trans(&[0])
             .with_offset(5 * 8, 4 * 8),
         //top vending machine
-        MapLayer::new(68, 29, 2, 3)
+        LayerInfo::new(68, 29, 2, 3)
             .with_trans(&[0])
             .with_offset(13 * 8, 5 * 4),
     ],
@@ -176,18 +176,18 @@ pub const SUPERMARKET: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const SUPERMARKET_HALL: StaticMapSet<'static> = StaticMapSet {
+pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //bg
-        MapLayer::new(86, 17, 13, 7)
+        LayerInfo::new(86, 17, 13, 7)
             .with_trans(&[0])
             .with_blit_rot_flags(4, 1, 0),
         //closet
-        MapLayer::new(87, 24, 3, 4)
+        LayerInfo::new(87, 24, 3, 4)
             .with_trans(&[0])
             .with_offset(5 * 8, 0),
         //diagonal door
-        MapLayer::new(86, 24, 1, 3)
+        LayerInfo::new(86, 24, 1, 3)
             .with_trans(&[0])
             .with_offset(11 * 8, 2 * 8),
     ],
@@ -225,12 +225,12 @@ pub const SUPERMARKET_HALL: StaticMapSet<'static> = StaticMapSet {
     bg_colour: 1,
     ..DEFAULT_MAP_SET
 };
-pub const SUPERMARKET_STOREROOM: StaticMapSet<'static> = StaticMapSet {
+pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
-        MapLayer::new(86, 28, 9, 6)
+        LayerInfo::new(86, 28, 9, 6)
             .with_trans(&[0])
             .with_blit_rot_flags(4, 1, 0),
-        MapLayer::new(93, 24, 5, 4)
+        LayerInfo::new(93, 24, 5, 4)
             .with_trans(&[0])
             .with_offset(2 * 8, 0),
     ],
@@ -256,8 +256,8 @@ pub const SUPERMARKET_STOREROOM: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const TEST_PEN: StaticMapSet<'static> = StaticMapSet {
-    maps: &[MapLayer::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
+pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
+    maps: &[LayerInfo::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
     warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
     interactables: &[StaticInteractable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
@@ -271,16 +271,16 @@ pub const TEST_PEN: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const BEDROOM: StaticMapSet<'static> = StaticMapSet {
+pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //room
-        MapLayer::new(30, 0, 21, 10),
+        LayerInfo::new(30, 0, 21, 10),
         //trolley
-        MapLayer::new(30, 10, 3, 2)
+        LayerInfo::new(30, 10, 3, 2)
             .with_trans(&[0])
             .with_offset(101 - 16, 22),
         //mattress
-        MapLayer::new(37, 10, 3, 2)
+        LayerInfo::new(37, 10, 3, 2)
             .with_trans(&[0])
             .with_offset(38, 27),
     ],
@@ -315,16 +315,16 @@ pub const BEDROOM: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const HOUSE_STAIRWELL: StaticMapSet<'static> = StaticMapSet {
+pub const HOUSE_STAIRWELL: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //room
-        MapLayer::new(51, 0, 16, 9),
+        LayerInfo::new(51, 0, 16, 9),
         //left door
-        MapLayer::new(41, 10, 1, 3)
+        LayerInfo::new(41, 10, 1, 3)
             .with_trans(&[0])
             .with_offset(0, 6),
         //right door
-        MapLayer::new(40, 10, 1, 3)
+        LayerInfo::new(40, 10, 1, 3)
             .with_trans(&[0])
             .with_offset(120, 6),
     ],
@@ -368,22 +368,22 @@ pub const HOUSE_STAIRWELL: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const HOUSE_LIVING_ROOM: StaticMapSet<'static> = StaticMapSet {
+pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //room
-        MapLayer::new(67, 0, 23, 13),
+        LayerInfo::new(67, 0, 23, 13),
         //couch
-        MapLayer::new(37, 14, 4, 2)
+        LayerInfo::new(37, 14, 4, 2)
             .with_trans(&[0])
             .with_offset(12 * 8 + 2, 8 * 8),
         //tv
-        MapLayer::new(41, 15, 2, 1)
+        LayerInfo::new(41, 15, 2, 1)
             .with_trans(&[0])
             .with_offset(15 * 8 + 2, 11 * 8 - 1),
     ],
     fg_maps: &[
         //tv
-        MapLayer::new(41, 13, 2, 3)
+        LayerInfo::new(41, 13, 2, 3)
             .with_trans(&[0])
             .with_offset(15 * 8 + 2, 9 * 8 - 1),
     ],
@@ -475,12 +475,12 @@ pub const HOUSE_LIVING_ROOM: StaticMapSet<'static> = StaticMapSet {
     ],
     ..DEFAULT_MAP_SET
 };
-pub const HOUSE_KITCHEN: StaticMapSet<'static> = StaticMapSet {
+pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //room
-        MapLayer::new(90, 0, 13, 10),
+        LayerInfo::new(90, 0, 13, 10),
         //microwave
-        MapLayer::new(37, 12, 2, 1)
+        LayerInfo::new(37, 12, 2, 1)
             .with_offset(7 * 8 + 6, 4 * 8 - 3)
             .with_trans(&[0]),
     ],
@@ -524,10 +524,10 @@ pub const HOUSE_KITCHEN: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const BACKYARD: StaticMapSet<'static> = StaticMapSet {
+pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //room
-        MapLayer::new(120, 0, 30, 17),
+        LayerInfo::new(120, 0, 30, 17),
     ],
     warps: &[
         Warp::new(
@@ -599,22 +599,22 @@ pub const BACKYARD: StaticMapSet<'static> = StaticMapSet {
 //TODO: Soundtrack where relevent
 //TODO: Finale
 
-pub const WILDERNESS: StaticMapSet<'static> = StaticMapSet {
+pub const WILDERNESS: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //ground
-        MapLayer::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
+        LayerInfo::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
         //left barrier
-        MapLayer::new(120, 78, 1, 22)
+        LayerInfo::new(120, 78, 1, 22)
             .with_trans(&[0])
             .with_offset(-8, 37 * 8),
         //bottom barrier
-        MapLayer::new(120, 72, 23, 1)
+        LayerInfo::new(120, 72, 23, 1)
             .with_trans(&[0])
             .with_offset(17 * 8, 68 * 8),
     ],
     fg_maps: &[
         //foreground
-        MapLayer::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
+        LayerInfo::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
     ],
     bg_colour: 3,
     warps: &[Warp::new(
@@ -629,16 +629,16 @@ pub const WILDERNESS: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const TOWN: StaticMapSet<'static> = StaticMapSet {
+pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
     maps: &[
         //ground
-        MapLayer::new(0, 0, 30 * 4, 17 * 4)
+        LayerInfo::new(0, 0, 30 * 4, 17 * 4)
             .with_trans(&[0])
             .with_blit_rot_flags(5, 0, 0),
     ],
     fg_maps: &[
         //foreground
-        MapLayer::new(0, 68, 30 * 4, 17 * 4)
+        LayerInfo::new(0, 68, 30 * 4, 17 * 4)
             .with_trans(&[0])
             .with_blit_rot_flags(5, 0, 0),
     ],
@@ -683,8 +683,8 @@ pub const TOWN: StaticMapSet<'static> = StaticMapSet {
     ..DEFAULT_MAP_SET
 };
 
-pub const PIANO_ROOM: StaticMapSet<'static> = StaticMapSet {
-    maps: &[MapLayer::new(99, 15, 21, 10)],
+pub const PIANO_ROOM: StaticMapInfo<'static> = StaticMapInfo {
+    maps: &[LayerInfo::new(99, 15, 21, 10)],
     bg_colour: 0,
     warps: &[Warp::new(
         Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),

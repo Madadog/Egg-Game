@@ -11,7 +11,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
-use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::StaticMapSet};
+use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::StaticMapInfo};
 use log::{error, info};
 use tic80_api::core::{MusicOptions, PrintOptions};
 
@@ -31,7 +31,7 @@ pub struct WalkaroundState<'a> {
     pub map_animations: Vec<StaticAnimation<'a>>,
     pub creatures: Vec<Creature>,
     pub camera: Camera,
-    pub current_map: StaticMapSet<'a>,
+    pub current_map: StaticMapInfo<'a>,
     pub dialogue: Dialogue,
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,
@@ -53,7 +53,7 @@ impl<'a> WalkaroundState<'a> {
             bg_colour: 0,
         }
     }
-    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: StaticMapSet<'a>) {
+    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: StaticMapInfo<'a>) {
         let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();

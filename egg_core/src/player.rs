@@ -17,7 +17,7 @@
 use crate::{
     camera::Camera,
     interact::StaticInteractable,
-    map::{Axis, StaticMapSet},
+    map::{Axis, StaticMapInfo},
     position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi, ConsoleHelper}, data::sound,
 };
 use tic80_api::core::{Flip, StaticSpriteOptions};
@@ -120,7 +120,7 @@ impl Player {
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
-        current_map: &StaticMapSet,
+        current_map: &StaticMapInfo,
     ) -> (i16, i16) {
         use crate::map::layer_collides;
 

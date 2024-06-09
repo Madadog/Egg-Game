@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use tic80_api::core::PrintOptions;
 use tic80_api::core::StaticSpriteOptions;
 
@@ -7,8 +9,8 @@ use crate::data::dialogue_data::OPTIONS_TITLE;
 use crate::data::map_data::MapIndex;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
-use crate::map::MapSet;
-use crate::map::StaticMapSet;
+use crate::map::MapInfo;
+use crate::map::StaticMapInfo;
 use crate::position::*;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
@@ -59,17 +61,13 @@ impl MenuState {
         }
     }
     pub fn map_select() -> Self {
-        let mut entries = vec![MenuEntry::Walk];
-        entries.extend(
-            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len())
-                .map(|x| MenuEntry::Debug(x as u8)),
-        );
-        entries.push(MenuEntry::MapTest);
-        entries.push(MenuEntry::MusicTest);
+        let mut entries = vec![];
+        entries.push(MenuEntry::Debug(6));
+        entries.push(MenuEntry::MapBankSelect(0, "Map Bank: 0".into()));
         Self {
             entries,
             draw_title: None,
-            back_entry: Some(MenuEntry::Walk),
+            back_entry: Some(MenuEntry::Debug(6)),
             ..Self::new()
         }
     }
@@ -175,8 +173,7 @@ impl MenuState {
                             system,
                         );
                     }
-                    6 => return Some(GameState::MainMenu(MenuState::map_select())),
-                    7 => return Some(GameState::MainMenu(MenuState::debug_options())),
+                    6 => return Some(GameState::MainMenu(MenuState::debug_options())),
                     _ => {}
                 }
             }
@@ -275,8 +272,8 @@ impl MenuEntry {
             ExitToMenu => MENU_EXIT,
             Space => "\0",
             Debug(x) => MENU_DEBUG_CONTROLS[usize::from(*x)],
-            MapTest => MENU_DEBUG_CONTROLS[6],
-            MusicTest => MENU_DEBUG_CONTROLS[7],
+            MapTest => MENU_MAP_TEST[0],
+            MusicTest => MENU_MUSIC_TEST[0],
             Walk => MENU_PLAY,
             MapBankSelect(_, string) => &string,
             MusicSelect(_, string) => &string,
