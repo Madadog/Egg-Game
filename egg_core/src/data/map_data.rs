@@ -29,8 +29,8 @@ use tic80_api::core::StaticSpriteOptions;
 use super::sound;
 
 pub(crate) const DEFAULT_MAP_SET: StaticMapInfo = StaticMapInfo {
-    maps: &[],
-    fg_maps: &[],
+    layers: &[],
+    fg_layers: &[],
     warps: &[],
     interactables: &[],
     bg_colour: 0,
@@ -74,7 +74,7 @@ impl MapIndex {
 }
 
 pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //bg
         LayerInfo::new(60, 17, 26, 12)
             .with_trans(&[0])
@@ -177,7 +177,7 @@ pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //bg
         LayerInfo::new(86, 17, 13, 7)
             .with_trans(&[0])
@@ -226,7 +226,7 @@ pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
     ..DEFAULT_MAP_SET
 };
 pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         LayerInfo::new(86, 28, 9, 6)
             .with_trans(&[0])
             .with_blit_rot_flags(4, 1, 0),
@@ -257,7 +257,7 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[LayerInfo::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
+    layers: &[LayerInfo::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
     warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
     interactables: &[StaticInteractable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
@@ -272,7 +272,7 @@ pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //room
         LayerInfo::new(30, 0, 21, 10),
         //trolley
@@ -316,7 +316,7 @@ pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const HOUSE_STAIRWELL: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //room
         LayerInfo::new(51, 0, 16, 9),
         //left door
@@ -369,7 +369,7 @@ pub const HOUSE_STAIRWELL: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //room
         LayerInfo::new(67, 0, 23, 13),
         //couch
@@ -381,7 +381,7 @@ pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
             .with_trans(&[0])
             .with_offset(15 * 8 + 2, 11 * 8 - 1),
     ],
-    fg_maps: &[
+    fg_layers: &[
         //tv
         LayerInfo::new(41, 13, 2, 3)
             .with_trans(&[0])
@@ -476,7 +476,7 @@ pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
     ..DEFAULT_MAP_SET
 };
 pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //room
         LayerInfo::new(90, 0, 13, 10),
         //microwave
@@ -525,7 +525,7 @@ pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //room
         LayerInfo::new(120, 0, 30, 17),
     ],
@@ -600,7 +600,7 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 //TODO: Finale
 
 pub const WILDERNESS: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //ground
         LayerInfo::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
         //left barrier
@@ -612,7 +612,7 @@ pub const WILDERNESS: StaticMapInfo<'static> = StaticMapInfo {
             .with_trans(&[0])
             .with_offset(17 * 8, 68 * 8),
     ],
-    fg_maps: &[
+    fg_layers: &[
         //foreground
         LayerInfo::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
     ],
@@ -630,13 +630,13 @@ pub const WILDERNESS: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[
+    layers: &[
         //ground
         LayerInfo::new(0, 0, 30 * 4, 17 * 4)
             .with_trans(&[0])
             .with_blit_rot_flags(5, 0, 0),
     ],
-    fg_maps: &[
+    fg_layers: &[
         //foreground
         LayerInfo::new(0, 68, 30 * 4, 17 * 4)
             .with_trans(&[0])
@@ -684,7 +684,7 @@ pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const PIANO_ROOM: StaticMapInfo<'static> = StaticMapInfo {
-    maps: &[LayerInfo::new(99, 15, 21, 10)],
+    layers: &[LayerInfo::new(99, 15, 21, 10)],
     bg_colour: 0,
     warps: &[Warp::new(
         Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),

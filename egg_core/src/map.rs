@@ -13,8 +13,8 @@ use tic80_api::core::MapOptions;
 
 #[derive(Clone, Debug)]
 pub struct StaticMapInfo<'a> {
-    pub maps: &'a [LayerInfo],
-    pub fg_maps: &'a [LayerInfo],
+    pub layers: &'a [LayerInfo],
+    pub fg_layers: &'a [LayerInfo],
     pub warps: &'a [Warp],
     pub interactables: &'a [StaticInteractable<'a>],
     pub bg_colour: u8,
@@ -24,12 +24,12 @@ pub struct StaticMapInfo<'a> {
 }
 impl<'a> StaticMapInfo<'a> {
     pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.maps
+        self.layers
             .iter()
             .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
     pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
-        self.fg_maps
+        self.fg_layers
             .iter()
             .for_each(|layer| layer.draw_tic80(system, offset, debug))
     }
@@ -62,8 +62,8 @@ impl MapInfo {
 impl From<StaticMapInfo<'static>> for MapInfo {
     fn from(value: StaticMapInfo) -> Self {
         MapInfo {
-            layers: value.maps.into(),
-            fg_layers: value.fg_maps.into(),
+            layers: value.layers.into(),
+            fg_layers: value.fg_layers.into(),
             warps: value.warps.into(),
             interactables: value
                 .interactables

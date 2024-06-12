@@ -180,7 +180,7 @@ impl MenuState {
             Walk => return Some(GameState::Walkaround),
             MapTest => return Some(GameState::MainMenu(MenuState::map_select())),
             MapBankSelect(x, _) => {
-                walkaround_state.load_map(system, MapIndex((*x).into()).map().into())
+                walkaround_state.load_map(system, MapIndex((*x).into()).map())
             }
             MusicTest => todo!(),
             MusicSelect(x, _) => todo!(),

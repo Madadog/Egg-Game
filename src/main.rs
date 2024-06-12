@@ -6,7 +6,7 @@ use bevy::utils::HashMap;
 use egg_core::gamestate::inventory::InventoryUi;
 
 use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
-use egg_core::system::{ConsoleApi, DrawParams};
+use egg_core::system::{ConsoleApi, StaticDrawParams};
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
@@ -24,7 +24,7 @@ mod tiled;
 
 #[derive(Resource)]
 pub struct EggState {
-    pub walkaround: WalkaroundState<'static>,
+    pub walkaround: WalkaroundState,
     pub inventory_ui: InventoryUi,
     pub gamestate: GameState,
 

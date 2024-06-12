@@ -15,10 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    camera::Camera,
-    interact::StaticInteractable,
-    map::{Axis, StaticMapInfo},
-    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi, ConsoleHelper}, data::sound,
+    camera::Camera, data::sound, interact::{Interactable, Interaction, StaticInteractable}, map::{Axis, MapInfo, StaticMapInfo}, position::{Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper, StaticDrawParams}
 };
 use tic80_api::core::{Flip, StaticSpriteOptions};
 
@@ -72,9 +69,9 @@ impl Player {
             (index, flip, y_offset) // Left
         }
     }
-    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
+    pub fn draw_params(&self, offset: Vec2) -> StaticDrawParams {
         let player_sprite = self.sprite_index();
-        DrawParams::new(
+        StaticDrawParams::new(
             player_sprite.0,
             i32::from(self.pos.x - offset.x),
             i32::from(self.pos.y - offset.y) - player_sprite.2,
@@ -120,7 +117,7 @@ impl Player {
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
-        current_map: &StaticMapInfo,
+        current_map: &MapInfo,
     ) -> (i16, i16) {
         use crate::map::layer_collides;
 
@@ -155,7 +152,7 @@ impl Player {
             (false, false, false);
         let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
         let mut diagonal_collision = false;
-        for layer in current_map.maps.iter() {
+        for layer in current_map.layers.iter() {
             let layer_hitbox = Hitbox::new(
                 layer.offset().x,
                 layer.offset().y,
@@ -316,7 +313,7 @@ impl Companion {
         direction: (i8, i8),
         walktime: u8,
         camera: &Camera,
-    ) -> DrawParams {
+    ) -> StaticDrawParams {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -327,7 +324,7 @@ impl Companion {
                     (_, _) => (1, 712 + t as i32, Flip::None),
                 };
                 let x_offset = if let Flip::Horizontal = flip { -8 } else { 0 };
-                DrawParams::new(
+                StaticDrawParams::new(
                     i,
                     position.x as i32 - camera.x() + x_offset,
                     position.y as i32 - camera.y() - 2,
@@ -341,7 +338,7 @@ impl Companion {
                     1,
                 )
             }
-            _ => DrawParams::new(0, 0, 0, StaticSpriteOptions::default(), None, 0),
+            _ => StaticDrawParams::new(0, 0, 0, StaticSpriteOptions::default(), None, 0),
         }
     }
     pub fn interact(
@@ -349,7 +346,7 @@ impl Companion {
         position: Vec2,
         direction: (i8, i8),
         player_position: Vec2,
-    ) -> StaticInteractable<'static> {
+    ) -> Interactable {
         use crate::interact::{InteractFn, StaticInteraction};
         match self {
             Companion::Dog => {
@@ -364,9 +361,9 @@ impl Companion {
                     x
                 };
                 let position = position + Vec2::new(pixel, 0);
-                StaticInteractable::new(
+                Interactable::new(
                     Hitbox::new(position.x, position.y, 16, 16),
-                    StaticInteraction::Func(InteractFn::Pet(position, Some(offset))),
+                    Interaction::Func(InteractFn::Pet(position, Some(offset))),
                     None,
                 )
             }
@@ -478,7 +475,7 @@ impl CompanionList {
     pub fn interact<const N: usize>(
         &self,
         positions: &CompanionTrail<N>,
-    ) -> Vec<StaticInteractable<'static>> {
+    ) -> Vec<Interactable> {
         match self.companions {
             [Some(x), Some(y)] => vec![
                 x.interact(positions.mid().0, positions.mid().1, positions.latest().0),

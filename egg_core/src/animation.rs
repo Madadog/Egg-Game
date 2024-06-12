@@ -133,7 +133,6 @@ impl AnimFrame {
     }
 }
 
-
 impl<'a> From<StaticAnimFrame<'a>> for AnimFrame {
     fn from(other: StaticAnimFrame) -> Self {
         Self {
@@ -143,6 +142,48 @@ impl<'a> From<StaticAnimFrame<'a>> for AnimFrame {
             options: other.options.into(),
             outline_colour: other.outline_colour,
             palette_rotate: other.palette_rotate,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Animation {
+    /// Timer used to switch frames
+    pub tick: u16,
+    /// Current frame being displayed
+    pub index: usize,
+    pub frames: Vec<AnimFrame>,
+}
+impl Animation {
+    pub fn new(frames: &[AnimFrame]) -> Self {
+        Self { frames: frames.into(), ..Self::default() }
+    }
+    pub const fn default() -> Self {
+        Self {
+            tick: 0,
+            index: 0,
+            frames: Vec::new(),
+        }
+    }
+    pub fn current_frame(&self) -> &AnimFrame {
+        &self.frames.get(self.index).expect("Couldn't find animation frame!")
+    }
+    pub fn advance(&mut self) {
+        if self.tick >= self.current_frame().duration {
+            self.index = (self.index + 1) % self.frames.len();
+            self.tick = 0;
+        } else {
+            self.tick += 1;
+        }
+    }
+}
+
+impl<'a> From<StaticAnimation<'a>> for Animation {
+    fn from(other: StaticAnimation) -> Self {
+        Self {
+            tick: other.tick,
+            index: other.index,
+            frames: other.frames.iter().map(|x| x.clone().into()).collect(),
         }
     }
 }

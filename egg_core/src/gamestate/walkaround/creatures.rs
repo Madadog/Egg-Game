@@ -1,5 +1,5 @@
 use crate::{
-    position::{Hitbox, Vec2}, system::{DrawParams, ConsoleApi},
+    position::{Hitbox, Vec2}, system::{StaticDrawParams, ConsoleApi},
 };
 
 #[derive(Clone)]
@@ -51,7 +51,7 @@ impl Creature {
             }
         }
     }
-    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
+    pub fn draw_params(&self, offset: Vec2) -> StaticDrawParams {
         let sprite: i32 = match &self.state {
             CreatureState::Idle(_) => self.sprite.into(),
             CreatureState::Walking(x, _) => i32::from(self.sprite) + i32::from(x.0 / 20) % 2,
@@ -62,7 +62,7 @@ impl Creature {
             true => tic80_api::core::Flip::Horizontal,
             false => tic80_api::core::Flip::None,
         };
-        DrawParams::new(
+        StaticDrawParams::new(
             sprite,
             self.hitbox.offset(offset).x.into(),
             self.hitbox.offset(offset).y.into(),

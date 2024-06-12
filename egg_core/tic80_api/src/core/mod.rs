@@ -242,6 +242,16 @@ impl SpriteOptions {
             ..Self::default()
         }
     }
+    pub fn compatibility_mode(&self) -> StaticSpriteOptions {
+        StaticSpriteOptions {
+            transparent: self.transparent.as_slice(),
+            scale: self.scale,
+            flip: self.flip.clone(),
+            rotate: self.rotate.clone(),
+            w: self.w,
+            h: self.h,
+        }
+    }
 }
 
 impl<'a> From<StaticSpriteOptions<'a>> for SpriteOptions {

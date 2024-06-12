@@ -15,26 +15,25 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    fmt::{Debug},
-    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}},
+    fmt::Debug,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crate::{
-    position::Vec2, system::{ConsoleApi, ConsoleHelper},
+    position::Vec2,
+    system::{ConsoleApi, ConsoleHelper},
 };
 
-use tic80_api::{
-    core::{StaticSpriteOptions, PrintOptions},
-};
+use tic80_api::core::{PrintOptions, StaticSpriteOptions};
 
 use crate::data::{
-        portraits::PicContainer,
-        save,
-        sound::{self, SfxData},
-    };
+    portraits::PicContainer,
+    save,
+    sound::{self, SfxData},
+};
 
 #[derive(Debug, Clone)]
-pub enum TextContent {
+pub enum StaticTextContent {
     Text(&'static str),
     Delayed(&'static str, u8),
     Delay(u8),
@@ -43,6 +42,35 @@ pub enum TextContent {
     PausePortrait(Option<&'static PicContainer>),
     Pause,
     AutoText(&'static str),
+    Flip(bool),
+}
+impl StaticTextContent {
+    pub fn is_auto(&self) -> bool {
+        use StaticTextContent::*;
+        match self {
+            Text(_) | Pause => false,
+            _ => true,
+        }
+    }
+    pub fn is_skip(&self) -> bool {
+        use StaticTextContent::*;
+        match self {
+            Sound(_) | Portrait(_) | Flip(_) => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TextContent {
+    Text(String),
+    Delayed(String, u8),
+    Delay(u8),
+    Sound(&'static SfxData),
+    Portrait(Option<&'static PicContainer>),
+    PausePortrait(Option<&'static PicContainer>),
+    Pause,
+    AutoText(String),
     Flip(bool),
 }
 impl TextContent {
@@ -58,6 +86,22 @@ impl TextContent {
         match self {
             Sound(_) | Portrait(_) | Flip(_) => true,
             _ => false,
+        }
+    }
+}
+
+impl From<StaticTextContent> for TextContent {
+    fn from(value: StaticTextContent) -> Self {
+        match value {
+            StaticTextContent::Text(x) => Self::Text(x.into()),
+            StaticTextContent::Delayed(x, y) => Self::Delayed(x.into(), y),
+            StaticTextContent::Delay(x) => Self::Delay(x),
+            StaticTextContent::Sound(x) => Self::Sound(x),
+            StaticTextContent::Portrait(x) => Self::Portrait(x),
+            StaticTextContent::PausePortrait(x) => Self::PausePortrait(x),
+            StaticTextContent::Pause => Self::Pause,
+            StaticTextContent::AutoText(x) => Self::AutoText(x.into()),
+            StaticTextContent::Flip(x) => Self::Flip(x),
         }
     }
 }
@@ -101,7 +145,8 @@ impl DialogueOptions {
         system.memory().toggle(save::SMALL_TEXT_ON)
     }
     pub fn toggle_fixed(&self) {
-        self.fixed.store(self.fixed.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.fixed
+            .store(self.fixed.load(Ordering::SeqCst), Ordering::SeqCst);
     }
 }
 pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
@@ -146,9 +191,9 @@ impl Dialogue {
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn add_text(&mut self, system: &mut impl ConsoleApi, string: &'static str) -> bool {
+    pub fn add_text(&mut self, system: &mut impl ConsoleApi, string: String) -> bool {
         if self.current_text.is_none() || self.is_line_done() {
-            self.set_current_text(system, string);
+            self.set_current_text(system, &string);
             true
         } else {
             self.next_text.push(TextContent::Text(string));
@@ -160,23 +205,23 @@ impl Dialogue {
             self.set_current_text(system, string);
         }
     }
-    pub fn set_dialogue(&mut self, system: &mut impl ConsoleApi, dialogue: &[&'static str]) {
+    pub fn set_dialogue(&mut self, system: &mut impl ConsoleApi, dialogue: &[String]) {
         self.next_text = dialogue
             .iter()
             .rev()
-            .map(|x| TextContent::Text(x))
+            .map(|x| TextContent::Text(x.clone()))
             .collect();
         self.next_text(system, false);
     }
-    pub fn set_enum_text(&mut self, system: &mut impl ConsoleApi, dialogue: &[TextContent]) {
-        self.next_text = dialogue.iter().rev().cloned().collect();
+    pub fn set_enum_text(&mut self, system: &mut impl ConsoleApi, dialogue: &[StaticTextContent]) {
+        self.next_text = dialogue.iter().rev().cloned().map(|x| x.into()).collect();
         self.next_text(system, false);
     }
     pub fn next_text(&mut self, system: &mut impl ConsoleApi, manual_skip: bool) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(system, text_content, manual_skip);
+            let val = self.consume_text_content(system, text_content.into(), manual_skip);
             if skip {
                 self.next_text(system, manual_skip)
             } else {
@@ -186,9 +231,16 @@ impl Dialogue {
             false
         }
     }
-    pub fn consume_text_content(&mut self, system: &mut impl ConsoleApi, text_content: TextContent, manual_skip: bool) -> bool {
+    pub fn consume_text_content(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        text_content: TextContent,
+        manual_skip: bool,
+    ) -> bool {
         match text_content {
-            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(system, text),
+            TextContent::Text(text) | TextContent::AutoText(text) => {
+                self.add_text(system, text)
+            }
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());
@@ -198,7 +250,7 @@ impl Dialogue {
             TextContent::Delayed(text, delay) => {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
-                    string.push_str(text);
+                    string.push_str(&text);
                     *string = fit_default_paragraph(system, string, wrap_width);
                     if !manual_skip {
                         self.add_delay(delay.into());
@@ -369,11 +421,10 @@ impl Dialogue {
             height += 4;
             system.blit_segment(4);
             system.palette_map_rotate(0);
-            frame.draw_offset(system,
-                Vec2::new(
-                ((WIDTH - w) / 2 - 15) as i16,
-                ((HEIGHT - h) - 8) as i16,
-            ));
+            frame.draw_offset(
+                system,
+                Vec2::new(((WIDTH - w) / 2 - 15) as i16, ((HEIGHT - h) - 8) as i16),
+            );
             system.palette_map_reset();
             system.rectb(
                 (WIDTH - w) / 2 - 13,
@@ -436,7 +487,12 @@ impl Debug for Dialogue {
     }
 }
 
-pub fn print_width(system: &mut impl ConsoleApi, string: &str, fixed: bool, small_font: bool) -> i32 {
+pub fn print_width(
+    system: &mut impl ConsoleApi,
+    string: &str,
+    fixed: bool,
+    small_font: bool,
+) -> i32 {
     system.print_alloc(
         string,
         250,
@@ -480,7 +536,13 @@ pub fn fit_string(
     )
 }
 
-pub fn fit_paragraph(system: &mut impl ConsoleApi, string: &str, wrap_width: usize, fixed: bool, small_font: bool) -> String {
+pub fn fit_paragraph(
+    system: &mut impl ConsoleApi,
+    string: &str,
+    wrap_width: usize,
+    fixed: bool,
+    small_font: bool,
+) -> String {
     let len = string.split_inclusive(' ').count();
     let mut paragraph = String::new();
     let mut skip = 0;
@@ -496,7 +558,11 @@ pub fn fit_paragraph(system: &mut impl ConsoleApi, string: &str, wrap_width: usi
     paragraph
 }
 
-pub fn fit_default_paragraph(system: &mut impl ConsoleApi, string: &str, wrap_width: usize) -> String {
+pub fn fit_default_paragraph(
+    system: &mut impl ConsoleApi,
+    string: &str,
+    wrap_width: usize,
+) -> String {
     let small_text = DIALOGUE_OPTIONS.small_text(system);
     fit_paragraph(
         system,

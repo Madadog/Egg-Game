@@ -15,7 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    dialogue::TextContent::{self, *},
+    dialogue::StaticTextContent::{self, *},
     data::{portraits, sound}
 };
 
@@ -51,11 +51,11 @@ pub const OPTIONS_LOSE_DATA: &str = "You'll lose all data.\0";
 pub const BEDROOM_MATTRESS: &str = "You can't get to sleep.";
 pub const BEDROOM_TROLLEY: &str = "It's your baby bro's cot.";
 pub const BEDROOM_CLOSET: &str = "Everything you have is in here.";
-pub const BEDROOM_WINDOW: &[TextContent] = &[
+pub const BEDROOM_WINDOW: &[StaticTextContent] = &[
     Text("It's a beautiful day...\n\n"),
     Delayed("... Outside.", 30),
 ];
-pub const THING: &[TextContent] = &[
+pub const THING: &[StaticTextContent] = &[
     Text("This thing is..."),
     Pause,
     Portrait(Some(&portraits::Y_NORMAL.to())),
@@ -293,12 +293,12 @@ pub const HOUSE_LIVING_ROOM_TV_3: &str = "A long cartoon series. After taking ov
 pub const HOUSE_LIVING_ROOM_TV_4: &str = "Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.";
 pub const HOUSE_LIVING_ROOM_TV_5: &str = "This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.";
 pub const HOUSE_LIVING_ROOM_TV_6: &str = "This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.";
-pub const HOUSE_LIVING_ROOM_WINDOW: &[TextContent] = &[
+pub const HOUSE_LIVING_ROOM_WINDOW: &[StaticTextContent] = &[
     Text("You harbour some very strong feelings about gothic windows.\n"),
     Delayed("None of which are good.", 30),
 ];
 pub const HOUSE_KITCHEN_CUPBOARD: &str = "The cupboard is empty. Even the spiders have moved on.";
-pub const HOUSE_KITCHEN_SINK: &[TextContent] = &[
+pub const HOUSE_KITCHEN_SINK: &[StaticTextContent] = &[
     Sound(&sound::GAIN),
     Text("Found something down the drain...!\n"),
     Pause,
@@ -356,7 +356,7 @@ pub const TOWN_TRAFFIC: &str = "They've been stuck like this for a while now.";
 pub const TOWN_LAMPPOST: &str =
     "Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.";
 pub const TOWN_HOME_WINDOW: &str = "It's not as bad from the outside.";
-pub const TOWN_WIDE: &[TextContent] = &[
+pub const TOWN_WIDE: &[StaticTextContent] = &[
     Text("T"),
     Delayed("h", 10),
     Delayed("i", 10),

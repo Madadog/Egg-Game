@@ -1,16 +1,16 @@
-use crate::animation::StaticAnimation;
+use crate::animation::{Animation, StaticAnimation};
 use crate::data::map_data::{
     MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
 };
 use crate::data::{dialogue_data::*, save, sound};
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
-use crate::interact::{InteractFn, StaticInteraction};
-use crate::map::{Axis, WarpMode};
+use crate::interact::{InteractFn, Interaction, StaticInteraction};
+use crate::map::{Axis, MapInfo, WarpMode};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, StaticDrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::StaticMapInfo};
 use log::{error, info};
 use tic80_api::core::{MusicOptions, PrintOptions};
@@ -24,21 +24,21 @@ mod creatures;
 mod cutscene;
 
 #[derive(Clone)]
-pub struct WalkaroundState<'a> {
+pub struct WalkaroundState {
     pub player: Player,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
-    pub map_animations: Vec<StaticAnimation<'a>>,
+    pub map_animations: Vec<Animation>,
     pub creatures: Vec<Creature>,
     pub camera: Camera,
-    pub current_map: StaticMapInfo<'a>,
+    pub current_map: MapInfo,
     pub dialogue: Dialogue,
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,
     pub bg_colour: u8,
 }
-impl<'a> WalkaroundState<'a> {
-    pub const fn new() -> Self {
+impl WalkaroundState {
+    pub fn new() -> Self {
         Self {
             player: Player::default(),
             companion_trail: CompanionTrail::new(),
@@ -46,15 +46,19 @@ impl<'a> WalkaroundState<'a> {
             map_animations: Vec::new(),
             creatures: Vec::new(),
             camera: Camera::default(),
-            current_map: DEFAULT_MAP_SET,
+            current_map: DEFAULT_MAP_SET.into(),
             dialogue: Dialogue::default(),
             particles: ParticleList::new(),
             cutscene: None,
             bg_colour: 0,
         }
     }
-    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: StaticMapInfo<'a>) {
-        let map1 = &map_set.maps.first().expect("Tried to load an empty map...");
+    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
+        let map_set = map_set.into();
+        let map1 = &map_set
+            .layers
+            .first()
+            .expect("Tried to load an empty map...");
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else {
@@ -74,10 +78,10 @@ impl<'a> WalkaroundState<'a> {
         self.map_animations = map_set
             .interactables
             .iter()
-            .flat_map(|x| x.sprite)
-            .map(|frames| StaticAnimation {
+            .flat_map(|x| x.clone().sprite)
+            .map(|frames| Animation {
                 frames,
-                ..StaticAnimation::default()
+                ..Animation::default()
             })
             .collect();
 
@@ -157,9 +161,8 @@ impl<'a> WalkaroundState<'a> {
                 None
             }
             InteractFn::AddCreatures(x) => {
-                self.creatures.extend(
-                    (0..=*x).map(|_| Creature::default().with_offset(self.player.pos)),
-                );
+                self.creatures
+                    .extend((0..=*x).map(|_| Creature::default().with_offset(self.player.pos)));
                 None
             }
             InteractFn::Pet(vec, flip) => {
@@ -216,25 +219,8 @@ impl<'a> WalkaroundState<'a> {
     }
 }
 
-impl<'a, T: ConsoleApi>
-    Game<
-        (
-            &mut T,
-            &mut InventoryUi,
-        ),
-        (
-            &mut T,
-            &DebugInfo,
-        ),
-    > for WalkaroundState<'a>
-{
-    fn step(
-        &mut self,
-        (system, inventory_ui): (
-            &mut T,
-            &mut InventoryUi,
-        ),
-    ) -> Option<GameState> {
+impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for WalkaroundState {
+    fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameState> {
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
@@ -327,9 +313,7 @@ impl<'a, T: ConsoleApi>
             false
         };
 
-        let (dx, dy) = self
-            .player
-            .walk(system, dx, dy, noclip, &self.current_map);
+        let (dx, dy) = self.player.walk(system, dx, dy, noclip, &self.current_map);
         self.player.apply_motion(dx, dy, &mut self.companion_trail);
 
         // Set after player.dir has updated
@@ -359,25 +343,26 @@ impl<'a, T: ConsoleApi>
                 self.load_map(system, new_map.map());
             }
         } else if interact {
-            for item in self
-                .current_map
-                .interactables
-                .iter()
-                .chain(self.companion_list.interact(&self.companion_trail).iter())
-            {
+            for item in self.current_map.interactables.iter().cloned().chain(
+                self.companion_list
+                    .interact(&self.companion_trail)
+                    .iter()
+                    .cloned(),
+            ) {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
-                        StaticInteraction::Text(x) => {
-                            self.dialogue.add_text(system, x);
+                        Interaction::Text(x) => {
+                            self.dialogue.add_text(system, x.clone());
                         }
-                        StaticInteraction::Dialogue(x) => {
+                        Interaction::Dialogue(x) => {
                             self.dialogue.set_dialogue(system, x);
                         }
-                        StaticInteraction::EnumText(x) => {
+                        Interaction::EnumText(x) => {
                             self.dialogue.set_enum_text(system, x);
                         }
-                        StaticInteraction::Func(x) => {
+                        Interaction::Func(x) => {
                             if let Some(dialogue) = self.execute_interact_fn(x, system) {
+                                let dialogue = dialogue.to_string();
                                 self.dialogue.add_text(system, dialogue);
                             };
                         }
@@ -398,12 +383,13 @@ impl<'a, T: ConsoleApi>
         system.cls(self.bg_colour);
         self.current_map.draw_bg(system, self.camera.pos, false);
 
-        self.particles.draw_tic80(system, -self.cam_x(), -self.cam_y());
+        self.particles
+            .draw_tic80(system, -self.cam_x(), -self.cam_y());
         system.blit_segment(4);
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
-        sprites.push(self.player.draw_params(self.camera.pos));
+        sprites.push(self.player.draw_params(self.camera.pos).into());
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
@@ -425,7 +411,7 @@ impl<'a, T: ConsoleApi>
         sprites.extend(
             self.creatures
                 .iter()
-                .map(|x| x.draw_params(self.camera.pos)),
+                .map(|x| x.draw_params(self.camera.pos).into()),
         );
 
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
@@ -436,7 +422,7 @@ impl<'a, T: ConsoleApi>
                     self.companion_trail.mid()
                 };
                 let walktime = self.companion_trail.walktime();
-                let params = companion.spr_params(position, direction, walktime, &self.camera);
+                let params = companion.spr_params(position, direction, walktime, &self.camera).into();
                 sprites.push(params);
             }
         }

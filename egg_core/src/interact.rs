@@ -15,14 +15,14 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::animation::*;
-use crate::dialogue::TextContent;
+use crate::dialogue::StaticTextContent;
 use crate::position::Hitbox;
 use crate::position::Vec2;
 
 #[derive(Debug, Clone)]
 pub enum StaticInteraction<'a> {
     Text(&'static str),
-    EnumText(&'a [TextContent]),
+    EnumText(&'a [StaticTextContent]),
     Dialogue(&'a [&'static str]),
     Func(InteractFn),
     None,
@@ -52,7 +52,7 @@ impl<'a> StaticInteractable<'a> {
 #[derive(Debug, Clone)]
 pub enum Interaction {
     Text(String),
-    EnumText(Vec<TextContent>),
+    EnumText(Vec<StaticTextContent>),
     Dialogue(Vec<String>),
     Func(InteractFn),
     None,
@@ -67,7 +67,7 @@ impl<'a> From<StaticInteraction<'a>> for Interaction {
                 Self::Dialogue(x.iter().map(|x| x.to_string()).collect())
             }
             StaticInteraction::Func(x) => Self::Func(x),
-            StaticInteraction::None => todo!(),
+            StaticInteraction::None => Self::None,
         }
     }
 }
