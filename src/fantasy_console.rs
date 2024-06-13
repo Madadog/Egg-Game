@@ -268,6 +268,21 @@ impl FantasyConsole {
     pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
         self.maps = maps;
     }
+    pub fn build_map(&mut self, map: TiledMap) -> egg_core::map::MapInfo {
+        let bank = self.maps.len().try_into().unwrap();
+        let out = egg_core::map::MapInfo {
+            layers: map.layers.iter().cloned().map(|x| x.into()).collect(),
+            fg_layers: Vec::new(),
+            warps: Vec::new(),
+            interactables: Vec::new(),
+            bg_colour: 0,
+            music_track: None,
+            bank,
+            camera_bounds: None,
+        };
+        self.maps.push(map);
+        out
+    }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
         if x >= 240 || y >= 136 || x < 0 || y < 0 {
             return;
@@ -659,7 +674,7 @@ impl ConsoleApi for FantasyConsole {
             return;
         }
         // Crop map
-        if opts.sx <= 0{
+        if opts.sx <= 0 {
             let x_tiles = -(opts.sx / 8);
             opts.sx += x_tiles * 8;
             opts.x += x_tiles;
@@ -676,12 +691,10 @@ impl ConsoleApi for FantasyConsole {
         let map_bank = self.sync_helper.last_bank() as usize;
         for j in 0..opts.h {
             for i in 0..opts.w {
-                if let (Ok(x_index), Ok(y_index)) = ((opts.x + i).try_into(), (opts.y + j).try_into()) {
-                    if let Some(mut index) = self.maps[map_bank].get(
-                        0,
-                        x_index,
-                        y_index,
-                    ) {
+                if let (Ok(x_index), Ok(y_index)) =
+                    ((opts.x + i).try_into(), (opts.y + j).try_into())
+                {
+                    if let Some(mut index) = self.maps[map_bank].get(0, x_index, y_index) {
                         let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
                         if index == 0 {
                             continue;
@@ -704,7 +717,9 @@ impl ConsoleApi for FantasyConsole {
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
         // TODO: Load more Tiled maps, add sprite scale, add the rest of town, add intro, remove tiny_skia, optimise drawing
-        self.map_get(self.sync_helper.last_bank() as usize, 0, x, y).try_into().unwrap()
+        self.map_get(self.sync_helper.last_bank() as usize, 0, x, y)
+            .try_into()
+            .unwrap()
     }
 
     fn mset(&mut self, _x: i32, _y: i32, _value: i32) {
@@ -841,7 +856,13 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.push((sfx_id.to_string(), opts));
     }
 
-    fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::tic80_api::core::StaticSpriteOptions) {
+    fn spr(
+        &mut self,
+        id: i32,
+        x: i32,
+        y: i32,
+        opts: egg_core::tic80_api::core::StaticSpriteOptions,
+    ) {
         let flip = match opts.flip {
             Flip::Horizontal => true,
             _ => false,
@@ -952,16 +973,30 @@ impl ConsoleApi for FantasyConsole {
     fn read_file(&mut self, filename: String) -> Option<&[u8]> {
         self.files.get(&filename).map(|vec| (*vec).as_slice())
     }
-    
-    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]) {
+
+    fn sprite(
+        &mut self,
+        id: i32,
+        x: i32,
+        y: i32,
+        opts: StaticSpriteOptions,
+        palette_map: &[usize],
+    ) {
         todo!()
     }
-    
+
     fn send(&mut self, channel: egg_core::system::DataChannel, data: &[u8]) {
         todo!()
     }
 
-    fn draw_outline(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, outline_colour: u8) {
+    fn draw_outline(
+        &mut self,
+        id: i32,
+        x: i32,
+        y: i32,
+        opts: StaticSpriteOptions,
+        outline_colour: u8,
+    ) {
         let flip = match opts.flip {
             egg_core::tic80_api::core::Flip::None => false,
             egg_core::tic80_api::core::Flip::Horizontal => true,

@@ -587,12 +587,22 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
     ],
     ..DEFAULT_MAP_SET
 };
-//TODO: Somehow reduce code size...
+// Somehow reduce code size...
 // Reduce necessary tracked state
 // Functionify
 // Zip strings if necessary...
 // serialize, zip, embed, unzip, deserialize...
-//TODO: Make intro animation
+//TODO: Load mayor office
+//TODO: Map workflow
+//TODO: dialogue files
+//TODO: Intro cutscene
+//TODO: Egg lab
+//TODO: Conditional dialogue
+//TODO: Platformer, turn-based RPG, geometric puzzle, danmaku
+//TODO: non-uniform pixels - 16 bit graphics - 3d
+//TODO: Egg OS
+
+
 //TODO: Creatures collide
 //TODO: Chicken <-> egg loop
 //TODO: Plot out game middles

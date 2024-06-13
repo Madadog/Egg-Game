@@ -4,6 +4,7 @@ use bevy::{
     reflect::{TypePath, TypeUuid},
     utils::BoxedFuture,
 };
+use egg_core::{map::LayerInfo, packed::PackedI16};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -12,6 +13,19 @@ pub struct TiledLayer {
     pub height: usize,
     pub data: Vec<usize>,
     pub name: String,
+}
+impl From<TiledLayer> for LayerInfo {
+    fn from(other: TiledLayer) -> Self {
+        Self {
+            origin: PackedI16::from_i16(0, 0),
+            size: PackedI16::from_i16(
+                other.width.try_into().unwrap(),
+                other.height.try_into().unwrap(),
+            ),
+            offset: PackedI16::from_i16(0, 0),
+            ..Self::DEFAULT_MAP
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TypeUuid, TypePath)]

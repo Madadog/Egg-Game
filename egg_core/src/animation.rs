@@ -17,7 +17,7 @@
 use tic80_api::core::{SpriteOptions, StaticSpriteOptions};
 use crate::position::Vec2;
 
-// TODO: Static and allocated variants of all map structs
+// TODO: Allocate game dialogue so it can be loaded from files
 
 #[derive(Debug, Clone)]
 pub struct StaticAnimFrame<'a> {
