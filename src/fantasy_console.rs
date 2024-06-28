@@ -961,6 +961,10 @@ impl ConsoleApi for FantasyConsole {
         &mut self.input.previous_mouse
     }
 
+    fn map_properties(&self, bank: usize) -> (usize, usize, usize) {
+        let map = &self.maps[bank];
+        (map.width, map.height, map.layers.len())
+    }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
         self.maps[bank].get(layer, x as usize, y as usize).unwrap()
     }

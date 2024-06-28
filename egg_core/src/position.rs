@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::ops::{Sub, Mul, Div, Add};
+use std::ops::{Add, Div, Mul, Sub};
 
 use crate::system::ConsoleApi;
 
@@ -241,5 +241,19 @@ pub fn touches_tile(flags: u8, point: Vec2) -> bool {
         0b1100 => point.y >= 3 && point.x >= 3, // Bottom-right corner
         0b1101 => point.y >= 3 && point.x <= 3, // Bottom-left corner
         _ => false,
+    }
+}
+
+struct Collider {
+    data: [[bool; 8]; 8],
+}
+impl Collider {
+    pub fn get(&self, x: usize, y: usize) -> bool {
+        let (x, y) = (x % 8, y % 8);
+        self.data[y][x]
+    }
+    pub fn set(&mut self, x: usize, y: usize) {
+        let (x, y) = (x % 8, y % 8);
+        self.data[y][x] = true;
     }
 }

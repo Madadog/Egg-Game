@@ -36,6 +36,8 @@ pub struct EggState {
     pub debug_info: DebugInfo,
     pub bg_colour: u8,
     pub loaded: bool,
+
+    pub scale_mode: ScaleMode,
 }
 impl EggState {
     pub fn run(&mut self) {
@@ -63,8 +65,15 @@ impl Default for EggState {
             debug_info: DebugInfo::default(),
             bg_colour: 0,
             loaded: false,
+
+            scale_mode: ScaleMode::Linear,
         }
     }
+}
+
+pub enum ScaleMode {
+    Linear,
+    Integer,
 }
 
 #[derive(Component)]
@@ -91,13 +100,7 @@ fn main() {
         .add_systems(Update, (load_assets, resize_screen))
         .add_systems(
             FixedUpdate,
-            (
-                step_state,
-                play_sounds,
-                play_music,
-                update_texture,
-            )
-                .chain(),
+            (step_state, play_sounds, play_music, update_texture).chain(),
         )
         // 60 FPS
         .insert_resource(FixedTime::new_from_secs(1.0 / 60.0))
@@ -137,16 +140,20 @@ impl GameAssets {
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
-            maps: vec![assets.load("maps/bank1.tmj"), assets.load("maps/bank2.tmj"), assets.load("maps/office.tmj")],
+            maps: vec![
+                assets.load("maps/bank1.tmj"),
+                assets.load("maps/bank2.tmj"),
+                assets.load("maps/office.tmj"),
+            ],
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
-        assets.get_group_load_state([
-            self.font.id(),
-            self.sheet.id(),
-            self.maps[0].id(),
-            self.maps[1].id(),
-        ])
+        assets.get_group_load_state(
+            [self.font.id(), self.sheet.id()]
+                .iter()
+                .cloned()
+                .chain(self.maps.iter().map(|map| map.id())),
+        )
     }
 }
 
@@ -169,7 +176,7 @@ fn load_assets(
                 let font = images.get(&game_assets.font).unwrap();
                 let sheet = images.get(&game_assets.sheet).unwrap();
                 // let maps = maps.get(&game_assets.maps).unwrap();
-                let maps = game_assets
+                let maps: Vec<TiledMap> = game_assets
                     .maps
                     .iter()
                     .map(|x| maps.get(x).cloned().unwrap())
@@ -177,6 +184,7 @@ fn load_assets(
                 state.system.set_font(font);
                 state.system.set_sprites(sheet);
                 state.system.set_indexed_sprites(sheet);
+                info!("Loaded {} maps", maps.len());
                 state.system.set_maps(maps);
                 state.loaded = true;
                 info!("Finished loading assets.");
@@ -298,13 +306,21 @@ fn update_texture(
 
 fn resize_screen(
     mut sprite: Query<&mut Transform, With<GameScreenSprite>>,
-    window: Query<&Window>,
+    mut window: Query<&mut Window>,
+    state: Res<EggState>,
 ) {
-    let x = window.get_single().unwrap().width() as f32 / 240.0;
-    let y = window.get_single().unwrap().height() as f32 / 136.0;
-    let size = x.min(y);
-    for mut transform in sprite.iter_mut() {
-        transform.scale = Vec3::new(size, size, 1.0);
+    if let Ok(mut window) = window.get_single_mut() {
+        let w = window.width() as f32 / 240.0;
+        let h = window.height() as f32 / 136.0;
+        window.resolution.set_scale_factor_override(Some(1.0));
+        window.title = "Egg Game".to_string();
+        let size = match state.scale_mode {
+            ScaleMode::Integer => w.min(h).floor(),
+            ScaleMode::Linear => w.min(h),
+        };
+        for mut transform in sprite.iter_mut() {
+            transform.scale = Vec3::new(size, size, 1.0);
+        }
     }
 }
 
@@ -312,6 +328,8 @@ fn step_state(
     mut state: ResMut<EggState>,
     keys: Res<Input<KeyCode>>,
     mut window: Query<&mut Window>,
+    mouse_button: Res<Input<MouseButton>>,
+    // mut window: Query<&mut Mouse>,
 ) {
     state.system.sync_helper().step();
     state.time += 1;
@@ -349,13 +367,40 @@ fn step_state(
     if keys.pressed(KeyCode::AltLeft) {
         state.system.input().press_key(65);
     }
-    if keys.just_pressed(KeyCode::F11) {
-        use bevy::window::WindowMode;
-        let mode = window.get_single_mut().unwrap().mode;
-        window.get_single_mut().unwrap().mode = match mode {
-            WindowMode::Windowed => WindowMode::BorderlessFullscreen,
-            _ => WindowMode::Windowed,
-        };
+
+    if let Ok(mut window) = window.get_single_mut() {
+        if keys.just_pressed(KeyCode::F11) {
+            use bevy::window::WindowMode;
+            window.mode = match window.mode {
+                WindowMode::Windowed => WindowMode::BorderlessFullscreen,
+                _ => WindowMode::Windowed,
+            };
+        }
+        if keys.just_pressed(KeyCode::F5) {
+            state.scale_mode = match state.scale_mode {
+                ScaleMode::Linear => ScaleMode::Integer,
+                _ => ScaleMode::Linear,
+            };
+        }
+        if let Some(pos) = window.cursor_position() {
+            let w = window.width() / 240.0;
+            let h = window.height() / 136.0;
+            let size = if matches!(state.scale_mode, ScaleMode::Integer) {
+                w.min(h).floor()
+            } else {
+                w.min(h)
+            };
+            let (x_offset, y_offset) = if w > h {
+                ((window.width() - 240.0 * size) / 2.0, 0.0)
+            } else {
+                (0.0, (window.height() - 136.0 * size) / 2.0)
+            };
+            state.system.input().mouse.x = ((pos.x - x_offset) / size) as i16;
+            state.system.input().mouse.y = ((pos.y - y_offset) / size) as i16;
+            state.system.input().mouse.left = mouse_button.pressed(MouseButton::Left);
+            state.system.input().mouse.right = mouse_button.pressed(MouseButton::Right);
+            state.system.input().mouse.middle = mouse_button.pressed(MouseButton::Middle);
+        }
     }
 
     if keys.just_pressed(KeyCode::P) {

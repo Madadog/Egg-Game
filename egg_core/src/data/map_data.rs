@@ -594,8 +594,11 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 // serialize, zip, embed, unzip, deserialize...
 //TODO: Load mayor office
 //TODO: Map workflow
+//TODO: Better mouse support
+//TODO: Save support
 //TODO: dialogue files
 //TODO: Intro cutscene
+//TODO: Remove unsafe code
 //TODO: Egg lab
 //TODO: Conditional dialogue
 //TODO: Platformer, turn-based RPG, geometric puzzle, danmaku

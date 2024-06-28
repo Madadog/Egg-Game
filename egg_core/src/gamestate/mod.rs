@@ -182,6 +182,8 @@ impl GameState {
                 }
             }
         }
+        // let mouse = system.mouse();
+        // system.pix(mouse.x.into(), mouse.y.into(), 12);
     }
 }
 

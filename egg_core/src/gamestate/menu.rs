@@ -63,7 +63,7 @@ impl MenuState {
     pub fn map_select() -> Self {
         let mut entries = vec![];
         entries.push(MenuEntry::Debug(6));
-        entries.push(MenuEntry::MapBankSelect(0, "Map Bank: 0".into()));
+        entries.push(MenuEntry::MapBankSelect(2, "Map Bank: 0".into()));
         Self {
             entries,
             draw_title: None,
