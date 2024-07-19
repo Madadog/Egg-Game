@@ -299,7 +299,9 @@ pub trait ConsoleApi {
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;
     
+
     // Proprietary extensions to the TIC80 API
+
     /// Gives you info about a specific map.
     /// `(width, height, layer count)`
     fn map_properties(&self, bank: usize) -> (usize, usize, usize);
@@ -315,6 +317,8 @@ pub trait ConsoleApi {
     fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]);
     /// Sends information to the outside world. Kinda sucks, I'll probably remove it.
     fn send(&mut self, channel: DataChannel, data: &[u8]);
+    /// Draws a specific map.
+    fn map_draw(&mut self, bank: usize, layer: usize, opts: MapOptions);
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {

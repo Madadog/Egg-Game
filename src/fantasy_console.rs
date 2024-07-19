@@ -664,54 +664,9 @@ impl ConsoleApi for FantasyConsole {
         .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
-    fn map(&mut self, mut opts: egg_core::tic80_api::core::MapOptions) {
-        if self.maps.is_empty()
-            || opts.sx + opts.w * 8 < 0
-            || opts.sy + opts.h * 8 < 0
-            || opts.sx >= 240
-            || opts.sy >= 132
-        {
-            return;
-        }
-        // Crop map
-        if opts.sx <= 0 {
-            let x_tiles = -(opts.sx / 8);
-            opts.sx += x_tiles * 8;
-            opts.x += x_tiles;
-            opts.w -= x_tiles;
-        }
-        if opts.sy <= 0 {
-            let y_tiles = -(opts.sy / 8);
-            opts.sy += y_tiles * 8;
-            opts.y += y_tiles;
-            opts.h -= y_tiles;
-        }
-        opts.w = opts.w.min(31);
-        opts.h = opts.h.min(18);
-        let map_bank = self.sync_helper.last_bank() as usize;
-        for j in 0..opts.h {
-            for i in 0..opts.w {
-                if let (Ok(x_index), Ok(y_index)) =
-                    ((opts.x + i).try_into(), (opts.y + j).try_into())
-                {
-                    if let Some(mut index) = self.maps[map_bank].get(0, x_index, y_index) {
-                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
-                        if index == 0 {
-                            continue;
-                        } else {
-                            index -= 1;
-                        }
-                        self.draw_indexed_sprite(
-                            index as i32,
-                            x,
-                            y,
-                            false,
-                            opts.transparent.unwrap_or(255),
-                        );
-                    }
-                }
-            }
-        }
+    fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
+        let bank = self.sync_helper.last_bank() as usize;
+        self.map_draw(bank, 0, opts);
     }
 
     fn mget(&self, x: i32, y: i32) -> i32 {
@@ -976,6 +931,54 @@ impl ConsoleApi for FantasyConsole {
     }
     fn read_file(&mut self, filename: String) -> Option<&[u8]> {
         self.files.get(&filename).map(|vec| (*vec).as_slice())
+    }
+    fn map_draw(&mut self, bank: usize, layer: usize, mut opts: egg_core::tic80_api::core::MapOptions) {
+        if self.maps.is_empty()
+            || opts.sx + opts.w * 8 < 0
+            || opts.sy + opts.h * 8 < 0
+            || opts.sx >= 240
+            || opts.sy >= 132
+        {
+            return;
+        }
+        // Crop map
+        if opts.sx <= 0 {
+            let x_tiles = -(opts.sx / 8);
+            opts.sx += x_tiles * 8;
+            opts.x += x_tiles;
+            opts.w -= x_tiles;
+        }
+        if opts.sy <= 0 {
+            let y_tiles = -(opts.sy / 8);
+            opts.sy += y_tiles * 8;
+            opts.y += y_tiles;
+            opts.h -= y_tiles;
+        }
+        opts.w = opts.w.min(31);
+        opts.h = opts.h.min(18);
+        for j in 0..opts.h {
+            for i in 0..opts.w {
+                if let (Ok(x_index), Ok(y_index)) =
+                    ((opts.x + i).try_into(), (opts.y + j).try_into())
+                {
+                    if let Some(mut index) = self.maps[bank].get(layer, x_index, y_index) {
+                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
+                        if index == 0 {
+                            continue;
+                        } else {
+                            index -= 1;
+                        }
+                        self.draw_indexed_sprite(
+                            index as i32,
+                            x,
+                            y,
+                            false,
+                            opts.transparent.unwrap_or(255),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn sprite(
