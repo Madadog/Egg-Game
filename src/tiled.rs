@@ -1,7 +1,7 @@
 use bevy::{
-    asset::{AssetLoader, LoadContext, LoadedAsset},
-    prelude::{AddAsset, Plugin},
-    reflect::{TypePath, TypeUuid},
+    asset::{io::{file::FileAssetReader, AssetReader, Reader}, Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset},
+    prelude::Plugin,
+    reflect::TypePath,
     utils::BoxedFuture,
 };
 use egg_core::{map::LayerInfo, packed::PackedI16};
@@ -28,8 +28,7 @@ impl From<TiledLayer> for LayerInfo {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TypeUuid, TypePath)]
-#[uuid = "37d8348c-47cc-4a1a-a3e9-d4e19fdc39b3"]
+#[derive(Clone, Debug, Deserialize, Serialize, Asset, TypePath)]
 pub struct TiledMap {
     pub width: usize,
     pub height: usize,
@@ -67,7 +66,7 @@ pub struct TiledMapPlugin;
 
 impl Plugin for TiledMapPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        app.add_asset::<TiledMap>()
+        app.init_asset::<TiledMap>()
             .init_asset_loader::<TiledMapLoader>();
     }
 }
@@ -76,16 +75,19 @@ impl Plugin for TiledMapPlugin {
 pub struct TiledMapLoader;
 
 impl AssetLoader for TiledMapLoader {
-    fn load<'a>(
+    type Asset = TiledMap;
+    type Settings = ();
+    type Error = std::io::Error;
+    async fn load<'a>(
         &'a self,
-        bytes: &'a [u8],
-        load_context: &'a mut LoadContext,
-    ) -> BoxedFuture<'a, Result<(), bevy::asset::Error>> {
-        Box::pin(async move {
-            let map: TiledMap = serde_json::from_slice(bytes).unwrap();
-            load_context.set_default_asset(LoadedAsset::new(map));
-            Ok(())
-        })
+        reader: &'a mut Reader<'_>,
+        _settings: &'a (),
+        _load_context: &'a mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        let map: TiledMap = serde_json::from_slice(&bytes)?; 
+        Ok(map)
     }
 
     fn extensions(&self) -> &[&str] {

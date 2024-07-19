@@ -1,6 +1,6 @@
 use bevy::asset::LoadState;
-use bevy::audio::VolumeLevel;
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::utils::HashMap;
 use egg_core::gamestate::inventory::InventoryUi;
@@ -93,7 +93,7 @@ impl TicSpriteLayer {
 fn main() {
     App::new()
         .init_resource::<EggState>()
-        .insert_resource(ClearColor(Color::rgb(0.102, 0.110, 0.173)))
+        .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugins(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets))
@@ -103,7 +103,7 @@ fn main() {
             (step_state, play_sounds, play_music, update_texture).chain(),
         )
         // 60 FPS
-        .insert_resource(FixedTime::new_from_secs(1.0 / 60.0))
+        .insert_resource(Time::<Fixed>::from_seconds(1.0 / 60.0))
         .run();
 }
 
@@ -118,6 +118,7 @@ fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<As
         TextureDimension::D2,
         &[0, 0, 0, 255],
         TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
     );
     commands.spawn((
         SpriteBundle {
@@ -148,12 +149,13 @@ impl GameAssets {
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
-        assets.get_group_load_state(
-            [self.font.id(), self.sheet.id()]
-                .iter()
-                .cloned()
-                .chain(self.maps.iter().map(|map| map.id())),
-        )
+        // assets.get_group_load_state(
+        //     [self.font.id(), self.sheet.id()]
+        //         .iter()
+        //         .cloned()
+        //         .chain(self.maps.iter().map(|map| map.id())),
+        // )
+        LoadState::Loaded
     }
 }
 
@@ -173,14 +175,22 @@ fn load_assets(
     if let Some(game_assets) = game_assets {
         match game_assets.load_state(&assets) {
             LoadState::Loaded => {
-                let font = images.get(&game_assets.font).unwrap();
-                let sheet = images.get(&game_assets.sheet).unwrap();
+                let font = images.get(&game_assets.font);
+                let sheet = images.get(&game_assets.sheet);
+                if font.is_none() || sheet.is_none() {
+                    return;
+                }
+                let (font, sheet) = (font.unwrap(), sheet.unwrap());
                 // let maps = maps.get(&game_assets.maps).unwrap();
-                let maps: Vec<TiledMap> = game_assets
+                let maps: Vec<Option<TiledMap>> = game_assets
                     .maps
                     .iter()
-                    .map(|x| maps.get(x).cloned().unwrap())
+                    .map(|x| maps.get(x).cloned())
                     .collect();
+                if maps.iter().any(|x| x.is_none()) {
+                    return;
+                }
+                let maps: Vec<TiledMap> = maps.into_iter().map(|map| map.unwrap()).collect();
                 state.system.set_font(font);
                 state.system.set_sprites(sheet);
                 state.system.set_indexed_sprites(sheet);
@@ -242,9 +252,10 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
                 source: sound.clone(),
                 settings: PlaybackSettings {
                     mode: bevy::audio::PlaybackMode::Despawn,
-                    volume: bevy::audio::Volume::Relative(VolumeLevel::new(0.5)),
+                    volume: bevy::audio::Volume::new(0.5),
                     speed,
                     paused: false,
+                    ..Default::default()
                 },
             });
         } else {
@@ -267,9 +278,10 @@ fn play_music(
                     source: assets.load(format!("music/{}.ogg", x.id)),
                     settings: PlaybackSettings {
                         mode: bevy::audio::PlaybackMode::Loop,
-                        volume: bevy::audio::Volume::Relative(VolumeLevel::new(1.0)),
+                        volume: bevy::audio::Volume::new(0.5),
                         speed: 1.0,
                         paused: false,
+                        ..Default::default()
                     },
                 },
                 MusicPlayer,
@@ -326,36 +338,36 @@ fn resize_screen(
 
 fn step_state(
     mut state: ResMut<EggState>,
-    keys: Res<Input<KeyCode>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut window: Query<&mut Window>,
-    mouse_button: Res<Input<MouseButton>>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
     // mut window: Query<&mut Mouse>,
 ) {
     state.system.sync_helper().step();
     state.time += 1;
 
-    if keys.any_pressed([KeyCode::Up, KeyCode::W]) {
+    if keys.any_pressed([KeyCode::ArrowUp, KeyCode::KeyW]) {
         state.system.input().press(0);
     }
-    if keys.any_pressed([KeyCode::Down, KeyCode::S]) {
+    if keys.any_pressed([KeyCode::ArrowDown, KeyCode::KeyS]) {
         state.system.input().press(1);
     }
-    if keys.any_pressed([KeyCode::Left, KeyCode::A]) {
+    if keys.any_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]) {
         state.system.input().press(2);
     }
-    if keys.any_pressed([KeyCode::Right, KeyCode::D]) {
+    if keys.any_pressed([KeyCode::ArrowRight, KeyCode::KeyD]) {
         state.system.input().press(3);
     }
-    if keys.any_pressed([KeyCode::Z, KeyCode::Space, KeyCode::Return, KeyCode::E]) {
+    if keys.any_pressed([KeyCode::KeyZ, KeyCode::Space, KeyCode::Enter, KeyCode::KeyE]) {
         state.system.input().press(4);
     }
-    if keys.any_pressed([KeyCode::X, KeyCode::Escape, KeyCode::Q]) {
+    if keys.any_pressed([KeyCode::KeyX, KeyCode::Escape, KeyCode::KeyQ]) {
         state.system.input().press(5);
     }
-    if keys.any_pressed([KeyCode::C]) {
+    if keys.any_pressed([KeyCode::KeyC]) {
         state.system.input().press(6);
     }
-    if keys.any_pressed([KeyCode::V]) {
+    if keys.any_pressed([KeyCode::KeyV]) {
         state.system.input().press(7);
     }
     if keys.pressed(KeyCode::ControlLeft) {
@@ -403,11 +415,11 @@ fn step_state(
         }
     }
 
-    if keys.just_pressed(KeyCode::P) {
+    if keys.just_pressed(KeyCode::KeyP) {
         state.pause = !state.pause;
     }
     if state.pause {
-        if keys.just_pressed(KeyCode::N) {
+        if keys.just_pressed(KeyCode::KeyN) {
             state.run();
             state.system.input().refresh();
         }
@@ -422,21 +434,21 @@ fn step_state(
         );
         return;
     }
-    if keys.just_pressed(KeyCode::D) && keys.pressed(KeyCode::ShiftLeft) {
+    if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {
         let x = !state.debug_info.player_info();
         state.debug_info.set_player_info(x);
     }
-    if keys.just_pressed(KeyCode::M) {
+    if keys.just_pressed(KeyCode::KeyM) {
         let x = !state.debug_info.map_info();
         state.debug_info.set_map_info(x);
     }
-    if keys.just_pressed(KeyCode::N) {
+    if keys.just_pressed(KeyCode::KeyN) {
         let x = !state.debug_info.memory_info();
         state.debug_info.set_memory_info(x);
     }
 
     state.run();
-    if keys.pressed(KeyCode::N) {
+    if keys.pressed(KeyCode::KeyN) {
         state.run();
         state.system.print_raw(
             "Fast-Forward",

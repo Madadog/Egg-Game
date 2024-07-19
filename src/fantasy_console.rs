@@ -137,8 +137,8 @@ impl FantasyConsole {
         image.data.copy_from_slice(self._output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {
-        assert!(font.size().x == 128.0);
-        assert!(font.size().y >= 128.0);
+        assert!(font.size().x == 128);
+        assert!(font.size().y >= 128);
         for (i, c) in self.font.data_mut().iter_mut().zip(font.data.iter()) {
             *i = *c;
         }
