@@ -447,6 +447,16 @@ fn step_state(
         state.debug_info.set_memory_info(x);
     }
 
+    if keys.just_pressed(KeyCode::KeyL) {
+        info!("------------------------");
+        info!("START CURRENT MAP");
+        info!("------------------------");
+        info!("{:#?}", state.walkaround.current_map);
+        info!("------------------------");
+        info!("END CURRENT MAP");
+        info!("------------------------");
+    }
+
     state.run();
     if keys.pressed(KeyCode::KeyN) {
         state.run();

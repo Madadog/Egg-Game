@@ -119,7 +119,7 @@ impl Player {
         noclip: bool,
         current_map: &MapInfo,
     ) -> (i16, i16) {
-        use crate::map::layer_collides;
+        use crate::map::layer_collides_flags;
 
         if dx == 0 && dy == 0 {
             return (dx, dy);
@@ -181,7 +181,7 @@ impl Player {
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag {
-                if layer_collides(
+                if layer_collides_flags(
                     system,
                     point_diag,
                     layer_hitbox,
@@ -254,11 +254,11 @@ fn test_many_points(
     spr_flag_offset: bool,
     mut side_flags: [bool; 3],
 ) -> [bool; 3] {
-    use crate::map::layer_collides;
+    use crate::map::layer_collides_flags;
     for (i, points) in p.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides(
+                if layer_collides_flags(
                     system,
                     *point,
                     layer_hitbox,

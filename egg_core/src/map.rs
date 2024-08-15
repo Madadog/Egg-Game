@@ -10,6 +10,23 @@ use crate::{
     system::{ConsoleApi, ConsoleHelper},
 };
 use tic80_api::core::MapOptions;
+/*
+pub enum TileMapCollision {
+    None,
+    Collision,
+}
+
+pub enum TileMapInteraction {
+    None,
+    Interaction(Interactable),
+    Warp(usize),
+}
+
+pub trait TileMap {
+    fn get(&self, x: i32, y: i32) -> (TileMapCollision, TileMapInteraction);
+    fn draw(&self, console: &mut impl ConsoleApi);
+    fn step(&mut self, console: &impl ConsoleApi);
+}*/
 
 #[derive(Clone, Debug)]
 pub struct StaticMapInfo<'a> {
@@ -23,20 +40,20 @@ pub struct StaticMapInfo<'a> {
     pub camera_bounds: Option<CameraBounds>,
 }
 impl<'a> StaticMapInfo<'a> {
-    pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+    pub fn draw_bg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         self.layers
             .iter()
-            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
     }
-    pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+    pub fn draw_fg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         self.fg_layers
             .iter()
-            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
     }
 }
 
 /// Metadata necessary to load a map into Walkaround.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MapInfo {
     pub layers: Vec<LayerInfo>,
     pub fg_layers: Vec<LayerInfo>,
@@ -48,15 +65,15 @@ pub struct MapInfo {
     pub camera_bounds: Option<CameraBounds>,
 }
 impl MapInfo {
-    pub fn draw_bg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+    pub fn draw_bg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         self.layers
             .iter()
-            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
     }
-    pub fn draw_fg(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+    pub fn draw_fg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         self.fg_layers
             .iter()
-            .for_each(|layer| layer.draw_tic80(system, offset, debug))
+            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
     }
 }
 impl From<StaticMapInfo<'static>> for MapInfo {
@@ -74,6 +91,7 @@ impl From<StaticMapInfo<'static>> for MapInfo {
             music_track: value.music_track,
             bank: value.bank,
             camera_bounds: value.camera_bounds,
+            ..Default::default()
         }
     }
 }
@@ -142,7 +160,7 @@ impl LayerInfo {
     pub fn shift_sprite_flags(&self) -> bool {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, offset: Vec2, debug: bool) {
+    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         system.palette_map_rotate(self.palette_rotate().into());
         system.blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();
@@ -151,7 +169,7 @@ impl LayerInfo {
         if debug {
             system.rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
-        system.map(options);
+        system.map_draw(bank, 0, options);
     }
 }
 impl<'a> From<LayerInfo> for MapOptions {
@@ -257,7 +275,7 @@ impl Axis {
     }
 }
 
-pub fn layer_collides(
+pub fn layer_collides_flags(
     system: &mut impl ConsoleApi,
     point: Vec2,
     layer_hitbox: Hitbox,
@@ -274,6 +292,31 @@ pub fn layer_collides(
         let id = system.mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         touches_tile(
             *system.get_sprite_flags().get(id as usize).unwrap_or(&0),
+            Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
+        )
+    } else {
+        false
+    }
+}
+
+
+pub fn layer_collides(
+    system: &mut impl ConsoleApi,
+    point: Vec2,
+    layer_hitbox: Hitbox,
+    layer_x: i32,
+    layer_y: i32,
+    bank: usize,
+    layer: usize,
+) -> bool {
+    if layer_hitbox.touches_point(point) {
+        let map_point = Vec2::new(
+            (point.x - layer_hitbox.x) / 8 + layer_x as i16,
+            (point.y - layer_hitbox.y) / 8 + layer_y as i16,
+        );
+        let id = system.map_get(bank, layer, map_point.x.into(), map_point.y.into());
+        touches_tile(
+            id.try_into().unwrap(),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
         )
     } else {

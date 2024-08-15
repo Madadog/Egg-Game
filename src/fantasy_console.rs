@@ -962,12 +962,12 @@ impl ConsoleApi for FantasyConsole {
                     ((opts.x + i).try_into(), (opts.y + j).try_into())
                 {
                     if let Some(mut index) = self.maps[bank].get(layer, x_index, y_index) {
-                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
                         if index == 0 {
                             continue;
                         } else {
                             index -= 1;
                         }
+                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
                         self.draw_indexed_sprite(
                             index as i32,
                             x,

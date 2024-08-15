@@ -1,5 +1,8 @@
 use bevy::{
-    asset::{io::{file::FileAssetReader, AssetReader, Reader}, Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset},
+    asset::{
+        io::{file::FileAssetReader, AssetReader, Reader},
+        Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset,
+    },
     prelude::Plugin,
     reflect::TypePath,
     utils::BoxedFuture,
@@ -13,6 +16,42 @@ pub struct TiledLayer {
     pub height: usize,
     pub data: Vec<usize>,
     pub name: String,
+}
+impl TiledLayer {
+    pub fn get(&self, x: usize, y: usize) -> Option<usize> {
+        self.data
+            .get(
+                y.checked_mul(self.width).unwrap_or_else(|| {
+                    println!("layer.width: {}, y: {}", self.width, y);
+                    1
+                }) + x,
+            )
+            .cloned()
+    }
+    pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
+        self.data.get_mut(
+            y.checked_mul(self.width).unwrap_or_else(|| {
+                println!("layer.width: {}, y: {}", self.width, y);
+                1
+            }) + x,
+        )
+    }
+    pub fn flatten_gids(&mut self, tilesets: &[Tileset]) {
+        let gids = {
+            let mut gids: Vec<usize> = tilesets.iter().map(|x| x.firstgid).collect();
+            gids.sort_unstable_by(|a, b| b.cmp(a));
+            gids
+        };
+        for tile in self.data.iter_mut() {
+            let mut max_gid = 0;
+            for gid in gids.iter() {
+                if *tile >= *gid && *gid > max_gid {
+                    max_gid = *gid;
+                }
+            }
+            *tile = *tile - max_gid;
+        }
+    }
 }
 impl From<TiledLayer> for LayerInfo {
     fn from(other: TiledLayer) -> Self {
@@ -28,37 +67,40 @@ impl From<TiledLayer> for LayerInfo {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Tileset {
+    pub firstgid: usize,
+    pub source: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Asset, TypePath)]
 pub struct TiledMap {
     pub width: usize,
     pub height: usize,
     pub layers: Vec<TiledLayer>,
+    pub tilesets: Vec<Tileset>,
 }
 impl TiledMap {
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
-        self.layers.get(layer).and_then(|layer| {
-            layer
-                .data
-                .get(
-                    y.checked_mul(layer.width).unwrap_or_else(|| {
-                        println!("layer.width: {}, y: {}", layer.width, y);
-                        1
-                    }) + x,
-                )
-                .cloned()
-        })
+        self.layers.get(layer).and_then(|layer| layer.get(x, y))
     }
     pub fn set(&mut self, layer: usize, x: usize, y: usize, value: usize) {
-        if let Some(tile) = self.layers.get_mut(layer).and_then(|layer| {
-            layer.data.get_mut(
-                y.checked_mul(layer.width).unwrap_or_else(|| {
-                    println!("layer.width: {}, y: {}", layer.width, y);
-                    1
-                }) + x,
-            )
-        }) {
+        if let Some(tile) = self
+            .layers
+            .get_mut(layer)
+            .and_then(|layer| layer.get_mut(x, y))
+        {
             *tile = value;
         };
+    }
+    pub fn get_tile_source(&self, tile: usize) -> Option<Tileset> {
+        let mut source = None;
+        for tileset in self.tilesets.iter() {
+            if tile >= tileset.firstgid {
+                source = Some(tileset.clone());
+            }
+        }
+        source
     }
 }
 
@@ -86,7 +128,7 @@ impl AssetLoader for TiledMapLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let map: TiledMap = serde_json::from_slice(&bytes)?; 
+        let map: TiledMap = serde_json::from_slice(&bytes)?;
         Ok(map)
     }
 
@@ -106,6 +148,7 @@ mod tests {
             width: 10,
             height: 10,
             layers: Vec::new(),
+            tilesets: Vec::new(),
         };
         let json = serde_json::to_string(&map).unwrap();
         println!("{}", json);

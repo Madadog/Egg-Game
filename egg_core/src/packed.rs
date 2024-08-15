@@ -19,6 +19,12 @@ impl PackedI16 {
     }
 }
 
+impl From<(i16, i16)> for PackedI16 {
+    fn from(value: (i16, i16)) -> Self {
+        Self(from_i16(value.0, value.1))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PackedU8(u32);
 impl PackedU8 {
