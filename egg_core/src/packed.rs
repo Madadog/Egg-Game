@@ -1,11 +1,11 @@
 #[derive(Debug, Clone)]
-pub struct PackedI16(u32);
+pub struct PackedI16(i16, i16);
 impl PackedI16 {
     pub const fn to_i16(&self) -> (i16, i16) {
-        to_i16(self.0)
+        (self.0, self.1)
     }
     pub const fn from_i16(x: i16, y: i16) -> Self {
-        Self(from_i16(x, y))
+        Self(x, y)
     }
     pub const fn x(&self) -> i16 {
         self.to_i16().0
@@ -21,18 +21,18 @@ impl PackedI16 {
 
 impl From<(i16, i16)> for PackedI16 {
     fn from(value: (i16, i16)) -> Self {
-        Self(from_i16(value.0, value.1))
+        Self(value.0, value.1)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PackedU8(u32);
+pub struct PackedU8(u8, u8, u8, u8);
 impl PackedU8 {
     pub const fn to_u8(&self) -> (u8, u8, u8, u8) {
-        to_u8(self.0)
+        (self.0, self.1, self.2, self.3)
     }
     pub const fn from_u8(i: (u8, u8, u8, u8)) -> Self {
-        Self(from_u8(i))
+        Self(i.0, i.1, i.2, i.3)
     }
     pub fn test() {
         let x = PackedU8::from_u8((0xDE, 0xAD, 0xBE, 0xEF));

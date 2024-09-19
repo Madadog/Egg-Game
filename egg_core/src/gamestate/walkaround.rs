@@ -71,8 +71,12 @@ impl WalkaroundState {
         //     system.music(Some(&track), MusicOptions::default());
         // };
         system.music(map_set.music_track.as_ref(), MusicOptions::default());
-        if map_set.bank != system.sync_helper().last_bank() {
-            system.sync(1 | 4 | 8 | 16 | 64 | 128, map_set.bank, false);
+        if map_set.bank != system.sync_helper().last_bank().into() {
+            system.sync(
+                1 | 4 | 8 | 16 | 64 | 128,
+                map_set.bank.try_into().unwrap(),
+                false,
+            );
         }
 
         self.map_animations = map_set
@@ -92,28 +96,8 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    pub fn generate_map_info(system: &mut impl ConsoleApi, bank: usize) -> MapInfo {
-        let (width, height, layers) = system.map_properties(bank);
-        MapInfo {
-            layers: vec![
-                LayerInfo {
-                    size: (width as i16, height as i16).into(),
-                    ..LayerInfo::DEFAULT_MAP
-                };
-                layers
-            ],
-            fg_layers: Vec::new(),
-            warps: Vec::new(),
-            interactables: Vec::new(),
-            bg_colour: 0,
-            music_track: None,
-            bank: bank as u8,
-            camera_bounds: None,
-        }
-    }
-    // TODO: map bank silently changes sprite offset. 
     pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
-        let map_info = Self::generate_map_info(system, bank);
+        let map_info = system.map_get_original(bank);
         self.load_map(system, map_info);
     }
     pub fn cam_x(&self) -> i32 {
@@ -405,7 +389,8 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         // Draw BG
         system.palette_map_reset();
         system.cls(self.bg_colour);
-        self.current_map.draw_bg(system, self.current_map.bank.into(), self.camera.pos, false);
+        self.current_map
+            .draw_bg(system, self.current_map.bank.into(), self.camera.pos, false);
 
         self.particles
             .draw_tic80(system, -self.cam_x(), -self.cam_y());
@@ -467,7 +452,8 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
 
         // Draw FG
         system.palette_map_reset();
-        self.current_map.draw_fg(system, self.current_map.bank.into(), self.camera.pos, false);
+        self.current_map
+            .draw_fg(system, self.current_map.bank.into(), self.camera.pos, false);
 
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(system, string, true);

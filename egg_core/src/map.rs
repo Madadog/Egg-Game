@@ -36,7 +36,7 @@ pub struct StaticMapInfo<'a> {
     pub interactables: &'a [StaticInteractable<'a>],
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
-    pub bank: u8,
+    pub bank: usize,
     pub camera_bounds: Option<CameraBounds>,
 }
 impl<'a> StaticMapInfo<'a> {
@@ -61,7 +61,7 @@ pub struct MapInfo {
     pub interactables: Vec<Interactable>,
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
-    pub bank: u8,
+    pub bank: usize,
     pub camera_bounds: Option<CameraBounds>,
 }
 impl MapInfo {

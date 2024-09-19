@@ -456,6 +456,21 @@ fn step_state(
         info!("END CURRENT MAP");
         info!("------------------------");
     }
+    if keys.just_pressed(KeyCode::Semicolon) && state.walkaround.current_map.layers.len()>0 {
+        info!("------------------------");
+        info!("REMOVED BG LAYER");
+        info!("{:#?}", state.walkaround.current_map.layers.remove(0));
+        info!("------------------------");
+    }
+    if keys.just_pressed(KeyCode::Quote)  && state.walkaround.current_map.fg_layers.len()>0 {
+        info!("------------------------");
+        info!("REMOVED FG LAYER");
+        info!("{:#?}", state.walkaround.current_map.fg_layers.remove(0));
+        info!("------------------------");
+    }
+    if keys.just_pressed(KeyCode::KeyK) {
+        state.gamestate = GameState::SpriteTest(0);
+    }
 
     state.run();
     if keys.pressed(KeyCode::KeyN) {

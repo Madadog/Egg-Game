@@ -104,7 +104,7 @@ impl FantasyConsole {
             string.push(char1);
             let flag = u8::from_str_radix(&string, 16).unwrap();
             let (x, y) = (i % 16, i / 16);
-            let index = x + y * 32 + 1;
+            let index = x + y * 32;
             self.sprite_flags[index] = flag;
         }
     }
@@ -267,21 +267,6 @@ impl FantasyConsole {
     }
     pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
         self.maps = maps;
-    }
-    pub fn build_map(&mut self, map: TiledMap) -> egg_core::map::MapInfo {
-        let bank = self.maps.len().try_into().unwrap();
-        let out = egg_core::map::MapInfo {
-            layers: map.layers.iter().cloned().map(|x| x.into()).collect(),
-            fg_layers: Vec::new(),
-            warps: Vec::new(),
-            interactables: Vec::new(),
-            bg_colour: 0,
-            music_track: None,
-            bank,
-            camera_bounds: None,
-        };
-        self.maps.push(map);
-        out
     }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
         if x >= 240 || y >= 136 || x < 0 || y < 0 {
@@ -920,6 +905,10 @@ impl ConsoleApi for FantasyConsole {
         let map = &self.maps[bank];
         (map.width, map.height, map.layers.len())
     }
+    fn map_get_original(&self, bank: usize) -> egg_core::map::MapInfo {
+        let map = &self.maps[bank];
+        map.clone().into_map_info(bank)
+    }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
         self.maps[bank].get(layer, x as usize, y as usize).unwrap()
     }
@@ -961,12 +950,12 @@ impl ConsoleApi for FantasyConsole {
                 if let (Ok(x_index), Ok(y_index)) =
                     ((opts.x + i).try_into(), (opts.y + j).try_into())
                 {
-                    if let Some(mut index) = self.maps[bank].get(layer, x_index, y_index) {
-                        if index == 0 {
-                            continue;
-                        } else {
-                            index -= 1;
-                        }
+                    if let Some(index) = self.maps[bank].get(layer, x_index, y_index) {
+                        // if index == 0 {
+                        //     continue;
+                        // } else {
+                        //     index -= 1;
+                        // }
                         let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
                         self.draw_indexed_sprite(
                             index as i32,

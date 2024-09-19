@@ -29,6 +29,7 @@ use self::menu::MenuState;
 mod intro;
 pub mod inventory;
 mod menu;
+mod debug;
 pub mod walkaround;
 
 #[derive(Clone, Debug)]
@@ -118,6 +119,7 @@ pub enum GameState {
     Animation(u16),
     MainMenu(MenuState),
     Inventory,
+    SpriteTest(u32),
 }
 impl GameState {
     pub fn run(
@@ -180,6 +182,10 @@ impl GameState {
                     }
                     _ => inventory_ui.draw(system),
                 }
+            }
+            Self::SpriteTest(x) => {
+                debug::draw_sprite_test(system, *x);
+                debug::step_sprite_test(system, x);
             }
         }
         // let mouse = system.mouse();

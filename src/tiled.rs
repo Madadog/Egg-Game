@@ -7,7 +7,7 @@ use bevy::{
     reflect::TypePath,
     utils::BoxedFuture,
 };
-use egg_core::{map::LayerInfo, packed::PackedI16};
+use egg_core::{map::{LayerInfo, MapInfo}, packed::PackedI16};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,6 +42,7 @@ impl TiledLayer {
             gids.sort_unstable_by(|a, b| b.cmp(a));
             gids
         };
+        // TODO: actually use the above sort...
         for tile in self.data.iter_mut() {
             let mut max_gid = 0;
             for gid in gids.iter() {
@@ -102,6 +103,31 @@ impl TiledMap {
         }
         source
     }
+    pub fn flatten_gids(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.flatten_gids(&self.tilesets);
+        }
+    }
+    pub fn into_map_info(self, bank: usize) -> MapInfo {
+        let mut layers = Vec::new();
+        let mut fg_layers = Vec::new();
+        for layer in self.layers {
+            if layer.name.starts_with("fg") {
+                fg_layers.push(layer.into());
+            } else {
+                layers.push(layer.into());
+            }
+        }
+        // TODO: map don't draw properly. Look at transparent colours (or special case it)
+        layers.reverse();
+        fg_layers.reverse();
+        MapInfo {
+            layers,
+            fg_layers,
+            bank,
+            ..Default::default()
+        }        
+    }
 }
 
 pub struct TiledMapPlugin;
@@ -128,7 +154,8 @@ impl AssetLoader for TiledMapLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let map: TiledMap = serde_json::from_slice(&bytes)?;
+        let mut map: TiledMap = serde_json::from_slice(&bytes)?;
+        map.flatten_gids();
         Ok(map)
     }
 

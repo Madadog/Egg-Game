@@ -305,6 +305,8 @@ pub trait ConsoleApi {
     /// Gives you info about a specific map.
     /// `(width, height, layer count)`
     fn map_properties(&self, bank: usize) -> (usize, usize, usize);
+    /// TODO: Rethink map data layout from fantasy console perspective
+    fn map_get_original(&self, bank: usize) -> crate::map::MapInfo;
     /// Gets a tile from a specific map.
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
     /// Sets a tile on a specific map.
