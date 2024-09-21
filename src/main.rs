@@ -343,6 +343,9 @@ fn step_state(
     mouse_button: Res<ButtonInput<MouseButton>>,
     // mut window: Query<&mut Mouse>,
 ) {
+    if !state.loaded {
+        return;
+    }
     state.system.sync_helper().step();
     state.time += 1;
 
