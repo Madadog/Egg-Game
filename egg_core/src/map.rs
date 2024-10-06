@@ -105,9 +105,9 @@ pub struct LayerInfo {
     pub transparent: Option<u8>,
     /// (blit_segment, rotate_palette, shift_sprite_flags, UNUSED)
     pub blit_rotate_and_flags: PackedU8,
+    pub visible: bool,
     // pub source_bank: usize,
     // pub source_layer: usize,
-    // pub visible: bool,
     // pub display_mode: BG, FG, Object
 }
 impl LayerInfo {
@@ -117,6 +117,7 @@ impl LayerInfo {
         offset: PackedI16::from_i16(0, 0),
         transparent: None,
         blit_rotate_and_flags: PackedU8::from_u8((4, 0, 0, 0)),
+        visible: true,
     };
     pub const fn new(x: i16, y: i16, w: i16, h: i16) -> Self {
         Self {
@@ -161,6 +162,9 @@ impl LayerInfo {
         self.blit_rotate_and_flags.to_u8().2 != 0
     }
     pub fn draw_tic80(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
+        if !self.visible {
+            return;
+        }
         system.palette_map_rotate(self.palette_rotate().into());
         system.blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();

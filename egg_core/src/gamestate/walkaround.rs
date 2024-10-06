@@ -32,6 +32,7 @@ pub struct WalkaroundState {
     pub creatures: Vec<Creature>,
     pub camera: Camera,
     pub current_map: MapInfo,
+    pub map_viewer: MapViewer,
     pub dialogue: Dialogue,
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,

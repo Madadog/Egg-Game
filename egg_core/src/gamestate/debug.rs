@@ -2,6 +2,8 @@ use tic80_api::core::{PrintOptions, SpriteOptions, StaticSpriteOptions};
 
 use crate::system::ConsoleApi;
 
+use super::walkaround::WalkaroundState;
+
 const WIDTH: u32 = 32;
 const WIDTHX10: u32 = WIDTH * 10;
 
@@ -35,5 +37,18 @@ pub fn step_sprite_test(system: &mut impl ConsoleApi, indice: &mut u32) {
     }
     if system.btnp(3,0,0) {
         *indice = indice.saturating_add(1);
+    }
+}
+
+pub struct MapViewer {
+    layer_index: usize,
+}
+impl MapViewer {
+    pub fn draw_map_viewer(&self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
+        system.map_draw()
+    }
+
+    pub fn step_map_viewer(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
+        system.map_draw()
     }
 }
