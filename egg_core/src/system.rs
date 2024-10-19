@@ -1,8 +1,15 @@
 use tic80_api::core::{
-        FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions, StaticSpriteOptions, TTriOptions
-    };
+    FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
+    StaticSpriteOptions, TTriOptions,
+};
 
-use crate::{rand::Lcg64Xsh32, data::{save, sound::{SfxData, music::MusicTrack}}};
+use crate::{
+    data::{
+        save,
+        sound::{music::MusicTrack, SfxData},
+    },
+    rand::Lcg64Xsh32,
+};
 
 pub struct SyncHelper {
     already_synced: bool,
@@ -57,16 +64,13 @@ impl SyncHelper {
     }
 }
 
-
 #[derive(Clone, Copy, Debug)]
 pub struct EggMemory {
     pub memory: [u8; 1024],
 }
 impl EggMemory {
     pub fn new() -> Self {
-        Self {
-            memory: [0; 1024],
-        }
+        Self { memory: [0; 1024] }
     }
     pub fn from_array(array: [u8; 1024]) -> Self {
         Self { memory: array }
@@ -165,9 +169,20 @@ impl DrawParams {
     pub fn draw(self, system: &mut impl ConsoleApi) {
         system.palette_map_rotate(self.palette_rotate.into());
         if let Some(outline) = self.outline {
-            system.spr_outline(self.index, self.x, self.y, self.options.compatibility_mode(), outline);
+            system.spr_outline(
+                self.index,
+                self.x,
+                self.y,
+                self.options.compatibility_mode(),
+                outline,
+            );
         } else {
-            system.spr(self.index, self.x, self.y, self.options.compatibility_mode());
+            system.spr(
+                self.index,
+                self.x,
+                self.y,
+                self.options.compatibility_mode(),
+            );
         }
     }
     pub fn bottom(&self) -> i32 {
@@ -192,6 +207,72 @@ impl<'a> From<StaticDrawParams<'a>> for DrawParams {
 pub enum DataChannel {
     Binary,
     String,
+}
+
+// TODO: finish console map support
+/// For simplicity all layers under a map have the same width and height.
+/// Ordering of layers is: first at the bottom, last at the top.
+#[derive(Clone, Debug)]
+pub struct GameMap {
+    width: usize,
+    height: usize,
+    pub layers: Vec<MapLayer>,
+}
+impl GameMap {
+    pub fn new(width: usize, height: usize, layers: Vec<MapLayer>) -> Self {
+        Self {
+            width,
+            height,
+            layers,
+        }
+    }
+    pub fn new_empty(width: usize, height: usize, layers: usize) -> Self {
+        Self::new(
+            width,
+            height,
+            (0..layers)
+                .map(|_| MapLayer::new_empty(width, height))
+                .collect(),
+        )
+    }
+    pub fn width(&self) -> usize {
+        self.width
+    }
+    pub fn height(&self) -> usize {
+        self.height
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MapLayer {
+    width: usize,
+    height: usize,
+    pub data: Vec<usize>,
+}
+impl MapLayer {
+    pub fn new(width: usize, height: usize, data: Vec<usize>) -> Self {
+        assert!(width * height == data.len());
+        Self {
+            width,
+            height,
+            data,
+        }
+    }
+    pub fn new_empty(width: usize, height: usize) -> Self {
+        Self::new(width, height, vec![0; width * height])
+    }
+    pub fn width(&self) -> usize {
+        self.width
+    }
+    pub fn height(&self) -> usize {
+        self.height
+    }
+    pub fn get(&self, x: usize, y: usize) -> Option<usize> {
+        self.data.get(y * self.width + x).copied()
+    }
+    pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
+        self.data.get_mut(y * self.width + x)
+    }
 }
 
 /// Abstracts away all static memory accesses
@@ -292,21 +373,18 @@ pub trait ConsoleApi {
         opts: TTriOptions,
     );
     fn vbank(&mut self, bank: u8) -> u8;
-    
+
     // Other things
     fn sync_helper(&mut self) -> &mut SyncHelper;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;
-    
 
     // Proprietary extensions to the TIC80 API
 
-    /// Gives you info about a specific map.
-    /// `(width, height, layer count)`
-    fn map_properties(&self, bank: usize) -> (usize, usize, usize);
-    /// TODO: Rethink map data layout from fantasy console perspective
-    fn map_get_original(&self, bank: usize) -> crate::map::MapInfo;
+    /// Get access to map storage
+    /// TODO: Separate storage. Console drawing functions consume storage (maps, sprites, etc) and modify a mutable image.
+    fn maps(&mut self) -> &mut Vec<GameMap>;
     /// Gets a tile from a specific map.
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
     /// Sets a tile on a specific map.
@@ -321,6 +399,9 @@ pub trait ConsoleApi {
     fn send(&mut self, channel: DataChannel, data: &[u8]);
     /// Draws a specific map.
     fn map_draw(&mut self, bank: usize, layer: usize, opts: MapOptions);
+    // TODO: No screen. Just expose `bitmaps: Vec<bitmap>`. By convention we can have 0=screen, 1=ovr, 2=sprites etc.
+    // get_bitmap(index)
+    fn screen_size(&self) -> (u32, u32);
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {
@@ -504,7 +585,14 @@ pub trait ConsoleHelper: ConsoleApi {
     fn blit_segment(&mut self, value: u8) {
         *self.get_blit_segment() = value;
     }
-    fn spr_blit_segment(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, blit_seg: u8) {
+    fn spr_blit_segment(
+        &mut self,
+        id: i32,
+        x: i32,
+        y: i32,
+        opts: StaticSpriteOptions,
+        blit_seg: u8,
+    ) {
         let old = *self.get_blit_segment();
         self.blit_segment(blit_seg);
         self.spr(id, x, y, opts);

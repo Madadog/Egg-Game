@@ -450,7 +450,7 @@ fn step_state(
         state.debug_info.set_memory_info(x);
     }
 
-    if keys.just_pressed(KeyCode::KeyL) {
+    if keys.just_pressed(KeyCode::KeyL) && keys.pressed(KeyCode::ShiftLeft) {
         info!("------------------------");
         info!("START CURRENT MAP");
         info!("------------------------");
@@ -458,6 +458,9 @@ fn step_state(
         info!("------------------------");
         info!("END CURRENT MAP");
         info!("------------------------");
+    } else if keys.just_pressed(KeyCode::KeyL) {
+        state.walkaround.map_viewer.focused = !state.walkaround.map_viewer.focused;
+        state.walkaround.map_viewer.layer_index = 0;
     }
     if keys.just_pressed(KeyCode::Semicolon) && state.walkaround.current_map.layers.len()>0 {
         info!("------------------------");

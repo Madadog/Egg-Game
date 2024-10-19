@@ -107,7 +107,7 @@ pub struct LayerInfo {
     pub blit_rotate_and_flags: PackedU8,
     pub visible: bool,
     // pub source_bank: usize,
-    // pub source_layer: usize,
+    pub source_layer: usize,
     // pub display_mode: BG, FG, Object
 }
 impl LayerInfo {
@@ -118,6 +118,7 @@ impl LayerInfo {
         transparent: None,
         blit_rotate_and_flags: PackedU8::from_u8((4, 0, 0, 0)),
         visible: true,
+        source_layer: 0,
     };
     pub const fn new(x: i16, y: i16, w: i16, h: i16) -> Self {
         Self {
@@ -173,7 +174,7 @@ impl LayerInfo {
         if debug {
             system.rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
-        system.map_draw(bank, 0, options);
+        system.map_draw(bank, self.source_layer, options);
     }
 }
 impl<'a> From<LayerInfo> for MapOptions {

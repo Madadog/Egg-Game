@@ -2,10 +2,7 @@ use bevy::{
     asset::{
         io::{file::FileAssetReader, AssetReader, Reader},
         Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset,
-    },
-    prelude::Plugin,
-    reflect::TypePath,
-    utils::BoxedFuture,
+    }, log::tracing_subscriber::fmt::Layer, prelude::Plugin, reflect::TypePath, utils::BoxedFuture
 };
 use egg_core::{map::{LayerInfo, MapInfo}, packed::PackedI16};
 use serde::{Deserialize, Serialize};
@@ -51,6 +48,12 @@ impl TiledLayer {
                 }
             }
             *tile = *tile - max_gid;
+        }
+    }
+    pub fn into_layer_info(self, source_layer: usize) -> LayerInfo {
+        LayerInfo {
+            source_layer,
+            ..self.into()
         }
     }
 }
@@ -109,20 +112,22 @@ impl TiledMap {
         }
     }
     pub fn into_map_info(self, bank: usize) -> MapInfo {
-        let mut layers = Vec::new();
+        let mut bg_layers = Vec::new();
         let mut fg_layers = Vec::new();
+        let mut bg_layer_index = 0;
         for layer in self.layers {
             if layer.name.starts_with("fg") {
                 fg_layers.push(layer.into());
             } else {
-                layers.push(layer.into());
+                bg_layers.push(layer.into_layer_info(bg_layer_index));
+                bg_layer_index += 1;
             }
         }
         // TODO: map don't draw properly. Look at transparent colours (or special case it)
-        layers.reverse();
+        bg_layers.reverse();
         fg_layers.reverse();
         MapInfo {
-            layers,
+            layers: bg_layers,
             fg_layers,
             bank,
             ..Default::default()

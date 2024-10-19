@@ -5,7 +5,7 @@ use egg_core::{
     data::sound::music::MusicTrack,
     gamestate::EggInput,
     rand::Lcg64Xsh32,
-    system::{ConsoleApi, EggMemory, SyncHelper},
+    system::{ConsoleApi, EggMemory, GameMap, MapLayer, SyncHelper},
     tic80_api::{
         core::{Flip, MouseInput, SfxOptions, StaticSpriteOptions},
         helpers::SWEETIE_16,
@@ -30,7 +30,7 @@ pub struct FantasyConsole {
     font: Pixmap,
     sprites: Pixmap,
     indexed_sprites: IndexedImage,
-    maps: Vec<TiledMap>,
+    maps: Vec<GameMap>,
     files: HashMap<String, Vec<u8>>,
 
     vbank: usize,
@@ -150,6 +150,7 @@ impl FantasyConsole {
         )
         .unwrap();
     }
+    // TODO: 255 index as transparent...
     pub fn set_indexed_sprites(&mut self, sheet: &Image) {
         self.indexed_sprites = IndexedImage::from_image(sheet, &self.palette);
     }
@@ -188,6 +189,7 @@ impl FantasyConsole {
         }
         letter_width
     }
+    // TODO: RGB and indexed sprite data
     pub fn blit_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
         let screen = match self.vbank {
@@ -266,6 +268,17 @@ impl FantasyConsole {
         }
     }
     pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
+        let maps = maps
+            .into_iter()
+            .map(|map| {
+                let layers = map
+                    .layers
+                    .into_iter()
+                    .map(|layer| MapLayer::new(layer.width, layer.height, layer.data))
+                    .collect();
+                GameMap::new(map.width, map.height, layers)
+            })
+            .collect();
         self.maps = maps;
     }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
@@ -901,19 +914,22 @@ impl ConsoleApi for FantasyConsole {
         &mut self.input.previous_mouse
     }
 
-    fn map_properties(&self, bank: usize) -> (usize, usize, usize) {
-        let map = &self.maps[bank];
-        (map.width, map.height, map.layers.len())
-    }
-    fn map_get_original(&self, bank: usize) -> egg_core::map::MapInfo {
-        let map = &self.maps[bank];
-        map.clone().into_map_info(bank)
+    fn maps(&mut self) -> &mut Vec<GameMap> {
+        &mut self.maps
     }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
-        self.maps[bank].get(layer, x as usize, y as usize).unwrap()
+        self.maps[bank]
+            .layers
+            .get(layer)
+            .and_then(|layer| layer.get(x as usize, y as usize))
+            .unwrap_or(0)
     }
     fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize) {
-        self.maps[bank].set(layer, x as usize, y as usize, value);
+        self.maps[bank]
+            .layers
+            .get_mut(layer)
+            .and_then(|layer| layer.get_mut(x as usize, y as usize))
+            .map(|tile| *tile = value);
     }
     fn write_file(&mut self, filename: String, data: &[u8]) {
         self.files.insert(filename, data.into());
@@ -921,7 +937,12 @@ impl ConsoleApi for FantasyConsole {
     fn read_file(&mut self, filename: String) -> Option<&[u8]> {
         self.files.get(&filename).map(|vec| (*vec).as_slice())
     }
-    fn map_draw(&mut self, bank: usize, layer: usize, mut opts: egg_core::tic80_api::core::MapOptions) {
+    fn map_draw(
+        &mut self,
+        bank: usize,
+        layer: usize,
+        mut opts: egg_core::tic80_api::core::MapOptions,
+    ) {
         if self.maps.is_empty()
             || opts.sx + opts.w * 8 < 0
             || opts.sy + opts.h * 8 < 0
@@ -950,7 +971,8 @@ impl ConsoleApi for FantasyConsole {
                 if let (Ok(x_index), Ok(y_index)) =
                     ((opts.x + i).try_into(), (opts.y + j).try_into())
                 {
-                    if let Some(index) = self.maps[bank].get(layer, x_index, y_index) {
+                    if let Some(index) = self.maps[bank].layers.get(layer).and_then(|layer| layer.get(x_index, y_index)) {
+                        
                         // if index == 0 {
                         //     continue;
                         // } else {
@@ -983,6 +1005,10 @@ impl ConsoleApi for FantasyConsole {
 
     fn send(&mut self, channel: egg_core::system::DataChannel, data: &[u8]) {
         todo!()
+    }
+
+    fn screen_size(&self) -> (u32, u32) {
+        (self.screen.width(), self.screen.height())
     }
 
     fn draw_outline(

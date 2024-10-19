@@ -7,6 +7,7 @@ use crate::debug::DebugInfo;
 use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction, StaticInteraction};
 use crate::map::{Axis, LayerInfo, MapInfo, WarpMode};
+use crate::packed::PackedI16;
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
@@ -18,6 +19,7 @@ use tic80_api::core::{MusicOptions, PrintOptions};
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
+use super::debug::MapViewer;
 use super::inventory::InventoryUi;
 // use super::{EggInput};
 mod creatures;
@@ -48,6 +50,7 @@ impl WalkaroundState {
             creatures: Vec::new(),
             camera: Camera::default(),
             current_map: DEFAULT_MAP_SET.into(),
+            map_viewer: MapViewer::default(),
             dialogue: Dialogue::default(),
             particles: ParticleList::new(),
             cutscene: None,
@@ -97,8 +100,32 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
-        let map_info = system.map_get_original(bank);
+    // TODO: Collision layer
+    pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize, split_point: Option<usize>) {
+        let map_info = system.maps()[bank].clone();
+        let layers: Vec<LayerInfo> = map_info.layers.into_iter().enumerate().map(|(i, layer)| LayerInfo {
+            origin: PackedI16::from_i16(0, 0),
+            size: PackedI16::from_i16(
+                layer.width().try_into().unwrap(),
+                layer.height().try_into().unwrap(),
+            ),
+            offset: PackedI16::from_i16(0, 0),
+            source_layer: i,
+            transparent: Some(0),
+            ..LayerInfo::DEFAULT_MAP
+        }).collect();
+        let (bg, fg) = if let Some(split_point) = split_point {
+            layers.split_at(split_point)
+        } else {
+            (layers.as_slice(), [].as_slice())
+        };
+        let map_info = MapInfo {
+            layers: Vec::from(bg),
+            fg_layers: Vec::from(fg),
+            bank,
+            ..Default::default()
+        };
+
         self.load_map(system, map_info);
     }
     pub fn cam_x(&self) -> i32 {
@@ -269,7 +296,11 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
-        if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
+
+        if self.map_viewer.focused {
+            self.map_viewer
+                .step_map_viewer(system, &mut self.current_map);
+        } else if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
             if system.mem_btn(0) {
                 dy -= 1;
             }
@@ -497,5 +528,6 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
                 },
             );
         }
+        self.map_viewer.draw_map_viewer(system, self);
     }
 }
