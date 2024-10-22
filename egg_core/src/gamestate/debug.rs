@@ -1,13 +1,10 @@
-use std::default;
-
-use tic80_api::core::{MapOptions, PrintOptions, SpriteOptions, StaticSpriteOptions};
+use tic80_api::core::{MapOptions, PrintOptions, StaticSpriteOptions};
 
 use crate::{map::MapInfo, system::ConsoleApi};
 
 use super::walkaround::WalkaroundState;
 
 const WIDTH: u32 = 32;
-const WIDTHX10: u32 = WIDTH * 10;
 
 pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
     system.cls(0);
@@ -64,7 +61,7 @@ impl MapViewer {
         if !self.focused {
             return;
         }
-        let (width, height) = system.screen_size();
+        let (_width, height) = system.screen_size();
         system.rect(0, 0, 70, height as i32, 0);
 
         system.rect(0, 8 + 8 * self.layer_index as i32, 70, 8, 15);

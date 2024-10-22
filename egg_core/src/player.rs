@@ -15,7 +15,12 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    camera::Camera, data::sound, interact::{Interactable, Interaction, StaticInteractable}, map::{Axis, MapInfo, StaticMapInfo}, position::{Hitbox, Vec2}, system::{ConsoleApi, ConsoleHelper, StaticDrawParams}
+    camera::Camera,
+    data::sound,
+    interact::{Interactable, Interaction},
+    map::{Axis, MapInfo},
+    position::{Hitbox, Vec2},
+    system::{ConsoleApi, ConsoleHelper, StaticDrawParams},
 };
 use tic80_api::core::{Flip, StaticSpriteOptions};
 
@@ -124,14 +129,14 @@ impl Player {
         if dx == 0 && dy == 0 {
             return (dx, dy);
         };
-        
+
         (dx, dy) = self.apply_walk_direction(dx, dy);
 
         if noclip {
             return (dx, dy);
         };
 
-        if (self.walktime+15) % 20 == 0 {
+        if (self.walktime + 15) % 20 == 0 {
             system.play_sound(sound::FOOTSTEP_PLAIN.with_note(17));
         }
 
@@ -154,10 +159,10 @@ impl Player {
         let mut diagonal_collision = false;
         for layer in current_map.layers.iter() {
             let layer_hitbox = Hitbox::new(
-                layer.offset().x,
-                layer.offset().y,
-                layer.size().x * 8,
-                layer.size().y * 8,
+                layer.offset.x,
+                layer.offset.y,
+                layer.size.x * 8,
+                layer.size.y * 8,
             );
             if !layer_hitbox.touches(delta_hitbox) {
                 continue;
@@ -166,8 +171,8 @@ impl Player {
                 system,
                 [points_dx, points_dx_up, points_dx_down],
                 layer_hitbox,
-                layer.origin.x().into(),
-                layer.origin.y().into(),
+                layer.origin.x.into(),
+                layer.origin.y.into(),
                 layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
@@ -175,8 +180,8 @@ impl Player {
                 system,
                 [points_dy, points_dy_left, points_dy_right],
                 layer_hitbox,
-                layer.origin.x().into(),
-                layer.origin.y().into(),
+                layer.origin.x.into(),
+                layer.origin.y.into(),
                 layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
@@ -185,8 +190,8 @@ impl Player {
                     system,
                     point_diag,
                     layer_hitbox,
-                    layer.origin.x().into(),
-                    layer.origin.y().into(),
+                    layer.origin.x.into(),
+                    layer.origin.y.into(),
                     layer.shift_sprite_flags(),
                 ) {
                     diagonal_collision = true;
@@ -347,7 +352,7 @@ impl Companion {
         direction: (i8, i8),
         player_position: Vec2,
     ) -> Interactable {
-        use crate::interact::{InteractFn, StaticInteraction};
+        use crate::interact::InteractFn;
         match self {
             Companion::Dog => {
                 let mut pixel = 0;
@@ -472,10 +477,7 @@ impl CompanionList {
             .filter(|companion| companion.is_some())
             .count()
     }
-    pub fn interact<const N: usize>(
-        &self,
-        positions: &CompanionTrail<N>,
-    ) -> Vec<Interactable> {
+    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<Interactable> {
         match self.companions {
             [Some(x), Some(y)] => vec![
                 x.interact(positions.mid().0, positions.mid().1, positions.latest().0),

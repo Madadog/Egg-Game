@@ -2,9 +2,16 @@ use bevy::{
     asset::{
         io::{file::FileAssetReader, AssetReader, Reader},
         Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset,
-    }, log::tracing_subscriber::fmt::Layer, prelude::Plugin, reflect::TypePath, utils::BoxedFuture
+    },
+    log::tracing_subscriber::fmt::Layer,
+    prelude::Plugin,
+    reflect::TypePath,
+    utils::BoxedFuture,
 };
-use egg_core::{map::{LayerInfo, MapInfo}, packed::PackedI16};
+use egg_core::{
+    map::{LayerInfo, MapInfo},
+    position::Vec2,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -60,12 +67,12 @@ impl TiledLayer {
 impl From<TiledLayer> for LayerInfo {
     fn from(other: TiledLayer) -> Self {
         Self {
-            origin: PackedI16::from_i16(0, 0),
-            size: PackedI16::from_i16(
+            origin: Vec2::new(0, 0),
+            size: Vec2::new(
                 other.width.try_into().unwrap(),
                 other.height.try_into().unwrap(),
             ),
-            offset: PackedI16::from_i16(0, 0),
+            offset: Vec2::new(0, 0),
             ..Self::DEFAULT_MAP
         }
     }
@@ -131,7 +138,7 @@ impl TiledMap {
             fg_layers,
             bank,
             ..Default::default()
-        }        
+        }
     }
 }
 

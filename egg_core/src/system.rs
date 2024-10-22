@@ -47,7 +47,7 @@ impl SyncHelper {
             Ok(())
         }
     }
-    pub fn sync2(&mut self, mask: i32, bank: u8) -> Result<(), ()> {
+    pub fn sync2(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
         if self.already_synced() {
             Err(())
         } else {

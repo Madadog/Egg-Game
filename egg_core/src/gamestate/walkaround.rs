@@ -1,19 +1,18 @@
-use crate::animation::{Animation, StaticAnimation};
+use crate::animation::Animation;
 use crate::data::map_data::{
     MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
 };
 use crate::data::{dialogue_data::*, save, sound};
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
-use crate::interact::{InteractFn, Interaction, StaticInteraction};
-use crate::map::{Axis, LayerInfo, MapInfo, WarpMode};
-use crate::packed::PackedI16;
+use crate::interact::{InteractFn, Interaction};
+use crate::map::{Axis, LayerInfo, MapInfo};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
 use crate::position::Vec2;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, StaticDrawParams};
-use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState, map::StaticMapInfo};
-use log::{error, info};
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
+use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState};
+use log::info;
 use tic80_api::core::{MusicOptions, PrintOptions};
 
 use self::creatures::Creature;
@@ -66,9 +65,7 @@ impl WalkaroundState {
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else {
-            let map_size = map1.size();
-            let map_offset = map1.offset();
-            self.camera = Camera::from_map_size(map_size, map_offset);
+            self.camera = Camera::from_map_size(map1.size, map1.offset);
         }
         self.bg_colour = map_set.bg_colour;
         // if let Some(track) = map_set.music_track {
@@ -101,19 +98,29 @@ impl WalkaroundState {
         self.particles.clear();
     }
     // TODO: Collision layer
-    pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize, split_point: Option<usize>) {
+    pub fn load_map_bank(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        bank: usize,
+        split_point: Option<usize>,
+    ) {
         let map_info = system.maps()[bank].clone();
-        let layers: Vec<LayerInfo> = map_info.layers.into_iter().enumerate().map(|(i, layer)| LayerInfo {
-            origin: PackedI16::from_i16(0, 0),
-            size: PackedI16::from_i16(
-                layer.width().try_into().unwrap(),
-                layer.height().try_into().unwrap(),
-            ),
-            offset: PackedI16::from_i16(0, 0),
-            source_layer: i,
-            transparent: Some(0),
-            ..LayerInfo::DEFAULT_MAP
-        }).collect();
+        let layers: Vec<LayerInfo> = map_info
+            .layers
+            .into_iter()
+            .enumerate()
+            .map(|(i, layer)| LayerInfo {
+                origin: Vec2::new(0, 0),
+                size: Vec2::new(
+                    layer.width().try_into().unwrap(),
+                    layer.height().try_into().unwrap(),
+                ),
+                offset: Vec2::new(0, 0),
+                source_layer: i,
+                transparent: Some(0),
+                ..LayerInfo::DEFAULT_MAP
+            })
+            .collect();
         let (bg, fg) = if let Some(split_point) = split_point {
             layers.split_at(split_point)
         } else {
@@ -406,7 +413,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
                                 self.dialogue.add_text(system, dialogue);
                             };
                         }
-                        x => {}
+                        _x => {}
                     }
                     break;
                 }

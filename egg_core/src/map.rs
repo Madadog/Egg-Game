@@ -2,10 +2,9 @@ use crate::{
     camera::CameraBounds,
     data::{
         map_data::MapIndex,
-        sound::{self, music::MusicTrack, SfxData},
+        sound::{music::MusicTrack, SfxData},
     },
     interact::{Interactable, StaticInteractable},
-    packed::{PackedI16, PackedU8},
     position::{touches_tile, Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper},
 };
@@ -99,12 +98,12 @@ impl From<StaticMapInfo<'static>> for MapInfo {
 /// Layers defined by map metadata. Separate from `TiledMap` layers.
 #[derive(Clone, Debug)]
 pub struct LayerInfo {
-    pub origin: PackedI16,
-    pub size: PackedI16,
-    pub offset: PackedI16,
+    pub origin: Vec2,
+    pub size: Vec2,
+    pub offset: Vec2,
     pub transparent: Option<u8>,
     /// (blit_segment, rotate_palette, shift_sprite_flags, UNUSED)
-    pub blit_rotate_and_flags: PackedU8,
+    pub blit_rotate_and_flags: (u8, u8, u8, u8),
     pub visible: bool,
     // pub source_bank: usize,
     pub source_layer: usize,
@@ -112,24 +111,24 @@ pub struct LayerInfo {
 }
 impl LayerInfo {
     pub const DEFAULT_MAP: Self = Self {
-        origin: PackedI16::from_i16(0, 0),
-        size: PackedI16::from_i16(30, 17),
-        offset: PackedI16::from_i16(0, 0),
+        origin: Vec2::new(0, 0),
+        size: Vec2::new(30, 17),
+        offset: Vec2::new(0, 0),
         transparent: None,
-        blit_rotate_and_flags: PackedU8::from_u8((4, 0, 0, 0)),
+        blit_rotate_and_flags: (4, 0, 0, 0),
         visible: true,
         source_layer: 0,
     };
     pub const fn new(x: i16, y: i16, w: i16, h: i16) -> Self {
         Self {
-            origin: PackedI16::from_i16(x, y),
-            size: PackedI16::from_i16(w, h),
+            origin: Vec2::new(x, y),
+            size: Vec2::new(w, h),
             ..Self::DEFAULT_MAP
         }
     }
     pub const fn with_offset(self, sx: i16, sy: i16) -> Self {
         Self {
-            offset: PackedI16::from_i16(sx, sy),
+            offset: Vec2::new(sx, sy),
             ..self
         }
     }
@@ -141,26 +140,18 @@ impl LayerInfo {
     }
     pub const fn with_blit_rot_flags(self, blit: u8, rot: u8, sprite_flag_shift: u8) -> Self {
         Self {
-            blit_rotate_and_flags: PackedU8::from_u8((blit, rot, sprite_flag_shift, 0)),
+            blit_rotate_and_flags: (blit, rot, sprite_flag_shift, 0),
             ..self
         }
     }
-    pub fn size(&self) -> Vec2 {
-        let size = self.size.to_i16();
-        Vec2::new(size.0, size.1)
-    }
-    pub fn offset(&self) -> Vec2 {
-        let offset = self.offset.to_i16();
-        Vec2::new(offset.0, offset.1)
-    }
     pub fn blit_segment(&self) -> u8 {
-        self.blit_rotate_and_flags.to_u8().0
+        self.blit_rotate_and_flags.0
     }
     pub fn palette_rotate(&self) -> u8 {
-        self.blit_rotate_and_flags.to_u8().1
+        self.blit_rotate_and_flags.1
     }
     pub fn shift_sprite_flags(&self) -> bool {
-        self.blit_rotate_and_flags.to_u8().2 != 0
+        self.blit_rotate_and_flags.2 != 0
     }
     pub fn draw_tic80(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         if !self.visible {
@@ -180,12 +171,12 @@ impl LayerInfo {
 impl<'a> From<LayerInfo> for MapOptions {
     fn from(map: LayerInfo) -> Self {
         MapOptions {
-            x: map.origin.x().into(),
-            y: map.origin.y().into(),
-            w: map.size.x().into(),
-            h: map.size.y().into(),
-            sx: map.offset.x().into(),
-            sy: map.offset.y().into(),
+            x: map.origin.x.into(),
+            y: map.origin.y.into(),
+            w: map.size.x.into(),
+            h: map.size.y.into(),
+            sx: map.offset.x.into(),
+            sy: map.offset.y.into(),
             transparent: map.transparent,
             scale: 1,
         }
@@ -204,9 +195,9 @@ pub enum WarpMode {
 
 #[derive(Clone, Debug)]
 pub struct Warp {
-    pub from: (PackedI16, PackedI16),
+    pub from: (Vec2, Vec2),
     pub map: Option<MapIndex>,
-    pub to: PackedI16,
+    pub to: Vec2,
     pub flip: Axis,
     pub mode: WarpMode,
     pub sound: Option<SfxData>,
@@ -215,10 +206,10 @@ pub struct Warp {
 impl Warp {
     pub const fn new(from: Hitbox, map: Option<MapIndex>, to: Vec2) -> Self {
         let from = (
-            PackedI16::from_i16(from.x, from.y),
-            PackedI16::from_i16(from.w, from.h),
+            Vec2::new(from.x, from.y),
+            Vec2::new(from.w, from.h),
         );
-        let to = PackedI16::from_i16(to.x, to.y);
+        let to = Vec2::new(to.x, to.y);
         Self {
             from,
             map,
@@ -253,14 +244,14 @@ impl Warp {
     }
     pub fn hitbox(&self) -> Hitbox {
         Hitbox::new(
-            self.from.0.x(),
-            self.from.0.y(),
-            self.from.1.x(),
-            self.from.1.y(),
+            self.from.0.x,
+            self.from.0.y,
+            self.from.1.x,
+            self.from.1.y,
         )
     }
     pub fn target(&self) -> Vec2 {
-        Vec2::new(self.to.x(), self.to.y())
+        Vec2::new(self.to.x, self.to.y)
     }
 }
 

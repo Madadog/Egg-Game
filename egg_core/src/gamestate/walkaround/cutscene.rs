@@ -1,4 +1,8 @@
-use crate::{data::sound, position::Vec2, system::{ConsoleApi, ConsoleHelper}};
+use crate::{
+    data::sound,
+    position::Vec2,
+    system::{ConsoleApi, ConsoleHelper},
+};
 
 use super::WalkaroundState;
 
@@ -39,7 +43,7 @@ impl Cutscene {
             .iter()
             .all(|x| x.is_done(walkaround))
     }
-    pub fn is_cutscene_done(&self, walkaround: &WalkaroundState) -> bool {
+    pub fn is_cutscene_done(&self, _walkaround: &WalkaroundState) -> bool {
         self.stages.get(self.index).is_none()
     }
     pub fn next_stage(&mut self, walkaround: &WalkaroundState) -> CutsceneState {

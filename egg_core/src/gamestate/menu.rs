@@ -1,16 +1,11 @@
-use std::str::FromStr;
-
 use tic80_api::core::PrintOptions;
 use tic80_api::core::StaticSpriteOptions;
 
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::dialogue_data::OPTIONS_TITLE;
-use crate::data::map_data::MapIndex;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
-use crate::map::MapInfo;
-use crate::map::StaticMapInfo;
 use crate::position::*;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
@@ -179,12 +174,12 @@ impl MenuState {
             }
             Walk => return Some(GameState::Walkaround),
             MapTest => return Some(GameState::MainMenu(MenuState::map_select())),
-            MapBankSelect(x, _) => {
+            MapBankSelect(_x, _) => {
                 // walkaround_state.load_map(system, MapIndex((*x).into()).map())
                 walkaround_state.load_map_bank(system, 2, None);
             }
             MusicTest => todo!(),
-            MusicSelect(x, _) => todo!(),
+            MusicSelect(_x, _) => todo!(),
         };
         None
     }

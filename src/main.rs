@@ -107,7 +107,7 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
+fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2dBundle::default());
     let screen = Image::new_fill(
         Extent3d {
@@ -148,7 +148,7 @@ impl GameAssets {
             ],
         }
     }
-    pub fn load_state(&self, assets: &AssetServer) -> LoadState {
+    pub fn load_state(&self, _assets: &AssetServer) -> LoadState {
         // assets.get_group_load_state(
         //     [self.font.id(), self.sheet.id()]
         //         .iter()
@@ -462,13 +462,13 @@ fn step_state(
         state.walkaround.map_viewer.focused = !state.walkaround.map_viewer.focused;
         state.walkaround.map_viewer.layer_index = 0;
     }
-    if keys.just_pressed(KeyCode::Semicolon) && state.walkaround.current_map.layers.len()>0 {
+    if keys.just_pressed(KeyCode::Semicolon) && state.walkaround.current_map.layers.len() > 0 {
         info!("------------------------");
         info!("REMOVED BG LAYER");
         info!("{:#?}", state.walkaround.current_map.layers.remove(0));
         info!("------------------------");
     }
-    if keys.just_pressed(KeyCode::Quote)  && state.walkaround.current_map.fg_layers.len()>0 {
+    if keys.just_pressed(KeyCode::Quote) && state.walkaround.current_map.fg_layers.len() > 0 {
         info!("------------------------");
         info!("REMOVED FG LAYER");
         info!("{:#?}", state.walkaround.current_map.fg_layers.remove(0));

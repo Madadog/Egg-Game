@@ -12,8 +12,7 @@ use egg_core::{
     },
 };
 use tiny_skia::{
-    Color, FillRule, IntSize, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint,
-    PremultipliedColorU8, Rect, Stroke, Transform,
+    Color, FillRule, IntSize, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,
 };
 
 use crate::tiled::TiledMap;
@@ -971,8 +970,11 @@ impl ConsoleApi for FantasyConsole {
                 if let (Ok(x_index), Ok(y_index)) =
                     ((opts.x + i).try_into(), (opts.y + j).try_into())
                 {
-                    if let Some(index) = self.maps[bank].layers.get(layer).and_then(|layer| layer.get(x_index, y_index)) {
-                        
+                    if let Some(index) = self.maps[bank]
+                        .layers
+                        .get(layer)
+                        .and_then(|layer| layer.get(x_index, y_index))
+                    {
                         // if index == 0 {
                         //     continue;
                         // } else {

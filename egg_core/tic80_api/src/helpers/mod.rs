@@ -14,9 +14,6 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-
-
 pub mod input_manager;
 
 pub const SWEETIE_16: [[u8; 3]; 16] = [
