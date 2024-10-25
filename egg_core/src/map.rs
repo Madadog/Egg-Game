@@ -5,7 +5,7 @@ use crate::{
         sound::{music::MusicTrack, SfxData},
     },
     interact::{Interactable, StaticInteractable},
-    position::{touches_tile, Hitbox, Vec2},
+    position::{touches_tile, Collider, Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper},
 };
 use tic80_api::core::MapOptions;
@@ -26,7 +26,6 @@ pub trait TileMap {
     fn draw(&self, console: &mut impl ConsoleApi);
     fn step(&mut self, console: &impl ConsoleApi);
 }*/
-
 #[derive(Clone, Debug)]
 pub struct StaticMapInfo<'a> {
     pub layers: &'a [LayerInfo],
@@ -95,7 +94,7 @@ impl From<StaticMapInfo<'static>> for MapInfo {
     }
 }
 
-/// Layers defined by map metadata. Separate from `TiledMap` layers.
+/// Layers defined by map metadata. References external data stored by the console.
 #[derive(Clone, Debug)]
 pub struct LayerInfo {
     pub origin: Vec2,
@@ -107,10 +106,11 @@ pub struct LayerInfo {
     pub visible: bool,
     // pub source_bank: usize,
     pub source_layer: usize,
+    pub colliders: Vec<Collider>,
     // pub display_mode: BG, FG, Object
 }
 impl LayerInfo {
-    pub const DEFAULT_MAP: Self = Self {
+    pub const DEFAULT_LAYER: Self = Self {
         origin: Vec2::new(0, 0),
         size: Vec2::new(30, 17),
         offset: Vec2::new(0, 0),
@@ -118,31 +118,25 @@ impl LayerInfo {
         blit_rotate_and_flags: (4, 0, 0, 0),
         visible: true,
         source_layer: 0,
+        colliders: Vec::new(),
     };
     pub const fn new(x: i16, y: i16, w: i16, h: i16) -> Self {
-        Self {
-            origin: Vec2::new(x, y),
-            size: Vec2::new(w, h),
-            ..Self::DEFAULT_MAP
-        }
+        let mut layer = Self::DEFAULT_LAYER;
+        layer.origin = Vec2::new(x, y);
+        layer.size = Vec2::new(w, h);
+        layer
     }
-    pub const fn with_offset(self, sx: i16, sy: i16) -> Self {
-        Self {
-            offset: Vec2::new(sx, sy),
-            ..self
-        }
+    pub const fn with_offset(mut self, sx: i16, sy: i16) -> Self {
+        self.offset = Vec2::new(sx, sy);
+        self
     }
-    pub const fn with_trans(self, transparent: &'static [u8]) -> Self {
-        Self {
-            transparent: Some(transparent[0]),
-            ..self
-        }
+    pub const fn with_trans(mut self, transparent: &'static [u8]) -> Self {
+        self.transparent = Some(transparent[0]);
+        self
     }
-    pub const fn with_blit_rot_flags(self, blit: u8, rot: u8, sprite_flag_shift: u8) -> Self {
-        Self {
-            blit_rotate_and_flags: (blit, rot, sprite_flag_shift, 0),
-            ..self
-        }
+    pub const fn with_blit_rot_flags(mut self, blit: u8, rot: u8, sprite_flag_shift: u8) -> Self {
+        self.blit_rotate_and_flags = (blit, rot, sprite_flag_shift, 0);
+        self
     }
     pub fn blit_segment(&self) -> u8 {
         self.blit_rotate_and_flags.0
@@ -205,10 +199,7 @@ pub struct Warp {
 
 impl Warp {
     pub const fn new(from: Hitbox, map: Option<MapIndex>, to: Vec2) -> Self {
-        let from = (
-            Vec2::new(from.x, from.y),
-            Vec2::new(from.w, from.h),
-        );
+        let from = (Vec2::new(from.x, from.y), Vec2::new(from.w, from.h));
         let to = Vec2::new(to.x, to.y);
         Self {
             from,
@@ -243,12 +234,7 @@ impl Warp {
         self.map
     }
     pub fn hitbox(&self) -> Hitbox {
-        Hitbox::new(
-            self.from.0.x,
-            self.from.0.y,
-            self.from.1.x,
-            self.from.1.y,
-        )
+        Hitbox::new(self.from.0.x, self.from.0.y, self.from.1.x, self.from.1.y)
     }
     pub fn target(&self) -> Vec2 {
         Vec2::new(self.to.x, self.to.y)
@@ -294,7 +280,6 @@ pub fn layer_collides_flags(
         false
     }
 }
-
 
 pub fn layer_collides(
     system: &mut impl ConsoleApi,

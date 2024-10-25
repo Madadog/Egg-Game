@@ -9,7 +9,7 @@ use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapInfo};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, Player};
-use crate::position::Vec2;
+use crate::position::{Collider, Vec2};
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState};
 use log::info;
@@ -20,11 +20,11 @@ use self::cutscene::Cutscene;
 
 use super::debug::MapViewer;
 use super::inventory::InventoryUi;
-// use super::{EggInput};
+
 mod creatures;
 mod cutscene;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WalkaroundState {
     pub player: Player,
     pub companion_trail: CompanionTrail<16>,
@@ -38,6 +38,7 @@ pub struct WalkaroundState {
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,
     pub bg_colour: u8,
+    pub default_map_colliders: Vec<Collider>,
 }
 impl WalkaroundState {
     pub fn new() -> Self {
@@ -54,6 +55,7 @@ impl WalkaroundState {
             particles: ParticleList::new(),
             cutscene: None,
             bg_colour: 0,
+            default_map_colliders: Vec::new(),
         }
     }
     pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
@@ -118,7 +120,7 @@ impl WalkaroundState {
                 offset: Vec2::new(0, 0),
                 source_layer: i,
                 transparent: Some(0),
-                ..LayerInfo::DEFAULT_MAP
+                ..LayerInfo::DEFAULT_LAYER
             })
             .collect();
         let (bg, fg) = if let Some(split_point) = split_point {
@@ -212,7 +214,6 @@ impl WalkaroundState {
                 self.cutscene = Some(Cutscene::pet_dog(*vec, self.player.pos, *flip));
                 None
             }
-            _ => Some(HOUSE_BACKYARD_DOGHOUSE),
         }
     }
 

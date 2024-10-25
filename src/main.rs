@@ -6,19 +6,11 @@ use bevy::utils::HashMap;
 use egg_core::gamestate::inventory::InventoryUi;
 
 use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
-use egg_core::system::{ConsoleApi, StaticDrawParams};
+use egg_core::system::ConsoleApi;
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
 
-// static WALKAROUND_STATE: RwLock<WalkaroundState> = RwLock::new(WalkaroundState::new());
-// static TIME: AtomicI32 = AtomicI32::new(0);
-// static PAUSE: AtomicBool = AtomicBool::new(false);
-// static RNG: RwLock<Lazy<Pcg32>> = RwLock::new(Lazy::new(Pcg32::default));
-// static DEBUG_INFO: DebugInfo = DebugInfo::default();
-// static GAMESTATE: RwLock<GameState> = RwLock::new(GameState::Animation(0));
-// static BG_COLOUR: AtomicU8 = AtomicU8::new(0);
-// static SYNC_HELPER: SyncHelper = SyncHelper::new();
 mod fantasy_console;
 mod tiled;
 

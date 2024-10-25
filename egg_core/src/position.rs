@@ -244,8 +244,10 @@ pub fn touches_tile(flags: u8, point: Vec2) -> bool {
     }
 }
 
-struct Collider {
-    data: [[bool; 8]; 8],
+/// An 8x8 custom bitmap collider
+#[derive(Clone, Debug, Default)]
+pub struct Collider {
+    pub data: [[bool; 8]; 8],
 }
 impl Collider {
     pub fn get(&self, x: usize, y: usize) -> bool {

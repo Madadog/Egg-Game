@@ -307,7 +307,7 @@ fn slide_ramp(
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Companion {
     Dog,
 }
@@ -343,7 +343,6 @@ impl Companion {
                     1,
                 )
             }
-            _ => StaticDrawParams::new(0, 0, 0, StaticSpriteOptions::default(), None, 0),
         }
     }
     pub fn interact(
@@ -376,7 +375,7 @@ impl Companion {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CompanionTrail<const N: usize> {
     positions: [Vec2; N],
     directions: [(i8, i8); N],
@@ -436,7 +435,7 @@ impl<const N: usize> CompanionTrail<N> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CompanionList {
     pub companions: [Option<Companion>; 2],
 }

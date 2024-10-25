@@ -1,7 +1,7 @@
 use crate::{position::Vec2, system::ConsoleApi};
 use tic80_api::core::StaticSpriteOptions;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ParticleDraw {
     Rect(i32, i32, u8),
     RectB(i32, i32, u8),
@@ -19,7 +19,7 @@ impl ParticleDraw {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Particle {
     draw: ParticleDraw,
     lifetime: usize,
@@ -55,7 +55,7 @@ impl Particle {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParticleList {
     particles: Vec<Particle>,
 }

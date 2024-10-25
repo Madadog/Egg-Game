@@ -668,7 +668,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn mget(&self, x: i32, y: i32) -> i32 {
         // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        // TODO: Load more Tiled maps, add sprite scale, add the rest of town, add intro, remove tiny_skia, optimise drawing
         self.map_get(self.sync_helper.last_bank() as usize, 0, x, y)
             .try_into()
             .unwrap()

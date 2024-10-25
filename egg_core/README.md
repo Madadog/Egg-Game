@@ -31,7 +31,6 @@ TODO: Simplify game setup.
 |`src/interact.rs`|Struct for interactable map objects.|
 |`src/lib.rs`|Exports everything to the front-end.|
 |`src/map.rs`|Structs used in `map_data.rs`.|
-|`src/packed.rs`|Structs for defining a u32 as being 4 u8s. TODO: Remove|
 |`src/particles.rs`|Particles. After generation, they act and are drawn according to their initial parameters.|
 |`src/player.rs`|Player struct and animation helper functions.|
 |`src/position.rs`|Vec2 and Hitbox types used for collision detection.|

@@ -242,8 +242,18 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
             hitbox: Hitbox::new(53, 28, 8, 10),
             interaction: StaticInteraction::Text(EGG_1),
             sprite: Some(&[
-                StaticAnimFrame::new(Vec2::new(0, 0), 524, 30, StaticSpriteOptions::transparent_zero()),
-                StaticAnimFrame::new(Vec2::new(0, -1), 524, 30, StaticSpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(
+                    Vec2::new(0, 0),
+                    524,
+                    30,
+                    StaticSpriteOptions::transparent_zero(),
+                ),
+                StaticAnimFrame::new(
+                    Vec2::new(0, -1),
+                    524,
+                    30,
+                    StaticSpriteOptions::transparent_zero(),
+                ),
             ]),
         },
         StaticInteractable {
@@ -263,8 +273,18 @@ pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
         interaction: StaticInteraction::Text(EGG_1),
         sprite: Some(&[
-            StaticAnimFrame::new(Vec2::new(0, 0), 524, 30, StaticSpriteOptions::transparent_zero()),
-            StaticAnimFrame::new(Vec2::new(0, -1), 524, 30, StaticSpriteOptions::transparent_zero()),
+            StaticAnimFrame::new(
+                Vec2::new(0, 0),
+                524,
+                30,
+                StaticSpriteOptions::transparent_zero(),
+            ),
+            StaticAnimFrame::new(
+                Vec2::new(0, -1),
+                524,
+                30,
+                StaticSpriteOptions::transparent_zero(),
+            ),
         ]),
     }],
     bg_colour: 1,
@@ -580,8 +600,18 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
             hitbox: Hitbox::new(3, 2 * 8, 8, 8),
             interaction: StaticInteraction::Text(DEFAULT),
             sprite: Some(&[
-                StaticAnimFrame::new(Vec2::new(0, 0), 646, 30, StaticSpriteOptions::transparent_zero()),
-                StaticAnimFrame::new(Vec2::new(0, 0), 647, 30, StaticSpriteOptions::transparent_zero()),
+                StaticAnimFrame::new(
+                    Vec2::new(0, 0),
+                    646,
+                    30,
+                    StaticSpriteOptions::transparent_zero(),
+                ),
+                StaticAnimFrame::new(
+                    Vec2::new(0, 0),
+                    647,
+                    30,
+                    StaticSpriteOptions::transparent_zero(),
+                ),
             ]),
         },
     ],
@@ -590,12 +620,13 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 // Somehow reduce code size...
 // Reduce necessary tracked state
 // Functionify
-// Zip strings if necessary...
-// serialize, zip, embed, unzip, deserialize...
-//TODO: Load mayor office
-//TODO: Map workflow
+//TODO: Tiled map collisions
 //TODO: Better mouse support
 //TODO: Save support
+//TODO: Add increment/decrement to menu UI
+//TODO: Fix keyboard support
+//TODO: Add test cases for game
+//TODO: Make ellipses draw properly
 //TODO: dialogue files
 //TODO: Intro cutscene
 //TODO: Remove unsafe code
@@ -604,7 +635,6 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 //TODO: Platformer, turn-based RPG, geometric puzzle, danmaku
 //TODO: non-uniform pixels - 16 bit graphics - 3d
 //TODO: Egg OS
-
 
 //TODO: Creatures collide
 //TODO: Chicken <-> egg loop

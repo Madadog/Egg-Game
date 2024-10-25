@@ -1,8 +1,9 @@
 use crate::{
-    position::{Hitbox, Vec2}, system::{StaticDrawParams, ConsoleApi},
+    position::{Hitbox, Vec2},
+    system::{ConsoleApi, StaticDrawParams},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Creature {
     pub hitbox: Hitbox,
     pub state: CreatureState,
@@ -30,7 +31,10 @@ impl Creature {
                 if timer.tick() {
                     self.state = CreatureState::Walking(
                         Timer(system.rng().rand_u8().min(80)),
-                        Vec2::new((system.rng().rand_u8() % 3) as i16 - 1, (system.rng().rand_u8() % 3) as i16 - 1),
+                        Vec2::new(
+                            (system.rng().rand_u8() % 3) as i16 - 1,
+                            (system.rng().rand_u8() % 3) as i16 - 1,
+                        ),
                     );
                 }
             }
@@ -76,7 +80,7 @@ impl Creature {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Timer(pub u8);
 
 impl Timer {
@@ -89,7 +93,7 @@ impl Timer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CreatureState {
     Idle(Timer),
     Walking(Timer, Vec2),

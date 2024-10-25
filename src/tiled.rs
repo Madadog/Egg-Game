@@ -1,12 +1,6 @@
 use bevy::{
-    asset::{
-        io::{file::FileAssetReader, AssetReader, Reader},
-        Asset, AssetApp, AssetLoader, AsyncReadExt, LoadContext, LoadedAsset,
-    },
-    log::tracing_subscriber::fmt::Layer,
-    prelude::Plugin,
-    reflect::TypePath,
-    utils::BoxedFuture,
+    asset::{io::Reader, AssetApp, AssetLoader, AsyncReadExt, LoadContext},
+    prelude::{Asset, Plugin, TypePath},
 };
 use egg_core::{
     map::{LayerInfo, MapInfo},
@@ -73,7 +67,7 @@ impl From<TiledLayer> for LayerInfo {
                 other.height.try_into().unwrap(),
             ),
             offset: Vec2::new(0, 0),
-            ..Self::DEFAULT_MAP
+            ..Self::DEFAULT_LAYER
         }
     }
 }

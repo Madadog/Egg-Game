@@ -6,7 +6,7 @@ use crate::{
 
 use super::WalkaroundState;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Cutscene {
     stages: Vec<Vec<CutsceneItem>>,
     index: usize,
@@ -69,7 +69,7 @@ pub enum CutsceneState {
     Finished,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CutsceneItem {
     WalkPlayer(Vec2),
     FacePlayer((i8, i8)),

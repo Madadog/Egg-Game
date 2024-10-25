@@ -83,7 +83,6 @@ impl InventoryUiState {
             Self::Eggs(_) => 1,
             Self::Options => 2,
             Self::Close => 3,
-            _ => 2,
         }
     }
     pub fn change(&mut self, system: &mut impl ConsoleApi) {
@@ -208,8 +207,7 @@ impl InventoryUi {
         // Entries is fixed-length so this can't fail
         let width = entries
             .iter()
-            .map(|x| {
-                print_width(system, x, false, small_text)})
+            .map(|x| print_width(system, x, false, small_text))
             .max()
             .unwrap();
         let side_column = width + 3;

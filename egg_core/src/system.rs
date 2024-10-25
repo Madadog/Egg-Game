@@ -209,7 +209,6 @@ pub enum DataChannel {
     String,
 }
 
-// TODO: finish console map support
 /// For simplicity all layers under a map have the same width and height.
 /// Ordering of layers is: first at the bottom, last at the top.
 #[derive(Clone, Debug)]
