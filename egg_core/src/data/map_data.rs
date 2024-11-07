@@ -620,6 +620,7 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 // Somehow reduce code size...
 // Reduce necessary tracked state
 // Functionify
+//TODO: Array2D images?
 //TODO: Tiled map collisions
 //TODO: Better mouse support
 //TODO: Save support

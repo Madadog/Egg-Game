@@ -254,8 +254,22 @@ impl Collider {
         let (x, y) = (x % 8, y % 8);
         self.data[y][x]
     }
-    pub fn set(&mut self, x: usize, y: usize) {
+    pub fn set(&mut self, x: usize, y: usize, value: bool) {
         let (x, y) = (x % 8, y % 8);
-        self.data[y][x] = true;
+        self.data[y][x] = value;
+    }
+    pub fn from_sprite(system: &impl ConsoleApi, index: usize) -> Collider {
+        let bitmap = system.get_bitmap_indexed(2);
+        let mut collider = Collider::default();
+        for i in 0..8 {
+            for j in 0..8 {
+                let sprite_offset = (index % 32) * 8 + (index / 32) * 2048;
+                let pixel = bitmap[sprite_offset + i + j * 256];
+                if pixel != 0 && pixel != 255 {
+                    collider.set(i, j, true);
+                }
+            }
+        }
+        collider
     }
 }

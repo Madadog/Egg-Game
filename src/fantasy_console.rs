@@ -1012,6 +1012,15 @@ impl ConsoleApi for FantasyConsole {
         (self.screen.width(), self.screen.height())
     }
 
+    fn get_bitmap_indexed(&self, id: usize) -> &[u8] {
+        match id {
+            0 => self.screen.data(),
+            1 => self.overlay_screen.data(),
+            2 => &self.indexed_sprites.data,
+            _ => panic!("bitmap {id} does not exist"),
+        }
+    }
+
     fn draw_outline(
         &mut self,
         id: i32,

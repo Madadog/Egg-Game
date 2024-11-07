@@ -18,7 +18,7 @@ use crate::{
     camera::Camera,
     data::sound,
     interact::{Interactable, Interaction},
-    map::{Axis, MapInfo},
+    map::{Axis, LayerInfo, MapInfo},
     position::{Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper, StaticDrawParams},
 };
@@ -158,42 +158,24 @@ impl Player {
         let point_diag = player_hitbox.dd_corner(Vec2::new(dx, dy));
         let mut diagonal_collision = false;
         for layer in current_map.layers.iter() {
-            let layer_hitbox = Hitbox::new(
-                layer.offset.x,
-                layer.offset.y,
-                layer.size.x * 8,
-                layer.size.y * 8,
-            );
+            let layer_hitbox = layer.hitbox();
             if !layer_hitbox.touches(delta_hitbox) {
                 continue;
             }
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
                 system,
+                layer,
                 [points_dx, points_dx_up, points_dx_down],
-                layer_hitbox,
-                layer.origin.x.into(),
-                layer.origin.y.into(),
-                layer.shift_sprite_flags(),
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
                 system,
+                layer,
                 [points_dy, points_dy_left, points_dy_right],
-                layer_hitbox,
-                layer.origin.x.into(),
-                layer.origin.y.into(),
-                layer.shift_sprite_flags(),
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag {
-                if layer_collides_flags(
-                    system,
-                    point_diag,
-                    layer_hitbox,
-                    layer.origin.x.into(),
-                    layer.origin.y.into(),
-                    layer.shift_sprite_flags(),
-                ) {
+                if layer_collides_flags(system, point_diag, layer) {
                     diagonal_collision = true;
                 }
             }
@@ -252,25 +234,15 @@ impl Default for Player {
 }
 fn test_many_points(
     system: &mut impl ConsoleApi,
-    p: [Option<[Vec2; 2]>; 3],
-    layer_hitbox: Hitbox,
-    layer_x: i32,
-    layer_y: i32,
-    spr_flag_offset: bool,
+    layer: &LayerInfo,
+    points: [Option<[Vec2; 2]>; 3],
     mut side_flags: [bool; 3],
 ) -> [bool; 3] {
     use crate::map::layer_collides_flags;
-    for (i, points) in p.iter().enumerate() {
+    for (i, points) in points.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides_flags(
-                    system,
-                    *point,
-                    layer_hitbox,
-                    layer_x,
-                    layer_y,
-                    spr_flag_offset,
-                ) {
+                if layer_collides_flags(system, *point, layer) {
                     side_flags[i] = true;
                 }
             });

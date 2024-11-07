@@ -161,6 +161,14 @@ impl LayerInfo {
         }
         system.map_draw(bank, self.source_layer, options);
     }
+    pub fn hitbox(&self) -> Hitbox {
+        Hitbox::new(
+            self.offset.x,
+            self.offset.y,
+            self.size.x * 8,
+            self.size.y * 8,
+        )
+    }
 }
 impl<'a> From<LayerInfo> for MapOptions {
     fn from(map: LayerInfo) -> Self {
@@ -257,25 +265,25 @@ impl Axis {
     }
 }
 
-pub fn layer_collides_flags(
-    system: &mut impl ConsoleApi,
-    point: Vec2,
-    layer_hitbox: Hitbox,
-    layer_x: i32,
-    layer_y: i32,
-    spr_flag_offset: bool,
-) -> bool {
+pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &LayerInfo) -> bool {
+    let layer_hitbox = layer.hitbox();
     if layer_hitbox.touches_point(point) {
         let map_point = Vec2::new(
-            (point.x - layer_hitbox.x) / 8 + layer_x as i16,
-            (point.y - layer_hitbox.y) / 8 + layer_y as i16,
+            (point.x - layer_hitbox.x) / 8 + layer.origin.x as i16,
+            (point.y - layer_hitbox.y) / 8 + layer.origin.y as i16,
         );
-        let spr_flag_offset = if spr_flag_offset { 256 } else { 0 };
+        let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
         let id = system.mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
-        touches_tile(
+        let mget_collision = touches_tile(
             *system.get_sprite_flags().get(id as usize).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
-        )
+        );
+        let bitmap_collision = layer
+            .colliders
+            .get((map_point.x % layer.size.x) as usize + (map_point.y * layer.size.x) as usize)
+            .map(|collider| collider.get(point.x as usize, point.y as usize))
+            .unwrap_or_default();
+        mget_collision || bitmap_collision
     } else {
         false
     }

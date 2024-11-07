@@ -9,7 +9,7 @@ const WIDTH: u32 = 32;
 pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
     system.cls(0);
     for x in 0..(WIDTH as i32) {
-        for y in 0..16 {
+        for y in 0..17 {
             system.spr(
                 x + y * (WIDTH as i32) + indice as i32,
                 x * 8,
@@ -17,6 +17,25 @@ pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
                 StaticSpriteOptions::default(),
             );
         }
+    }
+    if system.btn(5) {
+        let size = system.screen_size();
+        for x in 0..(size.0 as i32) {
+            for y in 0..(size.1 as i32) {
+                let color = system.get_bitmap_indexed(2)
+                    [(x + y * 256) as usize + ((indice % 32) * 8 + (indice / 32) * 2048) as usize];
+                system.pix(x, y, color);
+            }
+        }
+        system.print_alloc(
+            "RAW DATA:",
+            0,
+            0,
+            PrintOptions {
+                color: 12,
+                ..PrintOptions::default()
+            },
+        );
     }
     if system.btn(4) {
         for i in 0..255 {

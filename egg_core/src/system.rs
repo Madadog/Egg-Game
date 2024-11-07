@@ -401,6 +401,13 @@ pub trait ConsoleApi {
     // TODO: No screen. Just expose `bitmaps: Vec<bitmap>`. By convention we can have 0=screen, 1=ovr, 2=sprites etc.
     // get_bitmap(index)
     fn screen_size(&self) -> (u32, u32);
+    /// Grab a whole bitmap. By convention:
+    ///
+    /// 0. Screen
+    /// 1. OVR layer
+    /// 2. Indexed sprites
+    /// 3. RGBA sprites
+    fn get_bitmap_indexed(&self, id: usize) -> &[u8];
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {

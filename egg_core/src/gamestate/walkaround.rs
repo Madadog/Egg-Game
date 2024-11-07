@@ -99,29 +99,57 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    // TODO: Collision layer
+    // TODO: FG layers
     pub fn load_map_bank(
         &mut self,
         system: &mut impl ConsoleApi,
         bank: usize,
         split_point: Option<usize>,
     ) {
-        let map_info = system.maps()[bank].clone();
-        let layers: Vec<LayerInfo> = map_info
+        let mut map_info = system.maps()[bank].clone();
+        let mut collision_layer = map_info
             .layers
-            .into_iter()
-            .enumerate()
-            .map(|(i, layer)| LayerInfo {
+            .pop()
+            .map(|layer| LayerInfo {
                 origin: Vec2::new(0, 0),
                 size: Vec2::new(
                     layer.width().try_into().unwrap(),
                     layer.height().try_into().unwrap(),
                 ),
                 offset: Vec2::new(0, 0),
-                source_layer: i,
+                source_layer: 0,
                 transparent: Some(0),
+                visible: false,
                 ..LayerInfo::DEFAULT_LAYER
             })
+            .unwrap();
+        let mut colliders = Vec::new();
+        for j in 0..collision_layer.size.y {
+            for i in 0..collision_layer.size.x {
+                let tile = system.map_get(bank, 0, i.into(), j.into());
+                colliders.push(Collider::from_sprite(system, tile));
+            }
+        }
+        collision_layer.colliders = colliders;
+        let layers: Vec<LayerInfo> = [collision_layer]
+            .into_iter()
+            .chain(
+                map_info
+                    .layers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, layer)| LayerInfo {
+                        origin: Vec2::new(0, 0),
+                        size: Vec2::new(
+                            layer.width().try_into().unwrap(),
+                            layer.height().try_into().unwrap(),
+                        ),
+                        offset: Vec2::new(0, 0),
+                        source_layer: i + 1,
+                        transparent: Some(0),
+                        ..LayerInfo::DEFAULT_LAYER
+                    }),
+            )
             .collect();
         let (bg, fg) = if let Some(split_point) = split_point {
             layers.split_at(split_point)
