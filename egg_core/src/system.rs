@@ -244,21 +244,23 @@ impl GameMap {
 
 #[derive(Clone, Debug)]
 pub struct MapLayer {
+    pub name: String,
     width: usize,
     height: usize,
     pub data: Vec<usize>,
 }
 impl MapLayer {
-    pub fn new(width: usize, height: usize, data: Vec<usize>) -> Self {
+    pub fn new(name: String, width: usize, height: usize, data: Vec<usize>) -> Self {
         assert!(width * height == data.len());
         Self {
+            name,
             width,
             height,
             data,
         }
     }
     pub fn new_empty(width: usize, height: usize) -> Self {
-        Self::new(width, height, vec![0; width * height])
+        Self::new(String::new(), width, height, vec![0; width * height])
     }
     pub fn width(&self) -> usize {
         self.width

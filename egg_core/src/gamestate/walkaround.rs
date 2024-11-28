@@ -106,21 +106,27 @@ impl WalkaroundState {
         bank: usize,
         split_point: Option<usize>,
     ) {
-        let mut map_info = system.maps()[bank].clone();
-        let mut collision_layer = map_info
+        let mut game_map = system.maps()[bank].clone();
+        for layer in game_map.layers.iter() {
+            info!("{}", layer.name);
+        }
+        let mut collision_layer = game_map
             .layers
             .pop()
-            .map(|layer| LayerInfo {
-                origin: Vec2::new(0, 0),
-                size: Vec2::new(
-                    layer.width().try_into().unwrap(),
-                    layer.height().try_into().unwrap(),
-                ),
-                offset: Vec2::new(0, 0),
-                source_layer: 0,
-                transparent: Some(0),
-                visible: false,
-                ..LayerInfo::DEFAULT_LAYER
+            .map(|layer| {
+                info!("collision layer: {}", layer.name);
+                LayerInfo {
+                    origin: Vec2::new(0, 0),
+                    size: Vec2::new(
+                        layer.width().try_into().unwrap(),
+                        layer.height().try_into().unwrap(),
+                    ),
+                    offset: Vec2::new(0, 0),
+                    source_layer: 0,
+                    transparent: Some(0),
+                    visible: false,
+                    ..LayerInfo::DEFAULT_LAYER
+                }
             })
             .unwrap();
         let mut colliders = Vec::new();
@@ -130,14 +136,36 @@ impl WalkaroundState {
                 colliders.push(Collider::from_sprite(system, tile));
             }
         }
+        for layer in game_map.layers.iter() {
+            info!("{}", layer.name);
+        }
+        // let fg = map_info.layers.clone().retain(|layer| layer.name.to_lowercase().starts_with("fg"));
+        let fg: Vec<LayerInfo> = game_map
+            .layers
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, layer)| layer.name.to_lowercase().starts_with("fg"))
+            .map(|(i, layer)| LayerInfo {
+                origin: Vec2::new(0, 0),
+                size: Vec2::new(
+                    layer.width().try_into().unwrap(),
+                    layer.height().try_into().unwrap(),
+                ),
+                offset: Vec2::new(0, 0),
+                source_layer: i + 1,
+                transparent: Some(0),
+                ..LayerInfo::DEFAULT_LAYER
+            })
+            .collect();
         collision_layer.colliders = colliders;
         let layers: Vec<LayerInfo> = [collision_layer]
             .into_iter()
             .chain(
-                map_info
+                game_map
                     .layers
                     .into_iter()
                     .enumerate()
+                    .filter(|(_, layer)| !layer.name.to_lowercase().starts_with("fg"))
                     .map(|(i, layer)| LayerInfo {
                         origin: Vec2::new(0, 0),
                         size: Vec2::new(
@@ -151,14 +179,9 @@ impl WalkaroundState {
                     }),
             )
             .collect();
-        let (bg, fg) = if let Some(split_point) = split_point {
-            layers.split_at(split_point)
-        } else {
-            (layers.as_slice(), [].as_slice())
-        };
         let map_info = MapInfo {
-            layers: Vec::from(bg),
-            fg_layers: Vec::from(fg),
+            layers,
+            fg_layers: fg,
             bank,
             ..Default::default()
         };

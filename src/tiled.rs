@@ -112,28 +112,6 @@ impl TiledMap {
             layer.flatten_gids(&self.tilesets);
         }
     }
-    pub fn into_map_info(self, bank: usize) -> MapInfo {
-        let mut bg_layers = Vec::new();
-        let mut fg_layers = Vec::new();
-        let mut bg_layer_index = 0;
-        for layer in self.layers {
-            if layer.name.starts_with("fg") {
-                fg_layers.push(layer.into());
-            } else {
-                bg_layers.push(layer.into_layer_info(bg_layer_index));
-                bg_layer_index += 1;
-            }
-        }
-        // TODO: map don't draw properly. Look at transparent colours (or special case it)
-        bg_layers.reverse();
-        fg_layers.reverse();
-        MapInfo {
-            layers: bg_layers,
-            fg_layers,
-            bank,
-            ..Default::default()
-        }
-    }
 }
 
 pub struct TiledMapPlugin;

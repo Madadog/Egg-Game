@@ -267,18 +267,25 @@ impl FantasyConsole {
         }
     }
     pub fn set_maps(&mut self, maps: Vec<TiledMap>) {
+        info!("lodding maps");
         let maps = maps
             .into_iter()
-            .map(|map| {
+            .enumerate()
+            .map(|(i, map)| {
+                info!("map {i}");
                 let layers = map
                     .layers
                     .into_iter()
-                    .map(|layer| MapLayer::new(layer.width, layer.height, layer.data))
+                    .map(|layer| {
+                        info!("layer: {}", layer.name);
+                        MapLayer::new(layer.name, layer.width, layer.height, layer.data)
+                    })
                     .collect();
                 GameMap::new(map.width, map.height, layers)
             })
             .collect();
         self.maps = maps;
+        panic!();
     }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
         if x >= 240 || y >= 136 || x < 0 || y < 0 {
