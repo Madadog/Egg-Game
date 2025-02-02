@@ -169,28 +169,32 @@ fn load_assets(
             LoadState::Loaded => {
                 let font = images.get(&game_assets.font);
                 let sheet = images.get(&game_assets.sheet);
-                if font.is_none() || sheet.is_none() {
-                    return;
+                if let (Some(font), Some(sheet)) = (font, sheet) {
+                    println!("Okay I got the fonts and stuff!");
+                    // let maps = maps.get(&game_assets.maps).unwrap();
+                    let maps: Vec<Option<TiledMap>> = game_assets
+                        .maps
+                        .iter()
+                        .map(|x| maps.get(x).cloned())
+                        .collect();
+                    if maps.iter().any(|x| x.is_none()) {
+                        return;
+                    }
+                    let maps: Vec<TiledMap> = maps.into_iter().map(|map| map.expect("Map missing!")).collect();
+                    println!("Got maps!");
+                    state.system.set_font(font);
+                    println!("Set fonts!");
+                    state.system.set_sprites(sheet);
+                    println!("And sprites!");
+                    state.system.set_indexed_sprites(sheet);
+                    println!("And more sprites!");
+                    info!("Loaded {} maps", maps.len());
+                    state.system.set_maps(maps);
+                    println!("Just set the maps!!");
+                    state.loaded = true;
+                    info!("Finished loading assets.");
+                    commands.remove_resource::<GameAssets>();
                 }
-                let (font, sheet) = (font.unwrap(), sheet.unwrap());
-                // let maps = maps.get(&game_assets.maps).unwrap();
-                let maps: Vec<Option<TiledMap>> = game_assets
-                    .maps
-                    .iter()
-                    .map(|x| maps.get(x).cloned())
-                    .collect();
-                if maps.iter().any(|x| x.is_none()) {
-                    return;
-                }
-                let maps: Vec<TiledMap> = maps.into_iter().map(|map| map.unwrap()).collect();
-                state.system.set_font(font);
-                state.system.set_sprites(sheet);
-                state.system.set_indexed_sprites(sheet);
-                info!("Loaded {} maps", maps.len());
-                state.system.set_maps(maps);
-                state.loaded = true;
-                info!("Finished loading assets.");
-                commands.remove_resource::<GameAssets>();
             }
             LoadState::Loading => info!("Loading assets..."),
             LoadState::NotLoaded => info!("Not yet loaded..."),

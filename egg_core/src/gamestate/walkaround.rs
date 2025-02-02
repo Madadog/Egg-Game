@@ -112,7 +112,7 @@ impl WalkaroundState {
         }
         let mut collision_layer = game_map
             .layers
-            .pop()
+            .get(0)
             .map(|layer| {
                 info!("collision layer: {}", layer.name);
                 LayerInfo {
@@ -129,6 +129,7 @@ impl WalkaroundState {
                 }
             })
             .unwrap();
+        game_map.layers.remove(0);
         let mut colliders = Vec::new();
         for j in 0..collision_layer.size.y {
             for i in 0..collision_layer.size.x {
@@ -144,7 +145,11 @@ impl WalkaroundState {
             .layers
             .iter_mut()
             .enumerate()
-            .filter(|(_, layer)| layer.name.to_lowercase().starts_with("fg"))
+            .filter(|(_, layer)| {
+                let condition = layer.name.to_lowercase().starts_with("fg");
+                info!("{} starts with \"FG\"? {}", layer.name, condition);
+                condition
+            })
             .map(|(i, layer)| LayerInfo {
                 origin: Vec2::new(0, 0),
                 size: Vec2::new(

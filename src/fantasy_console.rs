@@ -285,7 +285,6 @@ impl FantasyConsole {
             })
             .collect();
         self.maps = maps;
-        panic!();
     }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
         if x >= 240 || y >= 136 || x < 0 || y < 0 {
