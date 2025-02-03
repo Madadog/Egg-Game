@@ -100,7 +100,7 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
-    commands.spawn(Camera2dBundle::default());
+    commands.spawn(Camera2d::default());
     let screen = Image::new_fill(
         Extent3d {
             width: 240,
@@ -112,12 +112,13 @@ fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<A
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     );
+    let screen_handle = images.add(screen);
     commands.spawn((
-        SpriteBundle {
-            texture: images.add(screen),
-            transform: Transform::from_xyz(0., 0., 0.),
+        Sprite {
+            image: screen_handle.clone(),
             ..default()
         },
+        Transform::from_xyz(0., 0., 0.),
         GameScreenSprite,
     ));
 }
@@ -180,7 +181,10 @@ fn load_assets(
                     if maps.iter().any(|x| x.is_none()) {
                         return;
                     }
-                    let maps: Vec<TiledMap> = maps.into_iter().map(|map| map.expect("Map missing!")).collect();
+                    let maps: Vec<TiledMap> = maps
+                        .into_iter()
+                        .map(|map| map.expect("Map missing!"))
+                        .collect();
                     println!("Got maps!");
                     state.system.set_font(font);
                     println!("Set fonts!");
@@ -244,16 +248,16 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
         if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
             let speed =
                 2.0_f32.powf((options.note as f32 + (options.octave as f32 - 5.0) * 12.0) / 12.0);
-            commands.spawn(AudioBundle {
-                source: sound.clone(),
-                settings: PlaybackSettings {
+            commands.spawn((
+                AudioPlayer(sound.clone()),
+                PlaybackSettings {
                     mode: bevy::audio::PlaybackMode::Despawn,
                     volume: bevy::audio::Volume::new(0.5),
                     speed,
                     paused: false,
                     ..Default::default()
                 },
-            });
+            ));
         } else {
             panic!("Unknown sound \"{name:?}\" with {options:?}")
         }
@@ -269,16 +273,15 @@ fn play_music(
 ) {
     if let Some((x, playing)) = state.system.music_track() {
         if query.iter().len() == 0 && !*playing {
+            let music: Handle<AudioSource> = assets.load(format!("music/{}.ogg", x.id));
             commands.spawn((
-                AudioBundle {
-                    source: assets.load(format!("music/{}.ogg", x.id)),
-                    settings: PlaybackSettings {
-                        mode: bevy::audio::PlaybackMode::Loop,
-                        volume: bevy::audio::Volume::new(0.5),
-                        speed: 1.0,
-                        paused: false,
-                        ..Default::default()
-                    },
+                AudioPlayer(music.clone()),
+                PlaybackSettings {
+                    mode: bevy::audio::PlaybackMode::Loop,
+                    volume: bevy::audio::Volume::new(0.5),
+                    speed: 1.0,
+                    paused: false,
+                    ..Default::default()
                 },
                 MusicPlayer,
             ));
@@ -305,10 +308,12 @@ pub struct GameScreenSprite;
 fn update_texture(
     mut state: ResMut<EggState>,
     mut images: ResMut<Assets<Image>>,
-    sprite: Query<&Handle<Image>, With<GameScreenSprite>>,
+    sprite: Query<&Sprite, With<GameScreenSprite>>,
 ) {
     for sprite in sprite.iter() {
-        state.system.to_texture(images.get_mut(sprite).unwrap());
+        state
+            .system
+            .to_texture(images.get_mut(&sprite.image).unwrap());
     }
 }
 
@@ -337,6 +342,7 @@ fn step_state(
     keys: Res<ButtonInput<KeyCode>>,
     mut window: Query<&mut Window>,
     mouse_button: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<(Entity, &Gamepad)>,
     // mut window: Query<&mut Mouse>,
 ) {
     if !state.loaded {
@@ -345,28 +351,62 @@ fn step_state(
     state.system.sync_helper().step();
     state.time += 1;
 
-    if keys.any_pressed([KeyCode::ArrowUp, KeyCode::KeyW]) {
+    let (
+        mut up,
+        mut down,
+        mut left,
+        mut right,
+        mut a_button,
+        mut b_button,
+        mut x_button,
+        mut y_button,
+    ) = (
+        keys.any_pressed([KeyCode::ArrowUp, KeyCode::KeyW]),
+        keys.any_pressed([KeyCode::ArrowDown, KeyCode::KeyS]),
+        keys.any_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]),
+        keys.any_pressed([KeyCode::ArrowRight, KeyCode::KeyD]),
+        keys.any_pressed([KeyCode::KeyZ, KeyCode::Space, KeyCode::Enter, KeyCode::KeyE]),
+        keys.any_pressed([KeyCode::KeyX, KeyCode::Escape, KeyCode::KeyQ]),
+        keys.any_pressed([KeyCode::KeyC]),
+        keys.any_pressed([KeyCode::KeyV]),
+    );
+    if let Some((_, gamepad)) = gamepads.iter().next() {
+        up |= gamepad.pressed(GamepadButton::DPadUp)
+            || gamepad.get(GamepadAxis::LeftStickY).unwrap() > 0.2;
+        down |= gamepad.pressed(GamepadButton::DPadDown)
+            || gamepad.get(GamepadAxis::LeftStickY).unwrap() < -0.2;
+        left |= gamepad.pressed(GamepadButton::DPadLeft)
+            || gamepad.get(GamepadAxis::LeftStickX).unwrap() < -0.2;
+        right |= gamepad.pressed(GamepadButton::DPadRight)
+            || gamepad.get(GamepadAxis::LeftStickX).unwrap() > 0.2;
+        a_button |= gamepad.pressed(GamepadButton::South);
+        b_button |= gamepad.pressed(GamepadButton::East);
+        x_button |= gamepad.pressed(GamepadButton::West);
+        y_button |= gamepad.pressed(GamepadButton::North);
+    }
+
+    if up {
         state.system.input().press(0);
     }
-    if keys.any_pressed([KeyCode::ArrowDown, KeyCode::KeyS]) {
+    if down {
         state.system.input().press(1);
     }
-    if keys.any_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]) {
+    if left {
         state.system.input().press(2);
     }
-    if keys.any_pressed([KeyCode::ArrowRight, KeyCode::KeyD]) {
+    if right {
         state.system.input().press(3);
     }
-    if keys.any_pressed([KeyCode::KeyZ, KeyCode::Space, KeyCode::Enter, KeyCode::KeyE]) {
+    if a_button {
         state.system.input().press(4);
     }
-    if keys.any_pressed([KeyCode::KeyX, KeyCode::Escape, KeyCode::KeyQ]) {
+    if b_button {
         state.system.input().press(5);
     }
-    if keys.any_pressed([KeyCode::KeyC]) {
+    if x_button {
         state.system.input().press(6);
     }
-    if keys.any_pressed([KeyCode::KeyV]) {
+    if y_button {
         state.system.input().press(7);
     }
     if keys.pressed(KeyCode::ControlLeft) {
@@ -383,7 +423,7 @@ fn step_state(
         if keys.just_pressed(KeyCode::F11) {
             use bevy::window::WindowMode;
             window.mode = match window.mode {
-                WindowMode::Windowed => WindowMode::BorderlessFullscreen,
+                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
                 _ => WindowMode::Windowed,
             };
         }
