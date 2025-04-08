@@ -9,13 +9,13 @@ use egg_core::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TiledLayer {
+pub struct TileLayer {
     pub width: usize,
     pub height: usize,
     pub data: Vec<usize>,
     pub name: String,
 }
-impl TiledLayer {
+impl TileLayer {
     pub fn get(&self, x: usize, y: usize) -> Option<usize> {
         self.data
             .get(
@@ -58,8 +58,8 @@ impl TiledLayer {
         }
     }
 }
-impl From<TiledLayer> for LayerInfo {
-    fn from(other: TiledLayer) -> Self {
+impl From<TileLayer> for LayerInfo {
+    fn from(other: TileLayer) -> Self {
         Self {
             origin: Vec2::new(0, 0),
             size: Vec2::new(
@@ -72,17 +72,41 @@ impl From<TiledLayer> for LayerInfo {
     }
 }
 
+pub struct ObjectLayer {
+    pub name: String,
+    pub objects: Vec<TiledObject>,
+}
+
+pub enum MapLayer {
+    TileLayer(TileLayer),
+    ObjectLayer(ObjectLayer),
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Tileset {
     pub firstgid: usize,
     pub source: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TiledObject {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+    pub properties: Vec<ObjectProperties>
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObjectProperties {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Asset, TypePath)]
 pub struct TiledMap {
     pub width: usize,
     pub height: usize,
-    pub layers: Vec<TiledLayer>,
+    pub layers: Vec<TileLayer>,
     pub tilesets: Vec<Tileset>,
 }
 impl TiledMap {

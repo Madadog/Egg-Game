@@ -14,10 +14,32 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
 use crate::{
     dialogue::StaticTextContent::{self, *},
     data::{portraits, sound}
 };
+
+pub struct GameText {
+    pub text: HashMap<String, String>,
+}
+impl Default for GameText {
+    fn default() -> Self {
+        let text: HashMap<String, String> = [
+            ("office_desk_front", "There's a bunny on the other side."),
+            ("office_desk_mayor", "He's busy doing mayoral things."),
+            ("office_window", "The lights must be out. The windows are the only source of light."),
+            ("office_emergency_exit", "The valve won't budge."),
+            ("office_vending_machine", "There are 8 options. All of them are \"granulated rabbit feed\"."),
+            ("office_plant", "It stretches hopelessly towards the only light in this room."),
+            ("office_door", "Arcane forces prevent you from entering this door."),
+            ("fallback", "Looks like the programmer forgot to write anything for this bit. How pathetic."),
+        ].iter().map(|(key, value)| (key.to_string(), value.to_string())).collect();
+        Self {
+            text,
+        }
+    }
+}
 
 // Strings directly printed with `print_raw()` must end with a
 // null byte `\0`, while strings printed by the game's dialogue

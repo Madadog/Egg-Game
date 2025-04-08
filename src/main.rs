@@ -178,9 +178,9 @@ fn load_assets(
                         .iter()
                         .map(|x| maps.get(x).cloned())
                         .collect();
-                    if maps.iter().any(|x| x.is_none()) {
-                        return;
-                    }
+                    // if maps.iter().any(|x| x.is_none()) {
+                    //     return;
+                    // }
                     let maps: Vec<TiledMap> = maps
                         .into_iter()
                         .map(|map| map.expect("Map missing!"))

@@ -21,6 +21,16 @@ use self::drawing::{array_to_colour, IndexedImage};
 
 mod drawing;
 
+// TODO:
+// Load interactables from tiled maps
+// Separate BG & FG palettes, upgrade BGs.
+// Move tiled map parsing/loading into core
+// Serialize save/load state, use structs, remove bits.
+// Dialogue hashmap
+// Make UI actually work: Hierarchical layout, compositional widgets.
+// Unified walkaround collision space
+// Yolkomatic
+
 pub struct FantasyConsole {
     screen: Pixmap,
     overlay_screen: Pixmap,
