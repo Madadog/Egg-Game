@@ -14,10 +14,15 @@ pub struct IndexedImage {
 }
 impl IndexedImage {
     pub fn new(width: usize, height: usize) -> Self {
-        Self { width, height, data: vec![0; width * height] }
+        Self {
+            width,
+            height,
+            data: vec![0; width * height],
+        }
     }
-    pub fn draw_to_image(&self, palette: &[[u8; 4]; 256], image: &mut Image) {
-        for (index, pixel) in self.data.iter().zip(image.data.chunks_exact_mut(4)) {
+    /// Only works as intended if self and target image are the same width & height.
+    pub fn draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
+        for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
             let colour = palette[usize::from(*index)];
             pixel.copy_from_slice(&colour);
         }
@@ -26,19 +31,25 @@ impl IndexedImage {
         let width = image.size().x as usize;
         let height = image.size().y as usize;
         let mut data = Vec::new();
-        'outer: for pixel in image.data.chunks_exact(4) {
+        'outer: for pixel in image
+            .data
+            .as_ref()
+            .expect("Tried to read uninitialised image.")
+            .chunks_exact(4)
+        {
             for (i, colour) in palette.iter().enumerate() {
                 if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
                     data.push(i.try_into().unwrap());
-                    if i >= 16 {
-                        // bevy::prelude::info!("Palette index: {}, {:?}", i, colour);
-                    }
                     continue 'outer;
                 }
             }
             data.push(0);
         }
-        Self { width, height, data }
+        Self {
+            width,
+            height,
+            data,
+        }
     }
 }
 impl Index<(usize, usize)> for IndexedImage {

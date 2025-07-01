@@ -1,5 +1,5 @@
 use bevy::{
-    asset::{io::Reader, AssetApp, AssetLoader, AsyncReadExt, LoadContext},
+    asset::{AssetApp, AssetLoader, AsyncReadExt, LoadContext, io::Reader},
     prelude::{Asset, Plugin, TypePath},
 };
 use egg_core::{
@@ -99,7 +99,7 @@ pub struct TiledObject {
     pub y: usize,
     pub width: usize,
     pub height: usize,
-    pub properties: Vec<ObjectProperties>
+    pub properties: Vec<ObjectProperties>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObjectProperties {
@@ -122,14 +122,10 @@ impl TiledMap {
         })
     }
     pub fn set(&mut self, layer: usize, x: usize, y: usize, value: usize) {
-        if let Some(tile) = self
-            .layers
-            .get_mut(layer)
-            .and_then(|layer| match layer {
-                TiledMapLayer::TileLayer(layer) => layer.get_mut(x, y),
-                _ => None,
-            })
-        {
+        if let Some(tile) = self.layers.get_mut(layer).and_then(|layer| match layer {
+            TiledMapLayer::TileLayer(layer) => layer.get_mut(x, y),
+            _ => None,
+        }) {
             *tile = value;
         };
     }

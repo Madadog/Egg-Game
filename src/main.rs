@@ -1,11 +1,11 @@
 use bevy::asset::LoadState;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::utils::HashMap;
 use egg_core::gamestate::inventory::InventoryUi;
 
-use egg_core::gamestate::{walkaround::WalkaroundState, GameState};
+use egg_core::gamestate::{GameState, walkaround::WalkaroundState};
 use egg_core::system::ConsoleApi;
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
@@ -95,7 +95,7 @@ fn main() {
             (step_state, play_sounds, play_music, update_texture).chain(),
         )
         // 60 FPS
-        .insert_resource(Time::<Fixed>::from_seconds(1.0 / 60.0))
+        .insert_resource(Time::<Fixed>::default())
         .run();
 }
 
@@ -252,7 +252,7 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
                 AudioPlayer(sound.clone()),
                 PlaybackSettings {
                     mode: bevy::audio::PlaybackMode::Despawn,
-                    volume: bevy::audio::Volume::new(0.5),
+                    volume: bevy::audio::Volume::Decibels(-6.0),
                     speed,
                     paused: false,
                     ..Default::default()
@@ -278,7 +278,7 @@ fn play_music(
                 AudioPlayer(music.clone()),
                 PlaybackSettings {
                     mode: bevy::audio::PlaybackMode::Loop,
-                    volume: bevy::audio::Volume::new(0.5),
+                    volume: bevy::audio::Volume::Decibels(-6.0),
                     speed: 1.0,
                     paused: false,
                     ..Default::default()
@@ -313,7 +313,7 @@ fn update_texture(
     for sprite in sprite.iter() {
         state
             .system
-            .to_texture(images.get_mut(&sprite.image).unwrap());
+            .to_texture(images.get_mut(&sprite.image).unwrap().data.as_mut().expect("Main screen texture uninitialized, can't draw game."));
     }
 }
 
@@ -322,7 +322,7 @@ fn resize_screen(
     mut window: Query<&mut Window>,
     state: Res<EggState>,
 ) {
-    if let Ok(mut window) = window.get_single_mut() {
+    if let Ok(mut window) = window.single_mut() {
         let w = window.width() as f32 / 240.0;
         let h = window.height() as f32 / 136.0;
         window.resolution.set_scale_factor_override(Some(1.0));
@@ -419,7 +419,7 @@ fn step_state(
         state.system.input().press_key(65);
     }
 
-    if let Ok(mut window) = window.get_single_mut() {
+    if let Ok(mut window) = window.single_mut() {
         if keys.just_pressed(KeyCode::F11) {
             use bevy::window::WindowMode;
             window.mode = match window.mode {
