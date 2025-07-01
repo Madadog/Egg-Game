@@ -31,7 +31,6 @@ const MULTIPLIER: u64 = 6364136223846793005;
 /// Note that two generators with different stream parameter may be closely
 /// correlated.
 #[derive(Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde1", derive(Serialize, Deserialize))]
 pub struct Lcg64Xsh32 {
     state: u64,
     increment: u64,
