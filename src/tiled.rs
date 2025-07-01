@@ -72,13 +72,18 @@ impl From<TileLayer> for LayerInfo {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObjectLayer {
     pub name: String,
     pub objects: Vec<TiledObject>,
 }
 
-pub enum MapLayer {
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
+pub enum TiledMapLayer {
+    #[serde(rename = "tilelayer")]
     TileLayer(TileLayer),
+    #[serde(rename = "objectgroup")]
     ObjectLayer(ObjectLayer),
 }
 
@@ -106,18 +111,24 @@ pub struct ObjectProperties {
 pub struct TiledMap {
     pub width: usize,
     pub height: usize,
-    pub layers: Vec<TileLayer>,
+    pub layers: Vec<TiledMapLayer>,
     pub tilesets: Vec<Tileset>,
 }
 impl TiledMap {
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
-        self.layers.get(layer).and_then(|layer| layer.get(x, y))
+        self.layers.get(layer).and_then(|layer| match layer {
+            TiledMapLayer::TileLayer(layer) => layer.get(x, y),
+            _ => None,
+        })
     }
     pub fn set(&mut self, layer: usize, x: usize, y: usize, value: usize) {
         if let Some(tile) = self
             .layers
             .get_mut(layer)
-            .and_then(|layer| layer.get_mut(x, y))
+            .and_then(|layer| match layer {
+                TiledMapLayer::TileLayer(layer) => layer.get_mut(x, y),
+                _ => None,
+            })
         {
             *tile = value;
         };
@@ -133,7 +144,10 @@ impl TiledMap {
     }
     pub fn flatten_gids(&mut self) {
         for layer in self.layers.iter_mut() {
-            layer.flatten_gids(&self.tilesets);
+            match layer {
+                TiledMapLayer::TileLayer(layer) => layer.flatten_gids(&self.tilesets),
+                _ => (),
+            }
         }
     }
 }
