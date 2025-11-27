@@ -141,13 +141,20 @@ impl GameAssets {
             ],
         }
     }
-    pub fn load_state(&self, _assets: &AssetServer) -> LoadState {
-        // assets.get_group_load_state(
-        //     [self.font.id(), self.sheet.id()]
-        //         .iter()
-        //         .cloned()
-        //         .chain(self.maps.iter().map(|map| map.id())),
-        // )
+    pub fn load_state(&self, assets: &AssetServer) -> LoadState {
+        let mut ids = vec![];
+        ids.push(self.font.id().untyped());
+        ids.push(self.sheet.id().untyped());
+        for map in &self.maps {
+            ids.push(map.id().untyped());
+        }
+        for id in ids {
+            let load_state = assets.get_load_state(id).unwrap();
+            match load_state {
+                LoadState::NotLoaded | LoadState::Loading | LoadState::Failed(_) => return load_state,
+                LoadState::Loaded => (),
+            };
+        }
         LoadState::Loaded
     }
 }
@@ -290,7 +297,7 @@ fn play_music(
     } else {
         for (entity, sink) in query.iter_mut() {
             info!("Stoppin mussic");
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
             sink.stop();
         }
     }
@@ -311,9 +318,14 @@ fn update_texture(
     sprite: Query<&Sprite, With<GameScreenSprite>>,
 ) {
     for sprite in sprite.iter() {
-        state
-            .system
-            .to_texture(images.get_mut(&sprite.image).unwrap().data.as_mut().expect("Main screen texture uninitialized, can't draw game."));
+        state.system.to_texture(
+            images
+                .get_mut(&sprite.image)
+                .unwrap()
+                .data
+                .as_mut()
+                .expect("Main screen texture uninitialized, can't draw game."),
+        );
     }
 }
 
