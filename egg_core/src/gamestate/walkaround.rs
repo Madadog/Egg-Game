@@ -8,7 +8,7 @@ use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapInfo};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, Player};
+use crate::player::{Companion, CompanionList, CompanionTrail, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState};
@@ -26,7 +26,7 @@ mod cutscene;
 
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
-    pub player: Player,
+    pub player: Shell,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
     pub map_animations: Vec<Animation>,
@@ -43,7 +43,7 @@ pub struct WalkaroundState {
 impl WalkaroundState {
     pub fn new() -> Self {
         Self {
-            player: Player::default(),
+            player: Shell::default(),
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),

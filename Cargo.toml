@@ -11,6 +11,7 @@ tiny-skia = "0.11.1"
 egg_core = { path = "egg_core" }
 serde = "1.0.173"
 serde_json = "1.0.103"
+itertools = "0.14.0"
 
 [workspace]
 

@@ -218,6 +218,9 @@ impl Default for StaticSpriteOptions<'_> {
 }
 #[derive(Debug, Clone)]
 pub struct SpriteOptions {
+    pub id: i32,
+    pub x_offset: i32,
+    pub y_offset: i32,
     pub transparent: Option<u8>,
     pub scale: i32,
     pub flip: Flip,
@@ -228,6 +231,9 @@ pub struct SpriteOptions {
 impl SpriteOptions {
     pub const fn default() -> Self {
         Self {
+            id: 0,
+            x_offset: 0,
+            y_offset: 0,
             transparent: None,
             scale: 1,
             flip: Flip::None,
@@ -242,7 +248,7 @@ impl SpriteOptions {
             ..Self::default()
         }
     }
-    pub fn compatibility_mode(&self) -> StaticSpriteOptions {
+    pub fn compatibility_mode(&'_ self) -> StaticSpriteOptions<'_> {
         StaticSpriteOptions {
             transparent: self.transparent.as_slice(),
             scale: self.scale,
@@ -257,6 +263,9 @@ impl SpriteOptions {
 impl<'a> From<StaticSpriteOptions<'a>> for SpriteOptions {
     fn from(other: StaticSpriteOptions) -> Self {
         Self {
+            id: 0,
+            x_offset: 0,
+            y_offset: 0,
             transparent: other.transparent.first().cloned(),
             scale: other.scale,
             flip: other.flip,

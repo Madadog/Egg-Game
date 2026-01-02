@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 tic80_api = { path = "tic80_api" }
 log = "0.4.17"
+itertools = "0.14.0"

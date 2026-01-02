@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::mem;
+
 use crate::{
     camera::Camera,
     data::sound,
@@ -22,10 +24,128 @@ use crate::{
     position::{Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper, StaticDrawParams},
 };
-use tic80_api::core::{Flip, StaticSpriteOptions};
+use itertools::Itertools;
+use tic80_api::core::{Flip, SpriteOptions, StaticSpriteOptions};
+
+#[derive(Debug, Clone, Default)]
+pub enum LoopMode {
+    #[default]
+    Loop,
+    LoopRange(usize, usize),
+    Hold,
+}
+impl LoopMode {
+    pub fn loop_index(&self, index: usize, len: usize) -> usize {
+        debug_assert!(len > 0);
+        match self {
+            LoopMode::Loop => index % len,
+            LoopMode::LoopRange(mut a, mut b) => {
+                if index > b {
+                    if a > b {
+                        mem::swap(&mut a, &mut b);
+                    }
+                    let len = b - a;
+                    if len == 0 {
+                        b
+                    } else {
+                        let zeroed_index = index - b;
+                        a + (zeroed_index % len)
+                    }
+                } else {
+                    index
+                }
+            }
+            LoopMode::Hold => index.min(len - 1),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
-pub struct Player {
+pub struct SpriteAnimation {
+    frames: Vec<SpriteOptions>,
+    loopmode: LoopMode,
+}
+
+impl SpriteAnimation {
+    pub fn new(frames: Vec<SpriteOptions>, loopmode: LoopMode) -> Self {
+        Self { frames, loopmode }
+    }
+    pub fn from_frames(frame_length: usize, loopmode: LoopMode, frames: &[SpriteOptions]) -> Self {
+        let mut animation_frames: Vec<SpriteOptions> =
+            Vec::with_capacity(frame_length * frames.len());
+        for frame in frames {
+            for _ in 0..frame_length {
+                animation_frames.push(frame.clone());
+            }
+        }
+        SpriteAnimation {
+            frames: Vec::from(frames),
+            loopmode,
+        }
+    }
+    pub fn from_sprite_frames(frames: &[SpriteOptions]) -> Self {
+        Self::from_frames(1, Default::default(), frames)
+    }
+    pub fn from_sprite_ids(ids: &[i32], w: i32, h: i32) -> Self {
+        let frames: Vec<SpriteOptions> = ids
+            .iter()
+            .map(|id| SpriteOptions {
+                id: *id,
+                w,
+                h,
+                ..SpriteOptions::default()
+            })
+            .collect();
+        Self::from_sprite_frames(&frames)
+    }
+}
+
+pub enum ShellSpriteFormat {
+    /// Unique sprites for all four directions.
+    Compass {
+        north: SpriteAnimation,
+        south: SpriteAnimation,
+        west: SpriteAnimation,
+        east: SpriteAnimation,
+    },
+    /// Forward and backwards sprites, mirrored for side directions.
+    FrontBack {
+        north: SpriteAnimation,
+        south: SpriteAnimation,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSprites {
+    north: SpriteAnimation,
+    south: SpriteAnimation,
+    west: SpriteAnimation,
+    east: SpriteAnimation,
+    pet: SpriteAnimation,
+}
+impl ShellSprites {
+    pub fn ellie() -> Self {
+        Self {
+            north: SpriteAnimation::from_sprite_ids(&[768], 1, 2),
+            south: SpriteAnimation::from_sprite_ids(&[771], 1, 2),
+            west: SpriteAnimation::from_sprite_ids(&[832], 1, 2),
+            east: SpriteAnimation::from_sprite_ids(&[832], 1, 2),
+            pet: SpriteAnimation::from_sprite_ids(&[774], 1, 2),
+        }
+    }
+    pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
+        match dir {
+            (0, 1) => &self.east,
+            (0, -1) => &self.west,
+            (1, 0) => &self.south,
+            (_, _) => &self.north,
+        }
+    }
+}
+
+/// A game entity controllable by the player.
+#[derive(Debug, Clone)]
+pub struct Shell {
     /// coords are (x, y)
     pub dir: (i8, i8),
     pub hp: u8,
@@ -35,9 +155,10 @@ pub struct Player {
     pub walktime: u16,
     pub flip_controls: Axis,
     pub pet_timer: Option<u8>,
+    pub sprites: ShellSprites,
 }
-impl Player {
-    pub const fn default() -> Self {
+impl Default for Shell {
+    fn default() -> Self {
         Self {
             pos: Vec2::new(62, 23),
             local_hitbox: Hitbox::new(0, 10, 7, 5),
@@ -47,8 +168,11 @@ impl Player {
             walking: false,
             flip_controls: Axis::None,
             pet_timer: None,
+            sprites: ShellSprites::ellie(),
         }
     }
+}
+impl Shell {
     pub fn sprite_index(&self) -> (i32, Flip, i32) {
         let timer = (self.walktime + 19) / 20;
         let y_offset = (timer % 2) as i32;
@@ -225,11 +349,6 @@ impl Player {
     pub fn animate_stop(&mut self) {
         self.walktime = 0;
         self.walking = false;
-    }
-}
-impl Default for Player {
-    fn default() -> Self {
-        Self::default()
     }
 }
 fn test_many_points(

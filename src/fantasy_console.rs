@@ -405,10 +405,11 @@ impl FantasyConsole {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
                 for (x, i) in (x_start..x_end).zip(x_offset..8) {
                     let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.indexed_sprites.data[sprite_index] == transparent_colour {
-                        continue;
+                    match self.indexed_sprites.data.get(sprite_index) {
+                        Some(&colour) if colour == transparent_colour => continue,
+                        None => continue,
+                        _ => self.draw_indexed_pixel(sprite_index, x, y),
                     }
-                    self.draw_indexed_pixel(sprite_index, x, y);
                 }
             }
         } else {
@@ -458,6 +459,12 @@ impl FantasyConsole {
                 }
             }
         }
+    }
+    fn draw_pixel_with_map(&mut self, colour: u8, x: i32, y: i32, map: &[[u8; 256]; 256]) {
+        let screen = &mut self.screen;
+        let screen_index = x + 240 * y;
+        let colour = screen.pixels()[screen_index as usize];
+        
     }
 }
 

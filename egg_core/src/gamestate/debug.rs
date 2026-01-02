@@ -1,6 +1,9 @@
-use tic80_api::core::{MapOptions, PrintOptions, StaticSpriteOptions};
+use tic80_api::{core::{MapOptions, PrintOptions, StaticSpriteOptions}, helpers::SWEETIE_16};
 
-use crate::{map::MapInfo, system::ConsoleApi};
+use crate::{
+    map::MapInfo,
+    system::{ConsoleApi, ConsoleHelper},
+};
 
 use super::walkaround::WalkaroundState;
 
@@ -8,6 +11,8 @@ const WIDTH: u32 = 32;
 
 pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
     system.cls(0);
+    system.set_palette(SWEETIE_16);
+    system.draw_ovr2(|system| {system.cls(0)});
     for x in 0..(WIDTH as i32) {
         for y in 0..17 {
             system.spr(
@@ -51,19 +56,53 @@ pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
             system.pix(10 + i % 32, 10 + i / 32, i as u8);
         }
     }
+    if system.btn(6) {
+        system.rectb(0, 0, 8, 8, 12);
+        system.print_alloc(
+            format!("Sprite ID = {indice}"),
+            0,
+            8,
+            PrintOptions {
+                color: 12,
+                ..PrintOptions::default()
+            },
+        );
+    }
+    let mouse_pos = system.mouse();
+    let mouse = system.mouse_delta();
+    let grid_index = (i32::from(mouse_pos.x / 8), i32::from(mouse_pos.y / 8));
+    let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
+    let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
+    let flip_text = if grid_index.1 == 0 {
+        15
+    } else {
+        0
+    };
+    system.rectb(grid_x, grid_y, 8, 8, 12);
+    system.print_alloc_centered(
+        &format!("ID:{}", mouse_indice),
+        grid_x + 4,
+        grid_y - 6 + flip_text,
+        PrintOptions {
+            color: 12,
+            ..PrintOptions::default()
+        },
+    );
+
+    if mouse.left {}
 }
 
 pub fn step_sprite_test(system: &mut impl ConsoleApi, indice: &mut u32) {
-    if system.btn(0) {
+    if system.btn(0) && *indice >= WIDTH  {
         *indice = indice.saturating_sub(WIDTH);
     }
     if system.btn(1) {
         *indice = indice.saturating_add(WIDTH);
     }
-    if system.btnp(2, 0, 0) {
+    if system.btn(2) && (*indice % WIDTH) > 0 {
         *indice = indice.saturating_sub(1);
     }
-    if system.btnp(3, 0, 0) {
+    if system.btn(3) && (*indice % WIDTH) < 2 {
         *indice = indice.saturating_add(1);
     }
 }
