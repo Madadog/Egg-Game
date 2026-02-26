@@ -482,16 +482,13 @@ impl<const N: usize> CompanionTrail<N> {
     }
     /// When player moves, rotate all positions towards start of buffer, add new position end of buffer.
     pub fn push(&mut self, position: Vec2, direction: (i8, i8)) {
-        unsafe {
-            // If this goes out of bounds, I'll eat my hat.
-            for i in 0..(N - 1) {
-                *self.positions.get_unchecked_mut(i) = *self.positions.get_unchecked(i + 1);
-                *self.directions.get_unchecked_mut(i) = *self.directions.get_unchecked(i + 1);
-            }
-            // It's an array, so there will always be a non-zero number of elements.
-            *self.positions.last_mut().unwrap_unchecked() = position;
-            *self.directions.last_mut().unwrap_unchecked() = direction;
-        }
+
+        self.positions.rotate_left(1);
+        self.directions.rotate_left(1);
+        
+        // Array always has at least one element (N >= 1)
+        *self.positions.last_mut().unwrap() = position;
+        *self.directions.last_mut().unwrap() = direction;
         self.walktime = self.walktime.wrapping_add(1);
     }
     /// When player stops moving, tell animations to switch to idle pose.
@@ -513,13 +510,11 @@ impl<const N: usize> CompanionTrail<N> {
         (self.positions[0], self.directions[0])
     }
     pub fn latest(&self) -> (Vec2, (i8, i8)) {
-        unsafe {
-            // Array of non-null values
-            (
-                *self.positions.last().unwrap_unchecked(),
-                *self.directions.last().unwrap_unchecked(),
-            )
-        }
+        // Array always has at least one element (N >= 1)
+        (
+            *self.positions.last().unwrap(),
+            *self.directions.last().unwrap(),
+        )
     }
     pub fn walktime(&self) -> u8 {
         self.walktime
@@ -540,10 +535,7 @@ impl CompanionList {
         if let Some(x) = self.companions.iter_mut().find(|x| x.is_none()) {
             *x = Some(companion);
         } else {
-            // Array will always have a last element.
-            unsafe {
-                *self.companions.iter_mut().last().unwrap_unchecked() = Some(companion);
-            }
+            *self.companions.iter_mut().last().unwrap() = Some(companion);
         }
     }
     pub fn has(&self, companion: Companion) -> bool {

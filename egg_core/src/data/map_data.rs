@@ -630,7 +630,7 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 //TODO: Make ellipses draw properly
 //TODO: dialogue files
 //TODO: Intro cutscene
-//TODO: Remove unsafe code
+
 //TODO: Egg lab
 //TODO: Conditional dialogue
 //TODO: Platformer, turn-based RPG, geometric puzzle, danmaku
