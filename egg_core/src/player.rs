@@ -22,7 +22,7 @@ use crate::{
     interact::{Interactable, Interaction},
     map::{Axis, LayerInfo, MapInfo},
     position::{Hitbox, Vec2},
-    system::{ConsoleApi, ConsoleHelper, StaticDrawParams},
+    system::{ConsoleApi, ConsoleHelper, DrawParams, StaticDrawParams},
 };
 use itertools::Itertools;
 use tic80_api::core::{Flip, SpriteOptions, StaticSpriteOptions};
@@ -44,11 +44,11 @@ impl LoopMode {
                     if a > b {
                         mem::swap(&mut a, &mut b);
                     }
-                    let len = b - a;
-                    if len == 0 {
+                    let len = b - a + 1;
+                    if len == 1 {
                         b
                     } else {
-                        let zeroed_index = index - b;
+                        let zeroed_index = index - (b + 1);
                         a + (zeroed_index % len)
                     }
                 } else {
@@ -93,14 +93,44 @@ impl SpriteAnimation {
                 id: *id,
                 w,
                 h,
+                transparent: Some(0),
                 ..SpriteOptions::default()
             })
             .collect();
         Self::from_sprite_frames(&frames)
     }
+    pub fn from_base_sprite_id(id: i32, len: i32, w: i32, h: i32) -> Self {
+        let frames: Vec<SpriteOptions> = (id..(id + len))
+            .into_iter()
+            .map(|id| SpriteOptions {
+                id: id,
+                w,
+                h,
+                transparent: Some(0),
+                ..SpriteOptions::default()
+            })
+            .collect();
+        Self::from_sprite_frames(&frames)
+    }
+    pub fn with_flip(mut self, flip: Flip) -> Self {
+        self.frames
+            .iter_mut()
+            .for_each(|frame| frame.flip = flip.clone());
+        self
+    }
+    pub fn with_loopmode(self, loopmode: LoopMode) -> Self {
+        Self { loopmode, ..self }
+    }
+    pub fn frames(&self) -> &[SpriteOptions] {
+        &self.frames
+    }
+    pub fn index(&self, i: usize) -> &SpriteOptions {
+        &self.frames()[self.loopmode.loop_index(i, self.frames().len())]
+    }
 }
 
-pub enum ShellSpriteFormat {
+#[derive(Debug, Clone)]
+pub enum WalkSprites {
     /// Unique sprites for all four directions.
     Compass {
         north: SpriteAnimation,
@@ -108,42 +138,78 @@ pub enum ShellSpriteFormat {
         west: SpriteAnimation,
         east: SpriteAnimation,
     },
-    /// Forward and backwards sprites, mirrored for side directions.
+    /// North & south sprites only, mirrored for side directions.
+    /// Default: East unmirrored, west mirrored.
     FrontBack {
         north: SpriteAnimation,
         south: SpriteAnimation,
     },
 }
+impl WalkSprites {
+    pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
+        match self {
+            WalkSprites::Compass {
+                north,
+                south,
+                west,
+                east,
+            } => match dir {
+                (1, 0) => east,
+                (-1, 0) => west,
+                (_, 1) => south,
+                (_, _) => north,
+            },
+            WalkSprites::FrontBack { north, south } => match dir {
+                (_, 1) => south,
+                (_, _) => north,
+            },
+        }
+    }
+    pub fn ellie() -> Self {
+        Self::Compass {
+            north: SpriteAnimation::from_base_sprite_id(771, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            south: SpriteAnimation::from_base_sprite_id(768, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            west: SpriteAnimation::from_sprite_ids(&[832, 833, 832, 834], 1, 2)
+                .with_flip(Flip::Horizontal),
+            east: SpriteAnimation::from_sprite_ids(&[832, 833, 832, 834], 1, 2),
+        }
+    }
+    pub fn may() -> Self {
+        Self::Compass {
+            north: SpriteAnimation::from_base_sprite_id(2187, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            south: SpriteAnimation::from_base_sprite_id(2184, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            west: SpriteAnimation::from_sprite_ids(&[2248, 2249, 2248, 2250], 1, 2)
+                .with_flip(Flip::Horizontal),
+            east: SpriteAnimation::from_sprite_ids(&[2248, 2249, 2248, 2250], 1, 2),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ShellSprites {
-    north: SpriteAnimation,
-    south: SpriteAnimation,
-    west: SpriteAnimation,
-    east: SpriteAnimation,
-    pet: SpriteAnimation,
+    pub walk: WalkSprites,
+    pub others: Vec<SpriteAnimation>,
 }
 impl ShellSprites {
     pub fn ellie() -> Self {
         Self {
-            north: SpriteAnimation::from_sprite_ids(&[768], 1, 2),
-            south: SpriteAnimation::from_sprite_ids(&[771], 1, 2),
-            west: SpriteAnimation::from_sprite_ids(&[832], 1, 2),
-            east: SpriteAnimation::from_sprite_ids(&[832], 1, 2),
-            pet: SpriteAnimation::from_sprite_ids(&[774], 1, 2),
+            walk: WalkSprites::ellie(),
+            others: vec![SpriteAnimation::from_sprite_ids(&[774, 775], 1, 2)],
         }
     }
-    pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
-        match dir {
-            (0, 1) => &self.east,
-            (0, -1) => &self.west,
-            (1, 0) => &self.south,
-            (_, _) => &self.north,
+    pub fn may() -> Self {
+        Self {
+            walk: WalkSprites::may(),
+            others: vec![SpriteAnimation::from_sprite_ids(&[2251, 2252], 1, 2)],
         }
     }
 }
 
-/// A game entity controllable by the player.
+/// A controllable game entity.
 #[derive(Debug, Clone)]
 pub struct Shell {
     /// coords are (x, y)
@@ -173,45 +239,41 @@ impl Default for Shell {
     }
 }
 impl Shell {
-    pub fn sprite_index(&self) -> (i32, Flip, i32) {
-        let timer = (self.walktime + 19) / 20;
-        let y_offset = (timer % 2) as i32;
-        let sprite_offset = if self.walktime > 0 { y_offset + 1 } else { 0 };
-        let flip = if self.dir.0 > 0 {
-            Flip::None
+    pub fn sprite_options(&self) -> (SpriteOptions, i32) {
+        let timer = if self.dir.1 == 0 {
+            // sideways anim 4fps
+            (self.walktime + 14) / 15
         } else {
-            Flip::Horizontal
+            // up/down anim at 3fps
+            (self.walktime + 19) / 20
         };
+        let y_offset = (timer % 2) as i32;
+        // petting animation
         if let Some(t) = self.pet_timer {
-            return (774 + (t / 20 % 2) as i32, flip, 0);
-        }
-        if self.dir.1 > 0 {
-            (768 + sprite_offset, Flip::None, y_offset) // Up
-        } else if self.dir.1 < 0 {
-            (771 + sprite_offset, Flip::None, y_offset) // Down
-        } else {
-            let index = match timer % 4 {
-                0 | 2 => 832,
-                1 => 833,
-                _ => 834,
+            let t = (t / 20 % 2) as usize;
+            let mut sprite = self.sprites.others[0].index(t).clone();
+            sprite.flip = if self.dir.0 > 0 {
+                Flip::None
+            } else {
+                Flip::Horizontal
             };
-            (index, flip, y_offset) // Left
+            return (sprite, 0);
         }
+        let sprite = self
+            .sprites
+            .walk
+            .dir_to_sprite(self.dir)
+            .index(timer as usize)
+            .clone();
+        (sprite, y_offset)
     }
-    pub fn draw_params(&self, offset: Vec2) -> StaticDrawParams {
-        let player_sprite = self.sprite_index();
-        StaticDrawParams::new(
-            player_sprite.0,
+    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
+        let (sprite, y_offset) = self.sprite_options();
+        DrawParams::new(
+            sprite.id,
             i32::from(self.pos.x - offset.x),
-            i32::from(self.pos.y - offset.y) - player_sprite.2,
-            StaticSpriteOptions {
-                w: 1,
-                h: 2,
-                transparent: &[0],
-                scale: 1,
-                flip: player_sprite.1,
-                ..Default::default()
-            },
+            i32::from(self.pos.y - offset.y) - y_offset,
+            sprite,
             Some(1),
             0,
         )
@@ -351,6 +413,37 @@ impl Shell {
         self.walking = false;
     }
 }
+
+// presets
+impl Shell {
+    pub fn ellie() -> Self {
+        Self {
+            pos: Vec2::new(62, 23),
+            local_hitbox: Hitbox::new(0, 10, 7, 5),
+            hp: 3,
+            dir: (0, 1),
+            walktime: 0,
+            walking: false,
+            flip_controls: Axis::None,
+            pet_timer: None,
+            sprites: ShellSprites::ellie(),
+        }
+    }
+    pub fn may() -> Self {
+        Self {
+            pos: Vec2::new(62, 23),
+            local_hitbox: Hitbox::new(0, 11, 7, 6),
+            hp: 3,
+            dir: (0, 1),
+            walktime: 0,
+            walking: false,
+            flip_controls: Axis::None,
+            pet_timer: None,
+            sprites: ShellSprites::may(),
+        }
+    }
+}
+
 fn test_many_points(
     system: &mut impl ConsoleApi,
     layer: &LayerInfo,
@@ -482,10 +575,9 @@ impl<const N: usize> CompanionTrail<N> {
     }
     /// When player moves, rotate all positions towards start of buffer, add new position end of buffer.
     pub fn push(&mut self, position: Vec2, direction: (i8, i8)) {
-
         self.positions.rotate_left(1);
         self.directions.rotate_left(1);
-        
+
         // Array always has at least one element (N >= 1)
         *self.positions.last_mut().unwrap() = position;
         *self.directions.last_mut().unwrap() = direction;

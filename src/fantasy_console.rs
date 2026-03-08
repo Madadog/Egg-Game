@@ -464,7 +464,6 @@ impl FantasyConsole {
         let screen = &mut self.screen;
         let screen_index = x + 240 * y;
         let colour = screen.pixels()[screen_index as usize];
-        
     }
 }
 

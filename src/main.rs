@@ -497,6 +497,16 @@ fn step_state(
         let x = !state.debug_info.memory_info();
         state.debug_info.set_memory_info(x);
     }
+    if keys.just_pressed(KeyCode::Digit1) && keys.pressed(KeyCode::ShiftLeft) {
+        let pos = state.walkaround.player.pos;
+        state.walkaround.player = egg_core::player::Shell::ellie();
+        state.walkaround.player.pos = pos;
+    }
+    if keys.just_pressed(KeyCode::Digit2) && keys.pressed(KeyCode::ShiftLeft) {
+        let pos = state.walkaround.player.pos;
+        state.walkaround.player = egg_core::player::Shell::may();
+        state.walkaround.player.pos = pos;
+    }
 
     if keys.just_pressed(KeyCode::KeyL) && keys.pressed(KeyCode::ShiftLeft) {
         info!("------------------------");
