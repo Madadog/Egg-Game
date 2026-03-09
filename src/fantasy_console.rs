@@ -51,7 +51,7 @@ pub struct FantasyConsole {
     sprite_flags: Vec<u8>,
     music: Option<(MusicTrack, bool)>,
     memory: EggMemory,
-    sounds: Vec<(String, SfxOptions)>,
+    sounds: HashMap<String, SfxOptions>,
     input: EggInput,
     rng: Lcg64Xsh32,
     sync_helper: SyncHelper,
@@ -89,7 +89,7 @@ impl FantasyConsole {
             screen_offset: [0; 2],
             sprite_flags: vec![0; 2048],
             music: None,
-            sounds: Vec::new(),
+            sounds: HashMap::new(),
             memory: EggMemory::new(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
@@ -122,7 +122,7 @@ impl FantasyConsole {
     pub fn input(&mut self) -> &mut EggInput {
         &mut self.input
     }
-    pub fn sounds(&mut self) -> &mut Vec<(String, SfxOptions)> {
+    pub fn sounds(&mut self) -> &mut HashMap<String, SfxOptions> {
         &mut self.sounds
     }
     pub fn music_track(&mut self) -> &mut Option<(MusicTrack, bool)> {
@@ -846,7 +846,7 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn sfx(&mut self, sfx_id: &str, opts: egg_core::tic80_api::core::SfxOptions) {
-        self.sounds.push((sfx_id.to_string(), opts));
+        self.sounds.insert(sfx_id.to_string(), opts);
     }
 
     fn spr(
@@ -1062,7 +1062,6 @@ impl ConsoleApi for FantasyConsole {
             _ => panic!("bitmap {id} does not exist"),
         }
     }
-
     fn draw_outline(
         &mut self,
         id: i32,

@@ -27,6 +27,7 @@ mod cutscene;
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
     pub player: Shell,
+    pub entities: Vec<Shell>,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
     pub map_animations: Vec<Animation>,
@@ -44,6 +45,7 @@ impl WalkaroundState {
     pub fn new() -> Self {
         Self {
             player: Shell::default(),
+            entities: Vec::new(),
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
@@ -417,8 +419,22 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
             false
         };
 
+        for shell in self.entities.iter_mut() {
+            let (dx, dy) = if system.rng().rand_u8() < 25 {
+                (
+                    (system.rng().rand_u8() % 3) as i16 - 1,
+                    (system.rng().rand_u8() % 3) as i16 - 1,
+                )
+            } else {
+                (shell.dir.0.into(), shell.dir.1.into())
+            };
+            let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map);
+            shell.apply_motion::<8>(dx, dy, None);
+        }
+
         let (dx, dy) = self.player.walk(system, dx, dy, noclip, &self.current_map);
-        self.player.apply_motion(dx, dy, &mut self.companion_trail);
+        self.player
+            .apply_motion(dx, dy, Some(&mut self.companion_trail));
 
         // Set after player.dir has updated
         let interact_hitbox = self
@@ -515,6 +531,12 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
 
         sprites.extend(
             self.creatures
+                .iter()
+                .map(|x| x.draw_params(self.camera.pos).into()),
+        );
+
+        sprites.extend(
+            self.entities
                 .iter()
                 .map(|x| x.draw_params(self.camera.pos).into()),
         );

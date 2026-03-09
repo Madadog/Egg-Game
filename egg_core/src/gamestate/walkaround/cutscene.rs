@@ -93,12 +93,12 @@ impl CutsceneItem {
 
                 walkaround
                     .player
-                    .apply_motion(dx, dy, &mut walkaround.companion_trail);
+                    .apply_motion(dx, dy, Some(&mut walkaround.companion_trail));
 
                 if self.is_done(walkaround) {
                     walkaround
                         .player
-                        .apply_motion(0, 0, &mut walkaround.companion_trail);
+                        .apply_motion(0, 0, Some(&mut walkaround.companion_trail));
                 }
             }
             CutsceneItem::MovePlayer(pos) => {

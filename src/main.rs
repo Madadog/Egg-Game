@@ -1,3 +1,5 @@
+use std::mem;
+
 use bevy::asset::LoadState;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -151,7 +153,9 @@ impl GameAssets {
         for id in ids {
             let load_state = assets.get_load_state(id).unwrap();
             match load_state {
-                LoadState::NotLoaded | LoadState::Loading | LoadState::Failed(_) => return load_state,
+                LoadState::NotLoaded | LoadState::Loading | LoadState::Failed(_) => {
+                    return load_state;
+                }
                 LoadState::Loaded => (),
             };
         }
@@ -506,6 +510,43 @@ fn step_state(
         let pos = state.walkaround.player.pos;
         state.walkaround.player = egg_core::player::Shell::may();
         state.walkaround.player.pos = pos;
+    }
+    if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
+        let pos = state.walkaround.player.pos;
+        let rand = state.system.rng().rand_u8();
+        let mut new = if rand < 64 {
+            egg_core::player::Shell::ellie()
+        } else if rand < 128 {
+            egg_core::player::Shell::dog()
+        } else if rand < 192 {
+            egg_core::player::Shell::bro()
+        } else {
+            egg_core::player::Shell::may()
+        };
+        new.pos = pos;
+        state.walkaround.entities.push(new);
+        info!("we have {} entities", state.walkaround.entities.len());
+    } else if keys.pressed(KeyCode::Digit3) {
+        state.walkaround.entities.pop();
+        info!("we have {} entities", state.walkaround.entities.len());
+    }
+    if keys.just_pressed(KeyCode::Digit4) && keys.pressed(KeyCode::ShiftLeft) {
+        let pos = state.walkaround.player.pos;
+        state.walkaround.player = egg_core::player::Shell::dog();
+        state.walkaround.player.pos = pos;
+    }
+    if keys.just_pressed(KeyCode::Digit5) && keys.pressed(KeyCode::ShiftLeft) {
+        let pos = state.walkaround.player.pos;
+        state.walkaround.player = egg_core::player::Shell::bro();
+        state.walkaround.player.pos = pos;
+    }
+    if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
+        let player = state.walkaround.player.clone();
+        if let Some(shell) = state.walkaround.entities.get_mut(0) {
+            let temp = shell.clone();
+            *shell = player;
+            state.walkaround.player = temp;
+        }
     }
 
     if keys.just_pressed(KeyCode::KeyL) && keys.pressed(KeyCode::ShiftLeft) {

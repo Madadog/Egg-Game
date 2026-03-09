@@ -100,7 +100,8 @@ impl SpriteAnimation {
         Self::from_sprite_frames(&frames)
     }
     pub fn from_base_sprite_id(id: i32, len: i32, w: i32, h: i32) -> Self {
-        let frames: Vec<SpriteOptions> = (id..(id + len))
+        let frames: Vec<SpriteOptions> = (id..(id + len * w))
+            .step_by(w as usize)
             .into_iter()
             .map(|id| SpriteOptions {
                 id: id,
@@ -116,6 +117,12 @@ impl SpriteAnimation {
         self.frames
             .iter_mut()
             .for_each(|frame| frame.flip = flip.clone());
+        self
+    }
+    pub fn with_x_offset(mut self, x_offset: i32) -> Self {
+        self.frames
+            .iter_mut()
+            .for_each(|frame| frame.x_offset = x_offset);
         self
     }
     pub fn with_loopmode(self, loopmode: LoopMode) -> Self {
@@ -187,6 +194,25 @@ impl WalkSprites {
             east: SpriteAnimation::from_sprite_ids(&[2248, 2249, 2248, 2250], 1, 2),
         }
     }
+    pub fn dog() -> Self {
+        Self::Compass {
+            north: SpriteAnimation::from_base_sprite_id(966, 2, 1, 2),
+            south: SpriteAnimation::from_base_sprite_id(964, 2, 1, 2),
+            west: SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_flip(Flip::Horizontal),
+            east: SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_x_offset(8),
+        }
+    }
+    pub fn bro() -> Self {
+        Self::Compass {
+            north: SpriteAnimation::from_base_sprite_id(899, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            south: SpriteAnimation::from_base_sprite_id(896, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2)),
+            west: SpriteAnimation::from_sprite_ids(&[902, 903, 902, 904], 1, 2)
+                .with_flip(Flip::Horizontal),
+            east: SpriteAnimation::from_sprite_ids(&[902, 903, 902, 904], 1, 2),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +231,18 @@ impl ShellSprites {
         Self {
             walk: WalkSprites::may(),
             others: vec![SpriteAnimation::from_sprite_ids(&[2251, 2252], 1, 2)],
+        }
+    }
+    pub fn dog() -> Self {
+        Self {
+            walk: WalkSprites::dog(),
+            others: vec![SpriteAnimation::from_sprite_ids(&[968, 970], 2, 2)],
+        }
+    }
+    pub fn bro() -> Self {
+        Self {
+            walk: WalkSprites::bro(),
+            others: vec![SpriteAnimation::from_sprite_ids(&[905, 906], 1, 2)],
         }
     }
 }
@@ -271,8 +309,8 @@ impl Shell {
         let (sprite, y_offset) = self.sprite_options();
         DrawParams::new(
             sprite.id,
-            i32::from(self.pos.x - offset.x),
-            i32::from(self.pos.y - offset.y) - y_offset,
+            i32::from(self.pos.x - offset.x - sprite.x_offset as i16),
+            i32::from(self.pos.y - offset.y - sprite.y_offset as i16) - y_offset,
             sprite,
             Some(1),
             0,
@@ -391,14 +429,14 @@ impl Shell {
         &mut self,
         dx: i16,
         dy: i16,
-        trail: &mut CompanionTrail<N>,
+        trail: Option<&mut CompanionTrail<N>>,
     ) {
         // Apply motion
         if dx == 0 && dy == 0 {
-            trail.stop();
+            trail.map(|x| x.stop());
             self.animate_stop();
         } else {
-            trail.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1));
+            trail.map(|x| x.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1)));
             self.pos.x += dx;
             self.pos.y += dy;
             self.animate_walk();
@@ -432,7 +470,7 @@ impl Shell {
     pub fn may() -> Self {
         Self {
             pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 11, 7, 6),
+            local_hitbox: Hitbox::new(0, 12, 7, 5),
             hp: 3,
             dir: (0, 1),
             walktime: 0,
@@ -440,6 +478,32 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites: ShellSprites::may(),
+        }
+    }
+    pub fn dog() -> Self {
+        Self {
+            pos: Vec2::new(62, 23),
+            local_hitbox: Hitbox::new(0, 11, 7, 6),
+            hp: 3,
+            dir: (0, 1),
+            walktime: 0,
+            walking: false,
+            flip_controls: Axis::None,
+            pet_timer: None,
+            sprites: ShellSprites::dog(),
+        }
+    }
+    pub fn bro() -> Self {
+        Self {
+            pos: Vec2::new(62, 23),
+            local_hitbox: Hitbox::new(0, 8, 7, 4),
+            hp: 3,
+            dir: (0, 1),
+            walktime: 0,
+            walking: false,
+            flip_controls: Axis::None,
+            pet_timer: None,
+            sprites: ShellSprites::bro(),
         }
     }
 }
