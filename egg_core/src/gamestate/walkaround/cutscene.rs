@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use crate::{
     data::sound,
+    player::Shell,
     position::Vec2,
     system::{ConsoleApi, ConsoleHelper},
 };
@@ -9,12 +12,17 @@ use super::WalkaroundState;
 #[derive(Clone, Debug)]
 pub struct Cutscene {
     stages: Vec<Vec<CutsceneItem>>,
+    entities: HashMap<String, usize>,
     index: usize,
 }
 
 impl Cutscene {
-    pub fn new(stages: Vec<Vec<CutsceneItem>>) -> Self {
-        Self { stages, index: 0 }
+    pub fn new(stages: Vec<Vec<CutsceneItem>>, entities: HashMap<String, usize>) -> Self {
+        Self {
+            stages,
+            entities,
+            index: 0,
+        }
     }
     pub fn pet_dog(dog_position: Vec2, initial_position: Vec2, flip: Option<bool>) -> Cutscene {
         let (position, dir) = if let Some(flip) = flip {
@@ -34,7 +42,8 @@ impl Cutscene {
         if flip.is_some() {
             vec.insert(1, vec![CutsceneItem::FacePlayer(dir)]);
         }
-        Self::new(vec)
+        let hashmap = HashMap::new();
+        Self::new(vec, hashmap)
     }
     pub fn is_stage_done(&self, walkaround: &WalkaroundState) -> bool {
         self.stages
@@ -72,6 +81,7 @@ pub enum CutsceneState {
 #[derive(Clone, Debug)]
 pub enum CutsceneItem {
     WalkPlayer(Vec2),
+    WalkEntity(Vec2, usize),
     FacePlayer((i8, i8)),
     MovePlayer(Vec2),
     PetDog(u8),
@@ -80,6 +90,9 @@ impl CutsceneItem {
     pub fn is_done(&self, walkaround: &WalkaroundState) -> bool {
         match self {
             CutsceneItem::WalkPlayer(pos) => walkaround.player.pos == *pos,
+            CutsceneItem::WalkEntity(pos, i) => {
+                walkaround.entities.get(*i).map(|x| x.pos == *pos).unwrap()
+            }
             CutsceneItem::MovePlayer(pos) => walkaround.player.pos == *pos,
             CutsceneItem::FacePlayer(_) => true,
             CutsceneItem::PetDog(x) => *x > 90,
@@ -87,8 +100,8 @@ impl CutsceneItem {
     }
     pub fn advance(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
         match self {
-            CutsceneItem::WalkPlayer(pos) => {
-                let Vec2 { x, y } = walkaround.player.pos.towards(pos);
+            CutsceneItem::WalkPlayer(vec2) => {
+                let Vec2 { x, y } = walkaround.player.pos.towards(vec2);
                 let (dx, dy) = walkaround.player.apply_walk_direction(x, y);
 
                 walkaround
@@ -99,6 +112,23 @@ impl CutsceneItem {
                     walkaround
                         .player
                         .apply_motion(0, 0, Some(&mut walkaround.companion_trail));
+                }
+            }
+            CutsceneItem::WalkEntity(vec2, i) => {
+                let shell = if let Some(entity) = walkaround.entities.get_mut(*i) {
+                    entity
+                } else {
+                    walkaround.entities.push(Shell::ellie());
+                    *i = walkaround.entities.len() - 1;
+                    walkaround.entities.last_mut().unwrap()
+                };
+                let Vec2 { x, y } = shell.pos.towards(vec2);
+                let (dx, dy) = shell.apply_walk_direction(x, y);
+
+                shell.apply_motion(dx, dy, Some(&mut walkaround.companion_trail));
+
+                if shell.pos == *vec2 {
+                    shell.apply_motion(0, 0, Some(&mut walkaround.companion_trail));
                 }
             }
             CutsceneItem::MovePlayer(pos) => {

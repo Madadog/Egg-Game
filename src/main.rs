@@ -526,6 +526,13 @@ fn step_state(
         new.pos = pos;
         state.walkaround.entities.push(new);
         info!("we have {} entities", state.walkaround.entities.len());
+    } else if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ControlLeft) {
+        let pos = state.walkaround.player.pos;
+        for e in state.walkaround.entities.iter_mut() {
+            let normalised = e.pos - pos;
+            let (x, y) = (normalised.x as f32 * 0.9, normalised.y as f32 * 0.9);
+            e.pos = egg_core::position::Vec2::new(x as i16, y as i16) + pos;
+        }
     } else if keys.pressed(KeyCode::Digit3) {
         state.walkaround.entities.pop();
         info!("we have {} entities", state.walkaround.entities.len());

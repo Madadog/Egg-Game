@@ -297,6 +297,12 @@ impl WalkaroundState {
         }
     }
 
+    // Adds a shell and returns its index
+    pub fn spawn_shell(&mut self, shell: Shell) -> usize {
+        self.entities.push(shell);
+        self.entities.len() - 1
+    }
+
     fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
         system.memory().set_byte(save::CURRENT_MAP, new_map.0 as u8);
         let x = self.player.pos.x.to_le_bytes();
