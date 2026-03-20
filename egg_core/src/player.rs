@@ -215,6 +215,12 @@ impl WalkSprites {
     }
 }
 
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum MoveMode {
+    Player,
+    Wander,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellSprites {
     pub walk: WalkSprites,
@@ -260,6 +266,7 @@ pub struct Shell {
     pub flip_controls: Axis,
     pub pet_timer: Option<u8>,
     pub sprites: ShellSprites,
+    pub move_mode: MoveMode,
 }
 impl Default for Shell {
     fn default() -> Self {
@@ -455,6 +462,7 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites: ShellSprites::ellie(),
+            move_mode: MoveMode::Wander,
         }
     }
     pub fn may() -> Self {
@@ -468,6 +476,7 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites: ShellSprites::may(),
+            move_mode: MoveMode::Wander,
         }
     }
     pub fn dog() -> Self {
@@ -481,6 +490,7 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites: ShellSprites::dog(),
+            move_mode: MoveMode::Wander,
         }
     }
     pub fn bro() -> Self {
@@ -494,6 +504,7 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites: ShellSprites::bro(),
+            move_mode: MoveMode::Wander,
         }
     }
 }

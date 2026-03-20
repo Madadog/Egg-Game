@@ -8,7 +8,7 @@ use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapInfo};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, Shell};
+use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState};
@@ -43,7 +43,10 @@ pub struct WalkaroundState {
 impl WalkaroundState {
     pub fn new() -> Self {
         Self {
-            entities: vec![Shell::default()],
+            entities: vec![Shell {
+                move_mode: MoveMode::Player,
+                ..Default::default()
+            }],
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
@@ -437,28 +440,27 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         };
 
         for shell in self.entities.iter_mut() {
-            let (dx, dy) = if system.rng().rand_u8() < 25 {
-                (
-                    (system.rng().rand_u8() % 3) as i16 - 1,
-                    (system.rng().rand_u8() % 3) as i16 - 1,
-                )
-            } else {
-                (shell.dir.0.into(), shell.dir.1.into())
-            };
-            let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map);
-            shell.apply_motion::<8>(dx, dy, None);
+            match shell.move_mode {
+                MoveMode::Player => {
+                    let (dx, dy) = shell.walk(system, dx, dy, noclip, &self.current_map);
+                    shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
+                }
+                MoveMode::Wander => {
+                    let (dx, dy) = if system.rng().rand_u8() < 25 {
+                        (
+                            (system.rng().rand_u8() % 3) as i16 - 1,
+                            (system.rng().rand_u8() % 3) as i16 - 1,
+                        )
+                    } else {
+                        (shell.dir.0.into(), shell.dir.1.into())
+                    };
+                    let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map);
+                    shell.apply_motion::<8>(dx, dy, None);
+                }
+            }
         }
 
-        let (dx, dy) = {
-            let map = self.current_map.clone();
-            self.player().walk(system, dx, dy, noclip, &map)
-        };
-        {
-            let mut companion_trail = self.companion_trail.clone();
-            self.player()
-                .apply_motion(dx, dy, Some(&mut companion_trail));
-            self.companion_trail = companion_trail;
-        }
+        {};
 
         // Set after player.dir has updated
         let interact_hitbox = self
