@@ -263,17 +263,7 @@ pub struct Shell {
 }
 impl Default for Shell {
     fn default() -> Self {
-        Self {
-            pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 10, 7, 5),
-            hp: 3,
-            dir: (0, 1),
-            walktime: 0,
-            walking: false,
-            flip_controls: Axis::None,
-            pet_timer: None,
-            sprites: ShellSprites::ellie(),
-        }
+        Self::ellie()
     }
 }
 impl Shell {

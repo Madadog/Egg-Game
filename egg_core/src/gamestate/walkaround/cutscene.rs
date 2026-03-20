@@ -89,11 +89,11 @@ pub enum CutsceneItem {
 impl CutsceneItem {
     pub fn is_done(&self, walkaround: &WalkaroundState) -> bool {
         match self {
-            CutsceneItem::WalkPlayer(pos) => walkaround.player.pos == *pos,
+            CutsceneItem::WalkPlayer(pos) => walkaround.player_ref().pos == *pos,
             CutsceneItem::WalkEntity(pos, i) => {
                 walkaround.entities.get(*i).map(|x| x.pos == *pos).unwrap()
             }
-            CutsceneItem::MovePlayer(pos) => walkaround.player.pos == *pos,
+            CutsceneItem::MovePlayer(pos) => walkaround.player_ref().pos == *pos,
             CutsceneItem::FacePlayer(_) => true,
             CutsceneItem::PetDog(x) => *x > 90,
         }
@@ -101,18 +101,17 @@ impl CutsceneItem {
     pub fn advance(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
         match self {
             CutsceneItem::WalkPlayer(vec2) => {
-                let Vec2 { x, y } = walkaround.player.pos.towards(vec2);
-                let (dx, dy) = walkaround.player.apply_walk_direction(x, y);
+                let Vec2 { x, y } = walkaround.player().pos.towards(vec2);
+                let (dx, dy) = walkaround.player().apply_walk_direction(x, y);
+                let mut trail = walkaround.companion_trail.clone();
 
-                walkaround
-                    .player
-                    .apply_motion(dx, dy, Some(&mut walkaround.companion_trail));
+                walkaround.player().apply_motion(dx, dy, Some(&mut trail));
 
                 if self.is_done(walkaround) {
-                    walkaround
-                        .player
-                        .apply_motion(0, 0, Some(&mut walkaround.companion_trail));
+                    walkaround.player().apply_motion(0, 0, Some(&mut trail));
                 }
+
+                walkaround.companion_trail = trail;
             }
             CutsceneItem::WalkEntity(vec2, i) => {
                 let shell = if let Some(entity) = walkaround.entities.get_mut(*i) {
@@ -132,25 +131,25 @@ impl CutsceneItem {
                 }
             }
             CutsceneItem::MovePlayer(pos) => {
-                let Vec2 { x, y } = walkaround.player.pos.towards(pos);
-                let (dx, dy) = walkaround.player.apply_walk_direction(x, y);
-                walkaround.player.pos = walkaround.player.pos + Vec2::new(dx, dy);
-                walkaround.player.animate_walk();
+                let Vec2 { x, y } = walkaround.player().pos.towards(pos);
+                let (dx, dy) = walkaround.player().apply_walk_direction(x, y);
+                walkaround.player().pos = walkaround.player().pos + Vec2::new(dx, dy);
+                walkaround.player().animate_walk();
                 if self.is_done(walkaround) {
-                    walkaround.player.animate_stop();
+                    walkaround.player().animate_stop();
                 }
             }
             CutsceneItem::PetDog(x) => {
-                walkaround.player.pet_timer = Some(*x);
+                walkaround.player().pet_timer = Some(*x);
                 if *x % 20 == 0 {
                     system.play_sound(sound::POP);
                 }
                 *x += 1;
                 if self.is_done(walkaround) {
-                    walkaround.player.pet_timer = None;
+                    walkaround.player().pet_timer = None;
                 }
             }
-            CutsceneItem::FacePlayer(dir) => walkaround.player.dir = *dir,
+            CutsceneItem::FacePlayer(dir) => walkaround.player().dir = *dir,
         }
     }
 }

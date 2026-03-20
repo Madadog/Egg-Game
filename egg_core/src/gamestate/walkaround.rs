@@ -26,7 +26,6 @@ mod cutscene;
 
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
-    pub player: Shell,
     pub entities: Vec<Shell>,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
@@ -44,8 +43,7 @@ pub struct WalkaroundState {
 impl WalkaroundState {
     pub fn new() -> Self {
         Self {
-            player: Shell::default(),
-            entities: Vec::new(),
+            entities: vec![Shell::default()],
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
@@ -59,6 +57,17 @@ impl WalkaroundState {
             bg_colour: 0,
             default_map_colliders: Vec::new(),
         }
+    }
+
+    /// Access the player entity (entities[0]) - mutable reference.
+    /// This allows changing which entity is the player at runtime if needed.
+    pub fn player(&mut self) -> &mut Shell {
+        &mut self.entities[0]
+    }
+
+    /// Access the player entity (entities[0]) - immutable reference.
+    pub fn player_ref(&self) -> &Shell {
+        &self.entities[0]
     }
     pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
         let map_set = map_set.into();
@@ -211,7 +220,8 @@ impl WalkaroundState {
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
-                self.companion_trail.fill(self.player.pos, self.player.dir);
+                self.companion_trail
+                    .fill(self.player_ref().pos, self.player_ref().dir);
                 if self.companion_list.has(Companion::Dog) {
                     self.companion_list.remove(Companion::Dog);
                     system.play_sound(sound::ALERT_DOWN);
@@ -238,9 +248,9 @@ impl WalkaroundState {
                 None
             }
             InteractFn::Piano(origin) => {
-                let mut note = (self.player.pos.x + 4 - origin.x) / 8;
+                let mut note = (self.player().pos.x + 4 - origin.x) / 8;
                 let x = origin.x + note * 8;
-                let y = if self.player.pos.y - origin.y < 2 {
+                let y = if self.player().pos.y - origin.y < 2 {
                     note += 5;
                     origin.y + 1
                 } else {
@@ -264,12 +274,13 @@ impl WalkaroundState {
                 None
             }
             InteractFn::AddCreatures(x) => {
+                let pos = self.player_ref().pos;
                 self.creatures
-                    .extend((0..=*x).map(|_| Creature::default().with_offset(self.player.pos)));
+                    .extend((0..=*x).map(|_| Creature::default().with_offset(pos)));
                 None
             }
             InteractFn::Pet(vec, flip) => {
-                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player.pos, *flip));
+                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player().pos, *flip));
                 None
             }
         }
@@ -305,10 +316,10 @@ impl WalkaroundState {
 
     fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
         system.memory().set_byte(save::CURRENT_MAP, new_map.0 as u8);
-        let x = self.player.pos.x.to_le_bytes();
+        let x = self.player_ref().pos.x.to_le_bytes();
         system.memory().set_byte(save::PLAYER_X[0], x[0]);
         system.memory().set_byte(save::PLAYER_X[1], x[1]);
-        let y = self.player.pos.y.to_le_bytes();
+        let y = self.player_ref().pos.y.to_le_bytes();
         system.memory().set_byte(save::PLAYER_Y[0], y[0]);
         system.memory().set_byte(save::PLAYER_Y[1], y[1]);
     }
@@ -316,11 +327,11 @@ impl WalkaroundState {
     pub fn load_pmem(&mut self, system: &mut impl ConsoleApi) {
         let current_map = system.memory().get_byte(save::CURRENT_MAP);
         self.load_map(system, MapIndex(current_map.into()).map());
-        self.player.pos.x = i16::from_le_bytes([
+        self.player().pos.x = i16::from_le_bytes([
             system.memory().get_byte(save::PLAYER_X[0]),
             system.memory().get_byte(save::PLAYER_X[1]),
         ]);
-        self.player.pos.y = i16::from_le_bytes([
+        self.player().pos.y = i16::from_le_bytes([
             system.memory().get_byte(save::PLAYER_Y[0]),
             system.memory().get_byte(save::PLAYER_Y[1]),
         ]);
@@ -415,7 +426,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
             return Some(GameState::MainMenu(super::menu::MenuState::debug_options()));
         }
         if system.any_btnpr() {
-            self.player.flip_controls = Axis::None
+            self.player().flip_controls = Axis::None
         }
         let noclip = if system.key(63) && system.key(64) {
             dy *= 3;
@@ -438,19 +449,26 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
             shell.apply_motion::<8>(dx, dy, None);
         }
 
-        let (dx, dy) = self.player.walk(system, dx, dy, noclip, &self.current_map);
-        self.player
-            .apply_motion(dx, dy, Some(&mut self.companion_trail));
+        let (dx, dy) = {
+            let map = self.current_map.clone();
+            self.player().walk(system, dx, dy, noclip, &map)
+        };
+        {
+            let mut companion_trail = self.companion_trail.clone();
+            self.player()
+                .apply_motion(dx, dy, Some(&mut companion_trail));
+            self.companion_trail = companion_trail;
+        }
 
         // Set after player.dir has updated
         let interact_hitbox = self
-            .player
+            .player()
             .hitbox()
-            .offset_xy(self.player.dir.0.into(), self.player.dir.1.into());
+            .offset_xy(self.player().dir.0.into(), self.player().dir.1.into());
 
         let mut warp_target = None;
         for warp in self.current_map.warps.iter() {
-            if self.player.hitbox().touches(warp.hitbox())
+            if self.player_ref().hitbox().touches(warp.hitbox())
                 || (interact && interact_hitbox.touches(warp.hitbox()))
             {
                 if let Some(sound) = &warp.sound {
@@ -461,9 +479,10 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
             }
         }
         if let Some(target) = warp_target {
-            self.player.pos = target.target();
-            self.player.flip_controls = target.flip;
-            self.companion_trail.fill(self.player.pos, self.player.dir);
+            self.player().pos = target.target();
+            self.player().flip_controls = target.flip;
+            self.companion_trail
+                .fill(self.player_ref().pos, self.player_ref().dir);
             if let Some(new_map) = target.map {
                 self.save(&new_map, system);
                 self.load_map(system, new_map.map());
@@ -500,7 +519,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         }
 
         self.camera
-            .center_on(self.player.pos.x + 4, self.player.pos.y + 8);
+            .center_on(self.player_ref().pos.x + 4, self.player_ref().pos.y + 8);
         None
     }
     fn draw(&self, (system, debug_info): (&mut T, &DebugInfo)) {
@@ -516,7 +535,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
-        sprites.push(self.player.draw_params(self.camera.pos).into());
+        sprites.push(self.player_ref().draw_params(self.camera.pos).into());
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
@@ -588,7 +607,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
                     .draw(system, 12);
             }
-            self.player
+            self.player_ref()
                 .hitbox()
                 .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
                 .draw(system, 12);
@@ -600,7 +619,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         }
         if debug_info.player_info() {
             system.print_raw(
-                &format!("Player: {:#?}\0", self.player),
+                &format!("Player: {:#?}\0", self.player_ref()),
                 0,
                 0,
                 PrintOptions {

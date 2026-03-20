@@ -502,17 +502,17 @@ fn step_state(
         state.debug_info.set_memory_info(x);
     }
     if keys.just_pressed(KeyCode::Digit1) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player.pos;
-        state.walkaround.player = egg_core::player::Shell::ellie();
-        state.walkaround.player.pos = pos;
+        let pos = state.walkaround.player().pos;
+        *state.walkaround.player() = egg_core::player::Shell::ellie();
+        state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit2) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player.pos;
-        state.walkaround.player = egg_core::player::Shell::may();
-        state.walkaround.player.pos = pos;
+        let pos = state.walkaround.player().pos;
+        *state.walkaround.player() = egg_core::player::Shell::may();
+        state.walkaround.player().pos = pos;
     }
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player.pos;
+        let pos = state.walkaround.player().pos;
         let rand = state.system.rng().rand_u8();
         let mut new = if rand < 64 {
             egg_core::player::Shell::ellie()
@@ -527,32 +527,34 @@ fn step_state(
         state.walkaround.entities.push(new);
         info!("we have {} entities", state.walkaround.entities.len());
     } else if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ControlLeft) {
-        let pos = state.walkaround.player.pos;
+        let pos = state.walkaround.player().pos;
         for e in state.walkaround.entities.iter_mut() {
             let normalised = e.pos - pos;
             let (x, y) = (normalised.x as f32 * 0.9, normalised.y as f32 * 0.9);
             e.pos = egg_core::position::Vec2::new(x as i16, y as i16) + pos;
         }
     } else if keys.pressed(KeyCode::Digit3) {
-        state.walkaround.entities.pop();
+        if state.walkaround.entities.len() > 1 {
+            state.walkaround.entities.pop();
+        }
         info!("we have {} entities", state.walkaround.entities.len());
     }
     if keys.just_pressed(KeyCode::Digit4) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player.pos;
-        state.walkaround.player = egg_core::player::Shell::dog();
-        state.walkaround.player.pos = pos;
+        let pos = state.walkaround.player().pos;
+        *state.walkaround.player() = egg_core::player::Shell::dog();
+        state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit5) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player.pos;
-        state.walkaround.player = egg_core::player::Shell::bro();
-        state.walkaround.player.pos = pos;
+        let pos = state.walkaround.player().pos;
+        *state.walkaround.player() = egg_core::player::Shell::bro();
+        state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
-        let player = state.walkaround.player.clone();
+        let player = state.walkaround.player().clone();
         if let Some(shell) = state.walkaround.entities.get_mut(0) {
             let temp = shell.clone();
             *shell = player;
-            state.walkaround.player = temp;
+            *state.walkaround.player() = temp;
         }
     }
 
