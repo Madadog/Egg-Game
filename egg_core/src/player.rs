@@ -24,7 +24,6 @@ use crate::{
     position::{Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper, DrawParams, StaticDrawParams},
 };
-use itertools::Itertools;
 use tic80_api::core::{Flip, SpriteOptions, StaticSpriteOptions};
 
 #[derive(Debug, Clone, Default)]
@@ -562,12 +561,12 @@ pub enum Companion {
 }
 impl Companion {
     pub fn spr_params(
-        &self,
+        &'_ self,
         position: Vec2,
         direction: (i8, i8),
         walktime: u8,
         camera: &Camera,
-    ) -> StaticDrawParams {
+    ) -> StaticDrawParams<'_> {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;

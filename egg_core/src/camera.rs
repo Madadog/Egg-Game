@@ -1,7 +1,9 @@
 use crate::position::Vec2;
+use CameraRange::*;
+// use tic80_api::core::WIDTH;
 
-const HEIGHT: i16 = 136;
-const WIDTH: i16 = 240;
+const WIDTH: i16 = tic80_api::core::WIDTH as i16;
+const HEIGHT: i16 = tic80_api::core::HEIGHT as i16;
 
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -63,8 +65,6 @@ impl Camera {
     }
 }
 
-use CameraRange::*;
-
 #[derive(Debug, Clone)]
 pub struct CameraBounds {
     x_bounds: CameraRange,
@@ -81,7 +81,7 @@ impl CameraBounds {
         Self::new(Free, Free)
     }
     pub const fn bounded(x: (i16, i16), y: (i16, i16)) -> Self {
-        Self::new(Range(x.0, x.1 - 240), Range(y.0, y.1 - 136))
+        Self::new(Range(x.0, x.1 - WIDTH as i16), Range(y.0, y.1 - HEIGHT))
     }
     pub fn bound(&self, focus: Vec2) -> Vec2 {
         Vec2::new(self.x_bounds.bound(focus.x), self.y_bounds.bound(focus.y))

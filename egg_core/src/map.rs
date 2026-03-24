@@ -273,7 +273,8 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
             (point.y - layer_hitbox.y) / 8 + layer.origin.y as i16,
         );
         let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
-        let id = system.mget(map_point.x.into(), map_point.y.into()) + spr_flag_offset;
+        let bank = system.sync_helper().last_bank().into();
+        let id = system.map_get(bank, 0, map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         let mget_collision = touches_tile(
             *system.get_sprite_flags().get(id as usize).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),

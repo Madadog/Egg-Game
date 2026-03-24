@@ -1,5 +1,5 @@
 use tic80_api::core::{
-    FontOptions, MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
+    MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
     StaticSpriteOptions, TTriOptions,
 };
 
@@ -279,72 +279,36 @@ impl MapLayer {
 /// Abstracts away all static memory accesses
 pub trait ConsoleApi {
     // TIC-80 RAM
-    fn get_framebuffer(&mut self) -> &mut [u8; 16320];
-    fn get_tiles(&mut self) -> &mut [u8; 8192];
-    fn get_sprites(&mut self) -> &mut [u8; 8192];
-    fn get_map(&mut self) -> &mut [u8; 32640];
     fn get_gamepads(&mut self) -> &mut [u8; 4];
     fn get_mouse(&mut self) -> &mut MouseInput;
-    fn get_keyboard(&mut self) -> &mut [u8; 4];
-    fn get_sfx_state(&mut self) -> &mut [u8; 16];
-    fn get_sound_registers(&mut self) -> &mut [u8; 72];
-    fn get_waveforms(&mut self) -> &mut [u8; 256];
-    fn get_sfx(&mut self) -> &mut [u8; 4224];
-    fn get_music_patterns(&mut self) -> &mut [u8; 11520];
-    fn get_music_tracks(&mut self) -> &mut [u8; 408];
-    fn get_sound_state(&mut self) -> &mut [u8; 4];
-    fn get_stereo_volume(&mut self) -> &mut [u8; 4];
     fn memory(&mut self) -> &mut EggMemory;
     fn get_sprite_flags(&mut self) -> &mut [u8];
-    fn get_system_font(&mut self) -> &mut [u8; 2048];
 
     // TIC-80 VRAM
     fn get_palette(&mut self) -> &mut [[u8; 3]];
     fn get_palette_map(&mut self) -> &mut [usize];
-    fn get_border_colour(&mut self) -> &mut u8;
+    fn get_border_colour(&mut self) -> &mut [u8; 3];
     fn get_screen_offset(&mut self) -> &mut [i8; 2];
-    fn get_mouse_cursor(&mut self) -> &mut u8;
     fn get_blit_segment(&mut self) -> &mut u8;
 
     // TIC-80 API
     fn btn(&self, index: i32) -> bool;
     fn btnp(&self, index: i32, hold: i32, period: i32) -> bool;
-    fn clip(&mut self, x: i32, y: i32, width: i32, height: i32);
     fn cls(&mut self, color: u8);
     fn circ(&mut self, x: i32, y: i32, radius: i32, color: u8);
     fn circb(&mut self, x: i32, y: i32, radius: i32, color: u8);
     fn elli(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
     fn ellib(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
     fn exit(&mut self);
-    fn fget(&self, sprite_index: i32, flag: i8) -> bool;
-    fn fset(&mut self, sprite_index: i32, flag: i8, value: bool);
-    fn font_raw(text: &str, x: i32, y: i32, opts: FontOptions) -> i32;
-    fn font_alloc(text: impl AsRef<str>, x: i32, y: i32, opts: FontOptions) -> i32;
     fn key(&self, index: i32) -> bool;
     fn keyp(&self, index: i32, hold: i32, period: i32) -> bool;
     fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u8);
-    // `remap` is not yet implemented by the TIC-80 WASM runtime, so for now its type is a raw i32.
     fn map(&mut self, opts: MapOptions);
-    // These clash with rustc builtins, so they are reimplemented in the wrappers.
-    // fn memcpy(dest: i32, src: i32, length: i32);
-    // fn memset(address: i32, value: i32, length: i32);
 
-    /// Gets a tile from some map. Old and deprecated. Use `ConsoleApi::map_get()` instead.
-    fn mget(&self, x: i32, y: i32) -> i32;
-    /// Old and deprecated. Use `ConsoleApi::map_set()` instead.
-    fn mset(&mut self, x: i32, y: i32, value: i32);
     fn mouse(&self) -> MouseInput;
     fn music(&mut self, track: Option<&MusicTrack>, opts: MusicOptions);
     fn pix(&mut self, x: i32, y: i32, color: u8) -> u8;
-    fn peek(&self, address: i32, bits: u8) -> u8;
-    fn peek4(&self, address: i32) -> u8;
-    fn peek2(&self, address: i32) -> u8;
-    fn peek1(&self, address: i32) -> u8;
     fn pmem(&mut self, address: i32, value: i64) -> i32;
-    fn poke(&mut self, address: i32, value: u8, bits: u8);
-    fn poke4(&mut self, address: i32, value: u8);
-    fn poke2(&mut self, address: i32, value: u8);
-    fn poke1(&mut self, address: i32, value: u8);
     fn print_alloc(&mut self, text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) -> i32;
     fn print_raw(&mut self, text: &str, x: i32, y: i32, opts: PrintOptions) -> i32;
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
@@ -545,7 +509,9 @@ pub trait ConsoleHelper: ConsoleApi {
         self.set_palette_colour(index as u8, rgb);
     }
     fn set_border_colour(&mut self, colour: u8) {
-        *self.get_border_colour() = colour;
+        if let Some(colour) = self.get_palette().get(usize::from(colour)) {
+            *self.get_border_colour() = *colour;
+        }
     }
     fn screen_offset(&mut self, horizontal: i8, vertical: i8) {
         self.get_screen_offset()[0] = horizontal;

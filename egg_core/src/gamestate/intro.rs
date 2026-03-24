@@ -1,4 +1,6 @@
+use tic80_api::core::HEIGHT;
 use tic80_api::core::MusicOptions;
+use tic80_api::core::WIDTH;
 use tic80_api::helpers::SWEETIE_16;
 
 use crate::data::dialogue_data::GAME_TITLE;
@@ -70,8 +72,8 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
                     system.circ(90, 36, 2, 12);
                     for _ in 0..420 {
                         let (x, y) = (
-                            system.rng().next_u32() as i32 % 240,
-                            system.rng().next_u32() as i32 % 136,
+                            system.rng().next_u32() as i32 % WIDTH,
+                            system.rng().next_u32() as i32 % HEIGHT,
                         );
                         system.pix(
                             x,

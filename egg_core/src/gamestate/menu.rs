@@ -1,5 +1,6 @@
 use tic80_api::core::PrintOptions;
 use tic80_api::core::StaticSpriteOptions;
+use tic80_api::core::WIDTH;
 
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
@@ -143,7 +144,7 @@ impl MenuState {
                 inventory_ui.state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
                 return Some(GameState::Inventory);
             }
-            Space => {}
+            _Space => {}
             Debug(x) => {
                 let walk = walkaround_state;
                 match x {
@@ -176,10 +177,10 @@ impl MenuState {
             MapTest => return Some(GameState::MainMenu(MenuState::map_select())),
             MapBankSelect(_x, _) => {
                 // walkaround_state.load_map(system, MapIndex((*x).into()).map())
-                walkaround_state.load_map_bank(system, 2, None);
+                walkaround_state.load_map_bank(system, 2);
             }
             MusicTest => todo!(),
-            MusicSelect(_x, _) => todo!(),
+            _MusicSelect(_x, _) => todo!(),
         };
         None
     }
@@ -239,12 +240,12 @@ pub enum MenuEntry {
     Reset(u8),
     Inventory,
     ExitToMenu,
-    Space,
+    _Space,
     Debug(u8),
     MapTest,
     MapBankSelect(u8, String),
     MusicTest,
-    MusicSelect(u8, String),
+    _MusicSelect(u8, String),
     Walk,
 }
 impl MenuEntry {
@@ -266,13 +267,13 @@ impl MenuEntry {
             }
             Inventory => MENU_BACK,
             ExitToMenu => MENU_EXIT,
-            Space => "\0",
+            _Space => "\0",
             Debug(x) => MENU_DEBUG_CONTROLS[usize::from(*x)],
             MapTest => MENU_MAP_TEST[0],
             MusicTest => MENU_MUSIC_TEST[0],
             Walk => MENU_PLAY,
             MapBankSelect(_, string) => &string,
-            MusicSelect(_, string) => &string,
+            _MusicSelect(_, string) => &string,
         }
     }
 }
@@ -287,7 +288,7 @@ pub fn draw_menu(
     for (i, string) in entries.iter().enumerate() {
         let color = if i == current_option { 4 } else { 3 };
         if i == current_option {
-            system.rect(0, y + i as i32 * 8 - 1, 240, 8, 1);
+            system.rect(0, y + i as i32 * 8 - 1, WIDTH, 8, 1);
         }
         let options = DIALOGUE_OPTIONS.get_options(system);
         system.print_raw_centered(
@@ -311,7 +312,7 @@ pub fn step_menu(
     let mouse_delta = system.mouse_delta();
     let mut clicked = false;
     for i in 0..entries {
-        if Hitbox::new(0, y + 8 * i as i16, 240, 8).touches_point(mouse_pos) {
+        if Hitbox::new(0, y + 8 * i as i16, WIDTH as i16, 8).touches_point(mouse_pos) {
             clicked = mouse_delta.left;
             if mouse_delta.x != 0 || mouse_delta.y != 0 || clicked {
                 *index = i;

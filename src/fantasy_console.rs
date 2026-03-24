@@ -7,7 +7,7 @@ use egg_core::{
     rand::Lcg64Xsh32,
     system::{ConsoleApi, EggMemory, GameMap, MapLayer, SyncHelper},
     tic80_api::{
-        core::{Flip, MouseInput, SfxOptions, StaticSpriteOptions},
+        core::{Flip, HEIGHT, MouseInput, SfxOptions, StaticSpriteOptions, WIDTH},
         helpers::SWEETIE_16,
     },
 };
@@ -43,11 +43,13 @@ pub struct FantasyConsole {
     files: HashMap<String, Vec<u8>>,
 
     vbank: usize,
-    palette_size: usize,
+
     palette: Vec<[u8; 3]>,
     palette_map: Vec<usize>,
     blit_segment: u8,
     screen_offset: [i8; 2],
+    border_colour: [u8; 3],
+
     sprite_flags: Vec<u8>,
     music: Option<(MusicTrack, bool)>,
     memory: EggMemory,
@@ -71,9 +73,9 @@ impl FantasyConsole {
             .collect();
         assert_eq!(palette.len(), palette_size);
         let mut x = Self {
-            screen: Pixmap::new(240, 136).unwrap(),
-            overlay_screen: Pixmap::new(240, 136).unwrap(),
-            _output_screen: Pixmap::new(240, 136).unwrap(),
+            screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
+            overlay_screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
+            _output_screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
 
             font: Pixmap::new(128, 128).unwrap(),
             sprites: Pixmap::new(1, 1).unwrap(),
@@ -81,12 +83,13 @@ impl FantasyConsole {
             maps: Vec::new(),
             files: HashMap::new(),
 
+            border_colour: palette[0],
             vbank: 0,
-            palette_size,
             palette,
             palette_map,
             blit_segment: 2,
             screen_offset: [0; 2],
+
             sprite_flags: vec![0; 2048],
             music: None,
             sounds: HashMap::new(),
@@ -193,13 +196,13 @@ impl FantasyConsole {
         let colour = colour.premultiply().to_color_u8();
         for j in 0..8 {
             for i in 0..8 {
-                let screen_index = (x + i) + 240 * (y + j);
+                let screen_index = (x + i) + WIDTH * (y + j);
                 let pixel = self.font.pixels()[pixel_index + (i + 128 * j) as usize];
                 if pixel.alpha() == 0 {
                     continue;
                 }
                 letter_width = letter_width.max(i + 1);
-                if x + i >= 240 || y + j >= 136 {
+                if x + i >= WIDTH || y + j >= HEIGHT {
                     continue;
                 }
                 if let Some(x) = screen.pixels_mut().get_mut(screen_index as usize) {
@@ -209,7 +212,7 @@ impl FantasyConsole {
         }
         letter_width
     }
-    // TODO: RGB and indexed sprite data
+    // Draws an RGB sprite to the RGB screen
     pub fn blit_sprite(&mut self, index: i32, x: i32, y: i32, flip: bool) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
         let screen = match self.vbank {
@@ -217,38 +220,30 @@ impl FantasyConsole {
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
-        let x_offset = x.min(0).abs();
-        let y_offset = y.min(0).abs();
-        let x_start = x.max(0);
-        let y_start = y.max(0);
-        let y_end = (y + 8).min(136);
-        let x_end = (x + 8).min(240);
-        if !flip {
+        let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
+        let (x_start, y_start) = (x.max(0), y.max(0));
+        let (x_end, y_end) = ((x + 8).min(WIDTH), (y + 8).min(HEIGHT));
+        let mut draw_pix = |x: i32, i: i32| {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).zip(x_offset..8) {
-                    let screen_index = x + 240 * y;
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
-                        continue;
-                    }
+                let screen_index = x + WIDTH * y;
+                let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                if self.sprites.pixels()[sprite_index].alpha() != 0 {
                     screen.pixels_mut()[screen_index as usize] =
                         self.sprites.pixels()[sprite_index];
                 }
             }
+        };
+        if flip {
+            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
+                draw_pix(x, i);
+            }
         } else {
-            for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                    let screen_index = x + 240 * y;
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
-                        continue;
-                    }
-                    screen.pixels_mut()[screen_index as usize] =
-                        self.sprites.pixels()[sprite_index];
-                }
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, i);
             }
         }
     }
+    // Draws a sprite to the RGB screen using only `colour` and the sprite's transparency
     pub fn blit_mask(&mut self, index: i32, x: i32, y: i32, colour: Color, flip: bool) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
         let screen = match self.vbank {
@@ -256,34 +251,26 @@ impl FantasyConsole {
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
-        let x_offset = x.min(0).abs();
-        let y_offset = y.min(0).abs();
-        let x_start = x.max(0);
-        let y_start = y.max(0);
-        let y_end = (y + 8).min(136);
-        let x_end = (x + 8).min(240);
+        let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
+        let (x_start, y_start) = (x.max(0), y.max(0));
+        let (x_end, y_end) = ((x + 8).min(WIDTH), (y + 8).min(HEIGHT));
         let colour = colour.premultiply().to_color_u8();
-        if !flip {
+        let mut draw_pix = |x: i32, i: i32| {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).zip(x_offset..8) {
-                    let screen_index = x + 240 * y;
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
-                        continue;
-                    }
+                let screen_index = x + WIDTH * y;
+                let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                if self.sprites.pixels()[sprite_index].alpha() != 0 {
                     screen.pixels_mut()[screen_index as usize] = colour;
                 }
             }
+        };
+        if flip {
+            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
+                draw_pix(x, i);
+            }
         } else {
-            for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                    let screen_index = x + 240 * y;
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.sprites.pixels()[sprite_index].alpha() == 0 {
-                        continue;
-                    }
-                    screen.pixels_mut()[screen_index as usize] = colour;
-                }
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, i);
             }
         }
     }
@@ -317,26 +304,26 @@ impl FantasyConsole {
         self.maps = maps;
     }
     pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
-        if x >= 240 || y >= 136 || x < 0 || y < 0 {
+        if x >= WIDTH || y >= HEIGHT || x < 0 || y < 0 {
             return;
         }
         let colour = colour.premultiply().to_color_u8();
-        let over = (x + width - 240).max(0);
+        let over = (x + width - WIDTH).max(0);
         let width = width - over;
         for i in 0..width {
-            let screen_index = x + 240 * y + i;
+            let screen_index = x + WIDTH * y + i;
             self.screen.pixels_mut()[screen_index as usize] = colour;
         }
     }
     pub fn vertical_line(&mut self, x: i32, y: i32, height: i32, colour: Color) {
-        if x >= 240 || y >= 136 || x < 0 || y < 0 {
+        if x >= WIDTH || y >= HEIGHT || x < 0 || y < 0 {
             return;
         }
         let colour = colour.premultiply().to_color_u8();
-        let over = (y + height - 136).max(0);
+        let over = (y + height - HEIGHT).max(0);
         let height = height - over;
         for i in 0..height {
-            let screen_index = x + 240 * (y + i);
+            let screen_index = x + WIDTH * (y + i);
             self.screen.pixels_mut()[screen_index as usize] = colour;
         }
     }
@@ -348,7 +335,7 @@ impl FantasyConsole {
         mut height: i32,
         colour: Color,
     ) {
-        if x >= 240 || y >= 136 {
+        if x >= WIDTH || y >= HEIGHT {
             return;
         }
         if x < 0 {
@@ -359,15 +346,15 @@ impl FantasyConsole {
             height += y;
             y = 0;
         }
-        if x + width > 240 {
-            width = 240 - x;
+        if x + width > WIDTH {
+            width = WIDTH - x;
         }
         for i in 0..height {
             self.horizontal_line(x, y + i, width, colour);
         }
     }
     pub fn draw_rect_border(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Color) {
-        if x >= 240 || y >= 136 {
+        if x >= WIDTH || y >= HEIGHT {
             return;
         }
         self.horizontal_line(x, y, width, colour);
@@ -383,7 +370,7 @@ impl FantasyConsole {
             .premultiply()
             .to_color_u8();
         let screen = &mut self.screen;
-        let screen_index = x + 240 * y;
+        let screen_index = x + WIDTH * y;
         screen.pixels_mut()[screen_index as usize] = colour;
     }
     pub fn draw_indexed_sprite(
@@ -395,32 +382,26 @@ impl FantasyConsole {
         transparent_colour: u8,
     ) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
-        let x_offset = x.min(0).abs();
-        let y_offset = y.min(0).abs();
-        let x_start = x.max(0);
-        let y_start = y.max(0);
-        let y_end = (y + 8).min(136);
-        let x_end = (x + 8).min(240);
-        if !flip {
+        let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
+        let (x_start, y_start) = (x.max(0), y.max(0));
+        let (x_end, y_end) = ((x + 8).min(WIDTH), (y + 8).min(HEIGHT));
+        let mut draw_pix = |x: i32, i: i32| {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).zip(x_offset..8) {
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    match self.indexed_sprites.data.get(sprite_index) {
-                        Some(&colour) if colour == transparent_colour => continue,
-                        None => continue,
-                        _ => self.draw_indexed_pixel(sprite_index, x, y),
-                    }
+                let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
+                match self.indexed_sprites.data.get(sprite_index) {
+                    Some(&colour) if colour == transparent_colour => continue,
+                    None => continue,
+                    _ => self.draw_indexed_pixel(sprite_index, x, y),
                 }
             }
+        };
+        if flip {
+            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
+                draw_pix(x, i);
+            }
         } else {
-            for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                    let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                    if self.indexed_sprites.data[sprite_index] == transparent_colour {
-                        continue;
-                    }
-                    self.draw_indexed_pixel(sprite_index, x, y);
-                }
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, i);
             }
         }
     }
@@ -434,10 +415,8 @@ impl FantasyConsole {
         scale: i32,
     ) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
-        let x_offset = x.min(0).abs();
-        let y_offset = y.min(0).abs();
-        let x_start = x.max(0);
-        let y_start = y.max(0);
+        let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
+        let (x_start, y_start) = (x.max(0), y.max(0));
         for j in y_offset..8 {
             for i in x_offset..8 {
                 let sprite_index = if flip {
@@ -460,72 +439,20 @@ impl FantasyConsole {
             }
         }
     }
-    fn draw_pixel_with_map(&mut self, colour: u8, x: i32, y: i32, map: &[[u8; 256]; 256]) {
+    fn _draw_pixel_with_map(&mut self, _colour: u8, x: i32, y: i32, _map: &[[u8; 256]; 256]) {
         let screen = &mut self.screen;
-        let screen_index = x + 240 * y;
-        let colour = screen.pixels()[screen_index as usize];
+        let screen_index = x + WIDTH * y;
+        let _colour = screen.pixels()[screen_index as usize];
     }
 }
 
 impl ConsoleApi for FantasyConsole {
-    fn get_framebuffer(&mut self) -> &mut [u8; 16320] {
-        todo!()
-    }
-
-    fn get_tiles(&mut self) -> &mut [u8; 8192] {
-        todo!()
-    }
-
-    fn get_sprites(&mut self) -> &mut [u8; 8192] {
-        todo!()
-    }
-
-    fn get_map(&mut self) -> &mut [u8; 32640] {
-        todo!()
-    }
-
     fn get_gamepads(&mut self) -> &mut [u8; 4] {
         &mut self.input.gamepads
     }
 
     fn get_mouse(&mut self) -> &mut MouseInput {
         &mut self.input.mouse
-    }
-
-    fn get_keyboard(&mut self) -> &mut [u8; 4] {
-        todo!()
-    }
-
-    fn get_sfx_state(&mut self) -> &mut [u8; 16] {
-        todo!()
-    }
-
-    fn get_sound_registers(&mut self) -> &mut [u8; 72] {
-        todo!()
-    }
-
-    fn get_waveforms(&mut self) -> &mut [u8; 256] {
-        todo!()
-    }
-
-    fn get_sfx(&mut self) -> &mut [u8; 4224] {
-        todo!()
-    }
-
-    fn get_music_patterns(&mut self) -> &mut [u8; 11520] {
-        todo!()
-    }
-
-    fn get_music_tracks(&mut self) -> &mut [u8; 408] {
-        todo!()
-    }
-
-    fn get_sound_state(&mut self) -> &mut [u8; 4] {
-        todo!()
-    }
-
-    fn get_stereo_volume(&mut self) -> &mut [u8; 4] {
-        todo!()
     }
 
     fn memory(&mut self) -> &mut EggMemory {
@@ -536,10 +463,6 @@ impl ConsoleApi for FantasyConsole {
         self.sprite_flags.as_mut_slice()
     }
 
-    fn get_system_font(&mut self) -> &mut [u8; 2048] {
-        todo!()
-    }
-
     fn get_palette(&mut self) -> &mut [[u8; 3]] {
         &mut self.palette
     }
@@ -548,16 +471,12 @@ impl ConsoleApi for FantasyConsole {
         self.palette_map.as_mut_slice()
     }
 
-    fn get_border_colour(&mut self) -> &mut u8 {
-        todo!()
+    fn get_border_colour(&mut self) -> &mut [u8; 3] {
+        &mut self.border_colour
     }
 
     fn get_screen_offset(&mut self) -> &mut [i8; 2] {
         &mut self.screen_offset
-    }
-
-    fn get_mouse_cursor(&mut self) -> &mut u8 {
-        todo!()
     }
 
     fn get_blit_segment(&mut self) -> &mut u8 {
@@ -570,10 +489,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn btnp(&self, index: i32, _hold: i32, _period: i32) -> bool {
         self.input.mem_btnp(index as u8)
-    }
-
-    fn clip(&mut self, _x: i32, _y: i32, _width: i32, _height: i32) {
-        todo!()
     }
 
     fn cls(&mut self, color: u8) {
@@ -641,33 +556,7 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn exit(&mut self) {
-        todo!()
-    }
-
-    fn fget(&self, _sprite_index: i32, _flag: i8) -> bool {
-        todo!()
-    }
-
-    fn fset(&mut self, _sprite_index: i32, _flag: i8, _value: bool) {
-        todo!()
-    }
-
-    fn font_raw(
-        _text: &str,
-        _x: i32,
-        _y: i32,
-        _opts: egg_core::tic80_api::core::FontOptions,
-    ) -> i32 {
-        todo!()
-    }
-
-    fn font_alloc(
-        _text: impl AsRef<str>,
-        _x: i32,
-        _y: i32,
-        _opts: egg_core::tic80_api::core::FontOptions,
-    ) -> i32 {
-        todo!()
+        panic!("Perfectly normal shutdown.")
     }
 
     fn key(&self, index: i32) -> bool {
@@ -708,19 +597,12 @@ impl ConsoleApi for FantasyConsole {
         self.map_draw(bank, 0, opts);
     }
 
-    fn mget(&self, x: i32, y: i32) -> i32 {
-        // let i = dbg!(self.maps[0].get(0, x as usize, y as usize).unwrap() as i32);
-        self.map_get(self.sync_helper.last_bank() as usize, 0, x, y)
-            .try_into()
-            .unwrap()
-    }
-
-    fn mset(&mut self, _x: i32, _y: i32, _value: i32) {
-        todo!()
-    }
-
     fn mouse(&self) -> MouseInput {
         self.input.mouse.clone()
+    }
+
+    fn pmem(&mut self, _address: i32, _value: i64) -> i32 {
+        todo!()
     }
 
     fn music(
@@ -748,42 +630,6 @@ impl ConsoleApi for FantasyConsole {
         }
         .pixels_mut()[i] = self.colour(color).premultiply().to_color_u8();
         0
-    }
-
-    fn peek(&self, _address: i32, _bits: u8) -> u8 {
-        todo!()
-    }
-
-    fn peek4(&self, _address: i32) -> u8 {
-        todo!()
-    }
-
-    fn peek2(&self, _address: i32) -> u8 {
-        todo!()
-    }
-
-    fn peek1(&self, _address: i32) -> u8 {
-        todo!()
-    }
-
-    fn pmem(&mut self, _address: i32, _value: i64) -> i32 {
-        todo!()
-    }
-
-    fn poke(&mut self, _address: i32, _value: u8, _bits: u8) {
-        todo!()
-    }
-
-    fn poke4(&mut self, _address: i32, _value: u8) {
-        todo!()
-    }
-
-    fn poke2(&mut self, _address: i32, _value: u8) {
-        todo!()
-    }
-
-    fn poke1(&mut self, _address: i32, _value: u8) {
-        todo!()
     }
 
     fn print_alloc(
@@ -986,7 +832,7 @@ impl ConsoleApi for FantasyConsole {
         if self.maps.is_empty()
             || opts.sx + opts.w * 8 < 0
             || opts.sy + opts.h * 8 < 0
-            || opts.sx >= 240
+            || opts.sx >= WIDTH
             || opts.sy >= 132
         {
             return;
@@ -1037,16 +883,16 @@ impl ConsoleApi for FantasyConsole {
 
     fn sprite(
         &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        opts: StaticSpriteOptions,
-        palette_map: &[usize],
+        _id: i32,
+        _x: i32,
+        _y: i32,
+        _opts: StaticSpriteOptions,
+        _palette_map: &[usize],
     ) {
         todo!()
     }
 
-    fn send(&mut self, channel: egg_core::system::DataChannel, data: &[u8]) {
+    fn send(&mut self, _channel: egg_core::system::DataChannel, _data: &[u8]) {
         todo!()
     }
 

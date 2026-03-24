@@ -1,11 +1,8 @@
 use bevy::{
-    asset::{AssetApp, AssetLoader, AsyncReadExt, LoadContext, io::Reader},
+    asset::{AssetApp, AssetLoader, LoadContext, io::Reader},
     prelude::{Asset, Plugin, TypePath},
 };
-use egg_core::{
-    map::{LayerInfo, MapInfo},
-    position::Vec2,
-};
+use egg_core::{map::LayerInfo, position::Vec2};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

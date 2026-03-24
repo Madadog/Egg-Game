@@ -12,7 +12,7 @@ use super::WalkaroundState;
 #[derive(Clone, Debug)]
 pub struct Cutscene {
     stages: Vec<Vec<CutsceneItem>>,
-    entities: HashMap<String, usize>,
+    _entities: HashMap<String, usize>,
     index: usize,
 }
 
@@ -20,7 +20,7 @@ impl Cutscene {
     pub fn new(stages: Vec<Vec<CutsceneItem>>, entities: HashMap<String, usize>) -> Self {
         Self {
             stages,
-            entities,
+            _entities: entities,
             index: 0,
         }
     }

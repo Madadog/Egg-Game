@@ -118,7 +118,6 @@ impl WalkaroundState {
         &mut self,
         system: &mut impl ConsoleApi,
         bank: usize,
-        split_point: Option<usize>,
     ) {
         let mut game_map = system.maps()[bank].clone();
         for layer in game_map.layers.iter() {

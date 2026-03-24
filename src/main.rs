@@ -1,5 +1,3 @@
-use std::mem;
-
 use bevy::asset::LoadState;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -9,6 +7,7 @@ use egg_core::gamestate::inventory::InventoryUi;
 
 use egg_core::gamestate::{GameState, walkaround::WalkaroundState};
 use egg_core::system::ConsoleApi;
+use egg_core::tic80_api::core::{WIDTH, HEIGHT};
 use egg_core::{debug::DebugInfo, rand::Pcg32};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
@@ -105,8 +104,8 @@ fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<A
     commands.spawn(Camera2d::default());
     let screen = Image::new_fill(
         Extent3d {
-            width: 240,
-            height: 136,
+            width: WIDTH as u32,
+            height: HEIGHT as u32,
             ..default()
         },
         TextureDimension::D2,
@@ -319,6 +318,7 @@ pub struct GameScreenSprite;
 fn update_texture(
     mut state: ResMut<EggState>,
     mut images: ResMut<Assets<Image>>,
+    mut border_colour: ResMut<ClearColor>,
     sprite: Query<&Sprite, With<GameScreenSprite>>,
 ) {
     for sprite in sprite.iter() {
@@ -331,6 +331,8 @@ fn update_texture(
                 .expect("Main screen texture uninitialized, can't draw game."),
         );
     }
+    let colour = state.system.get_border_colour().clone();
+    border_colour.0 = Color::srgb_u8(colour[0], colour[1], colour[2]);
 }
 
 fn resize_screen(
@@ -339,8 +341,8 @@ fn resize_screen(
     state: Res<EggState>,
 ) {
     if let Ok(mut window) = window.single_mut() {
-        let w = window.width() as f32 / 240.0;
-        let h = window.height() as f32 / 136.0;
+        let w = window.width() as f32 / WIDTH as f32;
+        let h = window.height() as f32 / HEIGHT as f32;
         window.resolution.set_scale_factor_override(Some(1.0));
         window.title = "Egg Game".to_string();
         let size = match state.scale_mode {
@@ -450,17 +452,17 @@ fn step_state(
             };
         }
         if let Some(pos) = window.cursor_position() {
-            let w = window.width() / 240.0;
-            let h = window.height() / 136.0;
+            let w = window.width() / WIDTH as f32;
+            let h = window.height() / HEIGHT as f32;
             let size = if matches!(state.scale_mode, ScaleMode::Integer) {
                 w.min(h).floor()
             } else {
                 w.min(h)
             };
             let (x_offset, y_offset) = if w > h {
-                ((window.width() - 240.0 * size) / 2.0, 0.0)
+                ((window.width() - WIDTH as f32 * size) / 2.0, 0.0)
             } else {
-                (0.0, (window.height() - 136.0 * size) / 2.0)
+                (0.0, (window.height() - HEIGHT as f32 * size) / 2.0)
             };
             state.system.input().mouse.x = ((pos.x - x_offset) / size) as i16;
             state.system.input().mouse.y = ((pos.y - y_offset) / size) as i16;

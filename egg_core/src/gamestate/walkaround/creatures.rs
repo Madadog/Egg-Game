@@ -55,7 +55,7 @@ impl Creature {
             }
         }
     }
-    pub fn draw_params(&self, offset: Vec2) -> StaticDrawParams {
+    pub fn draw_params(&'_ self, offset: Vec2) -> StaticDrawParams<'_> {
         let sprite: i32 = match &self.state {
             CreatureState::Idle(_) => self.sprite.into(),
             CreatureState::Walking(x, _) => i32::from(self.sprite) + i32::from(x.0 / 20) % 2,

@@ -9,19 +9,19 @@ pub fn array_to_colour(array: [u8; 3]) -> Color {
 
 pub struct IndexedImage {
     width: usize,
-    height: usize,
+    _height: usize,
     pub data: Vec<u8>,
 }
 impl IndexedImage {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
-            height,
+            _height: height,
             data: vec![0; width * height],
         }
     }
     /// Only works as intended if self and target image are the same width & height.
-    pub fn draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
+    pub fn _draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
         for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
             let colour = palette[usize::from(*index)];
             pixel.copy_from_slice(&colour);
@@ -47,7 +47,7 @@ impl IndexedImage {
         }
         Self {
             width,
-            height,
+            _height: height,
             data,
         }
     }
