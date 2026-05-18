@@ -89,7 +89,6 @@ impl From<StaticMapInfo<'static>> for MapInfo {
             music_track: value.music_track,
             bank: value.bank,
             camera_bounds: value.camera_bounds,
-            ..Default::default()
         }
     }
 }
@@ -170,7 +169,7 @@ impl LayerInfo {
         )
     }
 }
-impl<'a> From<LayerInfo> for MapOptions {
+impl From<LayerInfo> for MapOptions {
     fn from(map: LayerInfo) -> Self {
         MapOptions {
             x: map.origin.x.into(),
@@ -269,14 +268,14 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
     let layer_hitbox = layer.hitbox();
     if layer_hitbox.touches_point(point) {
         let map_point = Vec2::new(
-            (point.x - layer_hitbox.x) / 8 + layer.origin.x as i16,
-            (point.y - layer_hitbox.y) / 8 + layer.origin.y as i16,
+            (point.x - layer_hitbox.x) / 8 + layer.origin.x,
+            (point.y - layer_hitbox.y) / 8 + layer.origin.y,
         );
         let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
         let bank = system.sync_helper().last_bank().into();
         let id = system.map_get(bank, 0, map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         let mget_collision = touches_tile(
-            *system.get_sprite_flags().get(id as usize).unwrap_or(&0),
+            *system.get_sprite_flags().get(id).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
         );
         let bitmap_collision = layer

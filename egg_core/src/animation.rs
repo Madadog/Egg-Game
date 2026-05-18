@@ -79,7 +79,7 @@ impl<'a> StaticAnimation<'a> {
         }
     }
     pub fn current_frame(&self) -> &StaticAnimFrame<'a> {
-        &self.frames.get(self.index).expect("Couldn't find animation frame!")
+        self.frames.get(self.index).expect("Couldn't find animation frame!")
     }
     pub fn advance(&mut self) {
         if self.tick >= self.current_frame().duration {
@@ -166,7 +166,7 @@ impl Animation {
         }
     }
     pub fn current_frame(&self) -> &AnimFrame {
-        &self.frames.get(self.index).expect("Couldn't find animation frame!")
+        self.frames.get(self.index).expect("Couldn't find animation frame!")
     }
     pub fn advance(&mut self) {
         if self.tick >= self.current_frame().duration {

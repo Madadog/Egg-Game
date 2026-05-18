@@ -47,17 +47,11 @@ pub enum StaticTextContent {
 impl StaticTextContent {
     pub fn is_auto(&self) -> bool {
         use StaticTextContent::*;
-        match self {
-            Text(_) | Pause => false,
-            _ => true,
-        }
+        !matches!(self, Text(_) | Pause)
     }
     pub fn is_skip(&self) -> bool {
         use StaticTextContent::*;
-        match self {
-            Sound(_) | Portrait(_) | Flip(_) => true,
-            _ => false,
-        }
+        matches!(self, Sound(_) | Portrait(_) | Flip(_))
     }
 }
 
@@ -76,17 +70,11 @@ pub enum TextContent {
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
-        match self {
-            Text(_) | Pause => false,
-            _ => true,
-        }
+        !matches!(self, Text(_) | Pause)
     }
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
-        match self {
-            Sound(_) | Portrait(_) | Flip(_) => true,
-            _ => false,
-        }
+        matches!(self, Sound(_) | Portrait(_) | Flip(_))
     }
 }
 
@@ -110,6 +98,12 @@ pub struct DialogueOptions {
     pub fixed: AtomicBool,
     pub box_width: AtomicUsize,
 }
+impl Default for DialogueOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DialogueOptions {
     pub const fn new() -> Self {
         Self {
@@ -182,7 +176,7 @@ impl Dialogue {
     }
     pub fn is_line_done(&self) -> bool {
         match &self.current_text {
-            Some(text) => text.len() == 0 || self.characters == text.len() - 1,
+            Some(text) => text.is_empty() || self.characters == text.len() - 1,
             None => true,
         }
     }
@@ -221,7 +215,7 @@ impl Dialogue {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(system, text_content.into(), manual_skip);
+            let val = self.consume_text_content(system, text_content, manual_skip);
             if skip {
                 self.next_text(system, manual_skip)
             } else {
@@ -238,9 +232,7 @@ impl Dialogue {
         manual_skip: bool,
     ) -> bool {
         match text_content {
-            TextContent::Text(text) | TextContent::AutoText(text) => {
-                self.add_text(system, text)
-            }
+            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(system, text),
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());

@@ -19,17 +19,17 @@ use tic80_api::core::{MouseInput, PrintOptions};
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
-use crate::data::{save, map_data};
+use crate::data::{map_data, save};
 use crate::debug::DebugInfo;
 use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
 use crate::system::{ConsoleApi, ConsoleHelper};
 
 use self::menu::MenuState;
 
+mod debug;
 mod intro;
 pub mod inventory;
 mod menu;
-mod debug;
 pub mod walkaround;
 
 #[derive(Clone, Debug)]
@@ -41,6 +41,12 @@ pub struct EggInput {
     pub mouse: MouseInput,
     pub previous_mouse: MouseInput,
 }
+impl Default for EggInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EggInput {
     pub fn new() -> Self {
         Self {

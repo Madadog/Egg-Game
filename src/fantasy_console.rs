@@ -93,10 +93,10 @@ impl FantasyConsole {
             sprite_flags: vec![0; 2048],
             music: None,
             sounds: HashMap::new(),
-            memory: EggMemory::new(),
+            memory: EggMemory::default(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
-            sync_helper: SyncHelper::new(),
+            sync_helper: SyncHelper::default(),
         };
         let mut spr_flags = String::from(
             "00100000000000000000000000000000000000801000000000000000002020000010101010500000001000000000000000101030101000000000001010000000101010002000000000301010400000001000100000400010500000000000000010101010108020100000000000101010203000301080302000000000001010101010100000100010001010100000000010001000001000100010100000000000000000000010101030303010000010100000000000000000000000002030203000000000000000000000101010400000000000000010000000203010102000100000000000000000000000000010101000000000000000100010a060b0101020",
@@ -137,8 +137,8 @@ impl FantasyConsole {
         }
         array_to_colour(self.palette[index as usize])
     }
-    pub fn to_texture(&mut self, image: &mut [u8]) {
-        let [x, y] = self.get_screen_offset().clone();
+    pub fn blit_to_image(&mut self, image: &mut [u8]) {
+        let [x, y] = *self.get_screen_offset();
         self._output_screen.clone_from(&self.screen);
         self._output_screen.draw_pixmap(
             x.into(),
@@ -169,7 +169,7 @@ impl FantasyConsole {
                 .as_ref()
                 .expect("Tried to load uninitialised spritesheet.")
                 .clone(),
-            IntSize::from_wh(sheet.size().x as u32, sheet.size().y as u32).unwrap(),
+            IntSize::from_wh(sheet.size().x, sheet.size().y).unwrap(),
         )
         .unwrap();
     }
@@ -530,7 +530,6 @@ impl ConsoleApi for FantasyConsole {
         paint.set_color(self.colour(color));
         let path = {
             let mut pb = PathBuilder::new();
-            // pb.move_to(x as f32, y as f32);
             pb.push_circle(x as f32, y as f32, radius as f32);
             pb.finish().unwrap()
         };
@@ -702,11 +701,8 @@ impl ConsoleApi for FantasyConsole {
         y: i32,
         opts: egg_core::tic80_api::core::StaticSpriteOptions,
     ) {
-        let flip = match opts.flip {
-            Flip::Horizontal => true,
-            _ => false,
-        };
-        let transparent = opts.transparent.get(0).cloned().unwrap_or(255);
+        let flip = matches!(opts.flip, Flip::Horizontal);
+        let transparent = opts.transparent.first().cloned().unwrap_or(255);
         if opts.scale > 1 {
             self.draw_scaled_sprite(id, x, y, flip, transparent, opts.scale);
             return;
@@ -735,7 +731,7 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn sync(&mut self, mask: i32, bank: u8, _to_cart: bool) {
-        self.sync_helper.sync2(mask, bank).unwrap();
+        self.sync_helper.sync(mask, bank).unwrap();
     }
 
     fn time(&self) -> f32 {
@@ -811,11 +807,13 @@ impl ConsoleApi for FantasyConsole {
             .unwrap_or(0)
     }
     fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize) {
-        self.maps[bank]
+        if let Some(tile) = self.maps[bank]
             .layers
             .get_mut(layer)
             .and_then(|layer| layer.get_mut(x as usize, y as usize))
-            .map(|tile| *tile = value);
+        {
+            *tile = value
+        }
     }
     fn write_file(&mut self, filename: String, data: &[u8]) {
         self.files.insert(filename, data.into());
@@ -856,26 +854,19 @@ impl ConsoleApi for FantasyConsole {
             for i in 0..opts.w {
                 if let (Ok(x_index), Ok(y_index)) =
                     ((opts.x + i).try_into(), (opts.y + j).try_into())
-                {
-                    if let Some(index) = self.maps[bank]
+                    && let Some(index) = self.maps[bank]
                         .layers
                         .get(layer)
                         .and_then(|layer| layer.get(x_index, y_index))
-                    {
-                        // if index == 0 {
-                        //     continue;
-                        // } else {
-                        //     index -= 1;
-                        // }
-                        let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
-                        self.draw_indexed_sprite(
-                            index as i32,
-                            x,
-                            y,
-                            false,
-                            opts.transparent.unwrap_or(255),
-                        );
-                    }
+                {
+                    let (x, y) = (opts.sx + i * 8, opts.sy + j * 8);
+                    self.draw_indexed_sprite(
+                        index as i32,
+                        x,
+                        y,
+                        false,
+                        opts.transparent.unwrap_or(255),
+                    );
                 }
             }
         }
@@ -922,7 +913,7 @@ impl ConsoleApi for FantasyConsole {
             _ => false,
         };
         if opts.scale > 1 {
-            let transparent = opts.transparent.get(0).cloned().unwrap_or(255);
+            let transparent = opts.transparent.first().cloned().unwrap_or(255);
             self.palette_map_set_all(outline_colour.into());
             let scale = opts.scale;
             self.draw_scaled_sprite(id, x + 1, y, flip, transparent, scale);
@@ -932,25 +923,22 @@ impl ConsoleApi for FantasyConsole {
             self.palette_map_reset();
             return;
         }
-        match (opts.w, opts.h) {
-            (w, h) => {
-                for j in 0..h {
-                    for i in 0..w {
-                        let id = id + i + j * 32;
-                        let x = if !flip {
-                            x + i * 8
-                        } else {
-                            x + (w - 1 - i) * 8
-                        };
-                        let y = y + j * 8;
-                        let colour = self.colour(outline_colour);
-                        self.blit_mask(id, x + 1, y, colour, flip);
-                        self.blit_mask(id, x - 1, y, colour, flip);
-                        self.blit_mask(id, x, y + 1, colour, flip);
-                        self.blit_mask(id, x, y - 1, colour, flip);
-                        self.blit_sprite(id, x, y, flip);
-                    }
-                }
+        let (w, h) = (opts.w, opts.h);
+        for j in 0..h {
+            for i in 0..w {
+                let id = id + i + j * 32;
+                let x = if !flip {
+                    x + i * 8
+                } else {
+                    x + (w - 1 - i) * 8
+                };
+                let y = y + j * 8;
+                let colour = self.colour(outline_colour);
+                self.blit_mask(id, x + 1, y, colour, flip);
+                self.blit_mask(id, x - 1, y, colour, flip);
+                self.blit_mask(id, x, y + 1, colour, flip);
+                self.blit_mask(id, x, y - 1, colour, flip);
+                self.blit_sprite(id, x, y, flip);
             }
         }
     }

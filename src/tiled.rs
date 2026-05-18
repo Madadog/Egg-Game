@@ -45,7 +45,7 @@ impl TileLayer {
                     max_gid = *gid;
                 }
             }
-            *tile = *tile - max_gid;
+            *tile -= max_gid;
         }
     }
     pub fn into_layer_info(self, source_layer: usize) -> LayerInfo {
@@ -137,9 +137,8 @@ impl TiledMap {
     }
     pub fn flatten_gids(&mut self) {
         for layer in self.layers.iter_mut() {
-            match layer {
-                TiledMapLayer::TileLayer(layer) => layer.flatten_gids(&self.tilesets),
-                _ => (),
+            if let TiledMapLayer::TileLayer(layer) = layer {
+                layer.flatten_gids(&self.tilesets)
             }
         }
     }

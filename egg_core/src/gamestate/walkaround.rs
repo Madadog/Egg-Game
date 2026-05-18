@@ -40,6 +40,12 @@ pub struct WalkaroundState {
     pub bg_colour: u8,
     pub default_map_colliders: Vec<Collider>,
 }
+impl Default for WalkaroundState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalkaroundState {
     pub fn new() -> Self {
         Self {
@@ -114,18 +120,13 @@ impl WalkaroundState {
         self.particles.clear();
     }
     // TODO: FG layers
-    pub fn load_map_bank(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        bank: usize,
-    ) {
+    pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
         let mut game_map = system.maps()[bank].clone();
         for layer in game_map.layers.iter() {
             info!("{}", layer.name);
         }
         let mut collision_layer = game_map
-            .layers
-            .get(0)
+            .layers.first()
             .map(|layer| {
                 info!("collision layer: {}", layer.name);
                 LayerInfo {
@@ -294,7 +295,7 @@ impl WalkaroundState {
                 .cutscene
                 .clone()
                 .unwrap_or_else(|| std::process::abort());
-            match intermediate.next_stage(&self) {
+            match intermediate.next_stage(self) {
                 cutscene::CutsceneState::Playing => {
                     intermediate.advance(system, self);
                     self.cutscene = Some(intermediate);
@@ -340,7 +341,7 @@ impl WalkaroundState {
     }
 }
 
-impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for WalkaroundState {
+impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for WalkaroundState {
     fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameState> {
         self.map_animations
             .iter_mut()
@@ -385,7 +386,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         if self.map_viewer.focused {
             self.map_viewer
                 .step_map_viewer(system, &mut self.current_map);
-        } else if matches!(self.dialogue.current_text, None) && self.dialogue.next_text.is_empty() {
+        } else if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             if system.mem_btn(0) {
                 dy -= 1;
             }
@@ -418,7 +419,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
             interact = true;
             if self.dialogue.next_text(system, false) {
                 interact = false;
-            } else if matches!(self.dialogue.current_text, Some(_)) {
+            } else if self.dialogue.current_text.is_some() {
                 interact = false;
                 self.dialogue.close();
             }
@@ -528,7 +529,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         system.palette_map_reset();
         system.cls(self.bg_colour);
         self.current_map
-            .draw_bg(system, self.current_map.bank.into(), self.camera.pos, false);
+            .draw_bg(system, self.current_map.bank, self.camera.pos, false);
 
         self.particles
             .draw_tic80(system, -self.cam_x(), -self.cam_y());
@@ -536,7 +537,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
-        sprites.push(self.player_ref().draw_params(self.camera.pos).into());
+        sprites.push(self.player_ref().draw_params(self.camera.pos));
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
@@ -564,7 +565,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         sprites.extend(
             self.entities
                 .iter()
-                .map(|x| x.draw_params(self.camera.pos).into()),
+                .map(|x| x.draw_params(self.camera.pos)),
         );
 
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
@@ -597,7 +598,7 @@ impl<'a, T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> f
         // Draw FG
         system.palette_map_reset();
         self.current_map
-            .draw_fg(system, self.current_map.bank.into(), self.camera.pos, false);
+            .draw_fg(system, self.current_map.bank, self.camera.pos, false);
 
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(system, string, true);

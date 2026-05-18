@@ -5,10 +5,10 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::gamestate::inventory::InventoryUi;
 
+use egg_core::debug::DebugInfo;
 use egg_core::gamestate::{GameState, walkaround::WalkaroundState};
 use egg_core::system::ConsoleApi;
-use egg_core::tic80_api::core::{WIDTH, HEIGHT};
-use egg_core::{debug::DebugInfo, rand::Pcg32};
+use egg_core::tic80_api::core::{HEIGHT, WIDTH};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
 
@@ -25,9 +25,7 @@ pub struct EggState {
 
     pub time: i32,
     pub pause: bool,
-    pub rng: Pcg32,
     pub debug_info: DebugInfo,
-    pub bg_colour: u8,
     pub loaded: bool,
 
     pub scale_mode: ScaleMode,
@@ -54,9 +52,7 @@ impl Default for EggState {
 
             time: 0,
             pause: false,
-            rng: Pcg32::default(),
             debug_info: DebugInfo::default(),
-            bg_colour: 0,
             loaded: false,
 
             scale_mode: ScaleMode::Linear,
@@ -67,20 +63,6 @@ impl Default for EggState {
 pub enum ScaleMode {
     Linear,
     Integer,
-}
-
-#[derive(Component)]
-pub struct TicSpriteLayer {
-    pub colour: usize,
-    pub sprite_index: usize,
-}
-impl TicSpriteLayer {
-    pub fn new(colour: usize, sprite_index: usize) -> Self {
-        Self {
-            colour,
-            sprite_index,
-        }
-    }
 }
 
 fn main() {
@@ -101,7 +83,7 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
-    commands.spawn(Camera2d::default());
+    commands.spawn(Camera2d);
     let screen = Image::new_fill(
         Extent3d {
             width: WIDTH as u32,
@@ -322,7 +304,7 @@ fn update_texture(
     sprite: Query<&Sprite, With<GameScreenSprite>>,
 ) {
     for sprite in sprite.iter() {
-        state.system.to_texture(
+        state.system.blit_to_image(
             images
                 .get_mut(&sprite.image)
                 .unwrap()
@@ -331,7 +313,7 @@ fn update_texture(
                 .expect("Main screen texture uninitialized, can't draw game."),
         );
     }
-    let colour = state.system.get_border_colour().clone();
+    let colour = state.system.get_border_colour();
     border_colour.0 = Color::srgb_u8(colour[0], colour[1], colour[2]);
 }
 
@@ -341,8 +323,8 @@ fn resize_screen(
     state: Res<EggState>,
 ) {
     if let Ok(mut window) = window.single_mut() {
-        let w = window.width() as f32 / WIDTH as f32;
-        let h = window.height() as f32 / HEIGHT as f32;
+        let w = window.width() / WIDTH as f32;
+        let h = window.height() / HEIGHT as f32;
         window.resolution.set_scale_factor_override(Some(1.0));
         window.title = "Egg Game".to_string();
         let size = match state.scale_mode {
@@ -572,13 +554,13 @@ fn step_state(
         state.walkaround.map_viewer.focused = !state.walkaround.map_viewer.focused;
         state.walkaround.map_viewer.layer_index = 0;
     }
-    if keys.just_pressed(KeyCode::Semicolon) && state.walkaround.current_map.layers.len() > 0 {
+    if keys.just_pressed(KeyCode::Semicolon) && !state.walkaround.current_map.layers.is_empty() {
         info!("------------------------");
         info!("REMOVED BG LAYER");
         info!("{:#?}", state.walkaround.current_map.layers.remove(0));
         info!("------------------------");
     }
-    if keys.just_pressed(KeyCode::Quote) && state.walkaround.current_map.fg_layers.len() > 0 {
+    if keys.just_pressed(KeyCode::Quote) && !state.walkaround.current_map.fg_layers.is_empty() {
         info!("------------------------");
         info!("REMOVED FG LAYER");
         info!("{:#?}", state.walkaround.current_map.fg_layers.remove(0));

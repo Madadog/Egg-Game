@@ -57,9 +57,10 @@ impl MenuState {
         }
     }
     pub fn map_select() -> Self {
-        let mut entries = vec![];
-        entries.push(MenuEntry::Debug(6));
-        entries.push(MenuEntry::MapBankSelect(2, "Map Bank: 0".into()));
+        let entries = vec![
+            MenuEntry::Debug(6),
+            MenuEntry::MapBankSelect(2, "Map Bank: 0".into()),
+        ];
         Self {
             entries,
             draw_title: None,
@@ -186,29 +187,23 @@ impl MenuState {
     }
     pub fn exit_hover(&mut self, index: usize) {
         use MenuEntry::*;
-        match &mut self.entries[index] {
-            Reset(x) => *x = 0,
-            _ => {}
-        }
+        if let Reset(x) = &mut self.entries[index] { *x = 0 }
     }
     fn hover(&self, system: &mut impl ConsoleApi, index: usize) {
         use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
         use MenuEntry::*;
-        match self.entries[index] {
-            Reset(_) => {
-                system.rect(60, 10, 120, 11, 2);
-                let options = DIALOGUE_OPTIONS.get_options(system);
-                system.print_raw_centered(
-                    OPTIONS_LOSE_DATA,
-                    120,
-                    13,
-                    PrintOptions {
-                        color: 12,
-                        ..options
-                    },
-                );
-            }
-            _ => {}
+        if let Reset(_) = self.entries[index] {
+            system.rect(60, 10, 120, 11, 2);
+            let options = DIALOGUE_OPTIONS.get_options(system);
+            system.print_raw_centered(
+                OPTIONS_LOSE_DATA,
+                120,
+                13,
+                PrintOptions {
+                    color: 12,
+                    ..options
+                },
+            );
         }
     }
     pub fn draw_main_menu(&self, system: &mut impl ConsoleApi, elapsed_frames: i32) {
@@ -272,8 +267,8 @@ impl MenuEntry {
             MapTest => MENU_MAP_TEST[0],
             MusicTest => MENU_MUSIC_TEST[0],
             Walk => MENU_PLAY,
-            MapBankSelect(_, string) => &string,
-            _MusicSelect(_, string) => &string,
+            MapBankSelect(_, string) => string,
+            _MusicSelect(_, string) => string,
         }
     }
 }

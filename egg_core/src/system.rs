@@ -11,18 +11,13 @@ use crate::{
     rand::Lcg64Xsh32,
 };
 
+#[derive(Debug, Default)]
 pub struct SyncHelper {
     already_synced: bool,
     last_bank: u8,
 }
 
 impl SyncHelper {
-    pub const fn new() -> Self {
-        SyncHelper {
-            already_synced: false,
-            last_bank: 0,
-        }
-    }
     pub fn step(&mut self) {
         self.already_synced = false;
     }
@@ -37,17 +32,7 @@ impl SyncHelper {
     /// * palette = 1<<5 -- 32
     /// * flags   = 1<<6 -- 64
     /// * screen  = 1<<7 -- 128 (as of 0.90)
-    pub fn sync(&mut self, system: &mut impl ConsoleApi, mask: i32, bank: u8) -> Result<(), ()> {
-        if self.already_synced() {
-            Err(())
-        } else {
-            self.already_synced = true;
-            self.last_bank = bank;
-            system.sync(mask, bank, false);
-            Ok(())
-        }
-    }
-    pub fn sync2(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
+    pub fn sync(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
         if self.already_synced() {
             Err(())
         } else {
@@ -68,9 +53,14 @@ impl SyncHelper {
 pub struct EggMemory {
     pub memory: [u8; 1024],
 }
+impl Default for EggMemory {
+    fn default() -> Self {
+        Self::new([0; 1024])
+    }
+}
 impl EggMemory {
-    pub fn new() -> Self {
-        Self { memory: [0; 1024] }
+    pub fn new(memory: [u8; 1024]) -> Self {
+        Self { memory }
     }
     pub fn from_array(array: [u8; 1024]) -> Self {
         Self { memory: array }
@@ -387,18 +377,18 @@ pub trait ConsoleApi {
         }
     }
     fn set_palette_map(&mut self, map: &[usize]) {
-        for (map, target) in map.into_iter().zip(self.get_palette_map()) {
+        for (map, target) in map.iter().zip(self.get_palette_map()) {
             *target = *map;
         }
     }
     fn palette_map_reset(&mut self) {
         for i in 0..=15 {
-            self.get_palette_map()[i] = i as usize;
+            self.get_palette_map()[i] = i;
         }
     }
     fn palette_map_rotate(&mut self, amount: usize) {
         for i in 0..=15 {
-            self.get_palette_map()[i] = i as usize + amount;
+            self.get_palette_map()[i] = i + amount;
         }
     }
     fn set_palette_colour(&mut self, index: u8, rgb: [u8; 3]) {
@@ -418,7 +408,7 @@ pub trait ConsoleApi {
         sprite_options: StaticSpriteOptions,
         outline_colour: u8,
     ) {
-        let old_map: Vec<usize> = self.get_palette_map().into_iter().map(|x| *x).collect();
+        let old_map: Vec<usize> = self.get_palette_map().iter_mut().map(|x| *x).collect();
         self.palette_map_set_all(outline_colour.into());
         self.spr(id, x + 1, y, sprite_options.clone());
         self.spr(id, x - 1, y, sprite_options.clone());

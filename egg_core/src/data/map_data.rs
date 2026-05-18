@@ -307,7 +307,7 @@ pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
     warps: &[Warp::new(
         Hitbox::new(15 * 8, 6 * 8, 8, 8),
         Some(MapIndex::HOUSE_STAIRWELL),
-        Vec2::new(1 * 8 + 1, 2 * 8),
+        Vec2::new(8 + 1, 2 * 8),
     )
     .with_sound(sound::DOOR)],
     interactables: &[
@@ -572,27 +572,27 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(20 * 8, 8 * 8, 1 * 8, 2 * 8),
+            hitbox: Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8),
             interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(22 * 8, 8 * 8, 1 * 8, 2 * 8),
+            hitbox: Hitbox::new(22 * 8, 8 * 8, 8, 2 * 8),
             interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED_WINDOW),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(24 * 8, 10 * 8, 1 * 8, 6 * 8),
+            hitbox: Hitbox::new(24 * 8, 10 * 8, 8, 6 * 8),
             interaction: StaticInteraction::Dialogue(HOUSE_BACKYARD_NEIGHBOURS),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(21 * 8, 13 * 8, 1 * 8, 1 * 8),
+            hitbox: Hitbox::new(21 * 8, 13 * 8, 8, 8),
             interaction: StaticInteraction::Func(InteractFn::ToggleDog),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(5 * 8, 0, 1 * 8, 16 * 8),
+            hitbox: Hitbox::new(5 * 8, 0, 8, 16 * 8),
             interaction: StaticInteraction::Text(HOUSE_BACKYARD_STORMDRAIN),
             sprite: None,
         },
@@ -703,12 +703,12 @@ pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
     ],
     interactables: &[
         StaticInteractable {
-            hitbox: Hitbox::new(8 * 6, 17 * 8, 1 * 8, 6 * 8),
+            hitbox: Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8),
             interaction: StaticInteraction::Text(TOWN_TRAFFIC),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(8 * 8, 17 * 8, 1 * 8, 1 * 8),
+            hitbox: Hitbox::new(8 * 8, 17 * 8, 8, 8),
             interaction: StaticInteraction::Text(TOWN_LAMPPOST),
             sprite: None,
         },
@@ -739,12 +739,12 @@ pub const PIANO_ROOM: StaticMapInfo<'static> = StaticMapInfo {
     .with_mode(WarpMode::Auto)],
     interactables: &[
         StaticInteractable {
-            hitbox: Hitbox::new(4 * 8, 1 * 8, 4 * 25, 4 * 9),
-            interaction: StaticInteraction::Func(InteractFn::Piano(Vec2::new(4 * 8, 1 * 8))),
+            hitbox: Hitbox::new(4 * 8, 8, 4 * 25, 4 * 9),
+            interaction: StaticInteraction::Func(InteractFn::Piano(Vec2::new(4 * 8, 8))),
             sprite: None,
         },
         StaticInteractable {
-            hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8 * 1),
+            hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8),
             interaction: StaticInteraction::Text(UNKNOWN_3),
             sprite: None,
         },

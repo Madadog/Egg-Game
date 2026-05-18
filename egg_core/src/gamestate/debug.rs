@@ -99,7 +99,7 @@ pub fn step_sprite_test(system: &mut impl ConsoleApi, indice: &mut u32) {
     if system.btn(1) {
         *indice = indice.saturating_add(WIDTH);
     }
-    if system.btn(2) && (*indice % WIDTH) > 0 {
+    if system.btn(2) && !(*indice).is_multiple_of(WIDTH) {
         *indice = indice.saturating_sub(1);
     }
     if system.btn(3) && (*indice % WIDTH) < 2 {

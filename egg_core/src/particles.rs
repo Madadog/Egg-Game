@@ -55,7 +55,7 @@ impl Particle {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ParticleList {
     particles: Vec<Particle>,
 }

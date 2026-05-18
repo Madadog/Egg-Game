@@ -81,7 +81,7 @@ impl CameraBounds {
         Self::new(Free, Free)
     }
     pub const fn bounded(x: (i16, i16), y: (i16, i16)) -> Self {
-        Self::new(Range(x.0, x.1 - WIDTH as i16), Range(y.0, y.1 - HEIGHT))
+        Self::new(Range(x.0, x.1 - WIDTH), Range(y.0, y.1 - HEIGHT))
     }
     pub fn bound(&self, focus: Vec2) -> Vec2 {
         Vec2::new(self.x_bounds.bound(focus.x), self.y_bounds.bound(focus.y))

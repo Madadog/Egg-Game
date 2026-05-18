@@ -36,6 +36,12 @@ pub struct Inventory {
     pub items: [Option<&'static InventoryItem>; 8],
     pub unlocks: [bool; 4],
 }
+impl Default for Inventory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Inventory {
     pub fn new() -> Self {
         Self {
@@ -144,6 +150,12 @@ pub struct InventoryUi {
     pub state: InventoryUiState,
     pub dialogue: Dialogue,
 }
+impl Default for InventoryUi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InventoryUi {
     pub fn new() -> Self {
         Self {

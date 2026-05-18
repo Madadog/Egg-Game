@@ -101,9 +101,8 @@ impl SpriteAnimation {
     pub fn from_base_sprite_id(id: i32, len: i32, w: i32, h: i32) -> Self {
         let frames: Vec<SpriteOptions> = (id..(id + len * w))
             .step_by(w as usize)
-            .into_iter()
             .map(|id| SpriteOptions {
-                id: id,
+                id,
                 w,
                 h,
                 transparent: Some(0),
@@ -130,7 +129,7 @@ impl SpriteAnimation {
     pub fn frames(&self) -> &[SpriteOptions] {
         &self.frames
     }
-    pub fn index(&self, i: usize) -> &SpriteOptions {
+    pub fn get_frame(&self, i: usize) -> &SpriteOptions {
         &self.frames()[self.loopmode.loop_index(i, self.frames().len())]
     }
 }
@@ -276,16 +275,16 @@ impl Shell {
     pub fn sprite_options(&self) -> (SpriteOptions, i32) {
         let timer = if self.dir.1 == 0 {
             // sideways anim 4fps
-            (self.walktime + 14) / 15
+            self.walktime.div_ceil(15)
         } else {
             // up/down anim at 3fps
-            (self.walktime + 19) / 20
+            self.walktime.div_ceil(20)
         };
         let y_offset = (timer % 2) as i32;
         // petting animation
         if let Some(t) = self.pet_timer {
             let t = (t / 20 % 2) as usize;
-            let mut sprite = self.sprites.others[0].index(t).clone();
+            let mut sprite = self.sprites.others[0].get_frame(t).clone();
             sprite.flip = if self.dir.0 > 0 {
                 Flip::None
             } else {
@@ -297,7 +296,7 @@ impl Shell {
             .sprites
             .walk
             .dir_to_sprite(self.dir)
-            .index(timer as usize)
+            .get_frame(timer as usize)
             .clone();
         (sprite, y_offset)
     }
@@ -356,7 +355,7 @@ impl Shell {
             return (dx, dy);
         };
 
-        if (self.walktime + 15) % 20 == 0 {
+        if (self.walktime + 15).is_multiple_of(20) {
             system.play_sound(sound::FOOTSTEP_PLAIN.with_note(17));
         }
 
@@ -429,10 +428,14 @@ impl Shell {
     ) {
         // Apply motion
         if dx == 0 && dy == 0 {
-            trail.map(|x| x.stop());
+            if let Some(x) = trail {
+                x.stop()
+            }
             self.animate_stop();
         } else {
-            trail.map(|x| x.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1)));
+            if let Some(x) = trail {
+                x.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1))
+            }
             self.pos.x += dx;
             self.pos.y += dy;
             self.animate_walk();
@@ -629,6 +632,12 @@ pub struct CompanionTrail<const N: usize> {
     directions: [(i8, i8); N],
     walktime: u8,
 }
+impl<const N: usize> Default for CompanionTrail<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> CompanionTrail<N> {
     pub const fn new() -> Self {
         Self {
@@ -677,7 +686,7 @@ impl<const N: usize> CompanionTrail<N> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CompanionList {
     pub companions: [Option<Companion>; 2],
 }

@@ -64,12 +64,11 @@ impl Cutscene {
         CutsceneState::Playing
     }
     pub fn advance(&mut self, system: &mut impl ConsoleApi, walkaround: &mut WalkaroundState) {
-        self.stages.get_mut(self.index).and_then(|x| {
+        if let Some(x) = self.stages.get_mut(self.index) {
             x.iter_mut().for_each(|x| {
                 x.advance(system, walkaround);
             });
-            Some(())
-        });
+        };
     }
 }
 
