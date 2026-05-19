@@ -11,7 +11,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
-use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameState};
+use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 use tic80_api::core::{MusicOptions, PrintOptions};
 
@@ -342,7 +342,7 @@ impl WalkaroundState {
 }
 
 impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for WalkaroundState {
-    fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameState> {
+    fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameMode> {
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
@@ -401,7 +401,7 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
             }
             if system.mem_btnp(5) {
                 inventory_ui.open(system);
-                return Some(GameState::Inventory);
+                return Some(GameMode::Inventory);
             }
         } else {
             if self.dialogue.characters == 0 {
@@ -426,7 +426,7 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
             info!("Attempting interact...");
         }
         if system.mem_btnp(6) {
-            return Some(GameState::MainMenu(super::menu::MenuState::debug_options()));
+            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options()));
         }
         if system.any_btnpr() {
             self.player().flip_controls = Axis::None

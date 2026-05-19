@@ -119,7 +119,7 @@ impl EggInput {
 }
 
 #[derive(Debug)]
-pub enum GameState {
+pub enum GameMode {
     Instructions(u16),
     Walkaround,
     Animation(u16),
@@ -127,7 +127,7 @@ pub enum GameState {
     Inventory,
     SpriteTest(u32),
 }
-impl GameState {
+impl GameMode {
     pub fn run(
         &mut self,
         walkaround_state: &mut WalkaroundState,
@@ -200,7 +200,7 @@ impl GameState {
 }
 
 pub trait Game<T, U> {
-    fn step(&mut self, _state: T) -> Option<GameState> {
+    fn step(&mut self, _state: T) -> Option<GameMode> {
         None
     }
     fn draw(&self, state: U);

@@ -3,10 +3,9 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use egg_core::gamestate::inventory::InventoryUi;
+use egg_core::EggState;
 
-use egg_core::debug::DebugInfo;
-use egg_core::gamestate::{GameState, walkaround::WalkaroundState};
+use egg_core::gamestate::GameMode;
 use egg_core::system::ConsoleApi;
 use egg_core::tic80_api::core::{HEIGHT, WIDTH};
 use fantasy_console::FantasyConsole;
@@ -16,43 +15,27 @@ mod fantasy_console;
 mod tiled;
 
 #[derive(Resource)]
-pub struct EggState {
-    pub walkaround: WalkaroundState,
-    pub inventory_ui: InventoryUi,
-    pub gamestate: GameState,
+pub struct EggGame {
+    pub state: EggState,
+    system: FantasyConsole,
 
-    pub system: FantasyConsole,
-
-    pub time: i32,
-    pub pause: bool,
-    pub debug_info: DebugInfo,
     pub loaded: bool,
-
+    pub pause: bool,
     pub scale_mode: ScaleMode,
 }
-impl EggState {
+impl EggGame {
     pub fn run(&mut self) {
-        self.gamestate.run(
-            &mut self.walkaround,
-            &mut self.debug_info,
-            self.time,
-            &mut self.inventory_ui,
-            &mut self.system,
-        );
+        self.state.run(&mut self.system);
     }
 }
-impl Default for EggState {
+impl Default for EggGame {
     fn default() -> Self {
-        EggState {
-            walkaround: WalkaroundState::new(),
-            inventory_ui: InventoryUi::new(),
-            gamestate: GameState::Animation(0),
+        EggGame {
+            state: EggState::default(),
 
             system: FantasyConsole::new(),
 
-            time: 0,
             pause: false,
-            debug_info: DebugInfo::default(),
             loaded: false,
 
             scale_mode: ScaleMode::Linear,
@@ -67,7 +50,7 @@ pub enum ScaleMode {
 
 fn main() {
     App::new()
-        .init_resource::<EggState>()
+        .init_resource::<EggGame>()
         .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugins(TiledMapPlugin)
@@ -155,7 +138,7 @@ fn load_assets(
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMap>>,
-    mut state: ResMut<EggState>,
+    mut state: ResMut<EggGame>,
 ) {
     if let Some(game_assets) = game_assets {
         match game_assets.load_state(&assets) {
@@ -235,7 +218,7 @@ impl SfxAssets {
     }
 }
 
-fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggState>) {
+fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggGame>) {
     for (name, options) in state.system.sounds() {
         if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
             let speed =
@@ -260,7 +243,7 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
 fn play_music(
     mut commands: Commands,
     mut query: Query<(Entity, &mut AudioSink), With<MusicPlayer>>,
-    mut state: ResMut<EggState>,
+    mut state: ResMut<EggGame>,
     assets: Res<AssetServer>,
 ) {
     if let Some((x, playing)) = state.system.music_track() {
@@ -298,7 +281,7 @@ pub struct GameScreenSprite;
 // pub struct GameScreen(pub Image);
 
 fn update_texture(
-    mut state: ResMut<EggState>,
+    mut state: ResMut<EggGame>,
     mut images: ResMut<Assets<Image>>,
     mut border_colour: ResMut<ClearColor>,
     sprite: Query<&Sprite, With<GameScreenSprite>>,
@@ -320,7 +303,7 @@ fn update_texture(
 fn resize_screen(
     mut sprite: Query<&mut Transform, With<GameScreenSprite>>,
     mut window: Query<&mut Window>,
-    state: Res<EggState>,
+    state: Res<EggGame>,
 ) {
     if let Ok(mut window) = window.single_mut() {
         let w = window.width() / WIDTH as f32;
@@ -338,18 +321,19 @@ fn resize_screen(
 }
 
 fn step_state(
-    mut state: ResMut<EggState>,
+    mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
     mut window: Query<&mut Window>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
     // mut window: Query<&mut Mouse>,
 ) {
-    if !state.loaded {
+    if !game.loaded {
         return;
     }
-    state.system.sync_helper().step();
-    state.time += 1;
+    
+    game.system.input().refresh();
+    game.system.sync_helper().step();
 
     let (
         mut up,
@@ -386,37 +370,37 @@ fn step_state(
     }
 
     if up {
-        state.system.input().press(0);
+        game.system.input().press(0);
     }
     if down {
-        state.system.input().press(1);
+        game.system.input().press(1);
     }
     if left {
-        state.system.input().press(2);
+        game.system.input().press(2);
     }
     if right {
-        state.system.input().press(3);
+        game.system.input().press(3);
     }
     if a_button {
-        state.system.input().press(4);
+        game.system.input().press(4);
     }
     if b_button {
-        state.system.input().press(5);
+        game.system.input().press(5);
     }
     if x_button {
-        state.system.input().press(6);
+        game.system.input().press(6);
     }
     if y_button {
-        state.system.input().press(7);
+        game.system.input().press(7);
     }
     if keys.pressed(KeyCode::ControlLeft) {
-        state.system.input().press_key(63);
+        game.system.input().press_key(63);
     }
     if keys.pressed(KeyCode::ShiftLeft) {
-        state.system.input().press_key(64);
+        game.system.input().press_key(64);
     }
     if keys.pressed(KeyCode::AltLeft) {
-        state.system.input().press_key(65);
+        game.system.input().press_key(65);
     }
 
     if let Ok(mut window) = window.single_mut() {
@@ -428,7 +412,7 @@ fn step_state(
             };
         }
         if keys.just_pressed(KeyCode::F5) {
-            state.scale_mode = match state.scale_mode {
+            game.scale_mode = match game.scale_mode {
                 ScaleMode::Linear => ScaleMode::Integer,
                 _ => ScaleMode::Linear,
             };
@@ -436,7 +420,7 @@ fn step_state(
         if let Some(pos) = window.cursor_position() {
             let w = window.width() / WIDTH as f32;
             let h = window.height() / HEIGHT as f32;
-            let size = if matches!(state.scale_mode, ScaleMode::Integer) {
+            let size = if matches!(game.scale_mode, ScaleMode::Integer) {
                 w.min(h).floor()
             } else {
                 w.min(h)
@@ -446,23 +430,22 @@ fn step_state(
             } else {
                 (0.0, (window.height() - HEIGHT as f32 * size) / 2.0)
             };
-            state.system.input().mouse.x = ((pos.x - x_offset) / size) as i16;
-            state.system.input().mouse.y = ((pos.y - y_offset) / size) as i16;
-            state.system.input().mouse.left = mouse_button.pressed(MouseButton::Left);
-            state.system.input().mouse.right = mouse_button.pressed(MouseButton::Right);
-            state.system.input().mouse.middle = mouse_button.pressed(MouseButton::Middle);
+            game.system.input().mouse.x = ((pos.x - x_offset) / size) as i16;
+            game.system.input().mouse.y = ((pos.y - y_offset) / size) as i16;
+            game.system.input().mouse.left = mouse_button.pressed(MouseButton::Left);
+            game.system.input().mouse.right = mouse_button.pressed(MouseButton::Right);
+            game.system.input().mouse.middle = mouse_button.pressed(MouseButton::Middle);
         }
     }
 
     if keys.just_pressed(KeyCode::KeyP) {
-        state.pause = !state.pause;
+        game.pause = !game.pause;
     }
-    if state.pause {
+    if game.pause {
         if keys.just_pressed(KeyCode::KeyN) {
-            state.run();
-            state.system.input().refresh();
+            game.run();
         }
-        state.system.print_raw(
+        game.system.print_raw(
             "Paused\n[P] to unpause\n[N] to step forward",
             100,
             62,
@@ -474,30 +457,30 @@ fn step_state(
         return;
     }
     if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {
-        let x = !state.debug_info.player_info();
-        state.debug_info.set_player_info(x);
+        let x = !game.state.debug_info.player_info();
+        game.state.debug_info.set_player_info(x);
     }
     if keys.just_pressed(KeyCode::KeyM) {
-        let x = !state.debug_info.map_info();
-        state.debug_info.set_map_info(x);
+        let x = !game.state.debug_info.map_info();
+        game.state.debug_info.set_map_info(x);
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        let x = !state.debug_info.memory_info();
-        state.debug_info.set_memory_info(x);
+        let x = !game.state.debug_info.memory_info();
+        game.state.debug_info.set_memory_info(x);
     }
     if keys.just_pressed(KeyCode::Digit1) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player().pos;
-        *state.walkaround.player() = egg_core::player::Shell::ellie();
-        state.walkaround.player().pos = pos;
+        let pos = game.state.walkaround.player().pos;
+        *game.state.walkaround.player() = egg_core::player::Shell::ellie();
+        game.state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit2) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player().pos;
-        *state.walkaround.player() = egg_core::player::Shell::may();
-        state.walkaround.player().pos = pos;
+        let pos = game.state.walkaround.player().pos;
+        *game.state.walkaround.player() = egg_core::player::Shell::may();
+        game.state.walkaround.player().pos = pos;
     }
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player().pos;
-        let rand = state.system.rng().rand_u8();
+        let pos = game.state.walkaround.player().pos;
+        let rand = game.system.rng().rand_u8();
         let mut new = if rand < 64 {
             egg_core::player::Shell::ellie()
         } else if rand < 128 {
@@ -508,37 +491,37 @@ fn step_state(
             egg_core::player::Shell::may()
         };
         new.pos = pos;
-        state.walkaround.entities.push(new);
-        info!("we have {} entities", state.walkaround.entities.len());
+        game.state.walkaround.entities.push(new);
+        info!("we have {} entities", game.state.walkaround.entities.len());
     } else if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ControlLeft) {
-        let pos = state.walkaround.player().pos;
-        for e in state.walkaround.entities.iter_mut() {
+        let pos = game.state.walkaround.player().pos;
+        for e in game.state.walkaround.entities.iter_mut() {
             let normalised = e.pos - pos;
             let (x, y) = (normalised.x as f32 * 0.9, normalised.y as f32 * 0.9);
             e.pos = egg_core::position::Vec2::new(x as i16, y as i16) + pos;
         }
     } else if keys.pressed(KeyCode::Digit3) {
-        if state.walkaround.entities.len() > 1 {
-            state.walkaround.entities.pop();
+        if game.state.walkaround.entities.len() > 1 {
+            game.state.walkaround.entities.pop();
         }
-        info!("we have {} entities", state.walkaround.entities.len());
+        info!("we have {} entities", game.state.walkaround.entities.len());
     }
     if keys.just_pressed(KeyCode::Digit4) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player().pos;
-        *state.walkaround.player() = egg_core::player::Shell::dog();
-        state.walkaround.player().pos = pos;
+        let pos = game.state.walkaround.player().pos;
+        *game.state.walkaround.player() = egg_core::player::Shell::dog();
+        game.state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit5) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = state.walkaround.player().pos;
-        *state.walkaround.player() = egg_core::player::Shell::bro();
-        state.walkaround.player().pos = pos;
+        let pos = game.state.walkaround.player().pos;
+        *game.state.walkaround.player() = egg_core::player::Shell::bro();
+        game.state.walkaround.player().pos = pos;
     }
     if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
-        let player = state.walkaround.player().clone();
-        if let Some(shell) = state.walkaround.entities.get_mut(0) {
+        let player = game.state.walkaround.player().clone();
+        if let Some(shell) = game.state.walkaround.entities.get_mut(0) {
             let temp = shell.clone();
             *shell = player;
-            *state.walkaround.player() = temp;
+            *game.state.walkaround.player() = temp;
         }
     }
 
@@ -546,34 +529,35 @@ fn step_state(
         info!("------------------------");
         info!("START CURRENT MAP");
         info!("------------------------");
-        info!("{:#?}", state.walkaround.current_map);
+        info!("{:#?}", game.state.walkaround.current_map);
         info!("------------------------");
         info!("END CURRENT MAP");
         info!("------------------------");
     } else if keys.just_pressed(KeyCode::KeyL) {
-        state.walkaround.map_viewer.focused = !state.walkaround.map_viewer.focused;
-        state.walkaround.map_viewer.layer_index = 0;
+        game.state.walkaround.map_viewer.focused = !game.state.walkaround.map_viewer.focused;
+        game.state.walkaround.map_viewer.layer_index = 0;
     }
-    if keys.just_pressed(KeyCode::Semicolon) && !state.walkaround.current_map.layers.is_empty() {
+    if keys.just_pressed(KeyCode::Semicolon) && !game.state.walkaround.current_map.layers.is_empty() {
         info!("------------------------");
         info!("REMOVED BG LAYER");
-        info!("{:#?}", state.walkaround.current_map.layers.remove(0));
+        info!("{:#?}", game.state.walkaround.current_map.layers.remove(0));
         info!("------------------------");
     }
-    if keys.just_pressed(KeyCode::Quote) && !state.walkaround.current_map.fg_layers.is_empty() {
+    if keys.just_pressed(KeyCode::Quote) && !game.state.walkaround.current_map.fg_layers.is_empty() {
         info!("------------------------");
         info!("REMOVED FG LAYER");
-        info!("{:#?}", state.walkaround.current_map.fg_layers.remove(0));
+        info!("{:#?}", game.state.walkaround.current_map.fg_layers.remove(0));
         info!("------------------------");
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        state.gamestate = GameState::SpriteTest(0);
+        game.state.gamestate = GameMode::SpriteTest(0);
     }
 
-    state.run();
+    game.run();
     if keys.pressed(KeyCode::KeyN) {
-        state.run();
-        state.system.print_raw(
+        
+        game.run();
+        game.system.print_raw(
             "Fast-Forward",
             100,
             62,
@@ -583,5 +567,4 @@ fn step_state(
             },
         );
     }
-    state.system.input().refresh();
 }

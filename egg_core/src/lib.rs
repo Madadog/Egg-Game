@@ -16,6 +16,8 @@
 
 pub mod animation;
 pub mod camera;
+pub mod data;
+pub mod debug;
 pub mod dialogue;
 pub mod gamestate;
 pub mod interact;
@@ -24,7 +26,41 @@ pub mod particles;
 pub mod player;
 pub mod position;
 pub mod rand;
-pub mod data;
-pub mod debug;
 pub use tic80_api;
 pub mod system;
+
+use crate::debug::DebugInfo;
+use crate::gamestate::inventory::InventoryUi;
+use crate::gamestate::walkaround::WalkaroundState;
+use crate::gamestate::GameMode;
+
+pub struct EggState {
+    pub gamestate: GameMode,
+    pub walkaround: WalkaroundState,
+    pub debug_info: DebugInfo,
+    pub time: i32,
+    pub inventory_ui: InventoryUi,
+}
+impl EggState {
+    pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
+        self.time += 1;
+        self.gamestate.run(
+            &mut self.walkaround,
+            &mut self.debug_info,
+            self.time,
+            &mut self.inventory_ui,
+            system,
+        );
+    }
+}
+impl Default for EggState {
+    fn default() -> Self {
+        EggState {
+            walkaround: WalkaroundState::new(),
+            inventory_ui: InventoryUi::new(),
+            gamestate: GameMode::Animation(0),
+            time: 0,
+            debug_info: DebugInfo::default(),
+        }
+    }
+}

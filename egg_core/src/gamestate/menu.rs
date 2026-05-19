@@ -12,7 +12,7 @@ use crate::system::{ConsoleApi, ConsoleHelper};
 
 use super::inventory::InventoryUi;
 use super::walkaround::WalkaroundState;
-use super::GameState;
+use super::GameMode;
 
 #[derive(Debug)]
 pub struct MenuState {
@@ -73,7 +73,7 @@ impl MenuState {
         system: &mut impl ConsoleApi,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
-    ) -> Option<GameState> {
+    ) -> Option<GameMode> {
         let old_index = self.index;
         let (menu_index, clicked) = step_menu(
             self.entries.len(),
@@ -112,7 +112,7 @@ impl MenuState {
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
         system: &mut impl ConsoleApi,
-    ) -> Option<GameState> {
+    ) -> Option<GameMode> {
         use MenuEntry::*;
         let x = if let Some(index) = index {
             &mut self.entries[index]
@@ -122,7 +122,7 @@ impl MenuState {
             return None;
         };
         match x {
-            Play => return Some(GameState::Instructions(0)),
+            Play => return Some(GameMode::Instructions(0)),
             Options => {
                 self.index = 0;
                 self.draw_title = Some(OPTIONS_TITLE);
@@ -138,12 +138,12 @@ impl MenuState {
                     *x += 1;
                 } else {
                     system.zero_pmem();
-                    return Some(GameState::Animation(0));
+                    return Some(GameMode::Animation(0));
                 }
             }
             Inventory => {
                 inventory_ui.state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
-                return Some(GameState::Inventory);
+                return Some(GameMode::Inventory);
             }
             _Space => {}
             Debug(x) => {
@@ -170,12 +170,12 @@ impl MenuState {
                             system,
                         );
                     }
-                    6 => return Some(GameState::MainMenu(MenuState::debug_options())),
+                    6 => return Some(GameMode::MainMenu(MenuState::debug_options())),
                     _ => {}
                 }
             }
-            Walk => return Some(GameState::Walkaround),
-            MapTest => return Some(GameState::MainMenu(MenuState::map_select())),
+            Walk => return Some(GameMode::Walkaround),
+            MapTest => return Some(GameMode::MainMenu(MenuState::map_select())),
             MapBankSelect(_x, _) => {
                 // walkaround_state.load_map(system, MapIndex((*x).into()).map())
                 walkaround_state.load_map_bank(system, 2);
