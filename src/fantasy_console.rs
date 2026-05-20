@@ -11,13 +11,10 @@ use egg_core::{
         helpers::SWEETIE_16,
     },
 };
-use tiny_skia::{
-    Color, FillRule, IntSize, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,
-};
 
 use crate::tiled;
 
-use self::drawing::{IndexedImage, array_to_colour};
+use self::drawing::{IndexedImage, Rgba, RgbaImage, array_to_colour};
 
 mod drawing;
 
@@ -32,12 +29,12 @@ mod drawing;
 // Yolkomatic
 
 pub struct FantasyConsole {
-    screen: Pixmap,
-    overlay_screen: Pixmap,
-    _output_screen: Pixmap,
+    screen: RgbaImage,
+    overlay_screen: RgbaImage,
+    _output_screen: RgbaImage,
 
-    font: Pixmap,
-    sprites: Pixmap,
+    font: RgbaImage,
+    sprites: RgbaImage,
     indexed_sprites: IndexedImage,
     maps: Vec<GameMap>,
     files: HashMap<String, Vec<u8>>,
@@ -73,12 +70,12 @@ impl FantasyConsole {
             .collect();
         assert_eq!(palette.len(), palette_size);
         let mut x = Self {
-            screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
-            overlay_screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
-            _output_screen: Pixmap::new(WIDTH as u32, HEIGHT as u32).unwrap(),
+            screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
+            overlay_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
+            _output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
 
-            font: Pixmap::new(128, 128).unwrap(),
-            sprites: Pixmap::new(1, 1).unwrap(),
+            font: RgbaImage::new(128, 128),
+            sprites: RgbaImage::new(1, 1),
             indexed_sprites: IndexedImage::new(1, 1),
             maps: Vec::new(),
             files: HashMap::new(),
@@ -131,23 +128,17 @@ impl FantasyConsole {
     pub fn music_track(&mut self) -> &mut Option<(MusicTrack, bool)> {
         &mut self.music
     }
-    pub fn colour(&self, index: u8) -> Color {
+    pub fn colour(&self, index: u8) -> Rgba {
         if self.vbank == 1 && index == 0 {
-            return Color::from_rgba8(0, 0, 0, 0);
+            return Rgba::TRANSPARENT;
         }
         array_to_colour(self.palette[index as usize])
     }
     pub fn blit_to_image(&mut self, image: &mut [u8]) {
         let [x, y] = *self.get_screen_offset();
         self._output_screen.clone_from(&self.screen);
-        self._output_screen.draw_pixmap(
-            x.into(),
-            y.into(),
-            self.overlay_screen.as_ref(),
-            &PixmapPaint::default(),
-            Transform::identity(),
-            None,
-        );
+        self._output_screen
+            .blit(x.into(), y.into(), &self.overlay_screen);
         image.copy_from_slice(self._output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {
@@ -163,50 +154,50 @@ impl FantasyConsole {
         }
     }
     pub fn set_sprites(&mut self, sheet: &Image) {
-        self.sprites = Pixmap::from_vec(
+        self.sprites = RgbaImage::from_vec(
             sheet
                 .data
                 .as_ref()
                 .expect("Tried to load uninitialised spritesheet.")
                 .clone(),
-            IntSize::from_wh(sheet.size().x, sheet.size().y).unwrap(),
-        )
-        .unwrap();
+            sheet.size().x,
+            sheet.size().y,
+        );
     }
     // TODO: 255 index as transparent...
     pub fn set_indexed_sprites(&mut self, sheet: &Image) {
         self.indexed_sprites = IndexedImage::from_image(sheet, &self.palette);
     }
-    pub fn get_screen(&mut self) -> &mut Pixmap {
+    pub fn get_screen(&mut self) -> &mut RgbaImage {
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
     }
-    fn draw_colour_letter(&mut self, char: char, x: i32, y: i32, colour: Color) -> i32 {
+    fn draw_colour_letter(&mut self, char: char, x: i32, y: i32, colour: Rgba) -> i32 {
         let char_index = char as u8 as usize;
-        let pixel_index = (char_index % 16) * 8 + (char_index / 16) * 8 * 128;
+        let glyph_x = (char_index % 16) * 8;
+        let glyph_y = (char_index / 16) * 8;
         let screen = match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         };
         let mut letter_width = 0;
-        let colour = colour.premultiply().to_color_u8();
         for j in 0..8 {
             for i in 0..8 {
-                let screen_index = (x + i) + WIDTH * (y + j);
-                let pixel = self.font.pixels()[pixel_index + (i + 128 * j) as usize];
-                if pixel.alpha() == 0 {
+                let font_index = (glyph_x + i as usize) + (glyph_y + j as usize) * 128;
+                if self.font.alpha_at_index(font_index) == 0 {
                     continue;
                 }
                 letter_width = letter_width.max(i + 1);
                 if x + i >= WIDTH || y + j >= HEIGHT {
                     continue;
                 }
-                if let Some(x) = screen.pixels_mut().get_mut(screen_index as usize) {
-                    *x = colour;
+                let screen_index = (x + i) + WIDTH * (y + j);
+                if screen_index >= 0 && (screen_index as usize) < (WIDTH * HEIGHT) as usize {
+                    screen.set_pixel_index(screen_index as usize, colour);
                 }
             }
         }
@@ -223,13 +214,13 @@ impl FantasyConsole {
         let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
         let (x_start, y_start) = (x.max(0), y.max(0));
         let (x_end, y_end) = ((x + 8).min(WIDTH), (y + 8).min(HEIGHT));
+        let sprites = &self.sprites;
         let mut draw_pix = |x: i32, i: i32| {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                let screen_index = x + WIDTH * y;
+                let screen_index = (x + WIDTH * y) as usize;
                 let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                if self.sprites.pixels()[sprite_index].alpha() != 0 {
-                    screen.pixels_mut()[screen_index as usize] =
-                        self.sprites.pixels()[sprite_index];
+                if sprites.alpha_at_index(sprite_index) != 0 {
+                    screen.set_pixel_index(screen_index, sprites.get_pixel_index(sprite_index));
                 }
             }
         };
@@ -244,7 +235,7 @@ impl FantasyConsole {
         }
     }
     // Draws a sprite to the RGB screen using only `colour` and the sprite's transparency
-    pub fn blit_mask(&mut self, index: i32, x: i32, y: i32, colour: Color, flip: bool) {
+    pub fn blit_mask(&mut self, index: i32, x: i32, y: i32, colour: Rgba, flip: bool) {
         let (tx, ty) = ((index % 32) * 8, (index / 32) * 8);
         let screen = match self.vbank {
             0 => &mut self.screen,
@@ -254,13 +245,13 @@ impl FantasyConsole {
         let (x_offset, y_offset) = (x.min(0).abs(), y.min(0).abs());
         let (x_start, y_start) = (x.max(0), y.max(0));
         let (x_end, y_end) = ((x + 8).min(WIDTH), (y + 8).min(HEIGHT));
-        let colour = colour.premultiply().to_color_u8();
+        let sprites = &self.sprites;
         let mut draw_pix = |x: i32, i: i32| {
             for (y, j) in (y_start..y_end).zip(y_offset..8) {
-                let screen_index = x + WIDTH * y;
+                let screen_index = (x + WIDTH * y) as usize;
                 let sprite_index = (tx + i + (ty + j) * 8 * 32) as usize;
-                if self.sprites.pixels()[sprite_index].alpha() != 0 {
-                    screen.pixels_mut()[screen_index as usize] = colour;
+                if sprites.alpha_at_index(sprite_index) != 0 {
+                    screen.set_pixel_index(screen_index, colour);
                 }
             }
         };
@@ -303,75 +294,13 @@ impl FantasyConsole {
             .collect();
         self.maps = maps;
     }
-    pub fn horizontal_line(&mut self, x: i32, y: i32, width: i32, colour: Color) {
-        if x >= WIDTH || y >= HEIGHT || x < 0 || y < 0 {
-            return;
-        }
-        let colour = colour.premultiply().to_color_u8();
-        let over = (x + width - WIDTH).max(0);
-        let width = width - over;
-        for i in 0..width {
-            let screen_index = x + WIDTH * y + i;
-            self.screen.pixels_mut()[screen_index as usize] = colour;
-        }
-    }
-    pub fn vertical_line(&mut self, x: i32, y: i32, height: i32, colour: Color) {
-        if x >= WIDTH || y >= HEIGHT || x < 0 || y < 0 {
-            return;
-        }
-        let colour = colour.premultiply().to_color_u8();
-        let over = (y + height - HEIGHT).max(0);
-        let height = height - over;
-        for i in 0..height {
-            let screen_index = x + WIDTH * (y + i);
-            self.screen.pixels_mut()[screen_index as usize] = colour;
-        }
-    }
-    pub fn draw_rect(
-        &mut self,
-        mut x: i32,
-        mut y: i32,
-        mut width: i32,
-        mut height: i32,
-        colour: Color,
-    ) {
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-        if x < 0 {
-            width += x;
-            x = 0;
-        }
-        if y < 0 {
-            height += y;
-            y = 0;
-        }
-        if x + width > WIDTH {
-            width = WIDTH - x;
-        }
-        for i in 0..height {
-            self.horizontal_line(x, y + i, width, colour);
-        }
-    }
-    pub fn draw_rect_border(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Color) {
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-        self.horizontal_line(x, y, width, colour);
-        self.horizontal_line(x, y + height - 1, width, colour);
-        self.vertical_line(x, y, height, colour);
-        self.vertical_line(x + width - 1, y, height, colour);
-    }
     #[inline]
     pub fn draw_indexed_pixel(&mut self, index: usize, x: i32, y: i32) {
         let colour_index = self.indexed_sprites.data[index];
         let colour_index = self.palette_map[colour_index as usize];
-        let colour = array_to_colour(self.palette[colour_index])
-            .premultiply()
-            .to_color_u8();
-        let screen = &mut self.screen;
-        let screen_index = x + WIDTH * y;
-        screen.pixels_mut()[screen_index as usize] = colour;
+        let colour = array_to_colour(self.palette[colour_index]);
+        let screen_index = (x + WIDTH * y) as usize;
+        self.screen.set_pixel_index(screen_index, colour);
     }
     pub fn draw_indexed_sprite(
         &mut self,
@@ -440,9 +369,8 @@ impl FantasyConsole {
         }
     }
     fn _draw_pixel_with_map(&mut self, _colour: u8, x: i32, y: i32, _map: &[[u8; 256]; 256]) {
-        let screen = &mut self.screen;
-        let screen_index = x + WIDTH * y;
-        let _colour = screen.pixels()[screen_index as usize];
+        let screen_index = (x + WIDTH * y) as usize;
+        let _colour = self.screen.get_pixel_index(screen_index);
     }
 }
 
@@ -502,48 +430,23 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn circ(&mut self, x: i32, y: i32, radius: i32, color: u8) {
-        let mut paint = Paint {
-            anti_alias: false,
-            ..Default::default()
-        };
-        paint.set_color(self.colour(color));
-        let path = {
-            let mut pb = PathBuilder::new();
-            pb.push_circle(x as f32, y as f32, radius as f32);
-            pb.finish().unwrap()
-        };
-        let fill = FillRule::default();
-
+        let colour = self.colour(color);
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .fill_path(&path, &paint, fill, Transform::identity(), None);
+        .fill_circle(x, y, radius, colour);
     }
 
     fn circb(&mut self, x: i32, y: i32, radius: i32, color: u8) {
-        let mut paint = Paint {
-            anti_alias: false,
-            ..Default::default()
-        };
-        paint.set_color(self.colour(color));
-        let path = {
-            let mut pb = PathBuilder::new();
-            pb.push_circle(x as f32, y as f32, radius as f32);
-            pb.finish().unwrap()
-        };
-        let stroke = Stroke {
-            width: 1.0,
-            ..Default::default()
-        };
-
+        let colour = self.colour(color);
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        .stroke_circle(x, y, radius, colour);
     }
 
     fn elli(&mut self, _x: i32, _y: i32, _a: i32, _b: i32, _color: u8) {
@@ -567,28 +470,13 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u8) {
-        let mut paint = Paint {
-            anti_alias: false,
-            ..Default::default()
-        };
-        paint.set_color(self.colour(color));
-        let path = {
-            let mut pb = PathBuilder::new();
-            pb.move_to(x0, y0);
-            pb.line_to(x1, y1);
-            pb.finish().unwrap()
-        };
-        let stroke = Stroke {
-            width: 1.0,
-            ..Default::default()
-        };
-
+        let colour = self.colour(color);
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        .line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, colour);
     }
 
     fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
@@ -618,16 +506,19 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn pix(&mut self, x: i32, y: i32, color: u8) -> u8 {
-        let i = (y * self.screen.width() as i32 + x % self.screen.width() as i32) as usize;
-        if i > self.screen.pixels().len() {
+        let w = self.screen.width() as i32;
+        let h = self.screen.height() as i32;
+        let i = (y * w + x % w) as usize;
+        if i >= (w * h) as usize {
             return 0;
         }
+        let colour = self.colour(color);
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
             _ => unreachable!(),
         }
-        .pixels_mut()[i] = self.colour(color).premultiply().to_color_u8();
+        .set_pixel_index(i, colour);
         0
     }
 
@@ -682,12 +573,22 @@ impl ConsoleApi for FantasyConsole {
 
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
         let colour = self.colour(color);
-        self.draw_rect(x, y, w, h, colour);
+        match self.vbank {
+            0 => &mut self.screen,
+            1 => &mut self.overlay_screen,
+            _ => unreachable!(),
+        }
+        .fill_rect(x, y, w, h, colour);
     }
 
     fn rectb(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
         let colour = self.colour(color);
-        self.draw_rect_border(x, y, w, h, colour)
+        match self.vbank {
+            0 => &mut self.screen,
+            1 => &mut self.overlay_screen,
+            _ => unreachable!(),
+        }
+        .stroke_rect(x, y, w, h, colour);
     }
 
     fn sfx(&mut self, sfx_id: &str, opts: egg_core::tic80_api::core::SfxOptions) {
