@@ -234,8 +234,8 @@ impl FantasyConsole {
             }
         };
         if flip {
-            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                draw_pix(x, i);
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, 7 - i);
             }
         } else {
             for (x, i) in (x_start..x_end).zip(x_offset..8) {
@@ -265,8 +265,8 @@ impl FantasyConsole {
             }
         };
         if flip {
-            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                draw_pix(x, i);
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, 7 - i);
             }
         } else {
             for (x, i) in (x_start..x_end).zip(x_offset..8) {
@@ -396,8 +396,8 @@ impl FantasyConsole {
             }
         };
         if flip {
-            for (x, i) in (x_start..x_end).rev().zip(x_offset..8) {
-                draw_pix(x, i);
+            for (x, i) in (x_start..x_end).zip(x_offset..8) {
+                draw_pix(x, 7 - i);
             }
         } else {
             for (x, i) in (x_start..x_end).zip(x_offset..8) {
