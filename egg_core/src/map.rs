@@ -37,18 +37,6 @@ pub struct StaticMapInfo<'a> {
     pub bank: usize,
     pub camera_bounds: Option<CameraBounds>,
 }
-impl<'a> StaticMapInfo<'a> {
-    pub fn draw_bg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
-        self.layers
-            .iter()
-            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
-    }
-    pub fn draw_fg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
-        self.fg_layers
-            .iter()
-            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
-    }
-}
 
 /// Metadata necessary to load a map into Walkaround.
 #[derive(Clone, Debug, Default)]

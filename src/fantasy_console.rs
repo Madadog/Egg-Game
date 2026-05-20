@@ -883,10 +883,6 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn send(&mut self, _channel: egg_core::system::DataChannel, _data: &[u8]) {
-        todo!()
-    }
-
     fn screen_size(&self) -> (u32, u32) {
         (self.screen.width(), self.screen.height())
     }

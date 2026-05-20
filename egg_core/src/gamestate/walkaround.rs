@@ -68,16 +68,18 @@ impl WalkaroundState {
         }
     }
 
-    /// Access the player entity (entities[0]) - mutable reference.
-    /// This allows changing which entity is the player at runtime if needed.
+    /// Access the player entity
+    /// Mostly so we don't rely implicitly on "player index is 0" since it'll probably change later
     pub fn player(&mut self) -> &mut Shell {
         &mut self.entities[0]
     }
 
-    /// Access the player entity (entities[0]) - immutable reference.
+    /// Access the player entity immutably
     pub fn player_ref(&self) -> &Shell {
         &self.entities[0]
     }
+
+    /// Loads a map from given data
     pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
         let map_set = map_set.into();
         let map1 = &map_set
@@ -90,9 +92,6 @@ impl WalkaroundState {
             self.camera = Camera::from_map_size(map1.size, map1.offset);
         }
         self.bg_colour = map_set.bg_colour;
-        // if let Some(track) = map_set.music_track {
-        //     system.music(Some(&track), MusicOptions::default());
-        // };
         system.music(map_set.music_track.as_ref(), MusicOptions::default());
         if map_set.bank != system.sync_helper().last_bank().into() {
             system.sync(
@@ -119,14 +118,15 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    // TODO: FG layers
+    /// Load a map from a tic80 bank. Legacy code.
     pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
         let mut game_map = system.maps()[bank].clone();
         for layer in game_map.layers.iter() {
             info!("{}", layer.name);
         }
         let mut collision_layer = game_map
-            .layers.first()
+            .layers
+            .first()
             .map(|layer| {
                 info!("collision layer: {}", layer.name);
                 LayerInfo {
@@ -154,7 +154,6 @@ impl WalkaroundState {
         for layer in game_map.layers.iter() {
             info!("{}", layer.name);
         }
-        // let fg = map_info.layers.clone().retain(|layer| layer.name.to_lowercase().starts_with("fg"));
         let fg: Vec<LayerInfo> = game_map
             .layers
             .iter_mut()
@@ -216,6 +215,7 @@ impl WalkaroundState {
     pub fn cam_state(&mut self) -> &mut crate::camera::CameraBounds {
         &mut self.camera.bounds
     }
+    /// Function that does everything. No anti-pattern here.
     pub fn execute_interact_fn(
         &mut self,
         interact: &InteractFn,
@@ -289,6 +289,7 @@ impl WalkaroundState {
         }
     }
 
+    /// Plays a cued cutscene until finished, then removes it from the cue.
     fn play_cutscene(&mut self, system: &mut impl ConsoleApi) -> bool {
         if self.cutscene.is_some() {
             let mut intermediate = self
@@ -311,12 +312,13 @@ impl WalkaroundState {
         }
     }
 
-    // Adds a shell and returns its index
+    /// Adds a shell and returns its index
     pub fn spawn_shell(&mut self, shell: Shell) -> usize {
         self.entities.push(shell);
         self.entities.len() - 1
     }
 
+    /// TODO: Add actual save system.
     fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
         system.memory().set_byte(save::CURRENT_MAP, new_map.0 as u8);
         let x = self.player_ref().pos.x.to_le_bytes();
@@ -534,6 +536,7 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
         self.particles
             .draw_tic80(system, -self.cam_x(), -self.cam_y());
         system.blit_segment(4);
+
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
@@ -562,11 +565,7 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
                 .map(|x| x.draw_params(self.camera.pos).into()),
         );
 
-        sprites.extend(
-            self.entities
-                .iter()
-                .map(|x| x.draw_params(self.camera.pos)),
-        );
+        sprites.extend(self.entities.iter().map(|x| x.draw_params(self.camera.pos)));
 
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
             if let Some(companion) = companion {

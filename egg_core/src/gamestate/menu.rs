@@ -177,7 +177,6 @@ impl MenuState {
             Walk => return Some(GameMode::Walkaround),
             MapTest => return Some(GameMode::MainMenu(MenuState::map_select())),
             MapBankSelect(_x, _) => {
-                // walkaround_state.load_map(system, MapIndex((*x).into()).map())
                 walkaround_state.load_map_bank(system, 2);
             }
             MusicTest => todo!(),

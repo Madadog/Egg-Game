@@ -194,8 +194,6 @@ impl GameMode {
                 debug::step_sprite_test(system, x);
             }
         }
-        // let mouse = system.mouse();
-        // system.pix(mouse.x.into(), mouse.y.into(), 12);
     }
 }
 

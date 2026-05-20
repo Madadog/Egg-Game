@@ -87,7 +87,6 @@ impl EggMemory {
 
 #[derive(Clone, Debug)]
 pub struct StaticDrawParams<'a> {
-    // (i32, i32, i32, SpriteOptions, Option<u8>, u8)
     pub index: i32,
     pub x: i32,
     pub y: i32,
@@ -129,7 +128,6 @@ impl<'a> StaticDrawParams<'a> {
 
 #[derive(Clone, Debug)]
 pub struct DrawParams {
-    // (i32, i32, i32, SpriteOptions, Option<u8>, u8)
     pub index: i32,
     pub x: i32,
     pub y: i32,
@@ -350,8 +348,6 @@ pub trait ConsoleApi {
     fn read_file(&mut self, filename: String) -> Option<&[u8]>;
     /// Sprite with more options
     fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]);
-    /// Sends information to the outside world. Kinda sucks, I'll probably remove it.
-    fn send(&mut self, channel: DataChannel, data: &[u8]);
     /// Draws a specific map.
     fn map_draw(&mut self, bank: usize, layer: usize, opts: MapOptions);
     // TODO: No screen. Just expose `bitmaps: Vec<bitmap>`. By convention we can have 0=screen, 1=ovr, 2=sprites etc.

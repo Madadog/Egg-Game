@@ -21,14 +21,7 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
                 system.fade_palette([[0; 3]; 16], SWEETIE_16, local_time * 2);
                 system.draw_ovr2(|system| {
                     system.fade_palette([[0; 3]; 16], SWEETIE_16, local_time * 2);
-                    // This saves a couple kilobytes of wasm binary compared to using powf(0.02)
-                    let t = (local_time as f32 / max_time)
-                        .sqrt()
-                        .sqrt()
-                        .sqrt()
-                        .sqrt()
-                        .sqrt()
-                        .sqrt();
+                    let t = (local_time as f32 / max_time).powf(0.02);
                     let size = 200.0 / (max_time + 1.0 - t * max_time).powi(2).max(1.0);
                     let t = size as i32;
                     system.set_palette_colour(15, [0x0F; 3]);
