@@ -3,18 +3,6 @@ use crate::system::ConsoleApi;
 use tic80_api::core::StaticSpriteOptions;
 
 #[derive(Debug, Clone)]
-pub enum PicContainer {
-    Pic4x4(&'static Portrait),
-}
-impl PicContainer {
-    pub fn draw_offset(&self, system: &mut impl ConsoleApi, offset: Vec2) {
-        match self {
-            Self::Pic4x4(x) => x.draw_offset(system, offset),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct Portrait {
     spr_ids: [i16; 4],
     offset: (i8, i8),
@@ -53,9 +41,6 @@ impl Portrait {
             system.spr((*id).into(), x, y, StaticSpriteOptions::transparent_zero());
         }
         system.palette_map_rotate(0);
-    }
-    pub const fn to(&'static self) -> PicContainer {
-        PicContainer::Pic4x4(self)
     }
 }
 

@@ -27,7 +27,7 @@ use crate::{
 use tic80_api::core::{PrintOptions, StaticSpriteOptions};
 
 use crate::data::{
-    portraits::PicContainer,
+    portraits::Portrait,
     save,
     sound::{self, SfxData},
 };
@@ -38,8 +38,8 @@ pub enum StaticTextContent {
     Delayed(&'static str, u8),
     Delay(u8),
     Sound(&'static SfxData),
-    Portrait(Option<&'static PicContainer>),
-    PausePortrait(Option<&'static PicContainer>),
+    Portrait(Option<&'static Portrait>),
+    PausePortrait(Option<&'static Portrait>),
     Pause,
     AutoText(&'static str),
     Flip(bool),
@@ -61,8 +61,8 @@ pub enum TextContent {
     Delayed(String, u8),
     Delay(u8),
     Sound(SfxData),
-    Portrait(Option<PicContainer>),
-    PausePortrait(Option<PicContainer>),
+    Portrait(Option<Portrait>),
+    PausePortrait(Option<Portrait>),
     Pause,
     AutoText(String),
     Flip(bool),
@@ -153,7 +153,7 @@ pub struct Dialogue {
     pub width: usize,
     pub delay: usize,
     pub print_time: Option<usize>,
-    pub portrait: Option<PicContainer>,
+    pub portrait: Option<Portrait>,
     pub dark_theme: bool,
     pub flip_portrait: bool,
 }
