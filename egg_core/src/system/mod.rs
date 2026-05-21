@@ -1,6 +1,6 @@
 use crate::{
-    data::sound::{music::MusicTrack, SfxData},
-    rand::Lcg64Xsh32,
+    data::sound::{SfxData, music::MusicTrack},
+    rand::Lcg64Xsh32, system::image::RgbaImage,
 };
 
 pub use consts::*;
@@ -111,6 +111,9 @@ pub trait ConsoleApi {
     /// 2. Indexed sprites
     /// 3. RGBA sprites
     fn get_bitmap_indexed(&self, id: usize) -> &[u8];
+
+    /// Canonical final surface drawn by console to screen
+    fn output_image(&mut self) -> &mut RgbaImage;
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {

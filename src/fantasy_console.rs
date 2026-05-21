@@ -814,6 +814,11 @@ impl ConsoleApi for FantasyConsole {
             _ => panic!("bitmap {id} does not exist"),
         }
     }
+
+    fn output_image(&mut self) -> &mut RgbaImage {
+        &mut self.output_screen
+    }
+    
     fn draw_outline(
         &mut self,
         id: i32,
