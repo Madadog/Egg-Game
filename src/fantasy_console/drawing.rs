@@ -11,13 +11,24 @@ impl Rgba {
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self([r, g, b, a])
     }
+
     pub const fn a(self) -> u8 {
         self.0[3]
     }
+
+    pub const fn from_rgb(array: [u8; 3]) -> Self {
+        Rgba::new(array[0], array[1], array[2], 255)
+    }
 }
 
-pub fn array_to_colour(array: [u8; 3]) -> Rgba {
-    Rgba::new(array[0], array[1], array[2], 255)
+/// How `blit` treats destination pixels outside the natural projection of the source.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EdgePolicy {
+    /// Pixels outside `src` are left untouched.
+    #[default]
+    Transparent,
+    /// Edge pixels of `src` are held outwards to fill the whole destination.
+    Clamp,
 }
 
 pub struct RgbaImage {
@@ -99,19 +110,19 @@ impl RgbaImage {
         }
     }
     /// Alpha-blit `src` at (`dx`, `dy`). Pixels with src.a == 0 are skipped.
-    pub fn blit(&mut self, dx: i32, dy: i32, src: &RgbaImage) {
+    pub fn blit(&mut self, dx: i32, dy: i32, src: &RgbaImage, edge: EdgePolicy) {
         let sw = src.width as i32;
         let sh = src.height as i32;
         let dw = self.width as i32;
         let dh = self.height as i32;
-        let x0 = dx.max(0);
-        let y0 = dy.max(0);
-        let x1 = (dx + sw).min(dw);
-        let y1 = (dy + sh).min(dh);
+        let (x0, y0, x1, y1) = match edge {
+            EdgePolicy::Transparent => (dx.max(0), dy.max(0), (dx + sw).min(dw), (dy + sh).min(dh)),
+            EdgePolicy::Clamp => (0, 0, dw, dh),
+        };
         for y in y0..y1 {
             for x in x0..x1 {
-                let sx = (x - dx) as u32;
-                let sy = (y - dy) as u32;
+                let sx = (x - dx).clamp(0, sw - 1) as u32;
+                let sy = (y - dy).clamp(0, sh - 1) as u32;
                 let pixel = src.get_pixel(sx, sy);
                 if pixel.a() != 0 {
                     self.set_pixel(x as u32, y as u32, pixel);

@@ -14,7 +14,7 @@ use egg_core::{
 
 use crate::tiled;
 
-use self::drawing::{IndexedImage, Rgba, RgbaImage, array_to_colour};
+use self::drawing::{EdgePolicy, IndexedImage, Rgba, RgbaImage};
 
 mod drawing;
 
@@ -132,13 +132,13 @@ impl FantasyConsole {
         if self.vbank == 1 && index == 0 {
             return Rgba::TRANSPARENT;
         }
-        array_to_colour(self.palette[index as usize])
+        Rgba::from_rgb(self.palette[index as usize])
     }
     pub fn blit_to_image(&mut self, image: &mut [u8]) {
         let [x, y] = *self.get_screen_offset();
         self._output_screen.clone_from(&self.screen);
         self._output_screen
-            .blit(x.into(), y.into(), &self.overlay_screen);
+            .blit(x.into(), y.into(), &self.overlay_screen, EdgePolicy::Clamp);
         image.copy_from_slice(self._output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {
@@ -298,7 +298,7 @@ impl FantasyConsole {
     pub fn draw_indexed_pixel(&mut self, index: usize, x: i32, y: i32) {
         let colour_index = self.indexed_sprites.data[index];
         let colour_index = self.palette_map[colour_index as usize];
-        let colour = array_to_colour(self.palette[colour_index]);
+        let colour = Rgba::from_rgb(self.palette[colour_index]);
         let screen_index = (x + WIDTH * y) as usize;
         self.screen.set_pixel_index(screen_index, colour);
     }
