@@ -1,9 +1,8 @@
 use crate::position::Vec2;
 use CameraRange::*;
-// use tic80_api::core::WIDTH;
 
-const WIDTH: i16 = tic80_api::core::WIDTH as i16;
-const HEIGHT: i16 = tic80_api::core::HEIGHT as i16;
+const WIDTH: i16 = crate::system::WIDTH as i16;
+const HEIGHT: i16 = crate::system::HEIGHT as i16;
 
 #[derive(Debug, Clone)]
 pub struct Camera {

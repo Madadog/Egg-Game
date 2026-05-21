@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use tic80_api::core::{SpriteOptions, StaticSpriteOptions};
+use crate::system::{SpriteOptions, StaticSpriteOptions};
 use crate::position::Vec2;
 
 // TODO: Allocate game dialogue so it can be loaded from files

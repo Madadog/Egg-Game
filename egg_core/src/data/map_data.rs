@@ -24,7 +24,7 @@ use crate::map::StaticMapInfo;
 use crate::map::Warp;
 use crate::map::{Axis, WarpMode};
 use crate::position::{Hitbox, Vec2};
-use tic80_api::core::StaticSpriteOptions;
+use crate::system::StaticSpriteOptions;
 
 use super::sound;
 

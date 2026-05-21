@@ -8,7 +8,7 @@ use crate::{
     position::{touches_tile, Collider, Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper},
 };
-use tic80_api::core::MapOptions;
+use crate::system::MapOptions;
 /*
 pub enum TileMapCollision {
     None,

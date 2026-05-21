@@ -207,7 +207,7 @@ impl InventoryUi {
     }
     pub fn draw(&self, system: &mut impl ConsoleApi) {
         use crate::dialogue::DIALOGUE_OPTIONS;
-        use tic80_api::core::{PrintOptions, StaticSpriteOptions, HEIGHT, WIDTH};
+        use crate::system::{PrintOptions, StaticSpriteOptions, HEIGHT, WIDTH};
         system.blit_segment(4);
         let entries = [
             INVENTORY_ITEMS,

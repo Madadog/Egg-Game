@@ -1,89 +1,12 @@
-use tic80_api::core::{
-    MapOptions, MouseInput, MusicOptions, PrintOptions, SfxOptions, SpriteOptions,
-    StaticSpriteOptions, TTriOptions,
-};
-
 use crate::{
-    data::{
-        save,
-        sound::{music::MusicTrack, SfxData},
-    },
+    data::sound::{music::MusicTrack, SfxData},
     rand::Lcg64Xsh32,
 };
 
-#[derive(Debug, Default)]
-pub struct SyncHelper {
-    already_synced: bool,
-    last_bank: u8,
-}
-
-impl SyncHelper {
-    pub fn step(&mut self) {
-        self.already_synced = false;
-    }
-    /// Sync can only be called once per frame. Returns result to indicate failure or success.
-    /// Mask lets you switch out sections of cart data:
-    /// * all     = 0    -- 0
-    /// * tiles   = 1<<0 -- 1
-    /// * sprites = 1<<1 -- 2
-    /// * map     = 1<<2 -- 4
-    /// * sfx     = 1<<3 -- 8
-    /// * music   = 1<<4 -- 16
-    /// * palette = 1<<5 -- 32
-    /// * flags   = 1<<6 -- 64
-    /// * screen  = 1<<7 -- 128 (as of 0.90)
-    pub fn sync(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
-        if self.already_synced() {
-            Err(())
-        } else {
-            self.already_synced = true;
-            self.last_bank = bank;
-            Ok(())
-        }
-    }
-    pub fn already_synced(&self) -> bool {
-        self.already_synced
-    }
-    pub fn last_bank(&self) -> u8 {
-        self.last_bank
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct EggMemory {
-    pub memory: [u8; 1024],
-}
-impl Default for EggMemory {
-    fn default() -> Self {
-        Self::new([0; 1024])
-    }
-}
-impl EggMemory {
-    pub fn new(memory: [u8; 1024]) -> Self {
-        Self { memory }
-    }
-    pub fn from_array(array: [u8; 1024]) -> Self {
-        Self { memory: array }
-    }
-    pub fn is(&self, bit: save::PmemBit) -> bool {
-        bit.is_true_with(&self.memory)
-    }
-    pub fn set(&mut self, bit: save::PmemBit) {
-        bit.set_true_with(&mut self.memory);
-    }
-    pub fn clear(&mut self, bit: save::PmemBit) {
-        bit.set_false_with(&mut self.memory);
-    }
-    pub fn toggle(&mut self, bit: save::PmemBit) {
-        bit.toggle_with(&mut self.memory);
-    }
-    pub fn get_byte(&self, byte: save::PmemU8) -> u8 {
-        self.memory[byte.index()]
-    }
-    pub fn set_byte(&mut self, byte: save::PmemU8, value: u8) {
-        self.memory[byte.index()] = value;
-    }
-}
+use super::types::{
+    EggMemory, GameMap, MapOptions, MouseInput, PrintOptions, SfxOptions, SpriteOptions,
+    StaticSpriteOptions, SyncHelper, TTriOptions,
+};
 
 #[derive(Clone, Debug)]
 pub struct StaticDrawParams<'a> {
@@ -191,79 +114,6 @@ impl<'a> From<StaticDrawParams<'a>> for DrawParams {
     }
 }
 
-/// Type of data being sent to the external environment
-pub enum DataChannel {
-    Binary,
-    String,
-}
-
-/// For simplicity all layers under a map have the same width and height.
-/// Ordering of layers is: first at the bottom, last at the top.
-#[derive(Clone, Debug)]
-pub struct GameMap {
-    width: usize,
-    height: usize,
-    pub layers: Vec<MapLayer>,
-}
-impl GameMap {
-    pub fn new(width: usize, height: usize, layers: Vec<MapLayer>) -> Self {
-        Self {
-            width,
-            height,
-            layers,
-        }
-    }
-    pub fn new_empty(width: usize, height: usize, layers: usize) -> Self {
-        Self::new(
-            width,
-            height,
-            (0..layers)
-                .map(|_| MapLayer::new_empty(width, height))
-                .collect(),
-        )
-    }
-    pub fn width(&self) -> usize {
-        self.width
-    }
-    pub fn height(&self) -> usize {
-        self.height
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct MapLayer {
-    pub name: String,
-    width: usize,
-    height: usize,
-    pub data: Vec<usize>,
-}
-impl MapLayer {
-    pub fn new(name: String, width: usize, height: usize, data: Vec<usize>) -> Self {
-        assert!(width * height == data.len());
-        Self {
-            name,
-            width,
-            height,
-            data,
-        }
-    }
-    pub fn new_empty(width: usize, height: usize) -> Self {
-        Self::new(String::new(), width, height, vec![0; width * height])
-    }
-    pub fn width(&self) -> usize {
-        self.width
-    }
-    pub fn height(&self) -> usize {
-        self.height
-    }
-    pub fn get(&self, x: usize, y: usize) -> Option<usize> {
-        self.data.get(y * self.width + x).copied()
-    }
-    pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
-        self.data.get_mut(y * self.width + x)
-    }
-}
-
 /// Abstracts away all static memory accesses
 pub trait ConsoleApi {
     // TIC-80 RAM
@@ -294,7 +144,7 @@ pub trait ConsoleApi {
     fn map(&mut self, opts: MapOptions);
 
     fn mouse(&self) -> MouseInput;
-    fn music(&mut self, track: Option<&MusicTrack>, opts: MusicOptions);
+    fn music(&mut self, track: Option<&MusicTrack>);
     fn pix(&mut self, x: i32, y: i32, color: u8) -> u8;
     fn pmem(&mut self, address: i32, value: i64) -> i32;
     fn print_alloc(&mut self, text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) -> i32;

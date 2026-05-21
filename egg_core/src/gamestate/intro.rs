@@ -1,7 +1,6 @@
-use tic80_api::core::HEIGHT;
-use tic80_api::core::MusicOptions;
-use tic80_api::core::WIDTH;
-use tic80_api::helpers::SWEETIE_16;
+use crate::system::HEIGHT;
+use crate::system::WIDTH;
+use crate::system::SWEETIE_16;
 
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::save;
@@ -56,7 +55,7 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
             }
             Some(0) => {
                 system.cls(0);
-                system.music(Some(&MusicTrack::INTRO), MusicOptions::default());
+                system.music(Some(&MusicTrack::INTRO));
                 system.draw_ovr2(|system| {
                     system.cls(0);
                     system.circb(90, 38, 4, 4);
@@ -80,13 +79,7 @@ pub fn draw_animation(t: u16, system: &mut impl ConsoleApi) -> bool {
             _ => std::process::abort(),
         }
     } else {
-        system.music(
-            None,
-            MusicOptions {
-                frame: 1,
-                ..Default::default()
-            },
-        );
+        system.music(None);
         // Intro has played, skip it on next boot.
         system.memory().set(save::INTRO_ANIM_SEEN);
         system.screen_offset(0, 0);

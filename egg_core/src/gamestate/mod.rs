@@ -15,7 +15,7 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use log::trace;
-use tic80_api::core::{MouseInput, PrintOptions};
+use crate::system::{MouseInput, PrintOptions};
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;

@@ -22,9 +22,11 @@ use crate::{
     interact::{Interactable, Interaction},
     map::{Axis, LayerInfo, MapInfo},
     position::{Hitbox, Vec2},
-    system::{ConsoleApi, ConsoleHelper, DrawParams, StaticDrawParams},
+    system::{
+        ConsoleApi, ConsoleHelper, DrawParams, Flip, SpriteOptions, StaticDrawParams,
+        StaticSpriteOptions,
+    },
 };
-use tic80_api::core::{Flip, SpriteOptions, StaticSpriteOptions};
 
 #[derive(Debug, Clone, Default)]
 pub enum LoopMode {

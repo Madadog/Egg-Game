@@ -24,7 +24,7 @@ use crate::{
     system::{ConsoleApi, ConsoleHelper},
 };
 
-use tic80_api::core::{PrintOptions, StaticSpriteOptions};
+use crate::system::{PrintOptions, StaticSpriteOptions};
 
 use crate::data::{
     portraits::Portrait,
@@ -353,7 +353,7 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use tic80_api::core::{HEIGHT, WIDTH};
+        use crate::system::{HEIGHT, WIDTH};
 
         let w = self.width as i32;
         let h = 24;
@@ -383,7 +383,7 @@ impl Dialogue {
         mut y: i32,
         mut height: i32,
     ) {
-        use tic80_api::core::{HEIGHT, WIDTH};
+        use crate::system::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;
         let w = self.width as i32;

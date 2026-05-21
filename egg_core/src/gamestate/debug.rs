@@ -1,6 +1,5 @@
-use tic80_api::{
-    core::{MapOptions, PrintOptions, StaticSpriteOptions},
-    helpers::SWEETIE_16,
+use crate::system::{
+    MapOptions, PrintOptions, SWEETIE_16, StaticSpriteOptions
 };
 
 use crate::{

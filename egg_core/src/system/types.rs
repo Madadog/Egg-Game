@@ -1,28 +1,145 @@
-// MIT License
+use crate::data::save;
 
-// Copyright (c) 2017 Vadim Grigoruk @nesbox // grigoruk@gmail.com
+#[derive(Debug, Default)]
+pub struct SyncHelper {
+    already_synced: bool,
+    last_bank: u8,
+}
 
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
+impl SyncHelper {
+    pub fn step(&mut self) {
+        self.already_synced = false;
+    }
+    /// Sync can only be called once per frame. Returns result to indicate failure or success.
+    /// Mask lets you switch out sections of cart data:
+    /// * all     = 0    -- 0
+    /// * tiles   = 1<<0 -- 1
+    /// * sprites = 1<<1 -- 2
+    /// * map     = 1<<2 -- 4
+    /// * sfx     = 1<<3 -- 8
+    /// * music   = 1<<4 -- 16
+    /// * palette = 1<<5 -- 32
+    /// * flags   = 1<<6 -- 64
+    /// * screen  = 1<<7 -- 128 (as of 0.90)
+    pub fn sync(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
+        if self.already_synced() {
+            Err(())
+        } else {
+            self.already_synced = true;
+            self.last_bank = bank;
+            Ok(())
+        }
+    }
+    pub fn already_synced(&self) -> bool {
+        self.already_synced
+    }
+    pub fn last_bank(&self) -> u8 {
+        self.last_bank
+    }
+}
 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
+#[derive(Clone, Copy, Debug)]
+pub struct EggMemory {
+    pub memory: [u8; 1024],
+}
+impl Default for EggMemory {
+    fn default() -> Self {
+        Self::new([0; 1024])
+    }
+}
+impl EggMemory {
+    pub fn new(memory: [u8; 1024]) -> Self {
+        Self { memory }
+    }
+    pub fn from_array(array: [u8; 1024]) -> Self {
+        Self { memory: array }
+    }
+    pub fn is(&self, bit: save::PmemBit) -> bool {
+        bit.is_true_with(&self.memory)
+    }
+    pub fn set(&mut self, bit: save::PmemBit) {
+        bit.set_true_with(&mut self.memory);
+    }
+    pub fn clear(&mut self, bit: save::PmemBit) {
+        bit.set_false_with(&mut self.memory);
+    }
+    pub fn toggle(&mut self, bit: save::PmemBit) {
+        bit.toggle_with(&mut self.memory);
+    }
+    pub fn get_byte(&self, byte: save::PmemU8) -> u8 {
+        self.memory[byte.index()]
+    }
+    pub fn set_byte(&mut self, byte: save::PmemU8, value: u8) {
+        self.memory[byte.index()] = value;
+    }
+}
 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+/// For simplicity all layers under a map have the same width and height.
+/// Ordering of layers is: first at the bottom, last at the top.
+#[derive(Clone, Debug)]
+pub struct GameMap {
+    width: usize,
+    height: usize,
+    pub layers: Vec<MapLayer>,
+}
+impl GameMap {
+    pub fn new(width: usize, height: usize, layers: Vec<MapLayer>) -> Self {
+        Self {
+            width,
+            height,
+            layers,
+        }
+    }
+    pub fn new_empty(width: usize, height: usize, layers: usize) -> Self {
+        Self::new(
+            width,
+            height,
+            (0..layers)
+                .map(|_| MapLayer::new_empty(width, height))
+                .collect(),
+        )
+    }
+    pub fn width(&self) -> usize {
+        self.width
+    }
+    pub fn height(&self) -> usize {
+        self.height
+    }
+}
 
-// Constants
-pub const WIDTH: i32 = 240;
-pub const HEIGHT: i32 = 136;
+#[derive(Clone, Debug)]
+pub struct MapLayer {
+    pub name: String,
+    width: usize,
+    height: usize,
+    pub data: Vec<usize>,
+}
+impl MapLayer {
+    pub fn new(name: String, width: usize, height: usize, data: Vec<usize>) -> Self {
+        assert!(width * height == data.len());
+        Self {
+            name,
+            width,
+            height,
+            data,
+        }
+    }
+    pub fn new_empty(width: usize, height: usize) -> Self {
+        Self::new(String::new(), width, height, vec![0; width * height])
+    }
+    pub fn width(&self) -> usize {
+        self.width
+    }
+    pub fn height(&self) -> usize {
+        self.height
+    }
+    pub fn get(&self, x: usize, y: usize) -> Option<usize> {
+        self.data.get(y * self.width + x).copied()
+    }
+    pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
+        self.data.get_mut(y * self.width + x)
+    }
+}
 
 #[derive(Default, Clone, Debug)]
 pub struct MouseInput {
@@ -35,53 +152,20 @@ pub struct MouseInput {
     pub right: bool,
 }
 
-// Audio
-pub struct MusicOptions {
-    pub frame: i32,
-    pub row: i32,
-    pub repeat: bool,
-    pub sustain: bool,
-    pub tempo: i32,
-    pub speed: i32,
-}
-
-impl Default for MusicOptions {
-    fn default() -> Self {
-        Self {
-            frame: -1,
-            row: -1,
-            repeat: true,
-            sustain: false,
-            tempo: -1,
-            speed: -1,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SfxOptions {
     pub note: i32,
     pub octave: i32,
-    pub duration: i32,
-    pub channel: i32,
-    pub volume_left: i32,
-    pub volume_right: i32,
-    pub speed: i32,
 }
-
 impl Default for SfxOptions {
     fn default() -> Self {
         Self {
             note: -1,
             octave: -1,
-            duration: -1,
-            channel: 0,
-            volume_left: 15,
-            volume_right: 15,
-            speed: 0,
         }
     }
 }
+
 pub enum TextureSource {
     Tiles,
     Map,
@@ -276,11 +360,6 @@ impl<'a> From<StaticSpriteOptions<'a>> for SpriteOptions {
     }
 }
 
-// Text Output
-// The *_raw functions require a null terminated string reference.
-// The *_alloc functions can handle any AsRef<str> type, but require the overhead of allocation.
-// The macros will avoid the allocation if passed a string literal by adding the null terminator at compile time.
-
 #[derive(Clone)]
 pub struct PrintOptions {
     pub color: i32,
@@ -289,7 +368,9 @@ pub struct PrintOptions {
     pub small_text: bool,
 }
 impl PrintOptions {
-    pub fn with_color(self, color: i32) -> Self { Self {color, ..self} }
+    pub fn with_color(self, color: i32) -> Self {
+        Self { color, ..self }
+    }
 }
 
 impl Default for PrintOptions {

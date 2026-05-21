@@ -7,7 +7,7 @@ use egg_core::EggState;
 
 use egg_core::gamestate::GameMode;
 use egg_core::system::ConsoleApi;
-use egg_core::tic80_api::core::{HEIGHT, WIDTH};
+use egg_core::system::{HEIGHT, WIDTH};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
 
@@ -449,7 +449,7 @@ fn step_state(
             "Paused\n[P] to unpause\n[N] to step forward",
             100,
             62,
-            egg_core::tic80_api::core::PrintOptions {
+            egg_core::system::PrintOptions {
                 color: 12,
                 ..Default::default()
             },
@@ -561,7 +561,7 @@ fn step_state(
             "Fast-Forward",
             100,
             62,
-            egg_core::tic80_api::core::PrintOptions {
+            egg_core::system::PrintOptions {
                 color: 12,
                 ..Default::default()
             },

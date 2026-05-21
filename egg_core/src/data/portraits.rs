@@ -1,6 +1,6 @@
 use crate::position::Vec2;
 use crate::system::ConsoleApi;
-use tic80_api::core::StaticSpriteOptions;
+use crate::system::StaticSpriteOptions;
 
 #[derive(Debug, Clone)]
 pub struct Portrait {

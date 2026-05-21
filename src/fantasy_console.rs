@@ -5,10 +5,9 @@ use egg_core::{
     data::sound::music::MusicTrack,
     gamestate::EggInput,
     rand::Lcg64Xsh32,
-    system::{ConsoleApi, EggMemory, GameMap, MapLayer, SyncHelper},
-    tic80_api::{
-        core::{Flip, HEIGHT, MouseInput, SfxOptions, StaticSpriteOptions, WIDTH},
-        helpers::SWEETIE_16,
+    system::{
+        ConsoleApi, EggMemory, Flip, GameMap, HEIGHT, MapLayer, MouseInput, SWEETIE_16, SfxOptions,
+        StaticSpriteOptions, SyncHelper, WIDTH,
     },
 };
 
@@ -486,7 +485,7 @@ impl ConsoleApi for FantasyConsole {
         .line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, colour);
     }
 
-    fn map(&mut self, opts: egg_core::tic80_api::core::MapOptions) {
+    fn map(&mut self, opts: egg_core::system::MapOptions) {
         let bank = self.sync_helper.last_bank() as usize;
         self.map_draw(bank, 0, opts);
     }
@@ -499,11 +498,7 @@ impl ConsoleApi for FantasyConsole {
         todo!()
     }
 
-    fn music(
-        &mut self,
-        track: Option<&MusicTrack>,
-        _opts: egg_core::tic80_api::core::MusicOptions,
-    ) {
+    fn music(&mut self, track: Option<&MusicTrack>) {
         info!("Playing track \"{:?}\"", track);
         if let Some(track) = track {
             self.music = Some((track.clone(), false));
@@ -534,7 +529,7 @@ impl ConsoleApi for FantasyConsole {
         text: impl AsRef<str>,
         x: i32,
         y: i32,
-        opts: egg_core::tic80_api::core::PrintOptions,
+        opts: egg_core::system::PrintOptions,
     ) -> i32 {
         self.print_raw(text.as_ref(), x, y, opts)
     }
@@ -544,7 +539,7 @@ impl ConsoleApi for FantasyConsole {
         text: &str,
         x: i32,
         y: i32,
-        opts: egg_core::tic80_api::core::PrintOptions,
+        opts: egg_core::system::PrintOptions,
     ) -> i32 {
         let mut max_width = 0;
         let mut dx = x;
@@ -598,7 +593,7 @@ impl ConsoleApi for FantasyConsole {
         .stroke_rect(x, y, w, h, colour);
     }
 
-    fn sfx(&mut self, sfx_id: &str, opts: egg_core::tic80_api::core::SfxOptions) {
+    fn sfx(&mut self, sfx_id: &str, opts: egg_core::system::SfxOptions) {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
@@ -607,7 +602,7 @@ impl ConsoleApi for FantasyConsole {
         id: i32,
         x: i32,
         y: i32,
-        opts: egg_core::tic80_api::core::StaticSpriteOptions,
+        opts: egg_core::system::StaticSpriteOptions,
     ) {
         let flip = matches!(opts.flip, Flip::Horizontal);
         let transparent = opts.transparent.first().cloned().unwrap_or(255);
@@ -676,7 +671,7 @@ impl ConsoleApi for FantasyConsole {
         _v2: f32,
         _u3: f32,
         _v3: f32,
-        _opts: egg_core::tic80_api::core::TTriOptions,
+        _opts: egg_core::system::TTriOptions,
     ) {
         todo!()
     }
@@ -733,7 +728,7 @@ impl ConsoleApi for FantasyConsole {
         &mut self,
         bank: usize,
         layer: usize,
-        mut opts: egg_core::tic80_api::core::MapOptions,
+        mut opts: egg_core::system::MapOptions,
     ) {
         if self.maps.is_empty()
             || opts.sx + opts.w * 8 < 0
@@ -812,8 +807,8 @@ impl ConsoleApi for FantasyConsole {
         outline_colour: u8,
     ) {
         let flip = match opts.flip {
-            egg_core::tic80_api::core::Flip::None => false,
-            egg_core::tic80_api::core::Flip::Horizontal => true,
+            Flip::None => false,
+            Flip::Horizontal => true,
             _ => false,
         };
         if opts.scale > 1 {

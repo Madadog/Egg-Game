@@ -1,6 +1,6 @@
-use tic80_api::core::PrintOptions;
-use tic80_api::core::StaticSpriteOptions;
-use tic80_api::core::WIDTH;
+use crate::system::PrintOptions;
+use crate::system::StaticSpriteOptions;
+use crate::system::WIDTH;
 
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
@@ -150,13 +150,13 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        system.set_palette(tic80_api::helpers::SWEETIE_16);
+                        system.set_palette(crate::system::SWEETIE_16);
                     }
                     1 => {
-                        system.set_palette(tic80_api::helpers::NIGHT_16);
+                        system.set_palette(crate::system::NIGHT_16);
                     }
                     2 => {
-                        system.set_palette(tic80_api::helpers::B_W);
+                        system.set_palette(crate::system::B_W);
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();

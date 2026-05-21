@@ -26,7 +26,6 @@ pub mod particles;
 pub mod player;
 pub mod position;
 pub mod rand;
-pub use tic80_api;
 pub mod system;
 
 use crate::debug::DebugInfo;

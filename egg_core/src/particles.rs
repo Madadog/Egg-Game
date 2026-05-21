@@ -1,5 +1,5 @@
 use crate::{position::Vec2, system::ConsoleApi};
-use tic80_api::core::StaticSpriteOptions;
+use crate::system::StaticSpriteOptions;
 
 #[derive(Clone, Debug)]
 pub enum ParticleDraw {

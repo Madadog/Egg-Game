@@ -1,6 +1,6 @@
 use crate::{
     position::{Hitbox, Vec2},
-    system::{ConsoleApi, StaticDrawParams},
+    system::{ConsoleApi, Flip, StaticDrawParams, StaticSpriteOptions},
 };
 
 #[derive(Clone, Debug)]
@@ -63,16 +63,16 @@ impl Creature {
         };
         let offset = offset * Vec2::new(-1, -1);
         let flip = match self.flip_h {
-            true => tic80_api::core::Flip::Horizontal,
-            false => tic80_api::core::Flip::None,
+            true => Flip::Horizontal,
+            false => Flip::None,
         };
         StaticDrawParams::new(
             sprite,
             self.hitbox.offset(offset).x.into(),
             self.hitbox.offset(offset).y.into(),
-            tic80_api::core::StaticSpriteOptions {
+            StaticSpriteOptions {
                 flip,
-                ..tic80_api::core::StaticSpriteOptions::transparent_zero()
+                ..StaticSpriteOptions::transparent_zero()
             },
             Some(1),
             1,

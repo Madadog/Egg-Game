@@ -1,4 +1,4 @@
-use tic80_api::core::SfxOptions;
+use crate::system::SfxOptions;
 
 #[derive(Debug, Clone)]
 pub struct SfxData {
@@ -18,26 +18,12 @@ impl SfxData {
             ..self
         }
     }
-    pub fn with_volume(self, volume: i32) -> Self {
-        Self {
-            options: SfxOptions {
-                volume_left: volume,
-                volume_right: volume,
-                ..self.options
-            },
-            ..self
-        }
-    }
+
 }
 
 pub const DEFAULT_SFX: SfxOptions = SfxOptions {
     note: 0,
     octave: 5,
-    duration: -1,
-    channel: 0,
-    volume_left: 15,
-    volume_right: 15,
-    speed: 0,
 };
 
 pub const PIANO: SfxData = SfxData::new(
@@ -45,8 +31,6 @@ pub const PIANO: SfxData = SfxData::new(
     SfxOptions {
         note: 0,
         octave: 4,
-        duration: 60,
-        ..DEFAULT_SFX
     },
 );
 

@@ -36,4 +36,3 @@ TODO: Simplify game setup.
 |`src/position.rs`|Vec2 and Hitbox types used for collision detection.|
 |`src/rand.rs`|PCG32 RNG from Rust Rand crate.|
 |`src/system.rs`|API used for graphics, sound and input.|
-|`tic80_api`|Crate containing structs which I'm still using from the original TIC-80 Rust template. TODO: Remove|

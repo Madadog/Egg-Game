@@ -10,10 +10,10 @@ use crate::map::{Axis, LayerInfo, MapInfo};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
+use crate::system::PrintOptions;
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
-use tic80_api::core::{MusicOptions, PrintOptions};
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
@@ -92,7 +92,7 @@ impl WalkaroundState {
             self.camera = Camera::from_map_size(map1.size, map1.offset);
         }
         self.bg_colour = map_set.bg_colour;
-        system.music(map_set.music_track.as_ref(), MusicOptions::default());
+        system.music(map_set.music_track.as_ref());
         if map_set.bank != system.sync_helper().last_bank().into() {
             system.sync(
                 1 | 4 | 8 | 16 | 64 | 128,
@@ -372,13 +372,13 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
             self.load_pmem(system);
         }
         if system.keyp(33, -1, -1) {
-            system.set_palette(tic80_api::helpers::SWEETIE_16);
+            system.set_palette(crate::system::SWEETIE_16);
         }
         if system.keyp(34, -1, -1) {
-            system.set_palette(tic80_api::helpers::NIGHT_16);
+            system.set_palette(crate::system::NIGHT_16);
         }
         if system.keyp(35, -1, -1) {
-            system.set_palette(tic80_api::helpers::B_W);
+            system.set_palette(crate::system::B_W);
         }
 
         // Get keyboard inputs
