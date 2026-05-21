@@ -469,14 +469,16 @@ fn step_state(
         game.state.debug_info.set_memory_info(x);
     }
     if keys.just_pressed(KeyCode::Digit1) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = game.state.walkaround.player().pos;
-        *game.state.walkaround.player() = egg_core::player::Shell::ellie();
-        game.state.walkaround.player().pos = pos;
+        game.state
+            .walkaround
+            .player()
+            .replace(egg_core::player::Shell::ellie());
     }
     if keys.just_pressed(KeyCode::Digit2) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = game.state.walkaround.player().pos;
-        *game.state.walkaround.player() = egg_core::player::Shell::may();
-        game.state.walkaround.player().pos = pos;
+        game.state
+            .walkaround
+            .player()
+            .replace(egg_core::player::Shell::may());
     }
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
         let pos = game.state.walkaround.player().pos;
@@ -507,14 +509,16 @@ fn step_state(
         info!("we have {} entities", game.state.walkaround.entities.len());
     }
     if keys.just_pressed(KeyCode::Digit4) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = game.state.walkaround.player().pos;
-        *game.state.walkaround.player() = egg_core::player::Shell::dog();
-        game.state.walkaround.player().pos = pos;
+        game.state
+            .walkaround
+            .player()
+            .replace(egg_core::player::Shell::dog());
     }
     if keys.just_pressed(KeyCode::Digit5) && keys.pressed(KeyCode::ShiftLeft) {
-        let pos = game.state.walkaround.player().pos;
-        *game.state.walkaround.player() = egg_core::player::Shell::bro();
-        game.state.walkaround.player().pos = pos;
+        game.state
+            .walkaround
+            .player()
+            .replace(egg_core::player::Shell::bro());
     }
     if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
         let player = game.state.walkaround.player().clone();

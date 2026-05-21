@@ -313,6 +313,15 @@ impl Shell {
             0,
         )
     }
+    pub fn with_pos(self, pos: Vec2) -> Self {
+        Self { pos, ..self }
+    }
+    pub fn with_move_mode(self, move_mode: MoveMode) -> Self {
+        Self { move_mode, ..self }
+    }
+    pub fn replace(&mut self, shell: Shell) {
+        *self = shell.with_pos(self.pos).with_move_mode(self.move_mode);
+    }
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
     }
