@@ -1,4 +1,6 @@
 use bevy::asset::LoadState;
+use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyboardInput;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
@@ -7,7 +9,7 @@ use egg_core::EggState;
 
 use egg_core::gamestate::GameMode;
 use egg_core::system::ConsoleApi;
-use egg_core::system::{HEIGHT, WIDTH};
+use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
 
@@ -317,6 +319,7 @@ fn resize_screen(
 fn step_state(
     mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
+    mut keyboard_events: EventReader<KeyboardInput>,
     mut window: Query<&mut Window>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
@@ -386,14 +389,19 @@ fn step_state(
     if y_button {
         game.system.input().press(7);
     }
-    if keys.pressed(KeyCode::ControlLeft) {
-        game.system.input().press_key(63);
+    for keycode in keys.get_pressed() {
+        if let Some(scancode) = keycode_to_scancode(*keycode) {
+            game.system.input().press_key(scancode);
+        }
     }
-    if keys.pressed(KeyCode::ShiftLeft) {
-        game.system.input().press_key(64);
-    }
-    if keys.pressed(KeyCode::AltLeft) {
-        game.system.input().press_key(65);
+    for event in keyboard_events.read() {
+        if event.state == ButtonState::Pressed
+            && let Some(text) = event.text.as_ref()
+            && let Some(c) = text.chars().next()
+            && !c.is_control()
+        {
+            game.system.input().push_char(c);
+        }
     }
 
     if let Ok(mut window) = window.single_mut() {
@@ -568,4 +576,90 @@ fn step_state(
             },
         );
     }
+}
+
+// TODO: find a home for Bevy -> console conversions (image types etc)
+fn keycode_to_scancode(keycode: KeyCode) -> Option<ScanCode> {
+    use KeyCode::*;
+    Some(match keycode {
+        KeyA => ScanCode::A,
+        KeyB => ScanCode::B,
+        KeyC => ScanCode::C,
+        KeyD => ScanCode::D,
+        KeyE => ScanCode::E,
+        KeyF => ScanCode::F,
+        KeyG => ScanCode::G,
+        KeyH => ScanCode::H,
+        KeyI => ScanCode::I,
+        KeyJ => ScanCode::J,
+        KeyK => ScanCode::K,
+        KeyL => ScanCode::L,
+        KeyM => ScanCode::M,
+        KeyN => ScanCode::N,
+        KeyO => ScanCode::O,
+        KeyP => ScanCode::P,
+        KeyQ => ScanCode::Q,
+        KeyR => ScanCode::R,
+        KeyS => ScanCode::S,
+        KeyT => ScanCode::T,
+        KeyU => ScanCode::U,
+        KeyV => ScanCode::V,
+        KeyW => ScanCode::W,
+        KeyX => ScanCode::X,
+        KeyY => ScanCode::Y,
+        KeyZ => ScanCode::Z,
+        Digit0 => ScanCode::Digit0,
+        Digit1 => ScanCode::Digit1,
+        Digit2 => ScanCode::Digit2,
+        Digit3 => ScanCode::Digit3,
+        Digit4 => ScanCode::Digit4,
+        Digit5 => ScanCode::Digit5,
+        Digit6 => ScanCode::Digit6,
+        Digit7 => ScanCode::Digit7,
+        Digit8 => ScanCode::Digit8,
+        Digit9 => ScanCode::Digit9,
+        Minus => ScanCode::Minus,
+        Equal => ScanCode::Equals,
+        BracketLeft => ScanCode::LeftBracket,
+        BracketRight => ScanCode::RightBracket,
+        Backslash => ScanCode::Backslash,
+        Semicolon => ScanCode::Semicolon,
+        Quote => ScanCode::Apostrophe,
+        Backquote => ScanCode::Grave,
+        Comma => ScanCode::Comma,
+        Period => ScanCode::Period,
+        Slash => ScanCode::Slash,
+        Space => ScanCode::Space,
+        Tab => ScanCode::Tab,
+        Enter => ScanCode::Return,
+        Backspace => ScanCode::Backspace,
+        Delete => ScanCode::Delete,
+        Insert => ScanCode::Insert,
+        PageUp => ScanCode::PageUp,
+        PageDown => ScanCode::PageDown,
+        Home => ScanCode::Home,
+        End => ScanCode::End,
+        ArrowUp => ScanCode::Up,
+        ArrowDown => ScanCode::Down,
+        ArrowLeft => ScanCode::Left,
+        ArrowRight => ScanCode::Right,
+        CapsLock => ScanCode::CapsLock,
+        ControlLeft | ControlRight => ScanCode::Ctrl,
+        ShiftLeft | ShiftRight => ScanCode::Shift,
+        AltLeft | AltRight => ScanCode::Alt,
+        Escape => ScanCode::Escape,
+        F1 => ScanCode::F1,
+        F2 => ScanCode::F2,
+        F3 => ScanCode::F3,
+        F4 => ScanCode::F4,
+        F5 => ScanCode::F5,
+        F6 => ScanCode::F6,
+        F7 => ScanCode::F7,
+        F8 => ScanCode::F8,
+        F9 => ScanCode::F9,
+        F10 => ScanCode::F10,
+        F11 => ScanCode::F11,
+        F12 => ScanCode::F12,
+        _ => return None,
+    })
 }

@@ -6,8 +6,8 @@ use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, EggMemory, Flip, GameMap, HEIGHT, MapLayer, MouseInput, SWEETIE_16, SfxOptions,
-        StaticSpriteOptions, SyncHelper, WIDTH,
+        ConsoleApi, EggMemory, Flip, GameMap, HEIGHT, MapLayer, MouseInput, SWEETIE_16, ScanCode,
+        SfxOptions, StaticSpriteOptions, SyncHelper, WIDTH,
         drawing::{Canvas, EdgePolicy, Transform},
         image::{IndexedImage, Rgba, RgbaImage},
     },
@@ -26,11 +26,13 @@ use crate::tiled;
 // Yolkomatic
 
 // TODO:
-// Forward keyboard including char and scancode
 // Draw on images directly, remove API drawing methods
 //      * Make intro animation BG indexed because the fadein has been broken for 3 years
-// Make `Creatures` entities
-// 
+// Turn `Creature` into normal entities
+// Remove Static{name} from everything, load data from files like a sane program.
+// Level editor that serialises to json
+// Dialogue dsl and previewer
+// Cutscene editor
 // Resizable screen
 
 pub struct FantasyConsole {
@@ -488,12 +490,16 @@ impl ConsoleApi for FantasyConsole {
         panic!("Perfectly normal shutdown.")
     }
 
-    fn key(&self, index: i32) -> bool {
-        self.input.key(index as usize)
+    fn key(&self, scancode: ScanCode) -> bool {
+        self.input.key(scancode)
     }
 
-    fn keyp(&self, index: i32, hold: i32, period: i32) -> bool {
-        self.input.keyp(index as usize, hold, period)
+    fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool {
+        self.input.keyp(scancode, hold, period)
+    }
+
+    fn key_chars(&self) -> &[char] {
+        self.input.key_chars()
     }
 
     fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u8) {
@@ -618,13 +624,7 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    fn spr(
-        &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        opts: egg_core::system::StaticSpriteOptions,
-    ) {
+    fn spr(&mut self, id: i32, x: i32, y: i32, opts: egg_core::system::StaticSpriteOptions) {
         let flip = matches!(opts.flip, Flip::Horizontal);
         let transparent = opts.transparent.first().cloned().unwrap_or(255);
         if opts.scale > 1 {
@@ -745,12 +745,7 @@ impl ConsoleApi for FantasyConsole {
     fn read_file(&mut self, filename: String) -> Option<&[u8]> {
         self.files.get(&filename).map(|vec| (*vec).as_slice())
     }
-    fn map_draw(
-        &mut self,
-        bank: usize,
-        layer: usize,
-        mut opts: egg_core::system::MapOptions,
-    ) {
+    fn map_draw(&mut self, bank: usize, layer: usize, mut opts: egg_core::system::MapOptions) {
         if self.maps.is_empty()
             || opts.sx + opts.w * 8 < 0
             || opts.sy + opts.h * 8 < 0

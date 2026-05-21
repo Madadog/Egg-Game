@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::system::{MouseInput, PrintOptions, ScanCode, SCANCODE_COUNT};
 use log::trace;
-use crate::system::{MouseInput, PrintOptions};
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
@@ -36,10 +36,11 @@ pub mod walkaround;
 pub struct EggInput {
     pub gamepads: [u8; 4],
     pub previous_gamepads: [u8; 4],
-    pub keyboard: [bool; 65],
-    pub previous_keyboard: [bool; 65],
+    pub keyboard: [bool; SCANCODE_COUNT],
+    pub previous_keyboard: [bool; SCANCODE_COUNT],
     pub mouse: MouseInput,
     pub previous_mouse: MouseInput,
+    pub typed_chars: Vec<char>,
 }
 impl Default for EggInput {
     fn default() -> Self {
@@ -52,25 +53,33 @@ impl EggInput {
         Self {
             gamepads: [0; 4],
             previous_gamepads: [0; 4],
-            keyboard: [false; 65],
-            previous_keyboard: [false; 65],
+            keyboard: [false; SCANCODE_COUNT],
+            previous_keyboard: [false; SCANCODE_COUNT],
             mouse: MouseInput::default(),
             previous_mouse: MouseInput::default(),
+            typed_chars: Vec::with_capacity(8),
         }
     }
     pub fn press(&mut self, id: u8) {
         let id: usize = id.into();
         self.gamepads[id / 8] |= 1 << (id % 8);
     }
-    pub fn press_key(&mut self, id: usize) {
-        self.keyboard[id - 1] = true;
+    pub fn press_key(&mut self, key: ScanCode) {
+        self.keyboard[key.index()] = true;
+    }
+    pub fn push_char(&mut self, c: char) {
+        self.typed_chars.push(c);
     }
     pub fn refresh(&mut self) {
         self.previous_gamepads = self.gamepads;
         self.previous_keyboard = self.keyboard;
         self.previous_mouse = self.mouse.clone();
         self.gamepads = [0; 4];
-        self.keyboard = [false; 65];
+        self.keyboard = [false; SCANCODE_COUNT];
+        self.typed_chars.clear();
+    }
+    pub fn key_chars(&self) -> &[char] {
+        &self.typed_chars
     }
     pub fn mem_btn(&self, id: u8) -> bool {
         let controller: usize = (id / 8).min(3).into();
@@ -95,11 +104,12 @@ impl EggInput {
     pub fn any_btnpr(&self) -> bool {
         self.previous_gamepads != self.gamepads
     }
-    pub fn keyp(&self, index: usize, _: i32, _: i32) -> bool {
-        self.keyboard[index - 1] && !self.previous_keyboard[index - 1]
+    pub fn keyp(&self, key: ScanCode, _: i32, _: i32) -> bool {
+        let i = key.index();
+        self.keyboard[i] && !self.previous_keyboard[i]
     }
-    pub fn key(&self, index: usize) -> bool {
-        self.keyboard[index - 1]
+    pub fn key(&self, key: ScanCode) -> bool {
+        self.keyboard[key.index()]
     }
     pub fn mouse(&self) -> MouseInput {
         self.mouse.clone()

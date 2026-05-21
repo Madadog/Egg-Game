@@ -11,7 +11,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams};
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 
@@ -356,28 +356,28 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
             return None;
         }
 
-        if system.keyp(28, -1, -1) {
+        if system.keyp(ScanCode::Digit1, -1, -1) {
             self.load_map(system, SUPERMARKET);
         }
-        if system.keyp(29, -1, -1) {
+        if system.keyp(ScanCode::Digit2, -1, -1) {
             self.load_map(system, WILDERNESS);
         }
-        if system.keyp(30, -1, -1) {
+        if system.keyp(ScanCode::Digit3, -1, -1) {
             self.load_map(system, TEST_PEN);
         }
-        if system.keyp(31, -1, -1) {
+        if system.keyp(ScanCode::Digit4, -1, -1) {
             self.load_map(system, BEDROOM);
         }
-        if system.keyp(32, -1, -1) {
+        if system.keyp(ScanCode::Digit5, -1, -1) {
             self.load_pmem(system);
         }
-        if system.keyp(33, -1, -1) {
+        if system.keyp(ScanCode::Digit6, -1, -1) {
             system.set_palette(crate::system::SWEETIE_16);
         }
-        if system.keyp(34, -1, -1) {
+        if system.keyp(ScanCode::Digit7, -1, -1) {
             system.set_palette(crate::system::NIGHT_16);
         }
-        if system.keyp(35, -1, -1) {
+        if system.keyp(ScanCode::Digit8, -1, -1) {
             system.set_palette(crate::system::B_W);
         }
 
@@ -433,7 +433,7 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
         if system.any_btnpr() {
             self.player().flip_controls = Axis::None
         }
-        let noclip = if system.key(63) && system.key(64) {
+        let noclip = if system.key(ScanCode::Ctrl) && system.key(ScanCode::Shift) {
             dy *= 3;
             dx *= 4;
             true

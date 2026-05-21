@@ -3,6 +3,7 @@ use crate::{
     rand::Lcg64Xsh32,
 };
 
+use super::scancode::ScanCode;
 use super::types::{
     EggMemory, GameMap, MapOptions, MouseInput, PrintOptions, SfxOptions, SpriteOptions,
     StaticSpriteOptions, SyncHelper, TTriOptions,
@@ -138,8 +139,10 @@ pub trait ConsoleApi {
     fn elli(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
     fn ellib(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
     fn exit(&mut self);
-    fn key(&self, index: i32) -> bool;
-    fn keyp(&self, index: i32, hold: i32, period: i32) -> bool;
+    fn key(&self, scancode: ScanCode) -> bool;
+    fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool;
+    /// Latest character entered by the user this frame (for text entry).
+    fn key_chars(&self) -> &[char];
     fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u8);
     fn map(&mut self, opts: MapOptions);
 
