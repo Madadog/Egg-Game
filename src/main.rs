@@ -14,6 +14,7 @@ use tiled::{TiledMap, TiledMapPlugin};
 mod fantasy_console;
 mod tiled;
 
+/// Bevy frontend: Stores console and game state. Plus stuff for loading assets, pausing sim and window management.
 #[derive(Resource)]
 pub struct EggGame {
     pub state: EggState,
@@ -60,7 +61,7 @@ fn main() {
             FixedUpdate,
             (step_state, play_sounds, play_music, update_texture).chain(),
         )
-        // 60 FPS
+        // 64 FPS
         .insert_resource(Time::<Fixed>::default())
         .run();
 }
@@ -147,15 +148,11 @@ fn load_assets(
                 let sheet = images.get(&game_assets.sheet);
                 if let (Some(font), Some(sheet)) = (font, sheet) {
                     println!("Okay I got the fonts and stuff!");
-                    // let maps = maps.get(&game_assets.maps).unwrap();
                     let maps: Vec<Option<TiledMap>> = game_assets
                         .maps
                         .iter()
                         .map(|x| maps.get(x).cloned())
                         .collect();
-                    // if maps.iter().any(|x| x.is_none()) {
-                    //     return;
-                    // }
                     let maps: Vec<TiledMap> = maps
                         .into_iter()
                         .map(|map| map.expect("Map missing!"))
@@ -277,9 +274,6 @@ pub struct MusicPlayer;
 #[derive(Component)]
 pub struct GameScreenSprite;
 
-// #[derive(Resource)]
-// pub struct GameScreen(pub Image);
-
 fn update_texture(
     mut state: ResMut<EggGame>,
     mut images: ResMut<Assets<Image>>,
@@ -326,7 +320,6 @@ fn step_state(
     mut window: Query<&mut Window>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
-    // mut window: Query<&mut Mouse>,
 ) {
     if !game.loaded {
         return;
