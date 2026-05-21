@@ -103,16 +103,30 @@ impl RgbaImage {
 
 pub struct IndexedImage {
     width: usize,
-    _height: usize,
+    height: usize,
     pub data: Vec<u8>,
 }
 impl IndexedImage {
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
-            _height: height,
+            height,
             data: vec![0; width * height],
         }
+    }
+    pub fn width(&self) -> u32 {
+        self.width as u32
+    }
+    pub fn height(&self) -> u32 {
+        self.height as u32
+    }
+    #[inline]
+    pub fn get_pixel(&self, x: u32, y: u32) -> u8 {
+        self.data[x as usize + y as usize * self.width]
+    }
+    #[inline]
+    pub fn set_pixel(&mut self, x: u32, y: u32, colour: u8) {
+        self.data[x as usize + y as usize * self.width] = colour;
     }
     /// Only works as intended if self and target image are the same width & height.
     pub fn _draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
@@ -141,7 +155,7 @@ impl IndexedImage {
         }
         Self {
             width,
-            _height: height,
+            height,
             data,
         }
     }

@@ -1,4 +1,4 @@
-use super::image::{Rgba, RgbaImage};
+use super::image::{IndexedImage, Rgba, RgbaImage};
 
 /// How `blit` treats destination pixels outside the natural projection of the source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,15 +47,29 @@ impl Default for Transform {
     }
 }
 
-impl RgbaImage {
-    /// Alpha-blit `src` at (`dx`, `dy`). Pixels with src.a == 0 are skipped.
-    pub fn blit(
+/// A 2D drawable surface. Implementors supply pixel access; primitives and
+/// blit are default methods that share the same clipping/rasterisation logic
+/// across pixel formats (RGBA, palette index, etc.).
+pub trait Canvas {
+    type Pixel: Copy;
+
+    fn width(&self) -> u32;
+    fn height(&self) -> u32;
+    fn get_pixel(&self, x: u32, y: u32) -> Self::Pixel;
+    fn set_pixel(&mut self, x: u32, y: u32, colour: Self::Pixel);
+
+    /// Blit `src` at (`dx`, `dy`) with optional flip/rotate/scale. Source
+    /// pixels for which `is_transparent` returns true are skipped — the
+    /// caller supplies that test since it's pixel-format-specific (RGBA
+    /// alpha == 0, palette index == colorkey, etc.).
+    fn blit<S: Canvas<Pixel = Self::Pixel>>(
         &mut self,
         dx: i32,
         dy: i32,
-        src: &RgbaImage,
+        src: &S,
         edge: EdgePolicy,
         xform: Transform,
+        is_transparent: impl Fn(Self::Pixel) -> bool,
     ) {
         let sw = src.width() as i32;
         let sh = src.height() as i32;
@@ -91,7 +105,7 @@ impl RgbaImage {
                 let sx = sx.clamp(0, sw - 1) as u32;
                 let sy = sy.clamp(0, sh - 1) as u32;
                 let pixel = src.get_pixel(sx, sy);
-                if pixel.a() != 0 {
+                if !is_transparent(pixel) {
                     self.set_pixel(x as u32, y as u32, pixel);
                 }
             }
@@ -101,7 +115,7 @@ impl RgbaImage {
     // --- Immediate-mode primitives ---
 
     /// Fills a horizontal run of pixels. Coordinates are clipped to the image.
-    pub fn hline(&mut self, x: i32, y: i32, width: i32, colour: Rgba) {
+    fn hline(&mut self, x: i32, y: i32, width: i32, colour: Self::Pixel) {
         if y < 0 || y >= self.height() as i32 || width <= 0 {
             return;
         }
@@ -115,7 +129,7 @@ impl RgbaImage {
         }
     }
     /// Fills a vertical run of pixels. Coordinates are clipped to the image.
-    pub fn vline(&mut self, x: i32, y: i32, height: i32, colour: Rgba) {
+    fn vline(&mut self, x: i32, y: i32, height: i32, colour: Self::Pixel) {
         if x < 0 || x >= self.width() as i32 || height <= 0 {
             return;
         }
@@ -126,13 +140,13 @@ impl RgbaImage {
         }
     }
     /// Fills a solid rectangle. Coordinates are clipped to the image.
-    pub fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Rgba) {
+    fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Self::Pixel) {
         for j in 0..height {
             self.hline(x, y + j, width, colour);
         }
     }
     /// Draws a 1-pixel rectangle border. Coordinates are clipped to the image.
-    pub fn stroke_rect(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Rgba) {
+    fn stroke_rect(&mut self, x: i32, y: i32, width: i32, height: i32, colour: Self::Pixel) {
         if width <= 0 || height <= 0 {
             return;
         }
@@ -142,7 +156,7 @@ impl RgbaImage {
         self.vline(x + width - 1, y, height, colour);
     }
     /// Bresenham line between two integer endpoints.
-    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, colour: Rgba) {
+    fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, colour: Self::Pixel) {
         let dx = (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
@@ -168,7 +182,7 @@ impl RgbaImage {
         }
     }
     /// Filled circle (midpoint algorithm).
-    pub fn fill_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Rgba) {
+    fn fill_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Self::Pixel) {
         if radius < 0 {
             return;
         }
@@ -190,27 +204,28 @@ impl RgbaImage {
         }
     }
     /// Outlined circle (midpoint algorithm).
-    pub fn stroke_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Rgba) {
+    fn stroke_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Self::Pixel) {
         if radius < 0 {
             return;
         }
         let mut x = radius;
         let mut y = 0;
         let mut err = 1 - x;
-        let plot = |img: &mut RgbaImage, px: i32, py: i32| {
-            if px >= 0 && py >= 0 && (px as u32) < img.width() && (py as u32) < img.height() {
-                img.set_pixel(px as u32, py as u32, colour);
+        fn plot<C: Canvas + ?Sized>(canvas: &mut C, px: i32, py: i32, colour: C::Pixel) {
+            if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height()
+            {
+                canvas.set_pixel(px as u32, py as u32, colour);
             }
-        };
+        }
         while x >= y {
-            plot(self, cx + x, cy + y);
-            plot(self, cx - x, cy + y);
-            plot(self, cx + x, cy - y);
-            plot(self, cx - x, cy - y);
-            plot(self, cx + y, cy + x);
-            plot(self, cx - y, cy + x);
-            plot(self, cx + y, cy - x);
-            plot(self, cx - y, cy - x);
+            plot(self, cx + x, cy + y, colour);
+            plot(self, cx - x, cy + y, colour);
+            plot(self, cx + x, cy - y, colour);
+            plot(self, cx - x, cy - y, colour);
+            plot(self, cx + y, cy + x, colour);
+            plot(self, cx - y, cy + x, colour);
+            plot(self, cx + y, cy - x, colour);
+            plot(self, cx - y, cy - x, colour);
             y += 1;
             if err < 0 {
                 err += 2 * y + 1;
@@ -219,5 +234,37 @@ impl RgbaImage {
                 err += 2 * (y - x) + 1;
             }
         }
+    }
+}
+
+impl Canvas for RgbaImage {
+    type Pixel = Rgba;
+    fn width(&self) -> u32 {
+        self.width()
+    }
+    fn height(&self) -> u32 {
+        self.height()
+    }
+    fn get_pixel(&self, x: u32, y: u32) -> Rgba {
+        self.get_pixel(x, y)
+    }
+    fn set_pixel(&mut self, x: u32, y: u32, colour: Rgba) {
+        self.set_pixel(x, y, colour);
+    }
+}
+
+impl Canvas for IndexedImage {
+    type Pixel = u8;
+    fn width(&self) -> u32 {
+        self.width()
+    }
+    fn height(&self) -> u32 {
+        self.height()
+    }
+    fn get_pixel(&self, x: u32, y: u32) -> u8 {
+        self.get_pixel(x, y)
+    }
+    fn set_pixel(&mut self, x: u32, y: u32, colour: u8) {
+        self.set_pixel(x, y, colour);
     }
 }

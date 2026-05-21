@@ -14,7 +14,7 @@ use egg_core::{
 
 use crate::tiled;
 
-use self::drawing::{EdgePolicy, Transform};
+use self::drawing::{Canvas, EdgePolicy, Transform};
 use self::image::{IndexedImage, Rgba, RgbaImage};
 
 mod drawing;
@@ -33,7 +33,7 @@ mod image;
 pub struct FantasyConsole {
     screen: RgbaImage,
     overlay_screen: RgbaImage,
-    _output_screen: RgbaImage,
+    output_screen: RgbaImage,
 
     font: RgbaImage,
     sprites: RgbaImage,
@@ -74,7 +74,7 @@ impl FantasyConsole {
         let mut x = Self {
             screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             overlay_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
-            _output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
+            output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
 
             font: RgbaImage::new(128, 128),
             sprites: RgbaImage::new(1, 1),
@@ -138,15 +138,16 @@ impl FantasyConsole {
     }
     pub fn blit_to_image(&mut self, image: &mut [u8]) {
         let [x, y] = *self.get_screen_offset();
-        self._output_screen.clone_from(&self.screen);
-        self._output_screen.blit(
+        self.output_screen.clone_from(&self.screen);
+        self.output_screen.blit(
             x.into(),
             y.into(),
             &self.overlay_screen,
             EdgePolicy::Clamp,
             Transform::IDENTITY,
+            |p| p.a() == 0,
         );
-        image.copy_from_slice(self._output_screen.data());
+        image.copy_from_slice(self.output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {
         assert!(font.size().x == 128);
@@ -171,7 +172,6 @@ impl FantasyConsole {
             sheet.size().y,
         );
     }
-    // TODO: 255 index as transparent...
     pub fn set_indexed_sprites(&mut self, sheet: &Image) {
         self.indexed_sprites = IndexedImage::from_image(sheet, &self.palette);
     }
