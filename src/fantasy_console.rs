@@ -14,9 +14,11 @@ use egg_core::{
 
 use crate::tiled;
 
-use self::drawing::{EdgePolicy, IndexedImage, Rgba, RgbaImage};
+use self::drawing::{EdgePolicy, Transform};
+use self::image::{IndexedImage, Rgba, RgbaImage};
 
 mod drawing;
+mod image;
 
 // TODO:
 // Load interactables from tiled maps
@@ -137,8 +139,13 @@ impl FantasyConsole {
     pub fn blit_to_image(&mut self, image: &mut [u8]) {
         let [x, y] = *self.get_screen_offset();
         self._output_screen.clone_from(&self.screen);
-        self._output_screen
-            .blit(x.into(), y.into(), &self.overlay_screen, EdgePolicy::Clamp);
+        self._output_screen.blit(
+            x.into(),
+            y.into(),
+            &self.overlay_screen,
+            EdgePolicy::Clamp,
+            Transform::IDENTITY,
+        );
         image.copy_from_slice(self._output_screen.data());
     }
     pub fn set_font(&mut self, font: &Image) {

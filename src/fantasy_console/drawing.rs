@@ -1,25 +1,4 @@
-use std::ops::{Index, IndexMut};
-
-use bevy::prelude::Image;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Rgba(pub [u8; 4]);
-
-impl Rgba {
-    pub const TRANSPARENT: Self = Self([0, 0, 0, 0]);
-
-    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self([r, g, b, a])
-    }
-
-    pub const fn a(self) -> u8 {
-        self.0[3]
-    }
-
-    pub const fn from_rgb(array: [u8; 3]) -> Self {
-        Rgba::new(array[0], array[1], array[2], 255)
-    }
-}
+use super::image::{Rgba, RgbaImage};
 
 /// How `blit` treats destination pixels outside the natural projection of the source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -31,98 +10,86 @@ pub enum EdgePolicy {
     Clamp,
 }
 
-pub struct RgbaImage {
-    width: u32,
-    height: u32,
-    data: Vec<u8>,
+/// 90-degree rotation steps applied to the source before blitting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rotate {
+    #[default]
+    None,
+    By90,
+    By180,
+    By270,
+}
+
+/// Discrete transform applied to `src` during a blit: flip, 90-degree rotate,
+/// integer upscale. Order is flip -> rotate -> scale, and `(dx, dy)` anchors
+/// the top-left of the transformed bounding box on the destination (TIC-80
+/// convention: a rotated sprite occupies the rotated bbox starting at (dx, dy)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Transform {
+    pub flip_x: bool,
+    pub flip_y: bool,
+    pub rotate: Rotate,
+    pub scale: u32,
+}
+
+impl Transform {
+    pub const IDENTITY: Self = Self {
+        flip_x: false,
+        flip_y: false,
+        rotate: Rotate::None,
+        scale: 1,
+    };
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
 }
 
 impl RgbaImage {
-    pub fn new(width: u32, height: u32) -> Self {
-        Self {
-            width,
-            height,
-            data: vec![0; (width * height * 4) as usize],
-        }
-    }
-    pub fn from_vec(data: Vec<u8>, width: u32, height: u32) -> Self {
-        assert_eq!(data.len(), (width * height * 4) as usize);
-        Self {
-            width,
-            height,
-            data,
-        }
-    }
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-    pub fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
-    pub fn clone_from(&mut self, other: &RgbaImage) {
-        assert_eq!(self.width, other.width);
-        assert_eq!(self.height, other.height);
-        self.data.copy_from_slice(&other.data);
-    }
-    #[inline]
-    pub fn get_pixel(&self, x: u32, y: u32) -> Rgba {
-        let i = ((x + y * self.width) * 4) as usize;
-        Rgba::new(
-            self.data[i],
-            self.data[i + 1],
-            self.data[i + 2],
-            self.data[i + 3],
-        )
-    }
-    #[inline]
-    pub fn set_pixel(&mut self, x: u32, y: u32, colour: Rgba) {
-        let i = ((x + y * self.width) * 4) as usize;
-        self.data[i..i + 4].copy_from_slice(&colour.0);
-    }
-    #[inline]
-    pub fn set_pixel_index(&mut self, index: usize, colour: Rgba) {
-        let i = index * 4;
-        self.data[i..i + 4].copy_from_slice(&colour.0);
-    }
-    #[inline]
-    pub fn get_pixel_index(&self, index: usize) -> Rgba {
-        let i = index * 4;
-        Rgba::new(
-            self.data[i],
-            self.data[i + 1],
-            self.data[i + 2],
-            self.data[i + 3],
-        )
-    }
-    #[inline]
-    pub fn alpha_at_index(&self, index: usize) -> u8 {
-        self.data[index * 4 + 3]
-    }
-    pub fn fill(&mut self, colour: Rgba) {
-        for chunk in self.data.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&colour.0);
-        }
-    }
     /// Alpha-blit `src` at (`dx`, `dy`). Pixels with src.a == 0 are skipped.
-    pub fn blit(&mut self, dx: i32, dy: i32, src: &RgbaImage, edge: EdgePolicy) {
-        let sw = src.width as i32;
-        let sh = src.height as i32;
-        let dw = self.width as i32;
-        let dh = self.height as i32;
+    pub fn blit(
+        &mut self,
+        dx: i32,
+        dy: i32,
+        src: &RgbaImage,
+        edge: EdgePolicy,
+        xform: Transform,
+    ) {
+        let sw = src.width() as i32;
+        let sh = src.height() as i32;
+        let dw = self.width() as i32;
+        let dh = self.height() as i32;
+        let scale = xform.scale.max(1) as i32;
+        // Post-rotate, pre-scale extent.
+        let (rw, rh) = match xform.rotate {
+            Rotate::None | Rotate::By180 => (sw, sh),
+            Rotate::By90 | Rotate::By270 => (sh, sw),
+        };
+        // Final footprint on destination.
+        let tw = rw * scale;
+        let th = rh * scale;
         let (x0, y0, x1, y1) = match edge {
-            EdgePolicy::Transparent => (dx.max(0), dy.max(0), (dx + sw).min(dw), (dy + sh).min(dh)),
+            EdgePolicy::Transparent => {
+                (dx.max(0), dy.max(0), (dx + tw).min(dw), (dy + th).min(dh))
+            }
             EdgePolicy::Clamp => (0, 0, dw, dh),
         };
         for y in y0..y1 {
             for x in x0..x1 {
-                let sx = (x - dx).clamp(0, sw - 1) as u32;
-                let sy = (y - dy).clamp(0, sh - 1) as u32;
+                // Inverse-map dest -> src: undo translate, scale, rotate, flip.
+                let (u, v) = ((x - dx) / scale, (y - dy) / scale);
+                let (a, b) = match xform.rotate {
+                    Rotate::None => (u, v),
+                    Rotate::By90 => (v, rw - 1 - u),
+                    Rotate::By180 => (rw - 1 - u, rh - 1 - v),
+                    Rotate::By270 => (rh - 1 - v, u),
+                };
+                let sx = if xform.flip_x { sw - 1 - a } else { a };
+                let sy = if xform.flip_y { sh - 1 - b } else { b };
+                let sx = sx.clamp(0, sw - 1) as u32;
+                let sy = sy.clamp(0, sh - 1) as u32;
                 let pixel = src.get_pixel(sx, sy);
                 if pixel.a() != 0 {
                     self.set_pixel(x as u32, y as u32, pixel);
@@ -135,11 +102,11 @@ impl RgbaImage {
 
     /// Fills a horizontal run of pixels. Coordinates are clipped to the image.
     pub fn hline(&mut self, x: i32, y: i32, width: i32, colour: Rgba) {
-        if y < 0 || y >= self.height as i32 || width <= 0 {
+        if y < 0 || y >= self.height() as i32 || width <= 0 {
             return;
         }
         let x0 = x.max(0);
-        let x1 = (x + width).min(self.width as i32);
+        let x1 = (x + width).min(self.width() as i32);
         if x0 >= x1 {
             return;
         }
@@ -149,11 +116,11 @@ impl RgbaImage {
     }
     /// Fills a vertical run of pixels. Coordinates are clipped to the image.
     pub fn vline(&mut self, x: i32, y: i32, height: i32, colour: Rgba) {
-        if x < 0 || x >= self.width as i32 || height <= 0 {
+        if x < 0 || x >= self.width() as i32 || height <= 0 {
             return;
         }
         let y0 = y.max(0);
-        let y1 = (y + height).min(self.height as i32);
+        let y1 = (y + height).min(self.height() as i32);
         for py in y0..y1 {
             self.set_pixel(x as u32, py as u32, colour);
         }
@@ -183,7 +150,7 @@ impl RgbaImage {
         let mut err = dx + dy;
         let (mut x, mut y) = (x0, y0);
         loop {
-            if x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height {
+            if x >= 0 && y >= 0 && (x as u32) < self.width() && (y as u32) < self.height() {
                 self.set_pixel(x as u32, y as u32, colour);
             }
             if x == x1 && y == y1 {
@@ -231,7 +198,7 @@ impl RgbaImage {
         let mut y = 0;
         let mut err = 1 - x;
         let plot = |img: &mut RgbaImage, px: i32, py: i32| {
-            if px >= 0 && py >= 0 && (px as u32) < img.width && (py as u32) < img.height {
+            if px >= 0 && py >= 0 && (px as u32) < img.width() && (py as u32) < img.height() {
                 img.set_pixel(px as u32, py as u32, colour);
             }
         };
@@ -252,64 +219,5 @@ impl RgbaImage {
                 err += 2 * (y - x) + 1;
             }
         }
-    }
-}
-
-pub struct IndexedImage {
-    width: usize,
-    _height: usize,
-    pub data: Vec<u8>,
-}
-impl IndexedImage {
-    pub fn new(width: usize, height: usize) -> Self {
-        Self {
-            width,
-            _height: height,
-            data: vec![0; width * height],
-        }
-    }
-    /// Only works as intended if self and target image are the same width & height.
-    pub fn _draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
-        for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
-            let colour = palette[usize::from(*index)];
-            pixel.copy_from_slice(&colour);
-        }
-    }
-    pub fn from_image(image: &Image, palette: &[[u8; 3]]) -> Self {
-        let width = image.size().x as usize;
-        let height = image.size().y as usize;
-        let mut data = Vec::new();
-        'outer: for pixel in image
-            .data
-            .as_ref()
-            .expect("Tried to read uninitialised image.")
-            .chunks_exact(4)
-        {
-            for (i, colour) in palette.iter().enumerate() {
-                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
-                    data.push(i.try_into().unwrap());
-                    continue 'outer;
-                }
-            }
-            data.push(0);
-        }
-        Self {
-            width,
-            _height: height,
-            data,
-        }
-    }
-}
-impl Index<(usize, usize)> for IndexedImage {
-    type Output = u8;
-
-    fn index(&self, index: (usize, usize)) -> &u8 {
-        self.data.get(index.0 + index.1 * self.width).unwrap()
-    }
-}
-
-impl IndexMut<(usize, usize)> for IndexedImage {
-    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
-        self.data.get_mut(index.0 + index.1 * self.width).unwrap()
     }
 }
