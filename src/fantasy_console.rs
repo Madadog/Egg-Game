@@ -8,16 +8,12 @@ use egg_core::{
     system::{
         ConsoleApi, EggMemory, Flip, GameMap, HEIGHT, MapLayer, MouseInput, SWEETIE_16, SfxOptions,
         StaticSpriteOptions, SyncHelper, WIDTH,
+        drawing::{Canvas, EdgePolicy, Transform},
+        image::{IndexedImage, Rgba, RgbaImage},
     },
 };
 
 use crate::tiled;
-
-use self::drawing::{Canvas, EdgePolicy, Transform};
-use self::image::{IndexedImage, Rgba, RgbaImage};
-
-mod drawing;
-mod image;
 
 // TODO:
 // Load interactables from tiled maps
@@ -28,6 +24,14 @@ mod image;
 // Make UI actually work: Hierarchical layout, compositional widgets.
 // Unified walkaround collision space
 // Yolkomatic
+
+// TODO:
+// Forward keyboard including char and scancode
+// Draw on images directly, remove API drawing methods
+//      * Make intro animation BG indexed because the fadein has been broken for 3 years
+// Make `Creatures` entities
+// 
+// Resizable screen
 
 pub struct FantasyConsole {
     screen: RgbaImage,
@@ -172,7 +176,24 @@ impl FantasyConsole {
         );
     }
     pub fn set_indexed_sprites(&mut self, sheet: &Image) {
-        self.indexed_sprites = IndexedImage::from_image(sheet, &self.palette);
+        let width = sheet.size().x as usize;
+        let height = sheet.size().y as usize;
+        let mut data = Vec::with_capacity(width * height);
+        'outer: for pixel in sheet
+            .data
+            .as_ref()
+            .expect("Tried to read uninitialised image.")
+            .chunks_exact(4)
+        {
+            for (i, colour) in self.palette.iter().enumerate() {
+                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
+                    data.push(i.try_into().unwrap());
+                    continue 'outer;
+                }
+            }
+            data.push(0);
+        }
+        self.indexed_sprites = IndexedImage::from_vec(data, width, height);
     }
     pub fn get_screen(&mut self) -> &mut RgbaImage {
         match self.vbank {

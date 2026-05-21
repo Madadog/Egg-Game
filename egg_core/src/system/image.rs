@@ -1,7 +1,5 @@
 use std::ops::{Index, IndexMut};
 
-use bevy::prelude::Image;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rgba(pub [u8; 4]);
 
@@ -114,6 +112,14 @@ impl IndexedImage {
             data: vec![0; width * height],
         }
     }
+    pub fn from_vec(data: Vec<u8>, width: usize, height: usize) -> Self {
+        assert_eq!(data.len(), width * height);
+        Self {
+            width,
+            height,
+            data,
+        }
+    }
     pub fn width(&self) -> u32 {
         self.width as u32
     }
@@ -133,30 +139,6 @@ impl IndexedImage {
         for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
             let colour = palette[usize::from(*index)];
             pixel.copy_from_slice(&colour);
-        }
-    }
-    pub fn from_image(image: &Image, palette: &[[u8; 3]]) -> Self {
-        let width = image.size().x as usize;
-        let height = image.size().y as usize;
-        let mut data = Vec::new();
-        'outer: for pixel in image
-            .data
-            .as_ref()
-            .expect("Tried to read uninitialised image.")
-            .chunks_exact(4)
-        {
-            for (i, colour) in palette.iter().enumerate() {
-                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
-                    data.push(i.try_into().unwrap());
-                    continue 'outer;
-                }
-            }
-            data.push(0);
-        }
-        Self {
-            width,
-            height,
-            data,
         }
     }
 }

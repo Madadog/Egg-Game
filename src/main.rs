@@ -331,7 +331,7 @@ fn step_state(
     if !game.loaded {
         return;
     }
-    
+
     game.system.input().refresh();
     game.system.sync_helper().step();
 
@@ -537,16 +537,21 @@ fn step_state(
         game.state.walkaround.map_viewer.focused = !game.state.walkaround.map_viewer.focused;
         game.state.walkaround.map_viewer.layer_index = 0;
     }
-    if keys.just_pressed(KeyCode::Semicolon) && !game.state.walkaround.current_map.layers.is_empty() {
+    if keys.just_pressed(KeyCode::Semicolon) && !game.state.walkaround.current_map.layers.is_empty()
+    {
         info!("------------------------");
         info!("REMOVED BG LAYER");
         info!("{:#?}", game.state.walkaround.current_map.layers.remove(0));
         info!("------------------------");
     }
-    if keys.just_pressed(KeyCode::Quote) && !game.state.walkaround.current_map.fg_layers.is_empty() {
+    if keys.just_pressed(KeyCode::Quote) && !game.state.walkaround.current_map.fg_layers.is_empty()
+    {
         info!("------------------------");
         info!("REMOVED FG LAYER");
-        info!("{:#?}", game.state.walkaround.current_map.fg_layers.remove(0));
+        info!(
+            "{:#?}",
+            game.state.walkaround.current_map.fg_layers.remove(0)
+        );
         info!("------------------------");
     }
     if keys.just_pressed(KeyCode::KeyK) {
@@ -555,7 +560,6 @@ fn step_state(
 
     game.run();
     if keys.pressed(KeyCode::KeyN) {
-        
         game.run();
         game.system.print_raw(
             "Fast-Forward",
