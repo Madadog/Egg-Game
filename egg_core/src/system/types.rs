@@ -1,4 +1,4 @@
-use crate::data::save;
+use crate::{data::save, system::{ConsoleApi, ConsoleHelper}};
 
 #[derive(Debug, Default)]
 pub struct SyncHelper {
@@ -138,6 +138,112 @@ impl MapLayer {
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
         self.data.get_mut(y * self.width + x)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StaticDrawParams<'a> {
+    pub index: i32,
+    pub x: i32,
+    pub y: i32,
+    pub options: StaticSpriteOptions<'a>,
+    pub outline: Option<u8>,
+    pub palette_rotate: u8,
+}
+
+impl<'a> StaticDrawParams<'a> {
+    pub fn new(
+        index: i32,
+        x: i32,
+        y: i32,
+        options: StaticSpriteOptions<'a>,
+        outline: Option<u8>,
+        palette_rotate: u8,
+    ) -> Self {
+        Self {
+            index,
+            x,
+            y,
+            options,
+            outline,
+            palette_rotate,
+        }
+    }
+    pub fn draw(self, system: &mut impl ConsoleApi) {
+        system.palette_map_rotate(self.palette_rotate.into());
+        if let Some(outline) = self.outline {
+            system.spr_outline(self.index, self.x, self.y, self.options, outline);
+        } else {
+            system.spr(self.index, self.x, self.y, self.options);
+        }
+    }
+    pub fn bottom(&self) -> i32 {
+        self.y + self.options.h * 8
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DrawParams {
+    pub index: i32,
+    pub x: i32,
+    pub y: i32,
+    pub options: SpriteOptions,
+    pub outline: Option<u8>,
+    pub palette_rotate: u8,
+}
+
+impl DrawParams {
+    pub fn new(
+        index: i32,
+        x: i32,
+        y: i32,
+        options: SpriteOptions,
+        outline: Option<u8>,
+        palette_rotate: u8,
+    ) -> Self {
+        Self {
+            index,
+            x,
+            y,
+            options,
+            outline,
+            palette_rotate,
+        }
+    }
+    pub fn draw(self, system: &mut impl ConsoleApi) {
+        system.palette_map_rotate(self.palette_rotate.into());
+        if let Some(outline) = self.outline {
+            system.spr_outline(
+                self.index,
+                self.x,
+                self.y,
+                self.options.compatibility_mode(),
+                outline,
+            );
+        } else {
+            system.spr(
+                self.index,
+                self.x,
+                self.y,
+                self.options.compatibility_mode(),
+            );
+        }
+    }
+    pub fn bottom(&self) -> i32 {
+        self.y + self.options.h * 8
+    }
+}
+
+impl<'a> From<StaticDrawParams<'a>> for DrawParams {
+    fn from(other: StaticDrawParams) -> Self {
+        Self {
+            index: other.index,
+            x: other.x,
+            y: other.y,
+            options: other.options.into(),
+            outline: other.outline,
+            palette_rotate: other.palette_rotate,
+        }
     }
 }
 
