@@ -16,6 +16,7 @@
 
 pub mod animation;
 pub mod camera;
+pub mod drawstate;
 pub mod data;
 pub mod debug;
 pub mod dialogue;
@@ -29,11 +30,16 @@ pub mod rand;
 pub mod system;
 
 use crate::debug::DebugInfo;
+use crate::drawstate::DrawState;
+use crate::gamestate::GameMode;
 use crate::gamestate::inventory::InventoryUi;
 use crate::gamestate::walkaround::WalkaroundState;
-use crate::gamestate::GameMode;
 
 pub struct EggState {
+    // TODO: move maps here
+    // pub maps: HashMap<String, GameMap>,
+    pub draw_state: DrawState,
+
     pub gamestate: GameMode,
     pub walkaround: WalkaroundState,
     pub debug_info: DebugInfo,
@@ -55,6 +61,7 @@ impl EggState {
 impl Default for EggState {
     fn default() -> Self {
         EggState {
+            draw_state: DrawState::default(),
             walkaround: WalkaroundState::new(),
             inventory_ui: InventoryUi::new(),
             gamestate: GameMode::Animation(0),

@@ -19,6 +19,7 @@ impl Rgba {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct RgbaImage {
     width: u32,
     height: u32,
@@ -99,6 +100,7 @@ impl RgbaImage {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct IndexedImage {
     width: usize,
     height: usize,
@@ -135,14 +137,11 @@ impl IndexedImage {
         self.data[x as usize + y as usize * self.width] = colour;
     }
     /// Only works as intended if self and target image are the same width & height.
-    pub fn draw_to_image(
-        &self,
-        palette: &[[u8; 3]],
-        transparent: &[u8],
-        target_image: &mut [u8],
-    ) {
+    pub fn draw_to_image(&self, palette: &[[u8; 3]], transparent: &[u8], target_image: &mut [u8]) {
         for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
-            if let Some(rgb) = palette.get(usize::from(*index)) && !transparent.contains(index) {
+            if let Some(rgb) = palette.get(usize::from(*index))
+                && !transparent.contains(index)
+            {
                 let rgba = [rgb[0], rgb[1], rgb[2], u8::MAX];
                 pixel.copy_from_slice(&rgba);
             }
