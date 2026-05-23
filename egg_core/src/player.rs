@@ -40,17 +40,17 @@ impl LoopMode {
         debug_assert!(len > 0);
         match self {
             LoopMode::Loop => index % len,
-            LoopMode::LoopRange(mut a, mut b) => {
-                if index > b {
-                    if a > b {
-                        mem::swap(&mut a, &mut b);
+            &LoopMode::LoopRange(mut start, mut end) => {
+                if index > end {
+                    if start > end {
+                        mem::swap(&mut start, &mut end);
                     }
-                    let len = b - a + 1;
+                    let len = end - start + 1;
                     if len == 1 {
-                        b
+                        end
                     } else {
-                        let zeroed_index = index - (b + 1);
-                        a + (zeroed_index % len)
+                        let zeroed_index = index - (end + 1);
+                        start + (zeroed_index % len)
                     }
                 } else {
                     index
@@ -718,10 +718,10 @@ impl CompanionList {
         self.companions.contains(&Some(companion))
     }
     pub fn remove(&mut self, target: Companion) -> bool {
-        if let Some(x) =
-            self.companions
-                .iter_mut()
-                .find(|x| if let Some(x) = x { *x == target } else { false })
+        if let Some(x) = self
+            .companions
+            .iter_mut()
+            .find(|x| if let Some(x) = x { *x == target } else { false })
         {
             *x = None;
             true

@@ -197,7 +197,7 @@ impl FantasyConsole {
         }
         self.indexed_sprites = IndexedImage::from_vec(data, width, height);
     }
-    pub fn get_screen(&mut self) -> &mut RgbaImage {
+    pub fn _get_screen(&mut self) -> &mut RgbaImage {
         match self.vbank {
             0 => &mut self.screen,
             1 => &mut self.overlay_screen,
