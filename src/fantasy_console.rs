@@ -164,6 +164,107 @@ impl FantasyConsole {
             *i = *c;
         }
     }
+
+    /// Render `text` onto `target` using the console's default font.
+    /// Returns the maximum line width drawn (in pixels). `colour` is the
+    /// explicit RGBA used for non-transparent font pixels.
+    pub fn print_to(
+        &self,
+        target: &mut RgbaImage,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: Rgba,
+        opts: egg_core::system::PrintOptions,
+    ) -> i32 {
+        let mut max_width = 0;
+        let mut dx = x;
+        let mut dy = y;
+        for char in text.chars() {
+            match char as u8 {
+                10 => {
+                    dx = x;
+                    dy += 6;
+                }
+                32 => {
+                    dx += if opts.small_text { 3 } else { 4 };
+                }
+                0 => {}
+                _ => {
+                    let glyph = if opts.small_text {
+                        (char as u8 + 128) as char
+                    } else {
+                        char
+                    };
+                    let width = self.draw_letter_to(target, glyph, dx, dy, colour);
+                    dx += width + 1;
+                }
+            }
+            max_width = max_width.max(dx - x);
+        }
+        max_width
+    }
+
+    pub fn print_to_centered(
+        &self,
+        target: &mut RgbaImage,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: Rgba,
+        opts: egg_core::system::PrintOptions,
+    ) -> i32 {
+        let width = self.print_to(target, text, 999, 999, colour, opts.clone());
+        self.print_to(target, text, x - width / 2, y, colour, opts)
+    }
+
+    pub fn print_to_shadow(
+        &self,
+        target: &mut RgbaImage,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: Rgba,
+        shadow: Rgba,
+        opts: egg_core::system::PrintOptions,
+    ) -> i32 {
+        self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
+        self.print_to(target, text, x, y, colour, opts)
+    }
+
+    /// Draws a single 8×8 glyph from the font onto `target` at (`x`, `y`).
+    /// Returns the visual width of the glyph (rightmost non-transparent column + 1).
+    fn draw_letter_to(
+        &self,
+        target: &mut RgbaImage,
+        char: char,
+        x: i32,
+        y: i32,
+        colour: Rgba,
+    ) -> i32 {
+        let char_index = char as u8 as usize;
+        let glyph_x = (char_index % 16) * 8;
+        let glyph_y = (char_index / 16) * 8;
+        let target_w = target.width() as i32;
+        let target_h = target.height() as i32;
+        let mut letter_width = 0;
+        for j in 0..8 {
+            for i in 0..8 {
+                let font_index = (glyph_x + i as usize) + (glyph_y + j as usize) * 128;
+                if self.font.alpha_at_index(font_index) == 0 {
+                    continue;
+                }
+                letter_width = letter_width.max(i + 1);
+                let px = x + i;
+                let py = y + j;
+                if px < 0 || py < 0 || px >= target_w || py >= target_h {
+                    continue;
+                }
+                target.set_pixel(px as u32, py as u32, colour);
+            }
+        }
+        letter_width
+    }
     pub fn set_sprites(&mut self, sheet: &Image) {
         self.sprites = RgbaImage::from_vec(
             sheet
