@@ -208,7 +208,6 @@ impl InventoryUi {
     pub fn draw(&self, system: &mut impl ConsoleApi) {
         use crate::dialogue::DIALOGUE_OPTIONS;
         use crate::system::{PrintOptions, StaticSpriteOptions, HEIGHT, WIDTH};
-        system.blit_segment(4);
         let entries = [
             INVENTORY_ITEMS,
             INVENTORY_SHELL,

@@ -50,7 +50,6 @@ pub struct FantasyConsole {
 
     palette: Vec<[u8; 3]>,
     palette_map: Vec<usize>,
-    blit_segment: u8,
     screen_offset: [i8; 2],
     border_colour: [u8; 3],
 
@@ -91,7 +90,6 @@ impl FantasyConsole {
             vbank: 0,
             palette,
             palette_map,
-            blit_segment: 2,
             screen_offset: [0; 2],
 
             sprite_flags: vec![0; 2048],
@@ -435,11 +433,6 @@ impl ConsoleApi for FantasyConsole {
     fn get_screen_offset(&mut self) -> &mut [i8; 2] {
         &mut self.screen_offset
     }
-
-    fn get_blit_segment(&mut self) -> &mut u8 {
-        &mut self.blit_segment
-    }
-
     fn btn(&self, index: i32) -> bool {
         self.input.mem_btn(index as u8)
     }

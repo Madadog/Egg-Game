@@ -411,7 +411,6 @@ impl Dialogue {
             );
             let frame = &portrait;
             height += 4;
-            system.blit_segment(4);
             system.palette_map_rotate(0);
             frame.draw_offset(
                 system,

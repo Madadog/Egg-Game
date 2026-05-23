@@ -88,8 +88,8 @@ pub struct LayerInfo {
     pub size: Vec2,
     pub offset: Vec2,
     pub transparent: Option<u8>,
-    /// (blit_segment, rotate_palette, shift_sprite_flags, UNUSED)
-    pub blit_rotate_and_flags: (u8, u8, u8, u8),
+    /// (rotate_palette, shift_sprite_flags)
+    pub rotate_and_shift_flags: (u8, u8),
     pub visible: bool,
     // pub source_bank: usize,
     pub source_layer: usize,
@@ -102,7 +102,7 @@ impl LayerInfo {
         size: Vec2::new(30, 17),
         offset: Vec2::new(0, 0),
         transparent: None,
-        blit_rotate_and_flags: (4, 0, 0, 0),
+        rotate_and_shift_flags: (0, 0),
         visible: true,
         source_layer: 0,
         colliders: Vec::new(),
@@ -121,25 +121,21 @@ impl LayerInfo {
         self.transparent = Some(transparent[0]);
         self
     }
-    pub const fn with_blit_rot_flags(mut self, blit: u8, rot: u8, sprite_flag_shift: u8) -> Self {
-        self.blit_rotate_and_flags = (blit, rot, sprite_flag_shift, 0);
+    pub const fn with_rot_and_shift_flags(mut self, rot: u8, sprite_flag_shift: u8) -> Self {
+        self.rotate_and_shift_flags = (rot, sprite_flag_shift);
         self
     }
-    pub fn blit_segment(&self) -> u8 {
-        self.blit_rotate_and_flags.0
-    }
     pub fn palette_rotate(&self) -> u8 {
-        self.blit_rotate_and_flags.1
+        self.rotate_and_shift_flags.0
     }
     pub fn shift_sprite_flags(&self) -> bool {
-        self.blit_rotate_and_flags.2 != 0
+        self.rotate_and_shift_flags.1 != 0
     }
     pub fn draw_tic80(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
         if !self.visible {
             return;
         }
         system.palette_map_rotate(self.palette_rotate().into());
-        system.blit_segment(self.blit_segment());
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);
         options.sy -= i32::from(offset.y);

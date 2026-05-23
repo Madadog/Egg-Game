@@ -78,7 +78,7 @@ pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
         //bg
         LayerInfo::new(60, 17, 26, 12)
             .with_trans(&[0])
-            .with_blit_rot_flags(4, 1, 0),
+            .with_rot_and_shift_flags(1, 0),
         //fruit stand
         LayerInfo::new(61, 29, 3, 2)
             .with_trans(&[0])
@@ -181,7 +181,7 @@ pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
         //bg
         LayerInfo::new(86, 17, 13, 7)
             .with_trans(&[0])
-            .with_blit_rot_flags(4, 1, 0),
+            .with_rot_and_shift_flags(1, 0),
         //closet
         LayerInfo::new(87, 24, 3, 4)
             .with_trans(&[0])
@@ -229,7 +229,7 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
     layers: &[
         LayerInfo::new(86, 28, 9, 6)
             .with_trans(&[0])
-            .with_blit_rot_flags(4, 1, 0),
+            .with_rot_and_shift_flags(1, 0),
         LayerInfo::new(93, 24, 5, 4)
             .with_trans(&[0])
             .with_offset(2 * 8, 0),
@@ -267,7 +267,7 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
 };
 
 pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[LayerInfo::new(53, 17, 7, 9).with_blit_rot_flags(0, 1, 0)],
+    layers: &[LayerInfo::new(53, 17, 7, 9).with_rot_and_shift_flags(1, 0)],
     warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
     interactables: &[StaticInteractable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
@@ -678,13 +678,13 @@ pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
         //ground
         LayerInfo::new(0, 0, 30 * 4, 17 * 4)
             .with_trans(&[0])
-            .with_blit_rot_flags(5, 0, 0),
+            .with_rot_and_shift_flags(0, 0),
     ],
     fg_layers: &[
         //foreground
         LayerInfo::new(0, 68, 30 * 4, 17 * 4)
             .with_trans(&[0])
-            .with_blit_rot_flags(5, 0, 0),
+            .with_rot_and_shift_flags(0, 0),
     ],
     bg_colour: 0,
     warps: &[

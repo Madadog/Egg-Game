@@ -535,7 +535,6 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
 
         self.particles
             .draw_tic80(system, -self.cam_x(), -self.cam_y());
-        system.blit_segment(4);
 
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();

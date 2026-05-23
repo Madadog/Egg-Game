@@ -368,7 +368,6 @@ pub fn draw_title(
 
     system.rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
 
-    system.blit_segment(8);
     system.spr(
         534,
         120 - 8,
@@ -381,5 +380,4 @@ pub fn draw_title(
             ..Default::default()
         },
     );
-    system.blit_segment(4);
 }

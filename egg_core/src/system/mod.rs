@@ -26,7 +26,6 @@ pub trait ConsoleApi {
     fn get_palette_map(&mut self) -> &mut [usize];
     fn get_border_colour(&mut self) -> &mut [u8; 3];
     fn get_screen_offset(&mut self) -> &mut [i8; 2];
-    fn get_blit_segment(&mut self) -> &mut u8;
 
     // TIC-80 API
     fn btn(&self, index: i32) -> bool;
@@ -275,43 +274,7 @@ pub trait ConsoleHelper: ConsoleApi {
         let address = address.min(1023);
         self.memory().memory[address] = value;
     }
-    /// Valid values:
-    ///
-    /// 0000 SYS GFX
-    /// 0001 FONT
-    ///
-    /// 0010 4bpp BG Page 0
-    /// 0011 4bpp FG Page 0
-    ///
-    /// 0100 2bpp BG Page 0
-    /// 0101 2bpp BG Page 1
-    /// 0110 2bpp FG Page 0
-    /// 0111 2bpp FG Page 1
-    ///
-    /// 1000 1bpp BG Page 0
-    /// 1001 1bpp BG Page 1
-    /// 1010 1bpp BG Page 2
-    /// 1011 1bpp BG Page 3
-    /// 1100 1bpp FG Page 0
-    /// 1101 1bpp FG Page 1
-    /// 1110 1bpp FG Page 2
-    /// 1111 1bpp FG Page 3
-    fn blit_segment(&mut self, value: u8) {
-        *self.get_blit_segment() = value;
-    }
-    fn spr_blit_segment(
-        &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        opts: StaticSpriteOptions,
-        blit_seg: u8,
-    ) {
-        let old = *self.get_blit_segment();
-        self.blit_segment(blit_seg);
-        self.spr(id, x, y, opts);
-        self.blit_segment(old);
-    }
+
     fn spr_outline(
         &mut self,
         id: i32,
