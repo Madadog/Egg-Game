@@ -135,10 +135,17 @@ impl IndexedImage {
         self.data[x as usize + y as usize * self.width] = colour;
     }
     /// Only works as intended if self and target image are the same width & height.
-    pub fn _draw_to_image(&self, palette: &[[u8; 4]; 256], target_image: &mut [u8]) {
+    pub fn draw_to_image(
+        &self,
+        palette: &[[u8; 3]],
+        transparent: &[u8],
+        target_image: &mut [u8],
+    ) {
         for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {
-            let colour = palette[usize::from(*index)];
-            pixel.copy_from_slice(&colour);
+            if let Some(rgb) = palette.get(usize::from(*index)) && !transparent.contains(index) {
+                let rgba = [rgb[0], rgb[1], rgb[2], u8::MAX];
+                pixel.copy_from_slice(&rgba);
+            }
         }
     }
 }
