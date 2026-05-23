@@ -1,5 +1,5 @@
 use crate::system::{
-    MapOptions, StaticSpriteOptions,
+    MapOptions, SWEETIE_16, StaticSpriteOptions,
     image::{IndexedImage, Rgba, RgbaImage},
     types::GameMap,
 };
@@ -12,6 +12,9 @@ pub struct DrawState {
     pub indexed_sprites: IndexedImage,
 
     pub palettes: Vec<Vec<[u8; 3]>>,
+
+    pub maps: Vec<GameMap>,
+    pub sprite_flags: Vec<u8>,
 }
 
 impl Default for DrawState {
@@ -21,9 +24,20 @@ impl Default for DrawState {
             rgba_sprites: RgbaImage::new(0, 0),
             indexed_canvas: vec![IndexedImage::new(240, 136); 2],
             indexed_sprites: IndexedImage::new(0, 0),
-            palettes: vec![Vec::new()],
+            palettes: vec![default_palette()],
+            maps: Vec::new(),
+            sprite_flags: vec![0; 2048],
         }
     }
+}
+
+/// 256-entry palette: SWEETIE_16 plus `[255, 255, 255]` filler. Matches the
+/// console's historical default.
+fn default_palette() -> Vec<[u8; 3]> {
+    let mut p = Vec::with_capacity(256);
+    p.extend_from_slice(&SWEETIE_16);
+    p.resize(256, [255, 255, 255]);
+    p
 }
 
 #[repr(usize)]
@@ -77,8 +91,25 @@ impl DrawState {
         canvas.spr_indexed(&self.indexed_sprites, palette, palette_map, id, x, y, opts);
     }
 
-    /// Draw a 4-direction outline + sprite from the default indexed sheet.
+    /// Draw the 4-direction outline of a sprite from the default indexed
+    /// sheet (no centre fill).
     pub fn spr_outline(
+        &mut self,
+        layer: LayerId,
+        id: i32,
+        x: i32,
+        y: i32,
+        opts: StaticSpriteOptions<'_>,
+        outline_colour: u8,
+    ) {
+        let canvas = &mut self.rgba_canvas[layer as usize];
+        let palette = self.palettes[0].as_slice();
+        canvas.spr_outline(&self.indexed_sprites, palette, id, x, y, opts, outline_colour);
+    }
+
+    /// Draw a sprite with a 1-pixel outline around it. Equivalent to
+    /// `spr_outline` followed by `spr`.
+    pub fn spr_with_outline(
         &mut self,
         layer: LayerId,
         palette_map: &[usize],

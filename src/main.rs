@@ -169,6 +169,14 @@ fn load_assets(
                     info!("Loaded {} maps", maps.len());
                     state.system.set_maps(maps);
                     println!("Just set the maps!!");
+                    // Phase 2 scaffold: mirror loaded assets into DrawState so
+                    // the migrated draw paths can read from there. Removed in
+                    // Phase 4 once loaders write directly to DrawState.
+                    state.state.draw_state.rgba_sprites = state.system.sprites.clone();
+                    state.state.draw_state.indexed_sprites = state.system.indexed_sprites.clone();
+                    state.state.draw_state.maps = state.system.maps.clone();
+                    state.state.draw_state.sprite_flags = state.system.sprite_flags.clone();
+                    state.state.draw_state.palettes[0] = state.system.palette.clone();
                     state.loaded = true;
                     info!("Finished loading assets.");
                     commands.remove_resource::<GameAssets>();

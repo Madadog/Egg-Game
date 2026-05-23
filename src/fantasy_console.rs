@@ -41,19 +41,22 @@ pub struct FantasyConsole {
     output_screen: RgbaImage,
 
     font: RgbaImage,
-    sprites: RgbaImage,
-    indexed_sprites: IndexedImage,
-    maps: Vec<GameMap>,
+    // Phase 2 scaffold: these still live here for the legacy ConsoleApi draw
+    // methods. The authoritative copies live in `EggState::draw_state` and
+    // are kept in sync from the host. Both go away in Phase 4.
+    pub sprites: RgbaImage,
+    pub indexed_sprites: IndexedImage,
+    pub maps: Vec<GameMap>,
     files: HashMap<String, Vec<u8>>,
 
     vbank: usize,
 
-    palette: Vec<[u8; 3]>,
+    pub palette: Vec<[u8; 3]>,
     palette_map: Vec<usize>,
     screen_offset: [i8; 2],
     border_colour: [u8; 3],
 
-    sprite_flags: Vec<u8>,
+    pub sprite_flags: Vec<u8>,
     music: Option<(MusicTrack, bool)>,
     memory: EggMemory,
     sounds: HashMap<String, SfxOptions>,
