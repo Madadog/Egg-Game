@@ -178,7 +178,7 @@ impl GameMode {
                 if system.mem_btn(5) {
                     *x += 1000;
                 }
-                if intro::draw_animation(*x, system) {
+                if intro::draw_animation(*x, draw_state, system) {
                     *x += 1;
                 } else {
                     *self = Self::MainMenu(MenuState::new());

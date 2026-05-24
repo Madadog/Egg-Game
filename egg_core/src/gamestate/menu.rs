@@ -326,6 +326,72 @@ pub fn step_menu(
     (*index, clicked)
 }
 
+/// Indexed-canvas variant of [`draw_title`], used by the migrated intro
+/// animation so the palette fades apply uniformly to the title pixels.
+/// `canvas` is the target indexed layer; `indexed_sprites` is the sprite
+/// sheet for the egg icon.
+pub fn draw_title_indexed(
+    canvas: &mut crate::system::image::IndexedImage,
+    indexed_sprites: &crate::system::image::IndexedImage,
+    system: &impl ConsoleApi,
+    x: i32,
+    y: i32,
+    game_title: &str,
+    elapsed_frames: i32,
+) {
+    use crate::data::dialogue_data::GAME_TITLE_BLURB;
+    use crate::system::drawing::Canvas;
+    let game_title_z = format!("{game_title}\0");
+    let title_width = system.print_to(
+        canvas,
+        &game_title_z,
+        999,
+        999,
+        2u8,
+        PrintOptions {
+            scale: 1,
+            ..Default::default()
+        },
+    );
+    system.print_to_centered(
+        canvas,
+        &game_title_z,
+        x,
+        y + 23,
+        2u8,
+        PrintOptions {
+            scale: 1,
+            ..Default::default()
+        },
+    );
+    system.print_to(
+        canvas,
+        GAME_TITLE_BLURB,
+        3,
+        3,
+        14u8,
+        PrintOptions {
+            scale: 1,
+            small_text: true,
+            ..Default::default()
+        },
+    );
+    canvas.fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
+    canvas.spr(
+        indexed_sprites,
+        534,
+        120 - 8,
+        y + ((elapsed_frames / 30) % 2),
+        StaticSpriteOptions {
+            transparent: &[0],
+            scale: 1,
+            w: 2,
+            h: 2,
+            ..Default::default()
+        },
+    );
+}
+
 pub fn draw_title(
     system: &mut impl ConsoleApi,
     x: i32,

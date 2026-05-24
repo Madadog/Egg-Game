@@ -164,6 +164,33 @@ pub const fn palette_map_all(c: u8) -> [usize; 16] {
     [c as usize; 16]
 }
 
+/// Linearly interpolate each RGB triple in `target` between `from` and `to`.
+/// `amount` is fixed-point with 256 = "fully `to`". Clamped at 256.
+pub fn fade_palette_into(
+    target: &mut [[u8; 3]],
+    from: &[[u8; 3]],
+    to: &[[u8; 3]],
+    amount: u16,
+) {
+    let amount = amount.min(256);
+    let n = target.len().min(from.len()).min(to.len());
+    for i in 0..n {
+        for j in 0..3 {
+            target[i][j] = ((from[i][j] as u16 * (256 - amount) + to[i][j] as u16 * amount) >> 8)
+                as u8;
+        }
+    }
+}
+
+/// Linearly interpolate one RGB triple between `from` and `to`. See
+/// [`fade_palette_into`] for `amount` semantics.
+pub fn fade_colour_into(target: &mut [u8; 3], from: [u8; 3], to: [u8; 3], amount: u16) {
+    let amount = amount.min(256);
+    for j in 0..3 {
+        target[j] = ((from[j] as u16 * (256 - amount) + to[j] as u16 * amount) >> 8) as u8;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

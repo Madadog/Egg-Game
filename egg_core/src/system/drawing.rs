@@ -518,7 +518,10 @@ impl RgbaImage {
 impl IndexedImage {
     /// Composite this indexed image onto `target` at (`dx`, `dy`) by looking
     /// each index up in `palette`. Indices listed in `transparent` are
-    /// skipped (target pixel left untouched).
+    /// skipped (target pixel left untouched). `edge` controls what happens
+    /// to destination pixels outside the natural projection of the source —
+    /// `Clamp` repeats the source's edge pixels, which is the right choice
+    /// when an offset (e.g. screen shake) would otherwise leave seams.
     pub fn draw_to_rgba(
         &self,
         target: &mut RgbaImage,
@@ -526,21 +529,15 @@ impl IndexedImage {
         dy: i32,
         palette: &[[u8; 3]],
         transparent: &[u8],
+        edge: EdgePolicy,
     ) {
-        target.blit_with(
-            dx,
-            dy,
-            self,
-            EdgePolicy::Transparent,
-            Transform::IDENTITY,
-            |idx| {
-                if transparent.contains(&idx) {
-                    None
-                } else {
-                    palette.get(usize::from(idx)).map(|rgb| Rgba::from_rgb(*rgb))
-                }
-            },
-        );
+        target.blit_with(dx, dy, self, edge, Transform::IDENTITY, |idx| {
+            if transparent.contains(&idx) {
+                None
+            } else {
+                palette.get(usize::from(idx)).map(|rgb| Rgba::from_rgb(*rgb))
+            }
+        });
     }
 
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
