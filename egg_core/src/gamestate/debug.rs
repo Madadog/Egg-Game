@@ -1,4 +1,4 @@
-use crate::system::{MapOptions, PrintOptions, SWEETIE_16, StaticSpriteOptions};
+use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions};
 
 use crate::{
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY},
@@ -141,32 +141,45 @@ pub struct MapViewer {
     pub layer_index: usize,
 }
 impl MapViewer {
-    pub fn draw_map_viewer(&self, system: &mut impl ConsoleApi, walkaround: &WalkaroundState) {
+    pub fn draw_map_viewer(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        walkaround: &WalkaroundState,
+    ) {
         if !self.focused {
             return;
         }
-        let (_width, height) = system.screen_size();
-        system.rect(0, 0, 70, height as i32, 0);
-
-        system.rect(0, 8 + 8 * self.layer_index as i32, 70, 8, 15);
+        let bg = LayerId::BG as usize;
+        let height = draw_state.rgba_canvas[bg].height() as i32;
+        let c0 = draw_state.colour(0);
+        let c12 = draw_state.colour(12);
+        let c13 = draw_state.colour(13);
+        let c15 = draw_state.colour(15);
+        draw_state.rgba_canvas[bg].fill_rect(0, 0, 70, height, c0);
+        draw_state.rgba_canvas[bg].fill_rect(0, 8 + 8 * self.layer_index as i32, 70, 8, c15);
 
         let (layers, title) = if self.fg {
             (walkaround.current_map.fg_layers.iter().enumerate(), "FG")
         } else {
             (walkaround.current_map.layers.iter().enumerate(), "BG")
         };
-        system.print_alloc(
-            format!("{title} LAYERS:"),
+        system.print_to(
+            &mut draw_state.rgba_canvas[bg],
+            &format!("{title} LAYERS:"),
             0,
             0,
+            c13,
             PrintOptions::default().with_color(13),
         );
         for (i, layer) in layers {
             let text = if layer.visible { "" } else { "(Hidden)" };
-            system.print_alloc(
-                format!("Layer {} {text}", i),
+            system.print_to(
+                &mut draw_state.rgba_canvas[bg],
+                &format!("Layer {} {text}", i),
                 0,
                 8 + 8 * i as i32,
+                c12,
                 PrintOptions {
                     color: 12,
                     small_text: true,
@@ -198,28 +211,4 @@ impl MapViewer {
         }
     }
 
-    /// Draws numbers for each tile. Doesn't look good.
-    pub fn draw_map_data(
-        system: &mut impl ConsoleApi,
-        opts: MapOptions,
-        bank: usize,
-        layer: usize,
-    ) {
-        for i in 0..opts.w {
-            for j in 0..opts.h {
-                let (x, y) = (8 * i, 8 * j);
-                system.rectb(x, y, 8, 8, 1);
-                system.print_alloc(
-                    format!("{}", system.map_get(bank, layer, i, i)),
-                    x,
-                    y,
-                    PrintOptions {
-                        color: 12,
-                        small_text: true,
-                        ..PrintOptions::default()
-                    },
-                );
-            }
-        }
-    }
 }

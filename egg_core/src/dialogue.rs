@@ -345,6 +345,8 @@ impl Dialogue {
     }
     pub fn draw_dialogue_portrait(
         &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
         system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
@@ -353,14 +355,33 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
+        use crate::drawstate::PALETTE_MAP_IDENTITY;
+        use crate::system::drawing::Canvas;
         use crate::system::{HEIGHT, WIDTH};
 
         let w = self.width as i32;
         let h = 24;
-        self.draw_dialogue_box_with_offset(system, string, timer, 14, -2, 4);
-        system.rect_outline((WIDTH - w) / 2 - 13, (HEIGHT - h) - 6, h + 4, h + 4, 0, 3);
-
-        system.spr(
+        self.draw_dialogue_box_with_offset(draw_state, layer, system, string, timer, 14, -2, 4);
+        let c0 = draw_state.colour(0);
+        let c3 = draw_state.colour(3);
+        let bg = layer as usize;
+        draw_state.rgba_canvas[bg].fill_rect(
+            (WIDTH - w) / 2 - 13,
+            (HEIGHT - h) - 6,
+            h + 4,
+            h + 4,
+            c0,
+        );
+        draw_state.rgba_canvas[bg].stroke_rect(
+            (WIDTH - w) / 2 - 13,
+            (HEIGHT - h) - 6,
+            h + 4,
+            h + 4,
+            c3,
+        );
+        draw_state.spr(
+            layer,
+            &PALETTE_MAP_IDENTITY,
             portrait,
             (WIDTH - w) / 2 - 13 + 2,
             (HEIGHT - h) - 6 + 2,
@@ -376,6 +397,8 @@ impl Dialogue {
 
     pub fn draw_dialogue_box_with_offset(
         &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
         system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
@@ -383,17 +406,25 @@ impl Dialogue {
         mut y: i32,
         mut height: i32,
     ) {
+        use crate::system::drawing::Canvas;
         use crate::system::{HEIGHT, WIDTH};
 
         let print_timer = self.characters;
         let w = self.width as i32;
         let h = 24;
+        let bg = layer as usize;
 
-        let outline_colour = if self.dark_theme { 1 } else { 3 };
-        let bg_colour = if self.dark_theme { 1 } else { 2 };
+        let outline_colour = if self.dark_theme { 1u8 } else { 3 };
+        let bg_colour = if self.dark_theme { 1u8 } else { 2 };
+        let c_outline = draw_state.colour(outline_colour);
+        let c_bg = draw_state.colour(bg_colour);
+        let c0 = draw_state.colour(0);
+        let c1 = draw_state.colour(1);
+        let c12 = draw_state.colour(12);
+
         // Portrait
         if let Some(portrait) = &self.portrait {
-            let w = if self.flip_portrait {
+            let pw = if self.flip_portrait {
                 x -= 12;
                 -w
             } else {
@@ -401,66 +432,93 @@ impl Dialogue {
                 w
             };
             y -= 2;
-            system.rect_outline(
-                (WIDTH - w) / 2 - 13,
+            draw_state.rgba_canvas[bg].fill_rect(
+                (WIDTH - pw) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
                 h + 4,
-                0,
-                outline_colour,
+                c0,
             );
-            let frame = &portrait;
+            draw_state.rgba_canvas[bg].stroke_rect(
+                (WIDTH - pw) / 2 - 13,
+                (HEIGHT - h) - 6,
+                h + 4,
+                h + 4,
+                c_outline,
+            );
             height += 4;
-            system.palette_map_rotate(0);
-            frame.draw_offset(
-                system,
-                Vec2::new(((WIDTH - w) / 2 - 15) as i16, ((HEIGHT - h) - 8) as i16),
+            portrait.draw_offset(
+                draw_state,
+                layer,
+                Vec2::new(((WIDTH - pw) / 2 - 15) as i16, ((HEIGHT - h) - 8) as i16),
             );
-            system.palette_map_reset();
-            system.rectb(
-                (WIDTH - w) / 2 - 13,
+            draw_state.rgba_canvas[bg].stroke_rect(
+                (WIDTH - pw) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
                 h + 4,
-                outline_colour,
+                c_outline,
             );
         }
         // Text box
         if self.dark_theme {
-            system.rect_outline(
+            draw_state.rgba_canvas[bg].fill_rect(
                 (WIDTH - w) / 2 + x - 2,
                 (HEIGHT - h) - 4 + y - 2,
                 w + 4,
                 h + height + 4,
-                1,
-                0,
+                c1,
+            );
+            draw_state.rgba_canvas[bg].stroke_rect(
+                (WIDTH - w) / 2 + x - 2,
+                (HEIGHT - h) - 4 + y - 2,
+                w + 4,
+                h + height + 4,
+                c0,
             );
         }
-        system.rect_outline(
+        draw_state.rgba_canvas[bg].fill_rect(
             (WIDTH - w) / 2 + x,
             (HEIGHT - h) - 4 + y,
             w,
             h + height,
-            bg_colour,
-            outline_colour,
+            c_bg,
+        );
+        draw_state.rgba_canvas[bg].stroke_rect(
+            (WIDTH - w) / 2 + x,
+            (HEIGHT - h) - 4 + y,
+            w,
+            h + height,
+            c_outline,
         );
         let options = DIALOGUE_OPTIONS.get_options(system);
-        system.print_alloc(
-            if timer {
-                &string[..=(print_timer)]
-            } else {
-                string
-            },
+        let text: &str = if timer {
+            &string[..=(print_timer)]
+        } else {
+            string
+        };
+        system.print_to(
+            &mut draw_state.rgba_canvas[bg],
+            text,
             (WIDTH - w) / 2 + 3 + x,
             (HEIGHT - h) - 4 + 3 + y,
+            c12,
             PrintOptions {
                 color: 12,
                 ..options
             },
         );
     }
-    pub fn draw_dialogue_box(&self, system: &mut impl ConsoleApi, string: &str, timer: bool) {
-        self.draw_dialogue_box_with_offset(system, string, timer, 0, 0, 0)
+
+    pub fn draw_dialogue_box(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        system: &mut impl ConsoleApi,
+        string: &str,
+        timer: bool,
+    ) {
+        self.draw_dialogue_box_with_offset(draw_state, layer, system, string, timer, 0, 0, 0)
     }
 }
 
@@ -479,15 +537,14 @@ impl Debug for Dialogue {
 }
 
 pub fn print_width(
-    system: &mut impl ConsoleApi,
+    system: &impl ConsoleApi,
     string: &str,
     fixed: bool,
     small_font: bool,
 ) -> i32 {
-    system.print_alloc(
+    crate::system::text_width(
+        system.font(),
         string,
-        250,
-        200,
         PrintOptions {
             fixed,
             small_text: small_font,

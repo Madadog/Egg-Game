@@ -30,9 +30,6 @@ impl Vec2 {
     pub const fn splat(value: i16) -> Self {
         Vec2::new(value, value)
     }
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, colour: u8) {
-        system.pix(self.x.into(), self.y.into(), colour);
-    }
     pub fn towards(&self, other: &Vec2) -> Vec2 {
         let diff = *other - *self;
         Vec2::new(diff.x.clamp(-1, 1), diff.y.clamp(-1, 1))
@@ -211,13 +208,20 @@ impl Hitbox {
             None
         }
     }
-    pub fn draw(&self, system: &mut impl ConsoleApi, colour: u8) {
-        system.rectb(
+    pub fn draw(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        colour: u8,
+    ) {
+        use crate::system::drawing::Canvas;
+        let c = draw_state.colour(colour);
+        draw_state.rgba_canvas[layer as usize].stroke_rect(
             self.x.into(),
             self.y.into(),
             self.w.into(),
             self.h.into(),
-            colour,
+            c,
         );
     }
 }

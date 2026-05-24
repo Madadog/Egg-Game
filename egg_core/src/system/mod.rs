@@ -14,96 +14,46 @@ pub mod image;
 pub mod scancode;
 pub mod types;
 
-/// Abstracts away all static memory accesses
+/// IO + asset surface used by `egg_core`. Drawing is no longer done through
+/// this trait — see `DrawState`, the `Canvas` trait, and `print_to_with_font`.
+/// What stays here is input, audio, persistent memory, asset access, and
+/// the final `output_image()` surface that consoles composite into.
 pub trait ConsoleApi {
-    // TIC-80 RAM
+    // Input + memory
     fn get_gamepads(&mut self) -> &mut [u8; 4];
     fn get_mouse(&mut self) -> &mut MouseInput;
     fn memory(&mut self) -> &mut EggMemory;
     fn get_sprite_flags(&mut self) -> &mut [u8];
 
-    // TIC-80 VRAM
-    fn get_palette(&mut self) -> &mut [[u8; 3]];
-    fn get_palette_map(&mut self) -> &mut [usize];
-    fn get_border_colour(&mut self) -> &mut [u8; 3];
-    fn get_screen_offset(&mut self) -> &mut [i8; 2];
-
-    // TIC-80 API
     fn btn(&self, index: i32) -> bool;
     fn btnp(&self, index: i32, hold: i32, period: i32) -> bool;
-    fn cls(&mut self, color: u8);
-    fn circ(&mut self, x: i32, y: i32, radius: i32, color: u8);
-    fn circb(&mut self, x: i32, y: i32, radius: i32, color: u8);
-    fn elli(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
-    fn ellib(&mut self, x: i32, y: i32, a: i32, b: i32, color: u8);
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
     fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool;
     /// Latest character entered by the user this frame (for text entry).
     fn key_chars(&self) -> &[char];
-    fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u8);
-    fn map(&mut self, opts: MapOptions);
-
     fn mouse(&self) -> MouseInput;
-    fn music(&mut self, track: Option<&MusicTrack>);
-    fn pix(&mut self, x: i32, y: i32, color: u8) -> u8;
-    fn pmem(&mut self, address: i32, value: i64) -> i32;
-    fn print_alloc(&mut self, text: impl AsRef<str>, x: i32, y: i32, opts: PrintOptions) -> i32;
-    fn print_raw(&mut self, text: &str, x: i32, y: i32, opts: PrintOptions) -> i32;
-    fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
-    fn rectb(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8);
-    fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
-    fn spr(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions);
-    fn sync(&mut self, mask: i32, bank: u8, to_cart: bool);
-    fn time(&self) -> f32;
-    fn tstamp(&self) -> u32;
-    fn trace_alloc(text: impl AsRef<str>, color: u8);
-    fn tri(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8);
-    fn trib(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: u8);
-    fn ttri(
-        &mut self,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        x3: f32,
-        y3: f32,
-        u1: f32,
-        v1: f32,
-        u2: f32,
-        v2: f32,
-        u3: f32,
-        v3: f32,
-        opts: TTriOptions,
-    );
-    fn vbank(&mut self, bank: u8) -> u8;
 
-    // Other things
+    // Audio + IO
+    fn music(&mut self, track: Option<&MusicTrack>);
+    fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
+    fn sync(&mut self, mask: i32, bank: u8, to_cart: bool);
+    fn trace_alloc(text: impl AsRef<str>, color: u8);
+
+    // Per-frame state helpers
     fn sync_helper(&mut self) -> &mut SyncHelper;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;
 
-    // Proprietary extensions to the TIC80 API
-
-    /// Get access to map storage
-    /// TODO: Separate storage. Console drawing functions consume storage (maps, sprites, etc) and modify a mutable image.
+    // Asset access. Maps + indexed sprites also live on DrawState; these
+    // accessors exist for asset-loading and a few non-draw queries (collider
+    // generation, layer collision checks).
     fn maps(&mut self) -> &mut Vec<GameMap>;
-    /// Gets a tile from a specific map.
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
-    /// Sets a tile on a specific map.
     fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize);
-    /// Writes data to the virtual filesystem
     fn write_file(&mut self, filename: String, data: &[u8]);
-    /// Reads data from the virtual filesystem
     fn read_file(&mut self, filename: String) -> Option<&[u8]>;
-    /// Sprite with more options
-    fn sprite(&mut self, id: i32, x: i32, y: i32, opts: StaticSpriteOptions, palette_map: &[usize]);
-    /// Draws a specific map.
-    fn map_draw(&mut self, bank: usize, layer: usize, opts: MapOptions);
-    // TODO: No screen. Just expose `bitmaps: Vec<bitmap>`. By convention we can have 0=screen, 1=ovr, 2=sprites etc.
-    // get_bitmap(index)
-    fn screen_size(&self) -> (u32, u32);
     /// Grab a whole bitmap. By convention:
     ///
     /// 0. Screen
@@ -112,70 +62,17 @@ pub trait ConsoleApi {
     /// 3. RGBA sprites
     fn get_bitmap_indexed(&self, id: usize) -> &[u8];
 
-    /// Canonical final surface drawn by console to screen
+    /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;
 
-    /// The default 8x8 font used by `print_to` and friends. 16 chars per row.
+    /// Default 8x8 font (16 chars per row) used by `print_to_with_font`.
     fn font(&self) -> &RgbaImage;
 
     /// Called by `EggState::run` at the start of each frame, before any
-    /// drawing happens. Implementations should clear any frame-scoped
-    /// buffers (output_image, legacy screen/overlay if present) to
-    /// transparent so migrated and legacy draw paths start each frame on
-    /// a clean canvas.
+    /// drawing happens. Implementations should clear `output_image()` (and
+    /// any legacy scratch surfaces) so the gamestate draw paths start each
+    /// frame on a clean canvas.
     fn frame_start(&mut self);
-
-    // helpers
-    fn palette_map_swap(&mut self, from: usize, to: usize) {
-        let from: i32 = i32::try_from(from % 16).unwrap();
-        assert!(from >= 0);
-        self.get_palette_map()[from as usize] = to;
-    }
-    fn palette_map_set_all(&mut self, to: usize) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = to;
-        }
-    }
-    fn set_palette_map(&mut self, map: &[usize]) {
-        for (map, target) in map.iter().zip(self.get_palette_map()) {
-            *target = *map;
-        }
-    }
-    fn palette_map_reset(&mut self) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = i;
-        }
-    }
-    fn palette_map_rotate(&mut self, amount: usize) {
-        for i in 0..=15 {
-            self.get_palette_map()[i] = i + amount;
-        }
-    }
-    fn set_palette_colour(&mut self, index: u8, rgb: [u8; 3]) {
-        let index: usize = (index % 16).into();
-        self.get_palette()[index] = rgb;
-    }
-    fn set_palette(&mut self, colours: [[u8; 3]; 16]) {
-        for (i, colour) in colours.iter().enumerate() {
-            self.set_palette_colour(i as u8, *colour);
-        }
-    }
-    fn draw_outline(
-        &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        sprite_options: StaticSpriteOptions,
-        outline_colour: u8,
-    ) {
-        let old_map: Vec<usize> = self.get_palette_map().iter_mut().map(|x| *x).collect();
-        self.palette_map_set_all(outline_colour.into());
-        self.spr(id, x + 1, y, sprite_options.clone());
-        self.spr(id, x - 1, y, sprite_options.clone());
-        self.spr(id, x, y + 1, sprite_options.clone());
-        self.spr(id, x, y - 1, sprite_options);
-        self.set_palette_map(&old_map);
-    }
 }
 
 impl<T: ConsoleApi> ConsoleHelper for T {}
@@ -237,46 +134,6 @@ pub trait ConsoleHelper: ConsoleApi {
     fn zero_pmem(&mut self) {
         self.memory().memory.fill(0);
     }
-    fn fade_palette(&mut self, from: [[u8; 3]; 16], to: [[u8; 3]; 16], amount: u16) {
-        let amount = amount.min(256);
-        for (index, (colour1, colour2)) in from.iter().zip(to.iter()).enumerate() {
-            let mut rgb = [0; 3];
-            for (j, (component1, component2)) in colour1.iter().zip(colour2.iter()).enumerate() {
-                rgb[j] = ((*component1 as u16 * (256 - amount) + *component2 as u16 * amount) >> 8)
-                    as u8;
-            }
-            self.set_palette_colour(index as u8, rgb);
-        }
-    }
-    fn fade_palette_colour(&mut self, index: u8, from: [u8; 3], to: [u8; 3], amount: u16) {
-        let amount = amount.min(256);
-        let index: usize = (index % 16).into();
-        let mut rgb = [0; 3];
-        for (j, (component1, component2)) in from.iter().zip(to.iter()).enumerate() {
-            rgb[j] =
-                ((*component1 as u16 * (256 - amount) + *component2 as u16 * amount) >> 8) as u8;
-        }
-        self.set_palette_colour(index as u8, rgb);
-    }
-    fn set_border_colour(&mut self, colour: u8) {
-        if let Some(colour) = self.get_palette().get(usize::from(colour)) {
-            *self.get_border_colour() = *colour;
-        }
-    }
-    fn screen_offset(&mut self, horizontal: i8, vertical: i8) {
-        self.get_screen_offset()[0] = horizontal;
-        self.get_screen_offset()[1] = vertical;
-    }
-    fn draw_ovr2<T: FnMut(&mut Self)>(&mut self, mut draw: T) {
-        self.vbank(1);
-        draw(self);
-        self.vbank(0);
-    }
-    fn draw_ovr<T: FnMut()>(&mut self, mut draw: T) {
-        self.vbank(1);
-        draw();
-        self.vbank(0);
-    }
     fn get_pmem(&mut self, address: usize) -> u8 {
         let address = address.min(1023);
         self.memory().memory[address]
@@ -284,45 +141,6 @@ pub trait ConsoleHelper: ConsoleApi {
     fn set_pmem(&mut self, address: usize, value: u8) {
         let address = address.min(1023);
         self.memory().memory[address] = value;
-    }
-
-    fn spr_outline(
-        &mut self,
-        id: i32,
-        x: i32,
-        y: i32,
-        sprite_options: StaticSpriteOptions,
-        outline_colour: u8,
-    ) {
-        self.draw_outline(id, x, y, sprite_options.clone(), outline_colour);
-        self.spr(id, x, y, sprite_options);
-    }
-    fn rect_outline(&mut self, x: i32, y: i32, w: i32, h: i32, fill: u8, outline: u8) {
-        self.rect(x, y, w, h, fill);
-        self.rectb(x, y, w, h, outline);
-    }
-    fn print_raw_centered(&mut self, string: &str, x: i32, y: i32, options: PrintOptions) {
-        let string_width = self.print_raw(string, 999, 999, options.clone());
-        self.print_raw(string, x - string_width / 2, y, options);
-    }
-    fn print_alloc_centered(&mut self, string: &str, x: i32, y: i32, options: PrintOptions) {
-        let string_width = self.print_alloc(string, 999, 999, options.clone());
-        self.print_alloc(string, x - string_width / 2, y, options);
-    }
-    fn print_raw_shadow(
-        &mut self,
-        string: &str,
-        x: i32,
-        y: i32,
-        options: PrintOptions,
-        shadow_colour: i32,
-    ) {
-        let shadow_options = PrintOptions {
-            color: shadow_colour,
-            ..options
-        };
-        self.print_raw(string, x + 1, y + 1, shadow_options);
-        self.print_raw(string, x, y, options);
     }
 
     /// Render `text` onto `target` using the console's default font
@@ -367,6 +185,14 @@ pub trait ConsoleHelper: ConsoleApi {
         self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
         self.print_to(target, text, x, y, colour, opts)
     }
+}
+
+/// Measure the maximum line width of `text` rendered with `font`. Equivalent
+/// to a print_to dry-run that doesn't touch a real target. Useful for
+/// centering / wrapping.
+pub fn text_width(font: &RgbaImage, text: &str, opts: PrintOptions) -> i32 {
+    let mut throwaway = crate::system::image::IndexedImage::new(1, 1);
+    print_to_with_font(font, &mut throwaway, text, 0, 0, 0u8, opts)
 }
 
 /// Render `text` onto `target` using the supplied `font`. Free-function

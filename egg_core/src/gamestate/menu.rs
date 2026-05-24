@@ -70,6 +70,7 @@ impl MenuState {
     }
     pub fn step_main_menu(
         &mut self,
+        draw_state: &mut crate::drawstate::DrawState,
         system: &mut impl ConsoleApi,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
@@ -94,7 +95,7 @@ impl MenuState {
         };
         if action {
             system.play_sound(sound::INTERACT);
-            self.click(index, walkaround_state, inventory_ui, system)
+            self.click(index, draw_state, walkaround_state, inventory_ui, system)
         } else {
             None
         }
@@ -109,6 +110,7 @@ impl MenuState {
     pub fn click(
         &mut self,
         index: Option<usize>,
+        draw_state: &mut crate::drawstate::DrawState,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
         system: &mut impl ConsoleApi,
@@ -150,13 +152,22 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        system.set_palette(crate::system::SWEETIE_16);
+                        crate::gamestate::walkaround::apply_palette(
+                            draw_state,
+                            &crate::system::SWEETIE_16,
+                        );
                     }
                     1 => {
-                        system.set_palette(crate::system::NIGHT_16);
+                        crate::gamestate::walkaround::apply_palette(
+                            draw_state,
+                            &crate::system::NIGHT_16,
+                        );
                     }
                     2 => {
-                        system.set_palette(crate::system::B_W);
+                        crate::gamestate::walkaround::apply_palette(
+                            draw_state,
+                            &crate::system::B_W,
+                        );
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();

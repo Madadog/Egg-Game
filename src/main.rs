@@ -164,19 +164,20 @@ fn load_assets(
                     println!("Set fonts!");
                     state.system.set_sprites(sheet);
                     println!("And sprites!");
-                    state.system.set_indexed_sprites(sheet);
+                    let palette = state.state.draw_state.palettes[0].clone();
+                    state.system.set_indexed_sprites(sheet, &palette);
                     println!("And more sprites!");
                     info!("Loaded {} maps", maps.len());
                     state.system.set_maps(maps);
                     println!("Just set the maps!!");
-                    // Phase 2 scaffold: mirror loaded assets into DrawState so
-                    // the migrated draw paths can read from there. Removed in
-                    // Phase 4 once loaders write directly to DrawState.
+                    // Mirror loaded assets into DrawState (the authoritative
+                    // copies for the new draw paths). The console still keeps
+                    // copies for asset-side queries (e.g. Collider::from_sprite
+                    // reads via get_bitmap_indexed).
                     state.state.draw_state.rgba_sprites = state.system.sprites.clone();
                     state.state.draw_state.indexed_sprites = state.system.indexed_sprites.clone();
                     state.state.draw_state.maps = state.system.maps.clone();
                     state.state.draw_state.sprite_flags = state.system.sprite_flags.clone();
-                    state.state.draw_state.palettes[0] = state.system.palette.clone();
                     state.loaded = true;
                     info!("Finished loading assets.");
                     commands.remove_resource::<GameAssets>();
@@ -285,7 +286,7 @@ pub struct MusicPlayer;
 pub struct GameScreenSprite;
 
 fn update_texture(
-    mut state: ResMut<EggGame>,
+    state: ResMut<EggGame>,
     mut images: ResMut<Assets<Image>>,
     mut border_colour: ResMut<ClearColor>,
     sprite: Query<&Sprite, With<GameScreenSprite>>,
@@ -300,8 +301,10 @@ fn update_texture(
                 .expect("Main screen texture uninitialized, can't draw game."),
         );
     }
-    let colour = state.system.get_border_colour();
-    border_colour.0 = Color::srgb_u8(colour[0], colour[1], colour[2]);
+    // Use the current default palette's first colour for the border surround.
+    if let Some(colour) = state.state.draw_state.palettes[0].first() {
+        border_colour.0 = Color::srgb_u8(colour[0], colour[1], colour[2]);
+    }
 }
 
 fn resize_screen(

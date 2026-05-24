@@ -163,7 +163,7 @@ impl GameMode {
                 draw_instructions(draw_state, system);
             }
             Self::Walkaround => {
-                let next = walkaround_state.step((system, inventory_ui));
+                let next = walkaround_state.step((draw_state, system, inventory_ui));
                 walkaround_state.draw((draw_state, system, debug_info));
                 if let Some(state) = next {
                     *self = state;
@@ -185,7 +185,7 @@ impl GameMode {
                 }
             }
             Self::MainMenu(state) => {
-                match state.step_main_menu(system, walkaround_state, inventory_ui) {
+                match state.step_main_menu(draw_state, system, walkaround_state, inventory_ui) {
                     Some(x) => *self = x,
                     None => state.draw_main_menu(draw_state, system, elapsed_frames),
                 };

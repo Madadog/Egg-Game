@@ -343,13 +343,29 @@ impl WalkaroundState {
     }
 }
 
+/// Copy a 16-colour palette into the first 16 slots of `palettes[0]`.
+pub fn apply_palette(draw_state: &mut crate::drawstate::DrawState, palette: &[[u8; 3]; 16]) {
+    for (i, c) in palette.iter().enumerate() {
+        if let Some(slot) = draw_state.palettes[0].get_mut(i) {
+            *slot = *c;
+        }
+    }
+}
+
 impl<T: ConsoleApi>
     Game<
-        (&mut T, &mut InventoryUi),
+        (&mut crate::drawstate::DrawState, &mut T, &mut InventoryUi),
         (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
     > for WalkaroundState
 {
-    fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameMode> {
+    fn step(
+        &mut self,
+        (draw_state, system, inventory_ui): (
+            &mut crate::drawstate::DrawState,
+            &mut T,
+            &mut InventoryUi,
+        ),
+    ) -> Option<GameMode> {
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
@@ -377,13 +393,13 @@ impl<T: ConsoleApi>
             self.load_pmem(system);
         }
         if system.keyp(ScanCode::Digit6, -1, -1) {
-            system.set_palette(crate::system::SWEETIE_16);
+            apply_palette(draw_state, &crate::system::SWEETIE_16);
         }
         if system.keyp(ScanCode::Digit7, -1, -1) {
-            system.set_palette(crate::system::NIGHT_16);
+            apply_palette(draw_state, &crate::system::NIGHT_16);
         }
         if system.keyp(ScanCode::Digit8, -1, -1) {
-            system.set_palette(crate::system::B_W);
+            apply_palette(draw_state, &crate::system::B_W);
         }
 
         // Get keyboard inputs
@@ -626,62 +642,62 @@ impl<T: ConsoleApi>
             false,
         );
 
-        // Composite migrated content. Dialogue and debug overlays still use
-        // the legacy console.screen path; blit_to_image merges them on top of
-        // output_image after this returns.
-        {
-            let output = system.output_image();
-            output.blit::<RgbaImage>(
-                0,
-                0,
-                &draw_state.rgba_canvas[bg],
-                EdgePolicy::Transparent,
-                Transform::IDENTITY,
-                |p| p.a() == 0,
-            );
-        }
-
-        if let Some(string) = &self.dialogue.current_text {
-            self.dialogue.draw_dialogue_box(system, string, true);
+        if let Some(string) = self.dialogue.current_text.clone() {
+            self.dialogue
+                .draw_dialogue_box(draw_state, LayerId::BG, system, &string, true);
         }
         if debug_info.map_info() {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(system, 12);
+                    .draw(draw_state, LayerId::BG, 12);
             }
             self.player_ref()
                 .hitbox()
                 .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                .draw(system, 12);
+                .draw(draw_state, LayerId::BG, 12);
             for item in self.current_map.interactables.iter() {
                 item.hitbox
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(system, 14);
+                    .draw(draw_state, LayerId::BG, 14);
             }
         }
         if debug_info.player_info() {
-            system.print_raw(
+            let c11 = draw_state.colour(11);
+            let opts = PrintOptions {
+                small_text: true,
+                color: 11,
+                ..Default::default()
+            };
+            system.print_to(
+                &mut draw_state.rgba_canvas[bg],
                 &format!("Player: {:#?}\0", self.player_ref()),
                 0,
                 0,
-                PrintOptions {
-                    small_text: true,
-                    color: 11,
-                    ..Default::default()
-                },
+                c11,
+                opts.clone(),
             );
-            system.print_raw(
+            system.print_to(
+                &mut draw_state.rgba_canvas[bg],
                 &format!("Camera: {:#?}\0", self.camera),
                 74,
                 0,
-                PrintOptions {
-                    small_text: true,
-                    color: 11,
-                    ..Default::default()
-                },
+                c11,
+                opts,
             );
         }
-        self.map_viewer.draw_map_viewer(system, self);
+        self.map_viewer.draw_map_viewer(draw_state, system, self);
+
+        // Composite all migrated draw output to output_image (once, at the
+        // end of the draw fn).
+        let output = system.output_image();
+        output.blit::<RgbaImage>(
+            0,
+            0,
+            &draw_state.rgba_canvas[bg],
+            EdgePolicy::Transparent,
+            Transform::IDENTITY,
+            |p| p.a() == 0,
+        );
     }
 }

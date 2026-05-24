@@ -436,36 +436,50 @@ impl InventoryUi {
             _ => {}
         };
 
-        // Composite migrated content. Dialogue portrait (still legacy) draws
-        // onto console.screen and is composed on top by blit_to_image.
-        {
-            let output = system.output_image();
-            output.blit::<RgbaImage>(
-                0,
-                0,
-                &draw_state.rgba_canvas[bg],
-                EdgePolicy::Transparent,
-                Transform::IDENTITY,
-                |p| p.a() == 0,
-            );
-        }
-
-        // The dialogue portrait still uses the legacy path — its sprite +
-        // text land on console.screen and overlay correctly.
+        // Dialogue portrait now draws to the same BG layer.
         match &self.state {
             InventoryUiState::Items(current_index, selected) => {
                 if let Some((_, selected_item)) = selected {
-                    let string = &self.dialogue.fit_text(system, selected_item.desc);
-                    self.dialogue
-                        .draw_dialogue_portrait(system, string, false, selected_item.sprite, 3, 1, 1);
+                    let string = self.dialogue.fit_text(system, selected_item.desc);
+                    self.dialogue.draw_dialogue_portrait(
+                        draw_state,
+                        LayerId::BG,
+                        system,
+                        &string,
+                        false,
+                        selected_item.sprite,
+                        3,
+                        1,
+                        1,
+                    );
                 } else if let Some(item) = &self.inventory.items[*current_index] {
-                    let string = &self.dialogue.fit_text(system, item.desc);
-                    self.dialogue
-                        .draw_dialogue_portrait(system, string, false, item.sprite, 3, 1, 1);
+                    let string = self.dialogue.fit_text(system, item.desc);
+                    self.dialogue.draw_dialogue_portrait(
+                        draw_state,
+                        LayerId::BG,
+                        system,
+                        &string,
+                        false,
+                        item.sprite,
+                        3,
+                        1,
+                        1,
+                    );
                 }
             }
             _ => {}
         }
+
+        // Composite (once, after everything).
+        let output = system.output_image();
+        output.blit::<RgbaImage>(
+            0,
+            0,
+            &draw_state.rgba_canvas[bg],
+            EdgePolicy::Transparent,
+            Transform::IDENTITY,
+            |p| p.a() == 0,
+        );
     }
     pub fn step(&mut self, system: &mut impl ConsoleApi) {
         let (mut dx, mut dy) = (0, 0);

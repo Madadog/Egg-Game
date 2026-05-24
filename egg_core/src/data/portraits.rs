@@ -1,5 +1,5 @@
+use crate::drawstate::{DrawState, LayerId, palette_map_rotate};
 use crate::position::Vec2;
-use crate::system::ConsoleApi;
 use crate::system::StaticSpriteOptions;
 
 #[derive(Debug, Clone)]
@@ -16,31 +16,31 @@ impl Portrait {
         let spr_ids = [spr_id, spr_id + 1, spr_id + 32, spr_id + 33];
         Self { spr_ids, offset }
     }
-    pub fn draw_offset(&self, system: &mut impl ConsoleApi, offset: Vec2) {
+    pub fn draw_offset(&self, draw_state: &mut DrawState, layer: LayerId, offset: Vec2) {
+        let pmap = palette_map_rotate(1);
         for (i, id) in self.spr_ids.iter().enumerate() {
             let i = i as i32;
             let (x, y): (i32, i32) = (
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
             );
-            system.draw_outline(
+            draw_state.spr_outline(
+                layer,
                 (*id).into(),
                 x,
                 y,
                 StaticSpriteOptions::transparent_zero(),
                 1,
             );
-        }
-        system.palette_map_rotate(1);
-        for (i, id) in self.spr_ids.iter().enumerate() {
-            let i = i as i32;
-            let (x, y): (i32, i32) = (
-                i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
-                i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
+            draw_state.spr(
+                layer,
+                &pmap,
+                (*id).into(),
+                x,
+                y,
+                StaticSpriteOptions::transparent_zero(),
             );
-            system.spr((*id).into(), x, y, StaticSpriteOptions::transparent_zero());
         }
-        system.palette_map_rotate(0);
     }
 }
 
