@@ -197,7 +197,7 @@ impl GameMode {
                     InventoryUiState::Options => {
                         *self = Self::MainMenu(MenuState::inventory_options())
                     }
-                    _ => inventory_ui.draw(system),
+                    _ => inventory_ui.draw(draw_state, system),
                 }
             }
             Self::SpriteTest(x) => {
