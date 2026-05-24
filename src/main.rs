@@ -454,14 +454,18 @@ fn step_state(
         if keys.just_pressed(KeyCode::KeyN) {
             game.run();
         }
-        game.system.print_raw(
+        let colour = egg_core::system::image::Rgba::from_rgb(
+            game.state.draw_state.palettes[0][12],
+        );
+        let system = &mut game.system;
+        egg_core::system::print_to_with_font(
+            &system.font,
+            &mut system.output_screen,
             "Paused\n[P] to unpause\n[N] to step forward",
             100,
             62,
-            egg_core::system::PrintOptions {
-                color: 12,
-                ..Default::default()
-            },
+            colour,
+            egg_core::system::PrintOptions::default(),
         );
         return;
     }
@@ -574,14 +578,18 @@ fn step_state(
     game.run();
     if keys.pressed(KeyCode::KeyN) {
         game.run();
-        game.system.print_raw(
+        let colour = egg_core::system::image::Rgba::from_rgb(
+            game.state.draw_state.palettes[0][12],
+        );
+        let system = &mut game.system;
+        egg_core::system::print_to_with_font(
+            &system.font,
+            &mut system.output_screen,
             "Fast-Forward",
             100,
             62,
-            egg_core::system::PrintOptions {
-                color: 12,
-                ..Default::default()
-            },
+            colour,
+            egg_core::system::PrintOptions::default(),
         );
     }
 }

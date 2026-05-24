@@ -338,33 +338,7 @@ pub trait ConsoleHelper: ConsoleApi {
         colour: C::Pixel,
         opts: PrintOptions,
     ) -> i32 {
-        let mut max_width = 0;
-        let mut dx = x;
-        let mut dy = y;
-        for char in text.chars() {
-            match char as u8 {
-                10 => {
-                    dx = x;
-                    dy += 6;
-                }
-                32 => {
-                    dx += if opts.small_text { 3 } else { 4 };
-                }
-                0 => {}
-                _ => {
-                    let glyph = if opts.small_text {
-                        (char as u8 + 128) as char
-                    } else {
-                        char
-                    };
-                    let width = draw_letter_to(self.font(), target, glyph, dx, dy, colour);
-                    dx += width + 1;
-                }
-            }
-            max_width = max_width.max(dx - x);
-        }
-        let _ = dy;
-        max_width
+        print_to_with_font(self.font(), target, text, x, y, colour, opts)
     }
 
     fn print_to_centered<C: Canvas>(
@@ -393,6 +367,48 @@ pub trait ConsoleHelper: ConsoleApi {
         self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
         self.print_to(target, text, x, y, colour, opts)
     }
+}
+
+/// Render `text` onto `target` using the supplied `font`. Free-function
+/// variant of [`ConsoleHelper::print_to`] for callers that already hold a
+/// `&RgbaImage` font reference (e.g. when split-borrowing the console's
+/// font and output_image at the same time).
+pub fn print_to_with_font<C: Canvas>(
+    font: &RgbaImage,
+    target: &mut C,
+    text: &str,
+    x: i32,
+    y: i32,
+    colour: C::Pixel,
+    opts: PrintOptions,
+) -> i32 {
+    let mut max_width = 0;
+    let mut dx = x;
+    let mut dy = y;
+    for char in text.chars() {
+        match char as u8 {
+            10 => {
+                dx = x;
+                dy += 6;
+            }
+            32 => {
+                dx += if opts.small_text { 3 } else { 4 };
+            }
+            0 => {}
+            _ => {
+                let glyph = if opts.small_text {
+                    (char as u8 + 128) as char
+                } else {
+                    char
+                };
+                let width = draw_letter_to(font, target, glyph, dx, dy, colour);
+                dx += width + 1;
+            }
+        }
+        max_width = max_width.max(dx - x);
+    }
+    let _ = dy;
+    max_width
 }
 
 /// Draw one 8×8 glyph from `font` onto `target` at (`x`, `y`) using `colour`

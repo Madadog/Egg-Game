@@ -38,9 +38,9 @@ use crate::tiled;
 pub struct FantasyConsole {
     screen: RgbaImage,
     overlay_screen: RgbaImage,
-    output_screen: RgbaImage,
+    pub output_screen: RgbaImage,
 
-    font: RgbaImage,
+    pub font: RgbaImage,
     // Phase 2 scaffold: these still live here for the legacy ConsoleApi draw
     // methods. The authoritative copies live in `EggState::draw_state` and
     // are kept in sync from the host. Both go away in Phase 4.
