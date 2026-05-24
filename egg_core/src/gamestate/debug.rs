@@ -1,23 +1,44 @@
-use crate::system::{
-    MapOptions, PrintOptions, SWEETIE_16, StaticSpriteOptions
-};
+use crate::system::{MapOptions, PrintOptions, SWEETIE_16, StaticSpriteOptions};
 
 use crate::{
+    drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY},
     map::MapInfo,
-    system::{ConsoleApi, ConsoleHelper},
+    system::{
+        ConsoleApi, ConsoleHelper,
+        drawing::{Canvas, EdgePolicy, Transform},
+        image::{Rgba, RgbaImage},
+    },
 };
 
 use super::walkaround::WalkaroundState;
 
 const WIDTH: u32 = 32;
 
-pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
-    system.cls(0);
-    system.set_palette(SWEETIE_16);
-    system.draw_ovr2(|system| system.cls(0));
+pub fn draw_sprite_test(
+    draw_state: &mut DrawState,
+    system: &mut impl ConsoleApi,
+    indice: u32,
+) {
+    // Reset the default palette to SWEETIE_16 (matches the legacy set_palette).
+    for (i, c) in SWEETIE_16.iter().enumerate() {
+        draw_state.palettes[0][i] = *c;
+    }
+    let colour_0 = Rgba::from_rgb(draw_state.palettes[0][0]);
+    let colour_12 = Rgba::from_rgb(draw_state.palettes[0][12]);
+    let print_opts = PrintOptions {
+        color: 12,
+        ..PrintOptions::default()
+    };
+
+    draw_state.rgba_canvas[LayerId::BG as usize].fill(colour_0);
+
+    let palette_map = PALETTE_MAP_IDENTITY;
     for x in 0..(WIDTH as i32) {
         for y in 0..17 {
-            system.spr(
+            draw_state.rgba_canvas[LayerId::BG as usize].spr_indexed(
+                &draw_state.indexed_sprites,
+                &draw_state.palettes[0],
+                &palette_map,
                 x + y * (WIDTH as i32) + indice as i32,
                 x * 8,
                 y * 8,
@@ -25,65 +46,76 @@ pub fn draw_sprite_test(system: &mut impl ConsoleApi, indice: u32) {
             );
         }
     }
-    if system.btn(5) {
-        let size = system.screen_size();
-        for x in 0..(size.0 as i32) {
-            for y in 0..(size.1 as i32) {
-                let color = system.get_bitmap_indexed(2)
-                    [(x + y * 256) as usize + ((indice % 32) * 8 + (indice / 32) * 2048) as usize];
-                system.pix(x, y, color);
+
+    {
+        let canvas = &mut draw_state.rgba_canvas[LayerId::BG as usize];
+        if system.btn(5) {
+            // Raw indexed sprite bytes as colour-mapped pixels.
+            let palette = draw_state.palettes[0].as_slice();
+            let data = &draw_state.indexed_sprites.data;
+            let (cw, ch) = (canvas.width() as i32, canvas.height() as i32);
+            let offset = ((indice % 32) * 8 + (indice / 32) * 2048) as usize;
+            for y in 0..ch {
+                for x in 0..cw {
+                    let idx = match data.get((x + y * 256) as usize + offset) {
+                        Some(&i) => i,
+                        None => continue,
+                    };
+                    if let Some(rgb) = palette.get(idx as usize) {
+                        canvas.set_pixel(x as u32, y as u32, Rgba::from_rgb(*rgb));
+                    }
+                }
+            }
+            system.print_to(canvas, "RAW DATA:", 0, 0, colour_12, print_opts.clone());
+        }
+        if system.btn(4) {
+            for i in 0..255i32 {
+                system.print_to(canvas, "PALETTE:", 0, 0, colour_12, print_opts.clone());
+                let px = 10 + i % 32;
+                let py = 10 + i / 32;
+                if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height()
+                    && let Some(rgb) = draw_state.palettes[0].get(i as usize)
+                {
+                    canvas.set_pixel(px as u32, py as u32, Rgba::from_rgb(*rgb));
+                }
             }
         }
-        system.print_alloc(
-            "RAW DATA:",
-            0,
-            0,
-            PrintOptions {
-                color: 12,
-                ..PrintOptions::default()
-            },
-        );
-    }
-    if system.btn(4) {
-        for i in 0..255 {
-            system.print_alloc(
-                "PALETTE:",
+        if system.btn(6) {
+            canvas.stroke_rect(0, 0, 8, 8, colour_12);
+            system.print_to(
+                canvas,
+                &format!("Sprite ID = {indice}"),
                 0,
-                0,
-                PrintOptions {
-                    color: 12,
-                    ..PrintOptions::default()
-                },
+                8,
+                colour_12,
+                print_opts.clone(),
             );
-            system.pix(10 + i % 32, 10 + i / 32, i as u8);
         }
-    }
-    if system.btn(6) {
-        system.rectb(0, 0, 8, 8, 12);
-        system.print_alloc(
-            format!("Sprite ID = {indice}"),
-            0,
-            8,
-            PrintOptions {
-                color: 12,
-                ..PrintOptions::default()
-            },
+
+        let mouse_pos = system.mouse();
+        let grid_index = (i32::from(mouse_pos.x / 8), i32::from(mouse_pos.y / 8));
+        let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
+        let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
+        let flip_text = if grid_index.1 == 0 { 15 } else { 0 };
+        canvas.stroke_rect(grid_x, grid_y, 8, 8, colour_12);
+        system.print_to_centered(
+            canvas,
+            &format!("ID:{mouse_indice}"),
+            grid_x + 4,
+            grid_y - 6 + flip_text,
+            colour_12,
+            print_opts,
         );
     }
-    let mouse_pos = system.mouse();
-    let grid_index = (i32::from(mouse_pos.x / 8), i32::from(mouse_pos.y / 8));
-    let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
-    let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
-    let flip_text = if grid_index.1 == 0 { 15 } else { 0 };
-    system.rectb(grid_x, grid_y, 8, 8, 12);
-    system.print_alloc_centered(
-        &format!("ID:{}", mouse_indice),
-        grid_x + 4,
-        grid_y - 6 + flip_text,
-        PrintOptions {
-            color: 12,
-            ..PrintOptions::default()
-        },
+
+    let output = system.output_image();
+    output.blit::<RgbaImage>(
+        0,
+        0,
+        &draw_state.rgba_canvas[LayerId::BG as usize],
+        EdgePolicy::Transparent,
+        Transform::IDENTITY,
+        |p| p.a() == 0,
     );
 }
 

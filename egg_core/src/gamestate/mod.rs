@@ -201,7 +201,7 @@ impl GameMode {
                 }
             }
             Self::SpriteTest(x) => {
-                debug::draw_sprite_test(system, *x);
+                debug::draw_sprite_test(draw_state, system, *x);
                 debug::step_sprite_test(system, x);
             }
         }
