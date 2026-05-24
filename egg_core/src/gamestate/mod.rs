@@ -21,7 +21,7 @@ use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
 use crate::data::{map_data, save};
 use crate::debug::DebugInfo;
-use crate::dialogue::{print_width, DIALOGUE_OPTIONS};
+use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
 use self::menu::MenuState;
@@ -160,7 +160,7 @@ impl GameMode {
                     system.memory().set(save::INSTRUCTIONS_READ);
                     *self = Self::Walkaround;
                 }
-                draw_instructions(system);
+                draw_instructions(draw_state, system);
             }
             Self::Walkaround => {
                 let next = walkaround_state.step((system, inventory_ui));
@@ -215,36 +215,44 @@ pub trait Game<T, U> {
     fn draw(&self, state: U);
 }
 
-pub fn draw_instructions(system: &mut impl ConsoleApi) {
-    system.cls(0);
+pub fn draw_instructions(
+    draw_state: &mut crate::drawstate::DrawState,
+    system: &mut impl ConsoleApi,
+) {
     use crate::data::dialogue_data::{INSTRUCTIONS, INSTRUCTIONS_TITLE};
+    use crate::drawstate::LayerId;
+    use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+    use crate::system::image::RgbaImage;
     let small_text = DIALOGUE_OPTIONS.small_text(system);
-    system.rect_outline(6, 15, 228, 100, 0, 1);
-    system.rect(8, 17, 224, 96, 1);
-    system.print_raw_shadow(
-        &format!("{}\0", INSTRUCTIONS_TITLE),
-        11,
-        20,
-        PrintOptions {
-            color: 12,
-            small_text,
-            ..Default::default()
-        },
+    let title = format!("{INSTRUCTIONS_TITLE}\0");
+    let colour_12 = draw_state.colour(12);
+    let colour_1 = draw_state.colour(1);
+    let colour_0 = draw_state.colour(0);
+    let opts = PrintOptions {
+        color: 12,
+        small_text,
+        ..Default::default()
+    };
+    {
+        let canvas = &mut draw_state.rgba_canvas[LayerId::BG as usize];
+        canvas.fill(colour_0);
+        canvas.fill_rect(6, 15, 228, 100, colour_0);
+        canvas.stroke_rect(6, 15, 228, 100, colour_1);
+        canvas.fill_rect(8, 17, 224, 96, colour_1);
+        system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
+        system.print_to_shadow(canvas, INSTRUCTIONS, 11, 36, colour_12, colour_0, opts.clone());
+        let width = system.print_to(canvas, INSTRUCTIONS_TITLE, 999, 999, colour_12, opts) - 1;
+        let origin = 11;
+        canvas.line(origin, 27, origin + width, 27, colour_12);
+        canvas.line(origin + 1, 28, origin + width + 1, 28, colour_0);
+    }
+    let output = system.output_image();
+    output.blit::<RgbaImage>(
         0,
-    );
-    system.print_raw_shadow(
-        INSTRUCTIONS,
-        11,
-        36,
-        PrintOptions {
-            color: 12,
-            small_text,
-            ..Default::default()
-        },
         0,
+        &draw_state.rgba_canvas[LayerId::BG as usize],
+        EdgePolicy::Transparent,
+        Transform::IDENTITY,
+        |p| p.a() == 0,
     );
-    let origin = 11.0;
-    let width = (print_width(system, INSTRUCTIONS_TITLE, false, small_text) - 1) as f32;
-    system.line(origin, 27.0, origin + width, 27.0, 12);
-    system.line(origin + 1.0, 28.0, origin + width + 1.0, 28.0, 0);
 }
