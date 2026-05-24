@@ -516,6 +516,33 @@ impl RgbaImage {
 }
 
 impl IndexedImage {
+    /// Composite this indexed image onto `target` at (`dx`, `dy`) by looking
+    /// each index up in `palette`. Indices listed in `transparent` are
+    /// skipped (target pixel left untouched).
+    pub fn draw_to_rgba(
+        &self,
+        target: &mut RgbaImage,
+        dx: i32,
+        dy: i32,
+        palette: &[[u8; 3]],
+        transparent: &[u8],
+    ) {
+        target.blit_with(
+            dx,
+            dy,
+            self,
+            EdgePolicy::Transparent,
+            Transform::IDENTITY,
+            |idx| {
+                if transparent.contains(&idx) {
+                    None
+                } else {
+                    palette.get(usize::from(idx)).map(|rgb| Rgba::from_rgb(*rgb))
+                }
+            },
+        );
+    }
+
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
     /// Indices listed in `opts.transparent` are skipped; all other indices are
     /// copied through unchanged (no palette lookup — that's a compositing-time

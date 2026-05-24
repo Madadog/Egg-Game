@@ -136,6 +136,9 @@ impl IndexedImage {
     pub fn set_pixel(&mut self, x: u32, y: u32, colour: u8) {
         self.data[x as usize + y as usize * self.width] = colour;
     }
+    pub fn fill(&mut self, colour: u8) {
+        self.data.fill(colour);
+    }
     /// Only works as intended if self and target image are the same width & height.
     pub fn draw_to_image(&self, palette: &[[u8; 3]], transparent: &[u8], target_image: &mut [u8]) {
         for (index, pixel) in self.data.iter().zip(target_image.chunks_exact_mut(4)) {

@@ -144,6 +144,7 @@ impl GameMode {
         debug_info: &mut DebugInfo,
         elapsed_frames: i32,
         inventory_ui: &mut InventoryUi,
+        draw_state: &mut crate::drawstate::DrawState,
         system: &mut impl ConsoleApi,
     ) {
         trace!("Game state: {self:?}");

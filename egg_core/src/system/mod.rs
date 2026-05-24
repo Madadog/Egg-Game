@@ -1,6 +1,7 @@
 use crate::{
     data::sound::{SfxData, music::MusicTrack},
-    rand::Lcg64Xsh32, system::image::RgbaImage,
+    rand::Lcg64Xsh32,
+    system::{drawing::Canvas, image::RgbaImage},
 };
 
 pub use consts::*;
@@ -113,6 +114,16 @@ pub trait ConsoleApi {
 
     /// Canonical final surface drawn by console to screen
     fn output_image(&mut self) -> &mut RgbaImage;
+
+    /// The default 8x8 font used by `print_to` and friends. 16 chars per row.
+    fn font(&self) -> &RgbaImage;
+
+    /// Called by `EggState::run` at the start of each frame, before any
+    /// drawing happens. Implementations should clear any frame-scoped
+    /// buffers (output_image, legacy screen/overlay if present) to
+    /// transparent so migrated and legacy draw paths start each frame on
+    /// a clean canvas.
+    fn frame_start(&mut self);
 
     // helpers
     fn palette_map_swap(&mut self, from: usize, to: usize) {
@@ -313,4 +324,108 @@ pub trait ConsoleHelper: ConsoleApi {
         self.print_raw(string, x + 1, y + 1, shadow_options);
         self.print_raw(string, x, y, options);
     }
+
+    /// Render `text` onto `target` using the console's default font
+    /// (`self.font()`). Returns the maximum line width in pixels. `colour`
+    /// is the pixel value (RGBA, palette index, …) used for non-transparent
+    /// font pixels — the font itself is read as alpha-only.
+    fn print_to<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) -> i32 {
+        let mut max_width = 0;
+        let mut dx = x;
+        let mut dy = y;
+        for char in text.chars() {
+            match char as u8 {
+                10 => {
+                    dx = x;
+                    dy += 6;
+                }
+                32 => {
+                    dx += if opts.small_text { 3 } else { 4 };
+                }
+                0 => {}
+                _ => {
+                    let glyph = if opts.small_text {
+                        (char as u8 + 128) as char
+                    } else {
+                        char
+                    };
+                    let width = draw_letter_to(self.font(), target, glyph, dx, dy, colour);
+                    dx += width + 1;
+                }
+            }
+            max_width = max_width.max(dx - x);
+        }
+        let _ = dy;
+        max_width
+    }
+
+    fn print_to_centered<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) -> i32 {
+        let width = self.print_to(target, text, 999, 999, colour, opts.clone());
+        self.print_to(target, text, x - width / 2, y, colour, opts)
+    }
+
+    fn print_to_shadow<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        shadow: C::Pixel,
+        opts: PrintOptions,
+    ) -> i32 {
+        self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
+        self.print_to(target, text, x, y, colour, opts)
+    }
+}
+
+/// Draw one 8×8 glyph from `font` onto `target` at (`x`, `y`) using `colour`
+/// for every non-transparent font pixel. Returns the visual width of the
+/// glyph (rightmost non-transparent column + 1).
+fn draw_letter_to<C: Canvas>(
+    font: &RgbaImage,
+    target: &mut C,
+    char: char,
+    x: i32,
+    y: i32,
+    colour: C::Pixel,
+) -> i32 {
+    let char_index = char as u8 as usize;
+    let glyph_x = (char_index % 16) * 8;
+    let glyph_y = (char_index / 16) * 8;
+    let target_w = target.width() as i32;
+    let target_h = target.height() as i32;
+    let mut letter_width = 0;
+    for j in 0..8 {
+        for i in 0..8 {
+            let font_index = (glyph_x + i as usize) + (glyph_y + j as usize) * 128;
+            if font.alpha_at_index(font_index) == 0 {
+                continue;
+            }
+            letter_width = letter_width.max(i + 1);
+            let px = x + i;
+            let py = y + j;
+            if px < 0 || py < 0 || px >= target_w || py >= target_h {
+                continue;
+            }
+            target.set_pixel(px as u32, py as u32, colour);
+        }
+    }
+    letter_width
 }
