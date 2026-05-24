@@ -187,7 +187,7 @@ impl GameMode {
             Self::MainMenu(state) => {
                 match state.step_main_menu(system, walkaround_state, inventory_ui) {
                     Some(x) => *self = x,
-                    None => state.draw_main_menu(system, elapsed_frames),
+                    None => state.draw_main_menu(draw_state, system, elapsed_frames),
                 };
             }
             Self::Inventory => {

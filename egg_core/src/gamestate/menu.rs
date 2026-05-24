@@ -188,16 +188,28 @@ impl MenuState {
         use MenuEntry::*;
         if let Reset(x) = &mut self.entries[index] { *x = 0 }
     }
-    fn hover(&self, system: &mut impl ConsoleApi, index: usize) {
+    fn hover(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        system: &mut impl ConsoleApi,
+        index: usize,
+    ) {
         use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
+        use crate::drawstate::LayerId;
+        use crate::system::drawing::Canvas;
         use MenuEntry::*;
         if let Reset(_) = self.entries[index] {
-            system.rect(60, 10, 120, 11, 2);
+            let bg = LayerId::BG as usize;
+            let c2 = draw_state.colour(2);
+            let c12 = draw_state.colour(12);
             let options = DIALOGUE_OPTIONS.get_options(system);
-            system.print_raw_centered(
+            draw_state.rgba_canvas[bg].fill_rect(60, 10, 120, 11, c2);
+            system.print_to_centered(
+                &mut draw_state.rgba_canvas[bg],
                 OPTIONS_LOSE_DATA,
                 120,
                 13,
+                c12,
                 PrintOptions {
                     color: 12,
                     ..options
@@ -205,23 +217,45 @@ impl MenuState {
             );
         }
     }
-    pub fn draw_main_menu(&self, system: &mut impl ConsoleApi, elapsed_frames: i32) {
-        system.cls(0);
+    pub fn draw_main_menu(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        system: &mut impl ConsoleApi,
+        elapsed_frames: i32,
+    ) {
+        use crate::drawstate::LayerId;
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+        use crate::system::image::RgbaImage;
+
+        let bg = LayerId::BG as usize;
+        let c0 = draw_state.colour(0);
+        draw_state.rgba_canvas[bg].fill(c0);
 
         if let Some(string) = self.draw_title {
-            draw_title(system, 120, 53, string, elapsed_frames);
+            draw_title_rgba(draw_state, system, 120, 53, string, elapsed_frames);
         }
 
         let strings: Vec<&str> = self.entries.iter().map(|x| x.text()).collect();
         let current_option = self.index;
         draw_menu(
+            draw_state,
             system,
             &strings,
             120,
             self.entry_height().into(),
             current_option,
         );
-        self.hover(system, current_option);
+        self.hover(draw_state, system, current_option);
+
+        let output = system.output_image();
+        output.blit::<RgbaImage>(
+            0,
+            0,
+            &draw_state.rgba_canvas[bg],
+            EdgePolicy::Transparent,
+            Transform::IDENTITY,
+            |p| p.a() == 0,
+        );
     }
 }
 
@@ -273,23 +307,35 @@ impl MenuEntry {
 }
 
 pub fn draw_menu(
+    draw_state: &mut crate::drawstate::DrawState,
     system: &mut impl ConsoleApi,
     entries: &[&str],
     x: i32,
     y: i32,
     current_option: usize,
 ) {
+    use crate::drawstate::LayerId;
+    use crate::system::drawing::Canvas;
+    let bg = LayerId::BG as usize;
+    let c1 = draw_state.colour(1);
+    let c3 = draw_state.colour(3);
+    let c4 = draw_state.colour(4);
+    let options = DIALOGUE_OPTIONS.get_options(system);
     for (i, string) in entries.iter().enumerate() {
-        let color = if i == current_option { 4 } else { 3 };
+        let color = if i == current_option { c4 } else { c3 };
         if i == current_option {
-            system.rect(0, y + i as i32 * 8 - 1, WIDTH, 8, 1);
+            draw_state.rgba_canvas[bg].fill_rect(0, y + i as i32 * 8 - 1, WIDTH, 8, c1);
         }
-        let options = DIALOGUE_OPTIONS.get_options(system);
-        system.print_raw_centered(
+        system.print_to_centered(
+            &mut draw_state.rgba_canvas[bg],
             string,
             x,
             y + i as i32 * 8,
-            PrintOptions { color, ..options },
+            color,
+            PrintOptions {
+                color: if i == current_option { 4 } else { 3 },
+                ..options.clone()
+            },
         );
     }
 }
@@ -392,38 +438,52 @@ pub fn draw_title_indexed(
     );
 }
 
-pub fn draw_title(
-    system: &mut impl ConsoleApi,
+/// RGBA-canvas variant of [`draw_title_indexed`], used by the migrated
+/// main menu.
+pub fn draw_title_rgba(
+    draw_state: &mut crate::drawstate::DrawState,
+    system: &impl ConsoleApi,
     x: i32,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
 ) {
     use crate::data::dialogue_data::GAME_TITLE_BLURB;
-    let game_title = &format!("{game_title}\0");
-    let title_width = system.print_raw(
-        game_title,
+    use crate::drawstate::{LayerId, PALETTE_MAP_IDENTITY};
+    use crate::system::drawing::Canvas;
+    let bg = LayerId::BG as usize;
+    let c2 = draw_state.colour(2);
+    let c14 = draw_state.colour(14);
+    let game_title_z = format!("{game_title}\0");
+    let title_width = system.print_to(
+        &mut draw_state.rgba_canvas[bg],
+        &game_title_z,
         999,
         999,
+        c2,
         PrintOptions {
             scale: 1,
             ..Default::default()
         },
     );
-    system.print_raw_centered(
-        game_title,
+    system.print_to_centered(
+        &mut draw_state.rgba_canvas[bg],
+        &game_title_z,
         x,
         y + 23,
+        c2,
         PrintOptions {
             scale: 1,
             color: 2,
             ..Default::default()
         },
     );
-    system.print_raw(
+    system.print_to(
+        &mut draw_state.rgba_canvas[bg],
         GAME_TITLE_BLURB,
         3,
         3,
+        c14,
         PrintOptions {
             scale: 1,
             color: 14,
@@ -431,10 +491,10 @@ pub fn draw_title(
             ..Default::default()
         },
     );
-
-    system.rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
-
-    system.spr(
+    draw_state.rgba_canvas[bg].fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, c2);
+    draw_state.spr(
+        LayerId::BG,
+        &PALETTE_MAP_IDENTITY,
         534,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
