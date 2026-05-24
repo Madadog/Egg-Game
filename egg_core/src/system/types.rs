@@ -1,4 +1,4 @@
-use crate::{data::save, system::{ConsoleApi, ConsoleHelper}};
+use crate::data::save;
 
 #[derive(Debug, Default)]
 pub struct SyncHelper {
@@ -169,14 +169,6 @@ impl<'a> StaticDrawParams<'a> {
             palette_rotate,
         }
     }
-    pub fn draw(self, system: &mut impl ConsoleApi) {
-        system.palette_map_rotate(self.palette_rotate.into());
-        if let Some(outline) = self.outline {
-            system.spr_outline(self.index, self.x, self.y, self.options, outline);
-        } else {
-            system.spr(self.index, self.x, self.y, self.options);
-        }
-    }
     pub fn draw_to(
         self,
         draw_state: &mut crate::drawstate::DrawState,
@@ -228,25 +220,6 @@ impl DrawParams {
             options,
             outline,
             palette_rotate,
-        }
-    }
-    pub fn draw(self, system: &mut impl ConsoleApi) {
-        system.palette_map_rotate(self.palette_rotate.into());
-        if let Some(outline) = self.outline {
-            system.spr_outline(
-                self.index,
-                self.x,
-                self.y,
-                self.options.compatibility_mode(),
-                outline,
-            );
-        } else {
-            system.spr(
-                self.index,
-                self.x,
-                self.y,
-                self.options.compatibility_mode(),
-            );
         }
     }
     pub fn draw_to(

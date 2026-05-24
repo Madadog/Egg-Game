@@ -1,4 +1,4 @@
-use crate::{position::Vec2, system::ConsoleApi};
+use crate::position::Vec2;
 use crate::system::StaticSpriteOptions;
 
 #[derive(Clone, Debug)]
@@ -9,14 +9,6 @@ pub enum ParticleDraw {
     Spr(i32),
 }
 impl ParticleDraw {
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, x: i32, y: i32) {
-        match &self {
-            ParticleDraw::Rect(w, h, colour) => system.rect(x, y, *w, *h, *colour),
-            ParticleDraw::RectB(w, h, colour) => system.rectb(x, y, *w, *h, *colour),
-            ParticleDraw::Circ(radius, colour) => system.circ(x, y, *radius, *colour),
-            ParticleDraw::Spr(id) => system.spr(*id, x, y, StaticSpriteOptions::transparent_zero()),
-        }
-    }
     pub fn draw_indexed(
         &self,
         draw_state: &mut crate::drawstate::DrawState,
@@ -84,10 +76,6 @@ impl Particle {
     pub fn alive(&self) -> bool {
         self.lifetime <= self.max_life
     }
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, x_offset: i32, y_offset: i32) {
-        let (x, y): (i32, i32) = (self.position.x.into(), self.position.y.into());
-        self.draw.draw_tic80(system, x + x_offset, y + y_offset);
-    }
     pub fn draw_indexed(
         &self,
         draw_state: &mut crate::drawstate::DrawState,
@@ -116,11 +104,6 @@ impl ParticleList {
     }
     pub fn shrink_to_fit(&mut self) {
         self.particles.shrink_to_fit();
-    }
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, x_offset: i32, y_offset: i32) {
-        self.particles
-            .iter()
-            .for_each(|x| x.draw_tic80(system, x_offset, y_offset));
     }
     pub fn draw_indexed(
         &self,

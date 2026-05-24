@@ -6,7 +6,7 @@ use crate::{
     },
     interact::{Interactable, StaticInteractable},
     position::{touches_tile, Collider, Hitbox, Vec2},
-    system::{ConsoleApi, ConsoleHelper},
+    system::ConsoleApi,
 };
 use crate::system::MapOptions;
 /*
@@ -51,16 +51,6 @@ pub struct MapInfo {
     pub camera_bounds: Option<CameraBounds>,
 }
 impl MapInfo {
-    pub fn draw_bg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
-        self.layers
-            .iter()
-            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
-    }
-    pub fn draw_fg(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
-        self.fg_layers
-            .iter()
-            .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
-    }
     pub fn draw_bg_indexed(
         &self,
         draw_state: &mut crate::drawstate::DrawState,
@@ -155,20 +145,6 @@ impl LayerInfo {
     pub fn shift_sprite_flags(&self) -> bool {
         self.rotate_and_shift_flags.1 != 0
     }
-    pub fn draw_tic80(&self, system: &mut impl ConsoleApi, bank: usize, offset: Vec2, debug: bool) {
-        if !self.visible {
-            return;
-        }
-        system.palette_map_rotate(self.palette_rotate().into());
-        let mut options: MapOptions = self.clone().into();
-        options.sx -= i32::from(offset.x);
-        options.sy -= i32::from(offset.y);
-        if debug {
-            system.rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
-        }
-        system.map_draw(bank, self.source_layer, options);
-    }
-
     pub fn draw_indexed(
         &self,
         draw_state: &mut crate::drawstate::DrawState,
