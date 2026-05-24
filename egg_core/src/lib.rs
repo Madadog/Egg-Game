@@ -36,10 +36,7 @@ use crate::gamestate::inventory::InventoryUi;
 use crate::gamestate::walkaround::WalkaroundState;
 
 pub struct EggState {
-    // TODO: move maps here
-    // pub maps: HashMap<String, GameMap>,
     pub draw_state: DrawState,
-
     pub gamestate: GameMode,
     pub walkaround: WalkaroundState,
     pub debug_info: DebugInfo,

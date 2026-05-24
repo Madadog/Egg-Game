@@ -25,8 +25,6 @@ use crate::tiled;
 // Yolkomatic
 
 // TODO:
-// Draw on images directly, remove API drawing methods
-//      * Make intro animation BG indexed because the fadein has been broken for 3 years
 // Turn `Creature` into normal entities
 // Remove Static{name} from everything, load data from files like a sane program.
 // Level editor that serialises to json
