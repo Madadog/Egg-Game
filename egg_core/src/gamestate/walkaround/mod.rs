@@ -343,7 +343,12 @@ impl WalkaroundState {
     }
 }
 
-impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for WalkaroundState {
+impl<T: ConsoleApi>
+    Game<
+        (&mut T, &mut InventoryUi),
+        (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
+    > for WalkaroundState
+{
     fn step(&mut self, (system, inventory_ui): (&mut T, &mut InventoryUi)) -> Option<GameMode> {
         self.map_animations
             .iter_mut()
@@ -526,15 +531,34 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
             .center_on(self.player_ref().pos.x + 4, self.player_ref().pos.y + 8);
         None
     }
-    fn draw(&self, (system, debug_info): (&mut T, &DebugInfo)) {
-        // Draw BG
-        system.palette_map_reset();
-        system.cls(self.bg_colour);
-        self.current_map
-            .draw_bg(system, self.current_map.bank, self.camera.pos, false);
+    fn draw(
+        &self,
+        (draw_state, system, debug_info): (
+            &mut crate::drawstate::DrawState,
+            &mut T,
+            &DebugInfo,
+        ),
+    ) {
+        use crate::drawstate::LayerId;
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+        use crate::system::image::RgbaImage;
 
+        let bg = LayerId::BG as usize;
+        let bg_colour = draw_state.colour(self.bg_colour);
+        draw_state.rgba_canvas[bg].fill(bg_colour);
+
+        // BG map layers
+        self.current_map.draw_bg_indexed(
+            draw_state,
+            LayerId::BG,
+            self.current_map.bank,
+            self.camera.pos,
+            false,
+        );
+
+        // Particles
         self.particles
-            .draw_tic80(system, -self.cam_x(), -self.cam_y());
+            .draw_indexed(draw_state, LayerId::BG, -self.cam_x(), -self.cam_y());
 
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
@@ -590,13 +614,32 @@ impl<T: ConsoleApi> Game<(&mut T, &mut InventoryUi), (&mut T, &DebugInfo)> for W
 
         // Draw sprites
         for options in sprites {
-            options.draw(system);
+            options.draw_to(draw_state, LayerId::BG);
         }
 
-        // Draw FG
-        system.palette_map_reset();
-        self.current_map
-            .draw_fg(system, self.current_map.bank, self.camera.pos, false);
+        // FG map layers (drawn on top of sprites)
+        self.current_map.draw_fg_indexed(
+            draw_state,
+            LayerId::BG,
+            self.current_map.bank,
+            self.camera.pos,
+            false,
+        );
+
+        // Composite migrated content. Dialogue and debug overlays still use
+        // the legacy console.screen path; blit_to_image merges them on top of
+        // output_image after this returns.
+        {
+            let output = system.output_image();
+            output.blit::<RgbaImage>(
+                0,
+                0,
+                &draw_state.rgba_canvas[bg],
+                EdgePolicy::Transparent,
+                Transform::IDENTITY,
+                |p| p.a() == 0,
+            );
+        }
 
         if let Some(string) = &self.dialogue.current_text {
             self.dialogue.draw_dialogue_box(system, string, true);

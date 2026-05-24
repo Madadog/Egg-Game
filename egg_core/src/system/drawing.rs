@@ -479,14 +479,17 @@ impl RgbaImage {
         {
             return;
         }
-        if opts.sx < 0 {
-            let x_tiles = -opts.sx.div_euclid(8);
+        // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
+        // so a partial tile at sx=-1 keeps drawing — `div_euclid` would round
+        // away from zero and crop a whole tile.
+        if opts.sx <= 0 {
+            let x_tiles = -(opts.sx / 8);
             opts.sx += x_tiles * 8;
             opts.x += x_tiles;
             opts.w -= x_tiles;
         }
-        if opts.sy < 0 {
-            let y_tiles = -opts.sy.div_euclid(8);
+        if opts.sy <= 0 {
+            let y_tiles = -(opts.sy / 8);
             opts.sy += y_tiles * 8;
             opts.y += y_tiles;
             opts.h -= y_tiles;
@@ -585,14 +588,17 @@ impl IndexedImage {
         {
             return;
         }
-        if opts.sx < 0 {
-            let x_tiles = -opts.sx.div_euclid(8);
+        // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
+        // so a partial tile at sx=-1 keeps drawing — `div_euclid` would round
+        // away from zero and crop a whole tile.
+        if opts.sx <= 0 {
+            let x_tiles = -(opts.sx / 8);
             opts.sx += x_tiles * 8;
             opts.x += x_tiles;
             opts.w -= x_tiles;
         }
-        if opts.sy < 0 {
-            let y_tiles = -opts.sy.div_euclid(8);
+        if opts.sy <= 0 {
+            let y_tiles = -(opts.sy / 8);
             opts.sy += y_tiles * 8;
             opts.y += y_tiles;
             opts.h -= y_tiles;

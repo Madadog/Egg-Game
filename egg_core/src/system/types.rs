@@ -177,6 +177,26 @@ impl<'a> StaticDrawParams<'a> {
             system.spr(self.index, self.x, self.y, self.options);
         }
     }
+    pub fn draw_to(
+        self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+    ) {
+        let palette_map = crate::drawstate::palette_map_rotate(self.palette_rotate.into());
+        if let Some(outline) = self.outline {
+            draw_state.spr_with_outline(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                self.options,
+                outline,
+            );
+        } else {
+            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, self.options);
+        }
+    }
     pub fn bottom(&self) -> i32 {
         self.y + self.options.h * 8
     }
@@ -227,6 +247,27 @@ impl DrawParams {
                 self.y,
                 self.options.compatibility_mode(),
             );
+        }
+    }
+    pub fn draw_to(
+        self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+    ) {
+        let palette_map = crate::drawstate::palette_map_rotate(self.palette_rotate.into());
+        let opts = self.options.compatibility_mode();
+        if let Some(outline) = self.outline {
+            draw_state.spr_with_outline(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                opts,
+                outline,
+            );
+        } else {
+            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, opts);
         }
     }
     pub fn bottom(&self) -> i32 {

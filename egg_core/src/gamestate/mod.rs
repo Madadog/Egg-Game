@@ -164,7 +164,7 @@ impl GameMode {
             }
             Self::Walkaround => {
                 let next = walkaround_state.step((system, inventory_ui));
-                walkaround_state.draw((system, debug_info));
+                walkaround_state.draw((draw_state, system, debug_info));
                 if let Some(state) = next {
                     *self = state;
                 }

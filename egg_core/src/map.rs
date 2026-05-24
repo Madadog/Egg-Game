@@ -61,6 +61,30 @@ impl MapInfo {
             .iter()
             .for_each(|layer| layer.draw_tic80(system, bank, offset, debug))
     }
+    pub fn draw_bg_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        bank: usize,
+        offset: Vec2,
+        debug: bool,
+    ) {
+        for l in &self.layers {
+            l.draw_indexed(draw_state, layer, bank, offset, debug);
+        }
+    }
+    pub fn draw_fg_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        bank: usize,
+        offset: Vec2,
+        debug: bool,
+    ) {
+        for l in &self.fg_layers {
+            l.draw_indexed(draw_state, layer, bank, offset, debug);
+        }
+    }
 }
 impl From<StaticMapInfo<'static>> for MapInfo {
     fn from(value: StaticMapInfo) -> Self {
@@ -143,6 +167,36 @@ impl LayerInfo {
             system.rectb(options.sx, options.sy, options.w * 8, options.h * 8, 9);
         }
         system.map_draw(bank, self.source_layer, options);
+    }
+
+    pub fn draw_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        bank: usize,
+        offset: Vec2,
+        debug: bool,
+    ) {
+        use crate::drawstate::palette_map_rotate;
+        use crate::system::drawing::Canvas;
+        if !self.visible {
+            return;
+        }
+        let palette_map = palette_map_rotate(self.palette_rotate().into());
+        let mut options: MapOptions = self.clone().into();
+        options.sx -= i32::from(offset.x);
+        options.sy -= i32::from(offset.y);
+        if debug {
+            let c9 = draw_state.colour(9);
+            draw_state.rgba_canvas[layer as usize].stroke_rect(
+                options.sx,
+                options.sy,
+                options.w * 8,
+                options.h * 8,
+                c9,
+            );
+        }
+        draw_state.map_draw(layer, bank, self.source_layer, &palette_map, options);
     }
     pub fn hitbox(&self) -> Hitbox {
         Hitbox::new(

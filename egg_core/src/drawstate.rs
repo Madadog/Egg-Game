@@ -133,17 +133,18 @@ impl DrawState {
         canvas.spr_indexed(&self.indexed_sprites, palette, palette_map, id, x, y, opts);
     }
 
-    /// Draw a region of `maps[bank]`'s layer `map_layer` onto the RGBA `layer`.
+    /// Draw a region of `self.maps[bank]`'s layer `map_layer` onto the RGBA
+    /// `layer`, using the default indexed sprite sheet and the caller-supplied
+    /// `palette_map`.
     pub fn map_draw(
         &mut self,
         layer: LayerId,
-        maps: &[GameMap],
         bank: usize,
         map_layer: usize,
         palette_map: &[usize],
         opts: MapOptions,
     ) {
-        let Some(m) = maps.get(bank) else { return };
+        let Some(m) = self.maps.get(bank) else { return };
         let canvas = &mut self.rgba_canvas[layer as usize];
         let palette = self.palettes[0].as_slice();
         canvas.map_draw_indexed(m, map_layer, &self.indexed_sprites, palette, palette_map, opts);

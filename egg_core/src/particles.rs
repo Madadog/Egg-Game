@@ -17,6 +17,41 @@ impl ParticleDraw {
             ParticleDraw::Spr(id) => system.spr(*id, x, y, StaticSpriteOptions::transparent_zero()),
         }
     }
+    pub fn draw_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        x: i32,
+        y: i32,
+    ) {
+        use crate::drawstate::PALETTE_MAP_IDENTITY;
+        use crate::system::drawing::Canvas;
+        let bg = layer as usize;
+        match *self {
+            ParticleDraw::Rect(w, h, colour) => {
+                let c = draw_state.colour(colour);
+                draw_state.rgba_canvas[bg].fill_rect(x, y, w, h, c);
+            }
+            ParticleDraw::RectB(w, h, colour) => {
+                let c = draw_state.colour(colour);
+                draw_state.rgba_canvas[bg].stroke_rect(x, y, w, h, c);
+            }
+            ParticleDraw::Circ(radius, colour) => {
+                let c = draw_state.colour(colour);
+                draw_state.rgba_canvas[bg].fill_circle(x, y, radius, c);
+            }
+            ParticleDraw::Spr(id) => {
+                draw_state.spr(
+                    layer,
+                    &PALETTE_MAP_IDENTITY,
+                    id,
+                    x,
+                    y,
+                    StaticSpriteOptions::transparent_zero(),
+                );
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +88,16 @@ impl Particle {
         let (x, y): (i32, i32) = (self.position.x.into(), self.position.y.into());
         self.draw.draw_tic80(system, x + x_offset, y + y_offset);
     }
+    pub fn draw_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        x_offset: i32,
+        y_offset: i32,
+    ) {
+        let (x, y): (i32, i32) = (self.position.x.into(), self.position.y.into());
+        self.draw.draw_indexed(draw_state, layer, x + x_offset, y + y_offset);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -76,6 +121,17 @@ impl ParticleList {
         self.particles
             .iter()
             .for_each(|x| x.draw_tic80(system, x_offset, y_offset));
+    }
+    pub fn draw_indexed(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        layer: crate::drawstate::LayerId,
+        x_offset: i32,
+        y_offset: i32,
+    ) {
+        for p in &self.particles {
+            p.draw_indexed(draw_state, layer, x_offset, y_offset);
+        }
     }
     pub fn add(&mut self, particle: Particle) {
         self.particles.push(particle)
