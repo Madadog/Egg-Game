@@ -107,9 +107,7 @@ pub fn draw_animation(
         // Intro complete: set save flag, reset palette, show title.
         system.music(None);
         system.memory().set(save::INTRO_ANIM_SEEN);
-        for (dst, src) in draw_state.palettes[0].iter_mut().zip(SWEETIE_16.iter()) {
-            *dst = *src;
-        }
+        draw_state.set_palette(&SWEETIE_16);
         draw_state.indexed_canvas[LayerId::BG as usize].fill(0);
         draw_state.indexed_canvas[LayerId::FG as usize].fill(0);
         let fg = &mut draw_state.indexed_canvas[LayerId::FG as usize];

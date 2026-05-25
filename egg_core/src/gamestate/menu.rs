@@ -152,22 +152,13 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        crate::gamestate::walkaround::apply_palette(
-                            draw_state,
-                            &crate::system::SWEETIE_16,
-                        );
+                        draw_state.set_palette(&crate::system::SWEETIE_16);
                     }
                     1 => {
-                        crate::gamestate::walkaround::apply_palette(
-                            draw_state,
-                            &crate::system::NIGHT_16,
-                        );
+                        draw_state.set_palette(&crate::system::NIGHT_16);
                     }
                     2 => {
-                        crate::gamestate::walkaround::apply_palette(
-                            draw_state,
-                            &crate::system::B_W,
-                        );
+                        draw_state.set_palette(&crate::system::B_W);
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();

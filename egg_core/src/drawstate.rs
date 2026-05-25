@@ -75,6 +75,16 @@ impl DrawState {
         self.rgba_canvas[layer as usize].fill(colour);
     }
 
+    /// Replace the first 16 entries of `palettes[0]` with the given palette.
+    /// Slots beyond 16 (filler) are left untouched.
+    pub fn set_palette(&mut self, palette: &[[u8; 3]; 16]) {
+        for (i, c) in palette.iter().enumerate() {
+            if let Some(slot) = self.palettes[0].get_mut(i) {
+                *slot = *c;
+            }
+        }
+    }
+
     /// Draw a sprite from the default indexed sprite sheet onto `layer`,
     /// using the default palette and the caller-supplied `palette_map`.
     pub fn spr(

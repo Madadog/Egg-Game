@@ -343,15 +343,6 @@ impl WalkaroundState {
     }
 }
 
-/// Copy a 16-colour palette into the first 16 slots of `palettes[0]`.
-pub fn apply_palette(draw_state: &mut crate::drawstate::DrawState, palette: &[[u8; 3]; 16]) {
-    for (i, c) in palette.iter().enumerate() {
-        if let Some(slot) = draw_state.palettes[0].get_mut(i) {
-            *slot = *c;
-        }
-    }
-}
-
 impl<T: ConsoleApi>
     Game<
         (&mut crate::drawstate::DrawState, &mut T, &mut InventoryUi),
@@ -393,13 +384,13 @@ impl<T: ConsoleApi>
             self.load_pmem(system);
         }
         if system.keyp(ScanCode::Digit6, -1, -1) {
-            apply_palette(draw_state, &crate::system::SWEETIE_16);
+            draw_state.set_palette(&crate::system::SWEETIE_16);
         }
         if system.keyp(ScanCode::Digit7, -1, -1) {
-            apply_palette(draw_state, &crate::system::NIGHT_16);
+            draw_state.set_palette(&crate::system::NIGHT_16);
         }
         if system.keyp(ScanCode::Digit8, -1, -1) {
-            apply_palette(draw_state, &crate::system::B_W);
+            draw_state.set_palette(&crate::system::B_W);
         }
 
         // Get keyboard inputs
