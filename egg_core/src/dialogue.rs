@@ -20,6 +20,7 @@ use std::{
 };
 
 use crate::{
+    drawstate::{DrawState, LayerId},
     position::Vec2,
     system::{ConsoleApi, ConsoleHelper},
 };
@@ -345,8 +346,8 @@ impl Dialogue {
     }
     pub fn draw_dialogue_portrait(
         &self,
-        draw_state: &mut crate::drawstate::DrawState,
-        layer: crate::drawstate::LayerId,
+        draw_state: &mut DrawState,
+        layer: LayerId,
         system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
@@ -362,22 +363,16 @@ impl Dialogue {
         let w = self.width as i32;
         let h = 24;
         self.draw_dialogue_box_with_offset(draw_state, layer, system, string, timer, 14, -2, 4);
-        let c0 = draw_state.colour(0);
-        let c3 = draw_state.colour(3);
-        let bg = layer as usize;
-        draw_state.rgba_canvas[bg].fill_rect(
+        let rect_fill = draw_state.colour(0);
+        let rect_outline = draw_state.colour(3);
+        //TODO: flexbox
+        draw_state.rgba(layer).outlined_rect(
             (WIDTH - w) / 2 - 13,
             (HEIGHT - h) - 6,
             h + 4,
             h + 4,
-            c0,
-        );
-        draw_state.rgba_canvas[bg].stroke_rect(
-            (WIDTH - w) / 2 - 13,
-            (HEIGHT - h) - 6,
-            h + 4,
-            h + 4,
-            c3,
+            rect_fill,
+            rect_outline,
         );
         draw_state.spr(
             layer,
@@ -397,8 +392,8 @@ impl Dialogue {
 
     pub fn draw_dialogue_box_with_offset(
         &self,
-        draw_state: &mut crate::drawstate::DrawState,
-        layer: crate::drawstate::LayerId,
+        draw_state: &mut DrawState,
+        layer: LayerId,
         system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
@@ -412,15 +407,12 @@ impl Dialogue {
         let print_timer = self.characters;
         let w = self.width as i32;
         let h = 24;
-        let bg = layer as usize;
 
-        let outline_colour = if self.dark_theme { 1u8 } else { 3 };
-        let bg_colour = if self.dark_theme { 1u8 } else { 2 };
-        let c_outline = draw_state.colour(outline_colour);
-        let c_bg = draw_state.colour(bg_colour);
-        let c0 = draw_state.colour(0);
-        let c1 = draw_state.colour(1);
-        let c12 = draw_state.colour(12);
+        let outline_colour = draw_state.colour(if self.dark_theme { 1u8 } else { 3 });
+        let bg_colour = draw_state.colour(if self.dark_theme { 1u8 } else { 2 });
+        let dark = draw_state.colour(0);
+        let darkish = draw_state.colour(1);
+        let bright = draw_state.colour(12);
 
         // Portrait
         if let Some(portrait) = &self.portrait {
@@ -432,19 +424,13 @@ impl Dialogue {
                 w
             };
             y -= 2;
-            draw_state.rgba_canvas[bg].fill_rect(
+            draw_state.rgba(layer).outlined_rect(
                 (WIDTH - pw) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
                 h + 4,
-                c0,
-            );
-            draw_state.rgba_canvas[bg].stroke_rect(
-                (WIDTH - pw) / 2 - 13,
-                (HEIGHT - h) - 6,
-                h + 4,
-                h + 4,
-                c_outline,
+                dark,
+                outline_colour,
             );
             height += 4;
             portrait.draw_offset(
@@ -452,44 +438,32 @@ impl Dialogue {
                 layer,
                 Vec2::new(((WIDTH - pw) / 2 - 15) as i16, ((HEIGHT - h) - 8) as i16),
             );
-            draw_state.rgba_canvas[bg].stroke_rect(
+            draw_state.rgba(layer).stroke_rect(
                 (WIDTH - pw) / 2 - 13,
                 (HEIGHT - h) - 6,
                 h + 4,
                 h + 4,
-                c_outline,
+                outline_colour,
             );
         }
         // Text box
         if self.dark_theme {
-            draw_state.rgba_canvas[bg].fill_rect(
+            draw_state.rgba(layer).outlined_rect(
                 (WIDTH - w) / 2 + x - 2,
                 (HEIGHT - h) - 4 + y - 2,
                 w + 4,
                 h + height + 4,
-                c1,
-            );
-            draw_state.rgba_canvas[bg].stroke_rect(
-                (WIDTH - w) / 2 + x - 2,
-                (HEIGHT - h) - 4 + y - 2,
-                w + 4,
-                h + height + 4,
-                c0,
+                darkish,
+                dark,
             );
         }
-        draw_state.rgba_canvas[bg].fill_rect(
+        draw_state.rgba(layer).outlined_rect(
             (WIDTH - w) / 2 + x,
             (HEIGHT - h) - 4 + y,
             w,
             h + height,
-            c_bg,
-        );
-        draw_state.rgba_canvas[bg].stroke_rect(
-            (WIDTH - w) / 2 + x,
-            (HEIGHT - h) - 4 + y,
-            w,
-            h + height,
-            c_outline,
+            bg_colour,
+            outline_colour,
         );
         let options = DIALOGUE_OPTIONS.get_options(system);
         let text: &str = if timer {
@@ -498,11 +472,11 @@ impl Dialogue {
             string
         };
         system.print_to(
-            &mut draw_state.rgba_canvas[bg],
+            draw_state.rgba(layer),
             text,
             (WIDTH - w) / 2 + 3 + x,
             (HEIGHT - h) - 4 + 3 + y,
-            c12,
+            bright,
             PrintOptions {
                 color: 12,
                 ..options
@@ -512,8 +486,8 @@ impl Dialogue {
 
     pub fn draw_dialogue_box(
         &self,
-        draw_state: &mut crate::drawstate::DrawState,
-        layer: crate::drawstate::LayerId,
+        draw_state: &mut DrawState,
+        layer: LayerId,
         system: &mut impl ConsoleApi,
         string: &str,
         timer: bool,
@@ -536,12 +510,7 @@ impl Debug for Dialogue {
     }
 }
 
-pub fn print_width(
-    system: &impl ConsoleApi,
-    string: &str,
-    fixed: bool,
-    small_font: bool,
-) -> i32 {
+pub fn print_width(system: &impl ConsoleApi, string: &str, fixed: bool, small_font: bool) -> i32 {
     crate::system::text_width(
         system.font(),
         string,

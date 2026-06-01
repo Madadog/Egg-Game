@@ -1,6 +1,6 @@
 use crate::{
     data::{dialogue_data::*, sound},
-    dialogue::{print_width, Dialogue},
+    dialogue::{Dialogue, print_width},
     system::{ConsoleApi, ConsoleHelper},
 };
 
@@ -63,11 +63,7 @@ impl Inventory {
     }
     pub fn take(&mut self, index: usize) -> Option<&'static InventoryItem> {
         if let Some(slot) = self.items.get_mut(index) {
-            if slot.is_some() {
-                slot.take()
-            } else {
-                None
-            }
+            if slot.is_some() { slot.take() } else { None }
         } else {
             None
         }
@@ -207,9 +203,9 @@ impl InventoryUi {
     }
     pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {
         use crate::dialogue::DIALOGUE_OPTIONS;
-        use crate::drawstate::{LayerId, PALETTE_MAP_IDENTITY};
+        use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-        use crate::system::image::RgbaImage;
+        use crate::system::image::{Rgba, RgbaImage};
         use crate::system::{HEIGHT, PrintOptions, StaticSpriteOptions, WIDTH};
         let entries = [
             INVENTORY_ITEMS,
@@ -241,10 +237,10 @@ impl InventoryUi {
                 main_colour += 2;
             }
         };
-        let bg = LayerId::BG as usize;
+        let fg = FG as usize;
         let pmap = PALETTE_MAP_IDENTITY;
-        let c0 = draw_state.colour(0);
-        let c12 = draw_state.colour(12);
+        let black = draw_state.colour(0);
+        let white = draw_state.colour(12);
         let c_col = draw_state.colour(column_colour);
         let c_col_outline = draw_state.colour(column_colour + 1);
         let c_main = draw_state.colour(main_colour);
@@ -255,20 +251,34 @@ impl InventoryUi {
             ..Default::default()
         };
 
-        draw_state.rgba_canvas[bg].fill(c0);
+        draw_state.rgba(FG).fill(Rgba::TRANSPARENT);
         system.print_to_centered(
-            &mut draw_state.rgba_canvas[bg],
+            draw_state.rgba(FG),
+            crate::data::dialogue_data::INVENTORY_TITLE,
+            120 + 1,
+            37 + 1,
+            black,
+            body_opts.clone(),
+        );
+        system.print_to_centered(
+            draw_state.rgba(FG),
             crate::data::dialogue_data::INVENTORY_TITLE,
             120,
             37,
-            c12,
+            white,
             body_opts.clone(),
         );
         // Side selection: rect_outline = fill_rect + stroke_rect
         let side_h = 5 + entries.len() as i32 * 8;
-        draw_state.rgba_canvas[bg].fill_rect(x_offset, y_offset, side_column, side_h, c_col);
-        draw_state.rgba_canvas[bg].stroke_rect(x_offset, y_offset, side_column, side_h, c_col_outline);
-        draw_state.rgba_canvas[bg].fill_rect(
+        draw_state.rgba(FG).outlined_rect(
+            x_offset,
+            y_offset,
+            side_column,
+            side_h,
+            c_col,
+            c_col_outline,
+        );
+        draw_state.rgba(FG).fill_rect(
             x_offset + 1,
             y_offset + 8 * self.state.page() + 3,
             side_column - 2,
@@ -277,28 +287,22 @@ impl InventoryUi {
         );
         for (i, string) in entries.iter().enumerate() {
             system.print_to(
-                &mut draw_state.rgba_canvas[bg],
+                draw_state.rgba(FG),
                 string,
                 x_offset + 2,
                 y_offset + i as i32 * 8 + 4,
-                c12,
+                white,
                 body_opts.clone(),
             );
         }
         match self.state.page() {
             0 => {
-                draw_state.rgba_canvas[bg].fill_rect(
+                draw_state.rgba(FG).outlined_rect(
                     x_offset + side_column + column_margin,
                     y_offset,
                     main_width,
                     total_height,
                     c_main,
-                );
-                draw_state.rgba_canvas[bg].stroke_rect(
-                    x_offset + side_column + column_margin,
-                    y_offset,
-                    main_width,
-                    total_height,
                     c_main_outline,
                 );
                 for (i, item) in (0..).zip(self.inventory.items.iter()) {
@@ -306,11 +310,17 @@ impl InventoryUi {
                         x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
                         y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    draw_state.rgba_canvas[bg].fill_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c0);
-                    draw_state.rgba_canvas[bg].stroke_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c_main_outline);
+                    draw_state.rgba(FG).outlined_rect(
+                        sx,
+                        sy,
+                        item_slot_size - 1,
+                        item_slot_size - 1,
+                        black,
+                        c_main_outline,
+                    );
                     if let Some(item) = item {
                         draw_state.spr(
-                            LayerId::BG,
+                            FG,
                             &pmap,
                             item.sprite,
                             sx + 2,
@@ -325,18 +335,12 @@ impl InventoryUi {
                 }
             }
             1 => {
-                draw_state.rgba_canvas[bg].fill_rect(
+                draw_state.rgba(FG).outlined_rect(
                     x_offset + side_column + column_margin,
                     y_offset,
                     main_width,
                     item_slot_size + 5,
                     c_main,
-                );
-                draw_state.rgba_canvas[bg].stroke_rect(
-                    x_offset + side_column + column_margin,
-                    y_offset,
-                    main_width,
-                    item_slot_size + 5,
                     c_main_outline,
                 );
                 for i in 0..4 {
@@ -344,10 +348,16 @@ impl InventoryUi {
                         x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
                         y_offset + 3 + (i / 4) * item_slot_size,
                     );
-                    draw_state.rgba_canvas[bg].fill_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c0);
-                    draw_state.rgba_canvas[bg].stroke_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c_main_outline);
+                    draw_state.rgba(FG).outlined_rect(
+                        sx,
+                        sy,
+                        item_slot_size - 1,
+                        item_slot_size - 1,
+                        black,
+                        c_main_outline,
+                    );
                     draw_state.spr(
-                        LayerId::BG,
+                        FG,
                         &pmap,
                         534,
                         sx + 2,
@@ -361,7 +371,30 @@ impl InventoryUi {
                     );
                 }
             }
-            _ => (),
+            n => {
+                let string = match n {
+                    2 => "Open options menu",
+                    _ => "Back to world",
+                };
+                let width = system.text_width(string, body_opts.clone());
+                let y_offset = y_offset + n * 8 + 2;
+                draw_state.rgba(FG).outlined_rect(
+                    x_offset + side_column + column_margin,
+                    y_offset,
+                    width + 4,
+                    10,
+                    c_col,
+                    c_col_outline,
+                );
+                system.print_to(
+                    draw_state.rgba(FG),
+                    string,
+                    x_offset + side_column + column_margin + 2,
+                    y_offset + 2,
+                    white,
+                    body_opts.clone(),
+                );
+            }
         };
         let c2 = draw_state.colour(2);
         let c3 = draw_state.colour(3);
@@ -375,7 +408,13 @@ impl InventoryUi {
                         + (*current_index as i32 % 4) * item_slot_size,
                     y_offset + 3 + (*current_index as i32 / 4) * item_slot_size,
                 );
-                draw_state.rgba_canvas[bg].stroke_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c12);
+                draw_state.rgba(FG).stroke_rect(
+                    sx,
+                    sy,
+                    item_slot_size - 1,
+                    item_slot_size - 1,
+                    white,
+                );
                 if let Some((selected_index, selected_item)) = selected {
                     let (old_sx, old_sy) = (
                         x_offset
@@ -385,9 +424,15 @@ impl InventoryUi {
                             + (*selected_index as i32 % 4) * item_slot_size,
                         y_offset + 3 + (*selected_index as i32 / 4) * item_slot_size,
                     );
-                    draw_state.rgba_canvas[bg].fill_rect(old_sx + 1, old_sy + 1, item_slot_size - 3, item_slot_size - 3, c0);
+                    draw_state.rgba_canvas[fg].fill_rect(
+                        old_sx + 1,
+                        old_sy + 1,
+                        item_slot_size - 3,
+                        item_slot_size - 3,
+                        black,
+                    );
                     draw_state.spr_with_outline(
-                        LayerId::BG,
+                        FG,
                         &pmap,
                         selected_item.sprite,
                         sx + 2,
@@ -399,25 +444,23 @@ impl InventoryUi {
                         },
                         12,
                     );
-                    draw_state.rgba_canvas[bg].fill_rect(7, 98, 70, 9, c2);
-                    draw_state.rgba_canvas[bg].stroke_rect(7, 98, 70, 9, c3);
+                    draw_state.rgba_canvas[fg].outlined_rect(7, 98, 70, 9, c2, c3);
                     system.print_to(
-                        &mut draw_state.rgba_canvas[bg],
+                        draw_state.rgba(FG),
                         selected_item.name,
                         9,
                         100,
-                        c12,
+                        white,
                         body_opts.clone(),
                     );
                 } else if let Some(item) = &self.inventory.items[*current_index] {
-                    draw_state.rgba_canvas[bg].fill_rect(7, 98, 70, 9, c2);
-                    draw_state.rgba_canvas[bg].stroke_rect(7, 98, 70, 9, c3);
+                    draw_state.rgba_canvas[fg].outlined_rect(7, 98, 70, 9, c2, c3);
                     system.print_to(
-                        &mut draw_state.rgba_canvas[bg],
+                        draw_state.rgba(FG),
                         item.name,
                         9,
                         100,
-                        c12,
+                        white,
                         body_opts.clone(),
                     );
                 }
@@ -431,7 +474,13 @@ impl InventoryUi {
                         + (*current_index as i32 % 4) * item_slot_size,
                     y_offset + 3,
                 );
-                draw_state.rgba_canvas[bg].stroke_rect(sx, sy, item_slot_size - 1, item_slot_size - 1, c12);
+                draw_state.rgba_canvas[fg].stroke_rect(
+                    sx,
+                    sy,
+                    item_slot_size - 1,
+                    item_slot_size - 1,
+                    white,
+                );
             }
             _ => {}
         };
@@ -443,7 +492,7 @@ impl InventoryUi {
                     let string = self.dialogue.fit_text(system, selected_item.desc);
                     self.dialogue.draw_dialogue_portrait(
                         draw_state,
-                        LayerId::BG,
+                        FG,
                         system,
                         &string,
                         false,
@@ -456,7 +505,7 @@ impl InventoryUi {
                     let string = self.dialogue.fit_text(system, item.desc);
                     self.dialogue.draw_dialogue_portrait(
                         draw_state,
-                        LayerId::BG,
+                        FG,
                         system,
                         &string,
                         false,
@@ -475,7 +524,15 @@ impl InventoryUi {
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[bg],
+            &draw_state.rgba_canvas[BG as usize],
+            EdgePolicy::Transparent,
+            Transform::IDENTITY,
+            |p| p.a() == 0,
+        );
+        output.blit::<RgbaImage>(
+            0,
+            0,
+            &draw_state.rgba_canvas[fg],
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,

@@ -40,10 +40,13 @@ fn default_palette() -> Vec<[u8; 3]> {
     p
 }
 
+/// Named index of the layer you're drawing to. Can be cast to `usize`.
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub enum LayerId {
+    /// Background layer
     BG = 0,
+    /// Foreground layer
     FG,
 }
 

@@ -185,6 +185,10 @@ pub trait ConsoleHelper: ConsoleApi {
         self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
         self.print_to(target, text, x, y, colour, opts)
     }
+
+    fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
+        text_width(self.font(), text, opts)
+    }
 }
 
 /// Measure the maximum line width of `text` rendered with `font`. Equivalent

@@ -1,29 +1,24 @@
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::save;
 use crate::data::sound::music::MusicTrack;
-use crate::drawstate::{DrawState, LayerId, fade_colour_into, fade_palette_into};
+use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::menu::draw_title_indexed;
 use crate::system::drawing::{Canvas, EdgePolicy};
 use crate::system::{ConsoleApi, HEIGHT, SWEETIE_16, WIDTH};
 
-pub fn draw_animation(
-    t: u16,
-    draw_state: &mut DrawState,
-    system: &mut impl ConsoleApi,
-) -> bool {
+pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl ConsoleApi) -> bool {
     let steps: &[u16] = &[0, 700, 760];
     let index = steps.iter().position(|&x| x >= t);
     let local_time = index.map(|x| t - steps[x.saturating_sub(1)]);
-    // Camera shake: a local, applied at compose time.
     let mut screen_offset = [0i8; 2];
 
     if let Some(local_time) = local_time {
         match index {
             Some(0) => {
-                // Egg icon + starfield. Solid black BG, FG holds everything.
-                draw_state.indexed_canvas[LayerId::BG as usize].fill(0);
+                // Black BG, Oblong sun + starfield on FG.
+                draw_state.indexed_canvas[BG as usize].fill(0);
                 system.music(Some(&MusicTrack::INTRO));
-                let fg = &mut draw_state.indexed_canvas[LayerId::FG as usize];
+                let fg = &mut draw_state.indexed(FG);
                 fg.fill(0);
                 fg.stroke_circle(90, 38, 4, 4);
                 fg.stroke_circle(90, 36, 3, 4);
@@ -39,7 +34,7 @@ pub fn draw_animation(
                 }
             }
             Some(1) => {
-                // Growing white circle with palette fading in from black.
+                // Growing circle with palette fading in from black.
                 let max_time = 700.0 - 60.0;
                 fade_palette_into(
                     &mut draw_state.palettes[0],
@@ -53,7 +48,7 @@ pub fn draw_animation(
                 if let Some(slot) = draw_state.palettes[0].get_mut(15) {
                     *slot = [0x0F; 3];
                 }
-                let fg = &mut draw_state.indexed_canvas[LayerId::FG as usize];
+                let fg = &mut draw_state.indexed(FG);
                 fg.fill_circle(120, 68, t, 15);
                 fg.stroke_circle(120, 68, t, 2);
                 let (horizontal, vertical) = (
@@ -71,12 +66,9 @@ pub fn draw_animation(
                 }
             }
             Some(2) => {
-                // Whiteout fading to title screen.
-                // Order matters in the indexed model: do the global
-                // fade_palette first, then override palette[15] with the
-                // BG-specific fade. Otherwise fade_palette resets
-                // palette[15] back to SWEETIE_16[15] and the BG ends on
-                // medium blue-grey instead of dark blue.
+                // Blackout fading to title screen.
+                // palette[15] fades to palette[0] otherwise
+                // the transition to the title is rough
                 fade_palette_into(
                     &mut draw_state.palettes[0],
                     &[[0x0F; 3]; 16],
@@ -86,9 +78,9 @@ pub fn draw_animation(
                 if let Some(slot) = draw_state.palettes[0].get_mut(15) {
                     fade_colour_into(slot, [0x0F; 3], [26, 28, 44], local_time * 10);
                 }
-                draw_state.indexed_canvas[LayerId::BG as usize].fill(15);
-                draw_state.indexed_canvas[LayerId::FG as usize].fill(0);
-                let fg = &mut draw_state.indexed_canvas[LayerId::FG as usize];
+                draw_state.indexed(BG).fill(15);
+                draw_state.indexed(FG).fill(0);
+                let fg = &mut draw_state.indexed_canvas[FG as usize];
                 draw_title_indexed(
                     fg,
                     &draw_state.indexed_sprites,
@@ -99,7 +91,7 @@ pub fn draw_animation(
                     t as i32,
                 );
             }
-            _ => std::process::abort(),
+            _ => (),
         }
         compose_intro_layers(draw_state, system, screen_offset);
         true
@@ -108,9 +100,9 @@ pub fn draw_animation(
         system.music(None);
         system.memory().set(save::INTRO_ANIM_SEEN);
         draw_state.set_palette(&SWEETIE_16);
-        draw_state.indexed_canvas[LayerId::BG as usize].fill(0);
-        draw_state.indexed_canvas[LayerId::FG as usize].fill(0);
-        let fg = &mut draw_state.indexed_canvas[LayerId::FG as usize];
+        draw_state.indexed(BG).fill(0);
+        draw_state.indexed(FG).fill(0);
+        let fg = &mut draw_state.indexed_canvas[FG as usize];
         draw_title_indexed(
             fg,
             &draw_state.indexed_sprites,
@@ -125,14 +117,10 @@ pub fn draw_animation(
     }
 }
 
-fn compose_intro_layers(
-    draw_state: &DrawState,
-    system: &mut impl ConsoleApi,
-    offset: [i8; 2],
-) {
+fn compose_intro_layers(draw_state: &DrawState, system: &mut impl ConsoleApi, offset: [i8; 2]) {
     let palette = draw_state.palettes[0].as_slice();
     let output = system.output_image();
-    draw_state.indexed_canvas[LayerId::BG as usize].draw_to_rgba(
+    draw_state.indexed_canvas[BG as usize].draw_to_rgba(
         output,
         0,
         0,
@@ -142,7 +130,7 @@ fn compose_intro_layers(
     );
     // Clamp on the offset FG so screen-shake doesn't expose a transparent
     // seam at the trailing edge.
-    draw_state.indexed_canvas[LayerId::FG as usize].draw_to_rgba(
+    draw_state.indexed_canvas[FG as usize].draw_to_rgba(
         output,
         offset[0] as i32,
         offset[1] as i32,

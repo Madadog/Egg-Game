@@ -10,9 +10,9 @@ use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::position::*;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
+use super::GameMode;
 use super::inventory::InventoryUi;
 use super::walkaround::WalkaroundState;
-use super::GameMode;
 
 #[derive(Debug)]
 pub struct MenuState {
@@ -101,11 +101,7 @@ impl MenuState {
         }
     }
     pub fn entry_height(&self) -> i16 {
-        if self.draw_title.is_some() {
-            88
-        } else {
-            40
-        }
+        if self.draw_title.is_some() { 88 } else { 40 }
     }
     pub fn click(
         &mut self,
@@ -188,7 +184,9 @@ impl MenuState {
     }
     pub fn exit_hover(&mut self, index: usize) {
         use MenuEntry::*;
-        if let Reset(x) = &mut self.entries[index] { *x = 0 }
+        if let Reset(x) = &mut self.entries[index] {
+            *x = 0
+        }
     }
     fn hover(
         &self,
@@ -197,17 +195,16 @@ impl MenuState {
         index: usize,
     ) {
         use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
-        use crate::drawstate::LayerId;
+        use crate::drawstate::LayerId::*;
         use crate::system::drawing::Canvas;
         use MenuEntry::*;
         if let Reset(_) = self.entries[index] {
-            let bg = LayerId::BG as usize;
             let c2 = draw_state.colour(2);
             let c12 = draw_state.colour(12);
             let options = DIALOGUE_OPTIONS.get_options(system);
-            draw_state.rgba_canvas[bg].fill_rect(60, 10, 120, 11, c2);
+            draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
             system.print_to_centered(
-                &mut draw_state.rgba_canvas[bg],
+                draw_state.rgba(BG),
                 OPTIONS_LOSE_DATA,
                 120,
                 13,
@@ -225,13 +222,12 @@ impl MenuState {
         system: &mut impl ConsoleApi,
         elapsed_frames: i32,
     ) {
-        use crate::drawstate::LayerId;
+        use crate::drawstate::LayerId::*;
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::image::RgbaImage;
 
-        let bg = LayerId::BG as usize;
         let c0 = draw_state.colour(0);
-        draw_state.rgba_canvas[bg].fill(c0);
+        draw_state.rgba(BG).fill(c0);
 
         if let Some(string) = self.draw_title {
             draw_title_rgba(draw_state, system, 120, 53, string, elapsed_frames);
@@ -253,7 +249,7 @@ impl MenuState {
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[bg],
+            draw_state.rgba(BG),
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,
@@ -316,9 +312,8 @@ pub fn draw_menu(
     y: i32,
     current_option: usize,
 ) {
-    use crate::drawstate::LayerId;
+    use crate::drawstate::LayerId::*;
     use crate::system::drawing::Canvas;
-    let bg = LayerId::BG as usize;
     let c1 = draw_state.colour(1);
     let c3 = draw_state.colour(3);
     let c4 = draw_state.colour(4);
@@ -326,10 +321,12 @@ pub fn draw_menu(
     for (i, string) in entries.iter().enumerate() {
         let color = if i == current_option { c4 } else { c3 };
         if i == current_option {
-            draw_state.rgba_canvas[bg].fill_rect(0, y + i as i32 * 8 - 1, WIDTH, 8, c1);
+            draw_state
+                .rgba(BG)
+                .fill_rect(0, y + i as i32 * 8 - 1, WIDTH, 8, c1);
         }
         system.print_to_centered(
-            &mut draw_state.rgba_canvas[bg],
+            draw_state.rgba(BG),
             string,
             x,
             y + i as i32 * 8,
@@ -451,14 +448,13 @@ pub fn draw_title_rgba(
     elapsed_frames: i32,
 ) {
     use crate::data::dialogue_data::GAME_TITLE_BLURB;
-    use crate::drawstate::{LayerId, PALETTE_MAP_IDENTITY};
+    use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
     use crate::system::drawing::Canvas;
-    let bg = LayerId::BG as usize;
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
     let game_title_z = format!("{game_title}\0");
     let title_width = system.print_to(
-        &mut draw_state.rgba_canvas[bg],
+        draw_state.rgba(BG),
         &game_title_z,
         999,
         999,
@@ -469,7 +465,7 @@ pub fn draw_title_rgba(
         },
     );
     system.print_to_centered(
-        &mut draw_state.rgba_canvas[bg],
+        draw_state.rgba(BG),
         &game_title_z,
         x,
         y + 23,
@@ -481,7 +477,7 @@ pub fn draw_title_rgba(
         },
     );
     system.print_to(
-        &mut draw_state.rgba_canvas[bg],
+        draw_state.rgba(BG),
         GAME_TITLE_BLURB,
         3,
         3,
@@ -493,9 +489,11 @@ pub fn draw_title_rgba(
             ..Default::default()
         },
     );
-    draw_state.rgba_canvas[bg].fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, c2);
+    draw_state
+        .rgba(BG)
+        .fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, c2);
     draw_state.spr(
-        LayerId::BG,
+        BG,
         &PALETTE_MAP_IDENTITY,
         534,
         120 - 8,

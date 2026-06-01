@@ -4,38 +4,43 @@ use crate::system::StaticSpriteOptions;
 
 #[derive(Debug, Clone)]
 pub struct Portrait {
-    spr_ids: [i16; 4],
+    spr_ids: [i32; 4],
     offset: (i8, i8),
 }
 impl Portrait {
-    pub const fn new(spr_ids: [i16; 4], offset: (i8, i8)) -> Self {
+    pub const fn new(spr_ids: [i32; 4], offset: (i8, i8)) -> Self {
         Self { spr_ids, offset }
     }
-    pub const fn new_single(spr_id: i16, offset: (i8, i8)) -> Self {
+    pub const fn new_single(spr_id: i32, offset: (i8, i8)) -> Self {
         // Y axis stride is 32 for now...
         let spr_ids = [spr_id, spr_id + 1, spr_id + 32, spr_id + 33];
         Self { spr_ids, offset }
     }
     pub fn draw_offset(&self, draw_state: &mut DrawState, layer: LayerId, offset: Vec2) {
         let pmap = palette_map_rotate(1);
-        for (i, id) in self.spr_ids.iter().enumerate() {
-            let i = i as i32;
-            let (x, y): (i32, i32) = (
+        let xy = |i: i32| -> (i32, i32) {
+            (
                 i32::from(self.offset.0) + i32::from(offset.x) + (i % 2) * 8,
                 i32::from(self.offset.1) + i32::from(offset.y) + (i / 2) * 8,
-            );
+            )
+        };
+        for (id, i) in self.spr_ids.iter().zip(0..) {
+            let (x, y) = xy(i);
             draw_state.spr_outline(
                 layer,
-                (*id).into(),
+                *id,
                 x,
                 y,
                 StaticSpriteOptions::transparent_zero(),
                 1,
             );
+        }
+        for (id, i) in self.spr_ids.iter().zip(0..) {
+            let (x, y) = xy(i);
             draw_state.spr(
                 layer,
                 &pmap,
-                (*id).into(),
+                *id,
                 x,
                 y,
                 StaticSpriteOptions::transparent_zero(),

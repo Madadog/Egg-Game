@@ -234,10 +234,9 @@ pub fn draw_instructions(
         ..Default::default()
     };
     {
-        let canvas = &mut draw_state.rgba_canvas[LayerId::BG as usize];
+        let canvas = draw_state.rgba(LayerId::BG);
         canvas.fill(colour_0);
-        canvas.fill_rect(6, 15, 228, 100, colour_0);
-        canvas.stroke_rect(6, 15, 228, 100, colour_1);
+        canvas.outlined_rect(6, 15, 228, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17, 224, 96, colour_1);
         system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
         system.print_to_shadow(canvas, INSTRUCTIONS, 11, 36, colour_12, colour_0, opts.clone());

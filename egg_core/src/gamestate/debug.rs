@@ -14,23 +14,17 @@ use super::walkaround::WalkaroundState;
 
 const WIDTH: u32 = 32;
 
-pub fn draw_sprite_test(
-    draw_state: &mut DrawState,
-    system: &mut impl ConsoleApi,
-    indice: u32,
-) {
-    // Reset the default palette to SWEETIE_16 (matches the legacy set_palette).
-    for (i, c) in SWEETIE_16.iter().enumerate() {
-        draw_state.palettes[0][i] = *c;
-    }
-    let colour_0 = Rgba::from_rgb(draw_state.palettes[0][0]);
-    let colour_12 = Rgba::from_rgb(draw_state.palettes[0][12]);
+pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi, indice: u32) {
+    draw_state.set_palette(&SWEETIE_16);
+
+    let black = Rgba::from_rgb(draw_state.palettes[0][0]);
+    let white = Rgba::from_rgb(draw_state.palettes[0][12]);
     let print_opts = PrintOptions {
         color: 12,
         ..PrintOptions::default()
     };
 
-    draw_state.rgba_canvas[LayerId::BG as usize].fill(colour_0);
+    draw_state.rgba(LayerId::BG).fill(black);
 
     let palette_map = PALETTE_MAP_IDENTITY;
     for x in 0..(WIDTH as i32) {
@@ -53,10 +47,9 @@ pub fn draw_sprite_test(
             // Raw indexed sprite bytes as colour-mapped pixels.
             let palette = draw_state.palettes[0].as_slice();
             let data = &draw_state.indexed_sprites.data;
-            let (cw, ch) = (canvas.width() as i32, canvas.height() as i32);
             let offset = ((indice % 32) * 8 + (indice / 32) * 2048) as usize;
-            for y in 0..ch {
-                for x in 0..cw {
+            for y in 0..(canvas.height() as i32) {
+                for x in 0..(canvas.width() as i32) {
                     let idx = match data.get((x + y * 256) as usize + offset) {
                         Some(&i) => i,
                         None => continue,
@@ -66,14 +59,17 @@ pub fn draw_sprite_test(
                     }
                 }
             }
-            system.print_to(canvas, "RAW DATA:", 0, 0, colour_12, print_opts.clone());
+            system.print_to(canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
         }
         if system.btn(4) {
             for i in 0..255i32 {
-                system.print_to(canvas, "PALETTE:", 0, 0, colour_12, print_opts.clone());
+                system.print_to(canvas, "PALETTE:", 0, 0, white, print_opts.clone());
                 let px = 10 + i % 32;
                 let py = 10 + i / 32;
-                if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height()
+                if px >= 0
+                    && py >= 0
+                    && (px as u32) < canvas.width()
+                    && (py as u32) < canvas.height()
                     && let Some(rgb) = draw_state.palettes[0].get(i as usize)
                 {
                     canvas.set_pixel(px as u32, py as u32, Rgba::from_rgb(*rgb));
@@ -81,13 +77,13 @@ pub fn draw_sprite_test(
             }
         }
         if system.btn(6) {
-            canvas.stroke_rect(0, 0, 8, 8, colour_12);
+            canvas.stroke_rect(0, 0, 8, 8, white);
             system.print_to(
                 canvas,
                 &format!("Sprite ID = {indice}"),
                 0,
                 8,
-                colour_12,
+                white,
                 print_opts.clone(),
             );
         }
@@ -97,13 +93,13 @@ pub fn draw_sprite_test(
         let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
         let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
         let flip_text = if grid_index.1 == 0 { 15 } else { 0 };
-        canvas.stroke_rect(grid_x, grid_y, 8, 8, colour_12);
+        canvas.stroke_rect(grid_x, grid_y, 8, 8, white);
         system.print_to_centered(
             canvas,
             &format!("ID:{mouse_indice}"),
             grid_x + 4,
             grid_y - 6 + flip_text,
-            colour_12,
+            white,
             print_opts,
         );
     }
@@ -112,7 +108,7 @@ pub fn draw_sprite_test(
     output.blit::<RgbaImage>(
         0,
         0,
-        &draw_state.rgba_canvas[LayerId::BG as usize],
+        &draw_state.rgba(LayerId::BG),
         EdgePolicy::Transparent,
         Transform::IDENTITY,
         |p| p.a() == 0,
@@ -150,14 +146,15 @@ impl MapViewer {
         if !self.focused {
             return;
         }
-        let bg = LayerId::BG as usize;
-        let height = draw_state.rgba_canvas[bg].height() as i32;
+        let height = draw_state.rgba(LayerId::BG).height() as i32;
         let c0 = draw_state.colour(0);
         let c12 = draw_state.colour(12);
         let c13 = draw_state.colour(13);
         let c15 = draw_state.colour(15);
-        draw_state.rgba_canvas[bg].fill_rect(0, 0, 70, height, c0);
-        draw_state.rgba_canvas[bg].fill_rect(0, 8 + 8 * self.layer_index as i32, 70, 8, c15);
+        draw_state.rgba(LayerId::BG).fill_rect(0, 0, 70, height, c0);
+        draw_state
+            .rgba(LayerId::BG)
+            .fill_rect(0, 8 + 8 * self.layer_index as i32, 70, 8, c15);
 
         let (layers, title) = if self.fg {
             (walkaround.current_map.fg_layers.iter().enumerate(), "FG")
@@ -165,7 +162,7 @@ impl MapViewer {
             (walkaround.current_map.layers.iter().enumerate(), "BG")
         };
         system.print_to(
-            &mut draw_state.rgba_canvas[bg],
+            draw_state.rgba(LayerId::BG),
             &format!("{title} LAYERS:"),
             0,
             0,
@@ -175,7 +172,7 @@ impl MapViewer {
         for (i, layer) in layers {
             let text = if layer.visible { "" } else { "(Hidden)" };
             system.print_to(
-                &mut draw_state.rgba_canvas[bg],
+                draw_state.rgba(LayerId::BG),
                 &format!("Layer {} {text}", i),
                 0,
                 8 + 8 * i as i32,
@@ -210,5 +207,4 @@ impl MapViewer {
             self.fg = !self.fg;
         }
     }
-
 }

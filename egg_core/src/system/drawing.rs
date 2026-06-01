@@ -106,9 +106,7 @@ pub trait Canvas {
         let tw = rw * scale;
         let th = rh * scale;
         let (x0, y0, x1, y1) = match edge {
-            EdgePolicy::Transparent => {
-                (dx.max(0), dy.max(0), (dx + tw).min(dw), (dy + th).min(dh))
-            }
+            EdgePolicy::Transparent => (dx.max(0), dy.max(0), (dx + tw).min(dw), (dy + th).min(dh)),
             EdgePolicy::Clamp => (0, 0, dw, dh),
         };
         for y in y0..y1 {
@@ -175,6 +173,19 @@ pub trait Canvas {
         self.vline(x, y, height, colour);
         self.vline(x + width - 1, y, height, colour);
     }
+    /// Draws a filled rectangle with an outline.
+    fn outlined_rect(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        fill_colour: Self::Pixel,
+        outline_colour: Self::Pixel,
+    ) {
+        self.fill_rect(x + 1, y + 1, width - 2, height - 2, fill_colour);
+        self.stroke_rect(x, y, width, height, outline_colour);
+    }
     /// Bresenham line between two integer endpoints.
     fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, colour: Self::Pixel) {
         let dx = (x1 - x0).abs();
@@ -232,8 +243,7 @@ pub trait Canvas {
         let mut y = 0;
         let mut err = 1 - x;
         fn plot<C: Canvas + ?Sized>(canvas: &mut C, px: i32, py: i32, colour: C::Pixel) {
-            if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height()
-            {
+            if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height() {
                 canvas.set_pixel(px as u32, py as u32, colour);
             }
         }
@@ -434,7 +444,10 @@ impl RgbaImage {
                 if transparent.contains(&idx) {
                     return None;
                 }
-                let mapped = palette_map.get(idx as usize).copied().unwrap_or(idx as usize);
+                let mapped = palette_map
+                    .get(idx as usize)
+                    .copied()
+                    .unwrap_or(idx as usize);
                 palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
             });
         });
@@ -454,7 +467,15 @@ impl RgbaImage {
     ) {
         let outline_map = [outline_colour as usize; 16];
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-            self.spr_indexed(source, palette, &outline_map, id, x + dx, y + dy, opts.clone());
+            self.spr_indexed(
+                source,
+                palette,
+                &outline_map,
+                id,
+                x + dx,
+                y + dy,
+                opts.clone(),
+            );
         }
     }
 
@@ -469,14 +490,12 @@ impl RgbaImage {
         palette_map: &[usize],
         mut opts: MapOptions,
     ) {
-        let Some(layer) = map.layers.get(layer_idx) else { return };
+        let Some(layer) = map.layers.get(layer_idx) else {
+            return;
+        };
         let dw = self.width() as i32;
         let dh = self.height() as i32;
-        if opts.sx + opts.w * 8 < 0
-            || opts.sy + opts.h * 8 < 0
-            || opts.sx >= dw
-            || opts.sy >= dh
-        {
+        if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
             return;
         }
         // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
@@ -498,9 +517,15 @@ impl RgbaImage {
         let tpr = tiles_per_row(source.width());
         for j in 0..opts.h {
             for i in 0..opts.w {
-                let Ok(mx) = usize::try_from(opts.x + i) else { continue };
-                let Ok(my) = usize::try_from(opts.y + j) else { continue };
-                let Some(tile_id) = MapLayer::get(layer, mx, my) else { continue };
+                let Ok(mx) = usize::try_from(opts.x + i) else {
+                    continue;
+                };
+                let Ok(my) = usize::try_from(opts.y + j) else {
+                    continue;
+                };
+                let Some(tile_id) = MapLayer::get(layer, mx, my) else {
+                    continue;
+                };
                 let (tx, ty) = tile_origin(tile_id as i32, tpr);
                 let dx = opts.sx + i * 8;
                 let dy = opts.sy + j * 8;
@@ -510,7 +535,10 @@ impl RgbaImage {
                     {
                         return None;
                     }
-                    let mapped = palette_map.get(idx as usize).copied().unwrap_or(idx as usize);
+                    let mapped = palette_map
+                        .get(idx as usize)
+                        .copied()
+                        .unwrap_or(idx as usize);
                     palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
                 });
             }
@@ -538,7 +566,9 @@ impl IndexedImage {
             if transparent.contains(&idx) {
                 None
             } else {
-                palette.get(usize::from(idx)).map(|rgb| Rgba::from_rgb(*rgb))
+                palette
+                    .get(usize::from(idx))
+                    .map(|rgb| Rgba::from_rgb(*rgb))
             }
         });
     }
@@ -578,14 +608,12 @@ impl IndexedImage {
         source: &IndexedImage,
         mut opts: MapOptions,
     ) {
-        let Some(layer) = map.layers.get(layer_idx) else { return };
+        let Some(layer) = map.layers.get(layer_idx) else {
+            return;
+        };
         let dw = self.width() as i32;
         let dh = self.height() as i32;
-        if opts.sx + opts.w * 8 < 0
-            || opts.sy + opts.h * 8 < 0
-            || opts.sx >= dw
-            || opts.sy >= dh
-        {
+        if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
             return;
         }
         // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
@@ -607,9 +635,15 @@ impl IndexedImage {
         let tpr = tiles_per_row(source.width());
         for j in 0..opts.h {
             for i in 0..opts.w {
-                let Ok(mx) = usize::try_from(opts.x + i) else { continue };
-                let Ok(my) = usize::try_from(opts.y + j) else { continue };
-                let Some(tile_id) = MapLayer::get(layer, mx, my) else { continue };
+                let Ok(mx) = usize::try_from(opts.x + i) else {
+                    continue;
+                };
+                let Ok(my) = usize::try_from(opts.y + j) else {
+                    continue;
+                };
+                let Some(tile_id) = MapLayer::get(layer, mx, my) else {
+                    continue;
+                };
                 let (tx, ty) = tile_origin(tile_id as i32, tpr);
                 let dx = opts.sx + i * 8;
                 let dy = opts.sy + j * 8;

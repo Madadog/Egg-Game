@@ -1,6 +1,6 @@
 use crate::animation::Animation;
 use crate::data::map_data::{
-    MapIndex, BEDROOM, DEFAULT_MAP_SET, SUPERMARKET, TEST_PEN, WILDERNESS,
+    BEDROOM, DEFAULT_MAP_SET, MapIndex, SUPERMARKET, TEST_PEN, WILDERNESS,
 };
 use crate::data::{dialogue_data::*, save, sound};
 use crate::debug::DebugInfo;
@@ -540,24 +540,20 @@ impl<T: ConsoleApi>
     }
     fn draw(
         &self,
-        (draw_state, system, debug_info): (
-            &mut crate::drawstate::DrawState,
-            &mut T,
-            &DebugInfo,
-        ),
+        (draw_state, system, debug_info): (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
     ) {
-        use crate::drawstate::LayerId;
+        use crate::drawstate::LayerId::*;
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::image::RgbaImage;
 
-        let bg = LayerId::BG as usize;
+        let bg = BG as usize;
         let bg_colour = draw_state.colour(self.bg_colour);
-        draw_state.rgba_canvas[bg].fill(bg_colour);
+        draw_state.rgba(BG).fill(bg_colour);
 
         // BG map layers
         self.current_map.draw_bg_indexed(
             draw_state,
-            LayerId::BG,
+            BG,
             self.current_map.bank,
             self.camera.pos,
             false,
@@ -565,7 +561,7 @@ impl<T: ConsoleApi>
 
         // Particles
         self.particles
-            .draw_indexed(draw_state, LayerId::BG, -self.cam_x(), -self.cam_y());
+            .draw_indexed(draw_state, BG, -self.cam_x(), -self.cam_y());
 
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
@@ -621,13 +617,13 @@ impl<T: ConsoleApi>
 
         // Draw sprites
         for options in sprites {
-            options.draw_to(draw_state, LayerId::BG);
+            options.draw_to(draw_state, BG);
         }
 
         // FG map layers (drawn on top of sprites)
         self.current_map.draw_fg_indexed(
             draw_state,
-            LayerId::BG,
+            BG,
             self.current_map.bank,
             self.camera.pos,
             false,
@@ -635,22 +631,22 @@ impl<T: ConsoleApi>
 
         if let Some(string) = self.dialogue.current_text.clone() {
             self.dialogue
-                .draw_dialogue_box(draw_state, LayerId::BG, system, &string, true);
+                .draw_dialogue_box(draw_state, BG, system, &string, true);
         }
         if debug_info.map_info() {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(draw_state, LayerId::BG, 12);
+                    .draw(draw_state, BG, 12);
             }
             self.player_ref()
                 .hitbox()
                 .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                .draw(draw_state, LayerId::BG, 12);
+                .draw(draw_state, BG, 12);
             for item in self.current_map.interactables.iter() {
                 item.hitbox
                     .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
-                    .draw(draw_state, LayerId::BG, 14);
+                    .draw(draw_state, BG, 14);
             }
         }
         if debug_info.player_info() {
@@ -661,7 +657,7 @@ impl<T: ConsoleApi>
                 ..Default::default()
             };
             system.print_to(
-                &mut draw_state.rgba_canvas[bg],
+                draw_state.rgba(BG),
                 &format!("Player: {:#?}\0", self.player_ref()),
                 0,
                 0,
@@ -669,7 +665,7 @@ impl<T: ConsoleApi>
                 opts.clone(),
             );
             system.print_to(
-                &mut draw_state.rgba_canvas[bg],
+                draw_state.rgba(BG),
                 &format!("Camera: {:#?}\0", self.camera),
                 74,
                 0,
