@@ -32,7 +32,7 @@ pub trait ConsoleApi {
 
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
-    fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool;
+    fn keyp(&self, scancode: ScanCode) -> bool;
     /// Latest character entered by the user this frame (for text entry).
     fn key_chars(&self) -> &[char];
     fn mouse(&self) -> MouseInput;

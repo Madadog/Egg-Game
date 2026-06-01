@@ -207,8 +207,8 @@ impl ConsoleApi for FantasyConsole {
         self.input.key(scancode)
     }
 
-    fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool {
-        self.input.keyp(scancode, hold, period)
+    fn keyp(&self, scancode: ScanCode) -> bool {
+        self.input.keyp(scancode)
     }
 
     fn key_chars(&self) -> &[char] {

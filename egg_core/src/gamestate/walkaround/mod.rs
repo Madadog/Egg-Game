@@ -364,28 +364,16 @@ impl<T: ConsoleApi>
             return None;
         }
 
-        if system.keyp(ScanCode::Digit1, -1, -1) {
-            self.load_map(system, SUPERMARKET);
-        }
-        if system.keyp(ScanCode::Digit2, -1, -1) {
-            self.load_map(system, WILDERNESS);
-        }
-        if system.keyp(ScanCode::Digit3, -1, -1) {
-            self.load_map(system, TEST_PEN);
-        }
-        if system.keyp(ScanCode::Digit4, -1, -1) {
-            self.load_map(system, BEDROOM);
-        }
-        if system.keyp(ScanCode::Digit5, -1, -1) {
+        if system.keyp(ScanCode::Digit5) {
             self.load_pmem(system);
         }
-        if system.keyp(ScanCode::Digit6, -1, -1) {
+        if system.keyp(ScanCode::Digit6) {
             draw_state.set_palette(&crate::system::SWEETIE_16);
         }
-        if system.keyp(ScanCode::Digit7, -1, -1) {
+        if system.keyp(ScanCode::Digit7) {
             draw_state.set_palette(&crate::system::NIGHT_16);
         }
-        if system.keyp(ScanCode::Digit8, -1, -1) {
+        if system.keyp(ScanCode::Digit8) {
             draw_state.set_palette(&crate::system::B_W);
         }
 

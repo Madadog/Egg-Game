@@ -516,7 +516,7 @@ impl InventoryUi {
             self.state.back(system);
         }
 
-        // --- Keyboard / gamepad navigation (unchanged). ---
+        // Keyboard / gamepad navigation
         let pad = system.controller();
         let (mut dx, mut dy) = (0, 0);
         if just_pressed(pad.up) {

@@ -74,7 +74,7 @@ impl EggInput {
     pub fn key_chars(&self) -> &[char] {
         &self.typed_chars
     }
-    pub fn keyp(&self, key: ScanCode, _: i32, _: i32) -> bool {
+    pub fn keyp(&self, key: ScanCode) -> bool {
         let i = key.index();
         self.keyboard[i] && !self.previous_keyboard[i]
     }
