@@ -1,9 +1,9 @@
 use bevy::asset::LoadState;
+use bevy::asset::RenderAssetUsages;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::EggState;
 
@@ -330,7 +330,7 @@ fn resize_screen(
 fn step_state(
     mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut keyboard_events: EventReader<KeyboardInput>,
+    mut keyboard_events: MessageReader<KeyboardInput>,
     mut window: Query<&mut Window>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
@@ -456,9 +456,7 @@ fn step_state(
         if keys.just_pressed(KeyCode::KeyN) {
             game.run();
         }
-        let colour = egg_core::system::image::Rgba::from_rgb(
-            game.state.draw_state.palettes[0][12],
-        );
+        let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
         let system = &mut game.system;
         egg_core::system::print_to_with_font(
             &system.font,
@@ -580,9 +578,7 @@ fn step_state(
     game.run();
     if keys.pressed(KeyCode::KeyN) {
         game.run();
-        let colour = egg_core::system::image::Rgba::from_rgb(
-            game.state.draw_state.palettes[0][12],
-        );
+        let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
         let system = &mut game.system;
         egg_core::system::print_to_with_font(
             &system.font,

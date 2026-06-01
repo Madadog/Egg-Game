@@ -153,7 +153,7 @@ impl Plugin for TiledMapPlugin {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, TypePath)]
 pub struct TiledMapLoader;
 
 impl AssetLoader for TiledMapLoader {
