@@ -6,7 +6,8 @@ use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, EggMemory, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode, SfxOptions, WIDTH,
+        ConsoleApi, EggMemory, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode, SfxOptions,
+        WIDTH,
         image::{IndexedImage, Rgba, RgbaImage},
     },
 };
@@ -33,7 +34,7 @@ use crate::tiled;
 
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
-    pub font: RgbaImage,
+    pub font: Font,
     // sprites + indexed_sprites + maps + sprite_flags also live on
     // EggState::draw_state. These copies are kept around for the asset
     // loaders and Collider::from_sprite reads via get_bitmap_indexed.
@@ -54,7 +55,7 @@ impl FantasyConsole {
     pub fn new() -> Self {
         let mut x = Self {
             output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
-            font: RgbaImage::new(128, 128),
+            font: Font::blank(),
             sprites: RgbaImage::new(1, 1),
             indexed_sprites: IndexedImage::new(1, 1),
             maps: Vec::new(),
@@ -109,12 +110,14 @@ impl FantasyConsole {
         assert!(font.size().y >= 128);
         for (i, c) in self
             .font
+            .image_mut()
             .data_mut()
             .iter_mut()
             .zip(font.data.iter().flatten())
         {
             *i = *c;
         }
+        self.font.refresh();
     }
 
     pub fn set_sprites(&mut self, sheet: &Image) {
@@ -297,7 +300,7 @@ impl ConsoleApi for FantasyConsole {
         &mut self.output_screen
     }
 
-    fn font(&self) -> &RgbaImage {
+    fn font(&self) -> &Font {
         &self.font
     }
 

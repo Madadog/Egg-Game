@@ -5,11 +5,13 @@ use crate::{
 };
 
 pub use consts::*;
+pub use font::*;
 pub use scancode::*;
 pub use types::*;
 
 pub mod consts;
 pub mod drawing;
+pub mod font;
 pub mod image;
 pub mod scancode;
 pub mod types;
@@ -64,8 +66,10 @@ pub trait ConsoleApi {
     /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;
 
-    /// Default 8x8 font (16 chars per row) used by `print_to_with_font`.
-    fn font(&self) -> &RgbaImage;
+    /// Default 8×8 bitmap [`Font`] used by `print_to_with_font` and text
+    /// measurement. The font caches each glyph's width so text can be
+    /// measured without rasterising to a throwaway canvas.
+    fn font(&self) -> &Font;
 
     /// Called by `EggState::run` at the start of each frame, before any
     /// drawing happens. Implementations should clear `output_image()` (and
@@ -188,89 +192,4 @@ pub trait ConsoleHelper: ConsoleApi {
     fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
         text_width(self.font(), text, opts)
     }
-}
-
-/// Measure the maximum line width of `text` rendered with `font`. Equivalent
-/// to a print_to dry-run that doesn't touch a real target. Useful for
-/// centering / wrapping.
-pub fn text_width(font: &RgbaImage, text: &str, opts: PrintOptions) -> i32 {
-    let mut throwaway = crate::system::image::IndexedImage::new(1, 1);
-    print_to_with_font(font, &mut throwaway, text, 0, 0, 0u8, opts)
-}
-
-/// Render `text` onto `target` using the supplied `font`. Free-function
-/// variant of [`ConsoleHelper::print_to`] for callers that already hold a
-/// `&RgbaImage` font reference (e.g. when split-borrowing the console's
-/// font and output_image at the same time).
-pub fn print_to_with_font<C: Canvas>(
-    font: &RgbaImage,
-    target: &mut C,
-    text: &str,
-    x: i32,
-    y: i32,
-    colour: C::Pixel,
-    opts: PrintOptions,
-) -> i32 {
-    let mut max_width = 0;
-    let mut dx = x;
-    let mut dy = y;
-    for char in text.chars() {
-        match char as u8 {
-            10 => {
-                dx = x;
-                dy += 6;
-            }
-            32 => {
-                dx += if opts.small_text { 3 } else { 4 };
-            }
-            0 => {}
-            _ => {
-                let glyph = if opts.small_text {
-                    (char as u8 + 128) as char
-                } else {
-                    char
-                };
-                let width = draw_letter_to(font, target, glyph, dx, dy, colour);
-                dx += width + 1;
-            }
-        }
-        max_width = max_width.max(dx - x);
-    }
-    let _ = dy;
-    max_width
-}
-
-/// Draw one 8×8 glyph from `font` onto `target` at (`x`, `y`) using `colour`
-/// for every non-transparent font pixel. Returns the visual width of the
-/// glyph (rightmost non-transparent column + 1).
-fn draw_letter_to<C: Canvas>(
-    font: &RgbaImage,
-    target: &mut C,
-    char: char,
-    x: i32,
-    y: i32,
-    colour: C::Pixel,
-) -> i32 {
-    let char_index = char as u8 as usize;
-    let glyph_x = (char_index % 16) * 8;
-    let glyph_y = (char_index / 16) * 8;
-    let target_w = target.width() as i32;
-    let target_h = target.height() as i32;
-    let mut letter_width = 0;
-    for j in 0..8 {
-        for i in 0..8 {
-            let font_index = (glyph_x + i as usize) + (glyph_y + j as usize) * 128;
-            if font.alpha_at_index(font_index) == 0 {
-                continue;
-            }
-            letter_width = letter_width.max(i + 1);
-            let px = x + i;
-            let py = y + j;
-            if px < 0 || py < 0 || px >= target_w || py >= target_h {
-                continue;
-            }
-            target.set_pixel(px as u32, py as u32, colour);
-        }
-    }
-    letter_width
 }
