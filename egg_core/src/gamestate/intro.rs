@@ -1,5 +1,4 @@
 use crate::data::dialogue_data::GAME_TITLE;
-use crate::data::save;
 use crate::data::sound::music::MusicTrack;
 use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::menu::draw_title_indexed;
@@ -98,7 +97,7 @@ pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl Cons
     } else {
         // Intro complete: set save flag, reset palette, show title.
         system.music(None);
-        system.memory().set(save::INTRO_ANIM_SEEN);
+        system.memory().intro_anim_seen = true;
         draw_state.set_palette(&SWEETIE_16);
         draw_state.indexed(BG).fill(0);
         draw_state.indexed(FG).fill(0);

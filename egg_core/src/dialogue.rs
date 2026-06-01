@@ -29,7 +29,6 @@ use crate::system::{PrintOptions, StaticSpriteOptions};
 
 use crate::data::{
     portraits::Portrait,
-    save,
     sound::{self, SfxData},
 };
 
@@ -116,18 +115,14 @@ impl DialogueOptions {
         self.fixed.load(Ordering::SeqCst)
     }
     pub fn small_text(&self, system: &mut impl ConsoleApi) -> bool {
-        system.memory().is(save::SMALL_TEXT_ON)
+        system.memory().small_text_on
     }
     pub fn box_width(&self) -> usize {
         self.box_width.load(Ordering::SeqCst)
     }
     pub fn set_options(&self, system: &mut impl ConsoleApi, fixed: bool, small_text: bool) {
         self.fixed.store(fixed, Ordering::SeqCst);
-        if small_text {
-            system.memory().set(save::SMALL_TEXT_ON)
-        } else {
-            system.memory().clear(save::SMALL_TEXT_ON)
-        }
+        system.memory().small_text_on = small_text;
     }
     pub fn get_options(&self, system: &mut impl ConsoleApi) -> PrintOptions {
         PrintOptions {
@@ -137,7 +132,8 @@ impl DialogueOptions {
         }
     }
     pub fn toggle_small_text(&self, system: &mut impl ConsoleApi) {
-        system.memory().toggle(save::SMALL_TEXT_ON)
+        let save = system.memory();
+        save.small_text_on = !save.small_text_on;
     }
     pub fn toggle_fixed(&self) {
         self.fixed

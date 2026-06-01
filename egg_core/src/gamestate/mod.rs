@@ -19,7 +19,7 @@ use log::trace;
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
-use crate::data::{map_data, save};
+use crate::data::map_data;
 use crate::debug::DebugInfo;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::system::{ConsoleApi, ConsoleHelper};
@@ -106,13 +106,13 @@ impl GameMode {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || system.memory().is(save::INSTRUCTIONS_READ)) && system.any_btnp() {
-                    if system.memory().is(save::INSTRUCTIONS_READ) {
+                if (*i > 60 || system.memory().instructions_read) && system.any_btnp() {
+                    if system.memory().instructions_read {
                         walkaround_state.load_pmem(system);
                     } else {
                         walkaround_state.load_map(system, map_data::BEDROOM);
                     }
-                    system.memory().set(save::INSTRUCTIONS_READ);
+                    system.memory().instructions_read = true;
                     *self = Self::Walkaround;
                 }
                 draw_instructions(draw_state, system);
@@ -125,7 +125,7 @@ impl GameMode {
                 }
             }
             Self::Animation(x) => {
-                if system.memory().is(save::INTRO_ANIM_SEEN) {
+                if system.memory().intro_anim_seen {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };

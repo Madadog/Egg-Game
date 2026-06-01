@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use bevy::prelude::{Image, info};
 use egg_core::{
-    data::sound::music::MusicTrack,
+    data::{save::SaveData, sound::music::MusicTrack},
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, Controller, EggMemory, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
+        ConsoleApi, Controller, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
         SfxOptions,
         WIDTH,
         image::{IndexedImage, Rgba, RgbaImage},
@@ -45,7 +45,7 @@ pub struct FantasyConsole {
     pub sprite_flags: Vec<u8>,
     files: HashMap<String, Vec<u8>>,
     music: Option<(MusicTrack, bool)>,
-    memory: EggMemory,
+    memory: SaveData,
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
     rng: Lcg64Xsh32,
@@ -64,7 +64,7 @@ impl FantasyConsole {
             sprite_flags: vec![0; 2048],
             music: None,
             sounds: HashMap::new(),
-            memory: EggMemory::default(),
+            memory: SaveData::default(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
             bank: 0,
@@ -191,7 +191,7 @@ impl ConsoleApi for FantasyConsole {
         &self.input.controllers
     }
 
-    fn memory(&mut self) -> &mut EggMemory {
+    fn memory(&mut self) -> &mut SaveData {
         &mut self.memory
     }
 

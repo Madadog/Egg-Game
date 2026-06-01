@@ -1,41 +1,4 @@
-use crate::data::save;
 use crate::position::Vec2;
-
-#[derive(Clone, Copy, Debug)]
-pub struct EggMemory {
-    pub memory: [u8; 1024],
-}
-impl Default for EggMemory {
-    fn default() -> Self {
-        Self::new([0; 1024])
-    }
-}
-impl EggMemory {
-    pub fn new(memory: [u8; 1024]) -> Self {
-        Self { memory }
-    }
-    pub fn from_array(array: [u8; 1024]) -> Self {
-        Self { memory: array }
-    }
-    pub fn is(&self, bit: save::PmemBit) -> bool {
-        bit.is_true_with(&self.memory)
-    }
-    pub fn set(&mut self, bit: save::PmemBit) {
-        bit.set_true_with(&mut self.memory);
-    }
-    pub fn clear(&mut self, bit: save::PmemBit) {
-        bit.set_false_with(&mut self.memory);
-    }
-    pub fn toggle(&mut self, bit: save::PmemBit) {
-        bit.toggle_with(&mut self.memory);
-    }
-    pub fn get_byte(&self, byte: save::PmemU8) -> u8 {
-        self.memory[byte.index()]
-    }
-    pub fn set_byte(&mut self, byte: save::PmemU8, value: u8) {
-        self.memory[byte.index()] = value;
-    }
-}
 
 /// For simplicity all layers under a map have the same width and height.
 /// Ordering of layers is: first at the bottom, last at the top.

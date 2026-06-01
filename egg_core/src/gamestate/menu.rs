@@ -187,7 +187,7 @@ impl MenuState {
                 if *x == 0 {
                     *x += 1;
                 } else {
-                    system.zero_pmem();
+                    system.reset_save_data();
                     return Some(GameMode::Animation(0));
                 }
             }

@@ -1,5 +1,8 @@
 use crate::{
-    data::sound::{SfxData, music::MusicTrack},
+    data::{
+        save::SaveData,
+        sound::{SfxData, music::MusicTrack},
+    },
     rand::Lcg64Xsh32,
     system::{drawing::Canvas, image::RgbaImage},
 };
@@ -27,7 +30,7 @@ pub trait ConsoleApi {
     /// [`pressed`]/[`just_pressed`] helpers. See [`ConsoleHelper::controller`]
     /// for the single-player shorthand.
     fn controllers(&self) -> &[Controller; 4];
-    fn memory(&mut self) -> &mut EggMemory;
+    fn memory(&mut self) -> &mut SaveData;
     fn get_sprite_flags(&mut self) -> &mut [u8];
 
     fn exit(&mut self);
@@ -99,16 +102,9 @@ pub trait ConsoleHelper: ConsoleApi {
     fn any_btnpr(&self) -> bool {
         self.controllers().iter().any(Controller::changed)
     }
-    fn zero_pmem(&mut self) {
-        self.memory().memory.fill(0);
-    }
-    fn get_pmem(&mut self, address: usize) -> u8 {
-        let address = address.min(1023);
-        self.memory().memory[address]
-    }
-    fn set_pmem(&mut self, address: usize, value: u8) {
-        let address = address.min(1023);
-        self.memory().memory[address] = value;
+    /// Reset all persisted save data to its default (fresh-game) state.
+    fn reset_save_data(&mut self) {
+        *self.memory() = SaveData::default();
     }
 
     /// Render `text` onto `target` using the console's default font

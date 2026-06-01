@@ -1,8 +1,8 @@
 use crate::animation::Animation;
 use crate::data::map_data::{
-    BEDROOM, DEFAULT_MAP_SET, MapIndex, SUPERMARKET, TEST_PEN, WILDERNESS,
+    DEFAULT_MAP_SET, MapIndex,
 };
-use crate::data::{dialogue_data::*, save, sound};
+use crate::data::{dialogue_data::*, sound};
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
@@ -232,11 +232,11 @@ impl WalkaroundState {
                 }
             }
             InteractFn::StairwellWindow => {
-                system.memory().set(save::HOUSE_STAIRWELL_WINDOW_INTERACTED);
+                system.memory().house_stairwell_window_interacted = true;
                 Some(HOUSE_STAIRWELL_WINDOW)
             }
             InteractFn::StairwellPainting => {
-                if system.memory().is(save::HOUSE_STAIRWELL_WINDOW_INTERACTED) {
+                if system.memory().house_stairwell_window_interacted {
                     Some(HOUSE_STAIRWELL_PAINTING_AFTER)
                 } else {
                     Some(HOUSE_STAIRWELL_PAINTING_INIT)
@@ -316,26 +316,18 @@ impl WalkaroundState {
 
     /// TODO: Add actual save system.
     fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
-        system.memory().set_byte(save::CURRENT_MAP, new_map.0 as u8);
-        let x = self.player_ref().pos.x.to_le_bytes();
-        system.memory().set_byte(save::PLAYER_X[0], x[0]);
-        system.memory().set_byte(save::PLAYER_X[1], x[1]);
-        let y = self.player_ref().pos.y.to_le_bytes();
-        system.memory().set_byte(save::PLAYER_Y[0], y[0]);
-        system.memory().set_byte(save::PLAYER_Y[1], y[1]);
+        let pos = self.player_ref().pos;
+        let save = system.memory();
+        save.current_map = new_map.0 as u8;
+        save.player_x = pos.x;
+        save.player_y = pos.y;
     }
 
     pub fn load_pmem(&mut self, system: &mut impl ConsoleApi) {
-        let current_map = system.memory().get_byte(save::CURRENT_MAP);
-        self.load_map(system, MapIndex(current_map.into()).map());
-        self.player().pos.x = i16::from_le_bytes([
-            system.memory().get_byte(save::PLAYER_X[0]),
-            system.memory().get_byte(save::PLAYER_X[1]),
-        ]);
-        self.player().pos.y = i16::from_le_bytes([
-            system.memory().get_byte(save::PLAYER_Y[0]),
-            system.memory().get_byte(save::PLAYER_Y[1]),
-        ]);
+        let save = *system.memory();
+        self.load_map(system, MapIndex(save.current_map.into()).map());
+        self.player().pos.x = save.player_x;
+        self.player().pos.y = save.player_y;
     }
 }
 
