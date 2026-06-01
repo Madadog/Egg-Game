@@ -12,6 +12,17 @@ serde = "1.0.173"
 serde_json = "1.0.103"
 itertools = "0.14.0"
 
+# Web (wasm32) build. Bevy needs a web render backend (webgl2 for broad browser
+# support) and its web platform integration. getrandom's browser backend is
+# selected here (feature) and in .cargo/config.toml (cfg flag). web-sys gives us
+# localStorage for save persistence; console_error_panic_hook routes panics to
+# the browser console.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.18.1", features = ["web", "webgl2"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
+console_error_panic_hook = "0.1"
+
 [workspace]
 
 members = ["egg_core"]

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Egg Game</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1a1c2c;
+        overflow: hidden;
+      }
+      /* Bevy/winit appends its own <canvas> to the body. */
+      canvas {
+        display: block;
+        margin: 0 auto;
+        /* Keep the pixel art crisp when the browser scales the canvas. */
+        image-rendering: pixelated;
+        outline: none;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #f4f4f4;
+        font-family: sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">Loading Egg Game…</div>
+    <script type="module">
+      import init from "./egg_game_bevy.js";
+      init().then(() => {
+        // Bevy is running; drop the placeholder.
+        document.getElementById("loading")?.remove();
+      });
+    </script>
+  </body>
+</html>

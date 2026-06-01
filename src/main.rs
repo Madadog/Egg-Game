@@ -53,6 +53,11 @@ pub enum ScaleMode {
 }
 
 fn main() {
+    // Route wasm panics to the browser console (and dev tools) instead of the
+    // opaque "unreachable executed" trap.
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
     App::new()
         .init_resource::<EggGame>()
         .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
