@@ -6,7 +6,8 @@ use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, EggMemory, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode, SfxOptions,
+        ConsoleApi, Controller, EggMemory, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
+        SfxOptions,
         WIDTH,
         image::{IndexedImage, Rgba, RgbaImage},
     },
@@ -186,8 +187,8 @@ impl FantasyConsole {
 }
 
 impl ConsoleApi for FantasyConsole {
-    fn get_gamepads(&mut self) -> &mut [u8; 4] {
-        &mut self.input.gamepads
+    fn controllers(&self) -> &[Controller; 4] {
+        &self.input.controllers
     }
 
     fn memory(&mut self) -> &mut EggMemory {
@@ -196,14 +197,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn get_sprite_flags(&mut self) -> &mut [u8] {
         self.sprite_flags.as_mut_slice()
-    }
-
-    fn btn(&self, index: i32) -> bool {
-        self.input.mem_btn(index as u8)
-    }
-
-    fn btnp(&self, index: i32, _hold: i32, _period: i32) -> bool {
-        self.input.mem_btnp(index as u8)
     }
 
     fn exit(&mut self) {
@@ -249,10 +242,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn rng(&mut self) -> &mut egg_core::rand::Lcg64Xsh32 {
         &mut self.rng
-    }
-
-    fn previous_gamepad(&mut self) -> &mut [u8; 4] {
-        &mut self.input.previous_gamepads
     }
 
     fn maps(&mut self) -> &mut Vec<GameMap> {

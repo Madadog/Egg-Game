@@ -79,6 +79,7 @@ impl MenuState {
         let entries = self.entries.len();
         let ui = self.build_ui(system);
         let mouse = system.mouse();
+        let pad = system.controller();
         let mut clicked = false;
         if let Some(i) = ui.hit(mouse.pos()) {
             if mouse.moved() {
@@ -89,10 +90,10 @@ impl MenuState {
                 clicked = true;
             }
         }
-        if system.mem_btnp(0) {
+        if just_pressed(pad.up) {
             self.index = old_index.checked_sub(1).unwrap_or(entries - 1);
         }
-        if system.mem_btnp(1) {
+        if just_pressed(pad.down) {
             self.index = old_index.saturating_add(1) % entries;
         }
         let menu_index = self.index;
@@ -100,9 +101,9 @@ impl MenuState {
             self.exit_hover(old_index);
             system.play_sound(sound::CLICK);
         }
-        let (index, action) = if system.mem_btnp(4) || clicked {
+        let (index, action) = if just_pressed(pad.a) || clicked {
             (Some(menu_index), true)
-        } else if system.mem_btnp(5) && self.back_entry.is_some() {
+        } else if just_pressed(pad.b) && self.back_entry.is_some() {
             (None, true)
         } else {
             (None, false)

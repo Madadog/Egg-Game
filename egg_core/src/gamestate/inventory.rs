@@ -517,24 +517,25 @@ impl InventoryUi {
         }
 
         // --- Keyboard / gamepad navigation (unchanged). ---
+        let pad = system.controller();
         let (mut dx, mut dy) = (0, 0);
-        if system.mem_btnp(0) {
+        if just_pressed(pad.up) {
             dy -= 1
         }
-        if system.mem_btnp(1) {
+        if just_pressed(pad.down) {
             dy += 1
         }
-        if system.mem_btnp(2) {
+        if just_pressed(pad.left) {
             dx -= 1
         }
-        if system.mem_btnp(3) {
+        if just_pressed(pad.right) {
             dx += 1
         }
         self.state.arrows(system, dx, dy);
-        if system.mem_btnp(4) && !mouse_clicked {
+        if just_pressed(pad.a) && !mouse_clicked {
             self.click(system)
         };
-        if system.mem_btnp(5) {
+        if just_pressed(pad.b) {
             self.state.back(system)
         };
     }

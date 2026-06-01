@@ -11,7 +11,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode};
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, just_pressed, pressed};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 
@@ -393,23 +393,24 @@ impl<T: ConsoleApi>
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
 
+        let pad = system.controller();
         if self.map_viewer.focused {
             self.map_viewer
                 .step_map_viewer(system, &mut self.current_map);
         } else if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
-            if system.mem_btn(0) {
+            if pressed(pad.up) {
                 dy -= 1;
             }
-            if system.mem_btn(1) {
+            if pressed(pad.down) {
                 dy += 1;
             }
-            if system.mem_btn(2) {
+            if pressed(pad.left) {
                 dx -= 1;
             }
-            if system.mem_btn(3) {
+            if pressed(pad.right) {
                 dx += 1;
             }
-            if system.mem_btnp(5) {
+            if just_pressed(pad.b) {
                 inventory_ui.open(system);
                 return Some(GameMode::Inventory);
             }
@@ -418,14 +419,14 @@ impl<T: ConsoleApi>
                 system.play_sound(sound::INTERACT);
             }
             self.dialogue.tick(system, 1);
-            if system.mem_btn(4) {
+            if pressed(pad.a) {
                 self.dialogue.tick(system, 2);
             }
-            if system.mem_btnp(5) {
+            if just_pressed(pad.b) {
                 self.dialogue.skip(system);
             }
         }
-        if system.mem_btnp(4) && self.dialogue.is_line_done() {
+        if just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
             if self.dialogue.next_text(system, false) {
                 interact = false;
@@ -435,7 +436,7 @@ impl<T: ConsoleApi>
             }
             info!("Attempting interact...");
         }
-        if system.mem_btnp(6) {
+        if just_pressed(pad.x) {
             return Some(GameMode::MainMenu(super::menu::MenuState::debug_options()));
         }
         if system.any_btnpr() {

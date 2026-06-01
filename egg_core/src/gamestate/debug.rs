@@ -1,4 +1,4 @@
-use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions, just_pressed};
+use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions, just_pressed, pressed};
 
 use crate::{
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY},
@@ -42,9 +42,10 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
         }
     }
 
+    let pad = system.controller();
     {
         let canvas = &mut draw_state.rgba_canvas[LayerId::BG as usize];
-        if system.btn(5) {
+        if pressed(pad.b) {
             // Raw indexed sprite bytes as colour-mapped pixels.
             let palette = draw_state.palettes[0].as_slice();
             let data = &draw_state.indexed_sprites.data;
@@ -62,7 +63,7 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
             }
             system.print_to(canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
         }
-        if system.btn(4) {
+        if pressed(pad.a) {
             for i in 0..255i32 {
                 system.print_to(canvas, "PALETTE:", 0, 0, white, print_opts.clone());
                 let px = 10 + i % 32;
@@ -77,7 +78,7 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
                 }
             }
         }
-        if system.btn(6) {
+        if pressed(pad.x) {
             canvas.stroke_rect(0, 0, 8, 8, white);
             system.print_to(
                 canvas,
@@ -117,16 +118,17 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
 }
 
 pub fn step_sprite_test(system: &mut impl ConsoleApi, indice: &mut u32) {
-    if system.btn(0) && *indice >= WIDTH {
+    let pad = system.controller();
+    if pressed(pad.up) && *indice >= WIDTH {
         *indice = indice.saturating_sub(WIDTH);
     }
-    if system.btn(1) {
+    if pressed(pad.down) {
         *indice = indice.saturating_add(WIDTH);
     }
-    if system.btn(2) && !(*indice).is_multiple_of(WIDTH) {
+    if pressed(pad.left) && !(*indice).is_multiple_of(WIDTH) {
         *indice = indice.saturating_sub(1);
     }
-    if system.btn(3) && (*indice % WIDTH) < 2 {
+    if pressed(pad.right) && (*indice % WIDTH) < 2 {
         *indice = indice.saturating_add(1);
     }
 }
@@ -230,17 +232,17 @@ impl MapViewer {
             }
         }
 
-        // --- Keyboard (unchanged). ---
-        if system.btnp(0, 0, 0) {
+        let pad = system.controller();
+        if just_pressed(pad.up) {
             self.layer_index = self.layer_index.saturating_sub(1);
         }
-        if system.btnp(1, 0, 0) {
+        if just_pressed(pad.down) {
             self.layer_index = (self.layer_index + 1).min(map.layers.len() - 1);
         }
-        if system.btnp(4, 0, 0) && !mouse_toggled {
+        if just_pressed(pad.a) && !mouse_toggled {
             self.toggle_layer(map);
         }
-        if system.btnp(5, 0, 0) {
+        if just_pressed(pad.b) {
             self.fg = !self.fg;
         }
     }

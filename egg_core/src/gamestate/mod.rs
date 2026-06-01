@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::system::{MouseInput, PrintOptions, ScanCode, SCANCODE_COUNT};
+use crate::system::{pressed, Controller, MouseInput, PrintOptions, ScanCode, SCANCODE_COUNT};
 use log::trace;
 
 use self::inventory::{InventoryUi, InventoryUiState};
@@ -34,8 +34,7 @@ pub mod walkaround;
 
 #[derive(Clone, Debug)]
 pub struct EggInput {
-    pub gamepads: [u8; 4],
-    pub previous_gamepads: [u8; 4],
+    pub controllers: [Controller; 4],
     pub keyboard: [bool; SCANCODE_COUNT],
     pub previous_keyboard: [bool; SCANCODE_COUNT],
     pub mouse: MouseInput,
@@ -50,17 +49,12 @@ impl Default for EggInput {
 impl EggInput {
     pub fn new() -> Self {
         Self {
-            gamepads: [0; 4],
-            previous_gamepads: [0; 4],
+            controllers: [Controller::default(); 4],
             keyboard: [false; SCANCODE_COUNT],
             previous_keyboard: [false; SCANCODE_COUNT],
             mouse: MouseInput::default(),
             typed_chars: Vec::with_capacity(8),
         }
-    }
-    pub fn press(&mut self, id: u8) {
-        let id: usize = id.into();
-        self.gamepads[id / 8] |= 1 << (id % 8);
     }
     pub fn press_key(&mut self, key: ScanCode) {
         self.keyboard[key.index()] = true;
@@ -69,38 +63,16 @@ impl EggInput {
         self.typed_chars.push(c);
     }
     pub fn refresh(&mut self) {
-        self.previous_gamepads = self.gamepads;
         self.previous_keyboard = self.keyboard;
-        self.mouse.shift();
-        self.gamepads = [0; 4];
+        self.mouse.step();
+        for controller in &mut self.controllers {
+            controller.step();
+        }
         self.keyboard = [false; SCANCODE_COUNT];
         self.typed_chars.clear();
     }
     pub fn key_chars(&self) -> &[char] {
         &self.typed_chars
-    }
-    pub fn mem_btn(&self, id: u8) -> bool {
-        let controller: usize = (id / 8).min(3).into();
-        let id = id % 8;
-        let buttons = self.gamepads[controller];
-        (1 << id) & buttons != 0
-    }
-    pub fn mem_btnp(&self, id: u8) -> bool {
-        let controller: usize = (id / 8).min(3).into();
-        let id = id % 8;
-        let buttons = self.gamepads[controller];
-        let previous = self.previous_gamepads[controller];
-        (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
-    }
-    pub fn any_btnp(&self) -> bool {
-        let mut flag = false;
-        for (b0, b1) in self.previous_gamepads.iter().zip(self.gamepads.iter()) {
-            flag |= b0.count_ones() < b1.count_ones();
-        }
-        flag
-    }
-    pub fn any_btnpr(&self) -> bool {
-        self.previous_gamepads != self.gamepads
     }
     pub fn keyp(&self, key: ScanCode, _: i32, _: i32) -> bool {
         let i = key.index();
@@ -158,7 +130,7 @@ impl GameMode {
                     return;
                 };
                 // Press X to skip cutscene
-                if system.mem_btn(5) {
+                if pressed(system.controller().b) {
                     *x += 1000;
                 }
                 if intro::draw_animation(*x, draw_state, system) {

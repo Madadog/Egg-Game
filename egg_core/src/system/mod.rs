@@ -22,12 +22,14 @@ pub mod types;
 /// the final `output_image()` surface that consoles composite into.
 pub trait ConsoleApi {
     // Input + memory
-    fn get_gamepads(&mut self) -> &mut [u8; 4];
+    /// The four gamepads, mirroring [`ConsoleApi::mouse`]. Each [`Controller`]
+    /// holds `[current, previous]` per button; read edges with the shared
+    /// [`pressed`]/[`just_pressed`] helpers. See [`ConsoleHelper::controller`]
+    /// for the single-player shorthand.
+    fn controllers(&self) -> &[Controller; 4];
     fn memory(&mut self) -> &mut EggMemory;
     fn get_sprite_flags(&mut self) -> &mut [u8];
 
-    fn btn(&self, index: i32) -> bool;
-    fn btnp(&self, index: i32, hold: i32, period: i32) -> bool;
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
     fn keyp(&self, scancode: ScanCode, hold: i32, period: i32) -> bool;
@@ -43,7 +45,6 @@ pub trait ConsoleApi {
     // Per-frame state helpers
     fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
-    fn previous_gamepad(&mut self) -> &mut [u8; 4];
 
     // Asset access. Maps + indexed sprites also live on DrawState; these
     // accessors exist for asset-loading and a few non-draw queries (collider
@@ -83,38 +84,20 @@ pub trait ConsoleHelper: ConsoleApi {
     fn play_sound(&mut self, sfx_data: SfxData) {
         self.sfx(sfx_data.id, sfx_data.options);
     }
-    fn update_previous_gamepad(&mut self) {
-        let buttons = self.get_gamepads();
-        *self.previous_gamepad() = *buttons;
+    /// Player one's [`Controller`], mirroring [`ConsoleApi::mouse`]. Returns a
+    /// copy; read it with the shared [`pressed`]/[`just_pressed`] helpers, e.g.
+    /// `just_pressed(system.controller().a)`.
+    fn controller(&self) -> Controller {
+        self.controllers()[0]
     }
-    fn mem_btn(&mut self, id: u8) -> bool {
-        let controller: usize = (id / 8).min(3).into();
-        let id = id % 8;
-        let buttons = self.get_gamepads()[controller];
-        (1 << id) & buttons != 0
+    /// Returns true if any button on any controller was just pressed this
+    /// frame. Ignores button releases.
+    fn any_btnp(&self) -> bool {
+        self.controllers().iter().any(Controller::any_just_pressed)
     }
-    fn mem_btnp(&mut self, id: u8) -> bool {
-        let controller: usize = (id / 8).min(3).into();
-        let id = id % 8;
-        let buttons = self.get_gamepads()[controller];
-        let previous = self.previous_gamepad()[controller];
-        (1 << id) & buttons != (1 << id) & previous && (1 << id) & buttons != 0
-    }
-    /// Returns true if any button was pressed. Ignores button releases.
-    fn any_btnp(&mut self) -> bool {
-        let buttons = *self.get_gamepads();
-        let previous = *self.previous_gamepad();
-        let mut flag = false;
-        for (b0, b1) in previous.iter().zip(buttons.iter()) {
-            flag |= b0.count_ones() < b1.count_ones();
-        }
-        flag
-    }
-    /// Returns true if any button was pressed or released
-    fn any_btnpr(&mut self) -> bool {
-        let buttons = *self.get_gamepads();
-        let previous = *self.previous_gamepad();
-        buttons != previous
+    /// Returns true if any button on any controller was pressed or released.
+    fn any_btnpr(&self) -> bool {
+        self.controllers().iter().any(Controller::changed)
     }
     fn zero_pmem(&mut self) {
         self.memory().memory.fill(0);

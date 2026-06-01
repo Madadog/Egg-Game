@@ -375,30 +375,15 @@ fn step_state(
         y_button |= gamepad.pressed(GamepadButton::North);
     }
 
-    if up {
-        game.system.input().press(0);
-    }
-    if down {
-        game.system.input().press(1);
-    }
-    if left {
-        game.system.input().press(2);
-    }
-    if right {
-        game.system.input().press(3);
-    }
-    if a_button {
-        game.system.input().press(4);
-    }
-    if b_button {
-        game.system.input().press(5);
-    }
-    if x_button {
-        game.system.input().press(6);
-    }
-    if y_button {
-        game.system.input().press(7);
-    }
+    game.system.input().controllers[0].up[0] = up;
+    game.system.input().controllers[0].down[0] = down;
+    game.system.input().controllers[0].left[0] = left;
+    game.system.input().controllers[0].right[0] = right;
+    game.system.input().controllers[0].a[0] = a_button;
+    game.system.input().controllers[0].b[0] = b_button;
+    game.system.input().controllers[0].x[0] = x_button;
+    game.system.input().controllers[0].y[0] = y_button;
+    
     for keycode in keys.get_pressed() {
         if let Some(scancode) = keycode_to_scancode(*keycode) {
             game.system.input().press_key(scancode);
