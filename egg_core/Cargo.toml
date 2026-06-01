@@ -8,3 +8,4 @@ edition = "2024"
 [dependencies]
 log = "0.4.17"
 itertools = "0.14.0"
+taffy = "0.10"

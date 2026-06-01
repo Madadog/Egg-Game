@@ -28,6 +28,7 @@ pub mod player;
 pub mod position;
 pub mod rand;
 pub mod system;
+pub mod ui;
 
 use crate::debug::DebugInfo;
 use crate::drawstate::DrawState;

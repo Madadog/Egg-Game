@@ -1,4 +1,5 @@
 use crate::data::save;
+use crate::position::Vec2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EggMemory {
@@ -230,15 +231,95 @@ impl<'a> From<StaticDrawParams<'a>> for DrawParams {
     }
 }
 
-#[derive(Default, Clone, Debug)]
+/// Mouse state holding `[current, previous]` for every field, so movement and
+/// button edges are always well-defined. Index `0` is the current frame, index
+/// `1` the previous. Call [`MouseInput::shift`] once per frame before writing
+/// the new current values.
+#[derive(Default, Clone, Copy, Debug)]
 pub struct MouseInput {
-    pub x: i16,
-    pub y: i16,
-    pub scroll_x: i8,
-    pub scroll_y: i8,
-    pub left: bool,
-    pub middle: bool,
-    pub right: bool,
+    pub x: [i16; 2],
+    pub y: [i16; 2],
+    pub scroll_x: [i8; 2],
+    pub scroll_y: [i8; 2],
+    pub left: [bool; 2],
+    pub middle: [bool; 2],
+    pub right: [bool; 2],
+}
+
+impl MouseInput {
+    /// Current cursor position.
+    pub fn pos(&self) -> Vec2 {
+        Vec2::new(self.x[0], self.y[0])
+    }
+    /// Cursor position on the previous frame.
+    pub fn previous_pos(&self) -> Vec2 {
+        Vec2::new(self.x[1], self.y[1])
+    }
+    /// Whether the cursor moved since last frame.
+    pub fn moved(&self) -> bool {
+        self.x[0] != self.x[1] || self.y[0] != self.y[1]
+    }
+    /// Roll the current values into the previous slot, making room for this
+    /// frame's values to be written into the current (index `0`) slot.
+    pub fn shift(&mut self) {
+        self.x[1] = self.x[0];
+        self.y[1] = self.y[0];
+        self.scroll_x[1] = self.scroll_x[0];
+        self.scroll_y[1] = self.scroll_y[0];
+        self.left[1] = self.left[0];
+        self.middle[1] = self.middle[0];
+        self.right[1] = self.right[0];
+    }
+}
+
+/// Whether a `[current, previous]` button is held this frame.
+pub fn pressed(button: [bool; 2]) -> bool {
+    button[0]
+}
+
+/// Whether a `[current, previous]` button was just pressed this frame — down
+/// now, up last frame (rising edge).
+pub fn just_pressed(button: [bool; 2]) -> bool {
+    button[0] && !button[1]
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+
+    #[test]
+    fn edges_and_movement() {
+        let mut m = MouseInput::default();
+        m.x = [5, 5];
+        m.y = [9, 7];
+        assert_eq!(m.pos(), Vec2::new(5, 9));
+        assert!(m.moved()); // y differs from last frame
+
+        m.y = [7, 7];
+        assert!(!m.moved());
+
+        m.left = [true, false];
+        assert!(pressed(m.left));
+        assert!(just_pressed(m.left));
+
+        m.left = [true, true];
+        assert!(pressed(m.left)); // still held...
+        assert!(!just_pressed(m.left)); // ...but not a new press
+
+        m.left = [false, true];
+        assert!(!pressed(m.left));
+        assert!(!just_pressed(m.left));
+    }
+
+    #[test]
+    fn shift_rolls_current_into_previous() {
+        let mut m = MouseInput::default();
+        m.x = [3, 0];
+        m.left = [true, false];
+        m.shift();
+        assert_eq!(m.x, [3, 3]);
+        assert_eq!(m.left, [true, true]);
+    }
 }
 
 #[derive(Debug, Clone)]

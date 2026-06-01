@@ -39,7 +39,6 @@ pub struct EggInput {
     pub keyboard: [bool; SCANCODE_COUNT],
     pub previous_keyboard: [bool; SCANCODE_COUNT],
     pub mouse: MouseInput,
-    pub previous_mouse: MouseInput,
     pub typed_chars: Vec<char>,
 }
 impl Default for EggInput {
@@ -56,7 +55,6 @@ impl EggInput {
             keyboard: [false; SCANCODE_COUNT],
             previous_keyboard: [false; SCANCODE_COUNT],
             mouse: MouseInput::default(),
-            previous_mouse: MouseInput::default(),
             typed_chars: Vec::with_capacity(8),
         }
     }
@@ -73,7 +71,7 @@ impl EggInput {
     pub fn refresh(&mut self) {
         self.previous_gamepads = self.gamepads;
         self.previous_keyboard = self.keyboard;
-        self.previous_mouse = self.mouse.clone();
+        self.mouse.shift();
         self.gamepads = [0; 4];
         self.keyboard = [false; SCANCODE_COUNT];
         self.typed_chars.clear();
@@ -110,21 +108,6 @@ impl EggInput {
     }
     pub fn key(&self, key: ScanCode) -> bool {
         self.keyboard[key.index()]
-    }
-    pub fn mouse(&self) -> MouseInput {
-        self.mouse.clone()
-    }
-    pub fn mouse_delta(&self) -> MouseInput {
-        let new = self.mouse.clone();
-        let old = self.previous_mouse.clone();
-        MouseInput {
-            x: new.x - old.x,
-            y: new.y - old.y,
-            left: new.left && !old.left,
-            middle: new.middle && !old.middle,
-            right: new.right && !old.right,
-            ..new
-        }
     }
 }
 

@@ -1,14 +1,14 @@
 use crate::system::PrintOptions;
 use crate::system::StaticSpriteOptions;
-use crate::system::WIDTH;
+use crate::system::{HEIGHT, WIDTH};
 
 use crate::camera::CameraBounds;
 use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::dialogue_data::OPTIONS_TITLE;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
-use crate::position::*;
-use crate::system::{ConsoleApi, ConsoleHelper};
+use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
+use crate::ui::{self, Content, Decoration, Style, Ui, UiBuilder};
 
 use super::GameMode;
 use super::inventory::InventoryUi;
@@ -76,12 +76,26 @@ impl MenuState {
         inventory_ui: &mut InventoryUi,
     ) -> Option<GameMode> {
         let old_index = self.index;
-        let (menu_index, clicked) = step_menu(
-            self.entries.len(),
-            self.entry_height(),
-            &mut self.index,
-            system,
-        );
+        let entries = self.entries.len();
+        let ui = self.build_ui(system);
+        let mouse = system.mouse();
+        let mut clicked = false;
+        if let Some(i) = ui.hit(mouse.pos()) {
+            if mouse.moved() {
+                self.index = i;
+            }
+            if just_pressed(mouse.left) {
+                self.index = i;
+                clicked = true;
+            }
+        }
+        if system.mem_btnp(0) {
+            self.index = old_index.checked_sub(1).unwrap_or(entries - 1);
+        }
+        if system.mem_btnp(1) {
+            self.index = old_index.saturating_add(1) % entries;
+        }
+        let menu_index = self.index;
         if old_index != menu_index {
             self.exit_hover(old_index);
             system.play_sound(sound::CLICK);
@@ -102,6 +116,43 @@ impl MenuState {
     }
     pub fn entry_height(&self) -> i16 {
         if self.draw_title.is_some() { 88 } else { 40 }
+    }
+    /// Lay the menu out as a full-screen vertical column of selectable rows,
+    /// one per entry and keyed by its index. Rebuilt each frame for both
+    /// hit-testing (`step`) and drawing.
+    pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<usize> {
+        let small = DIALOGUE_OPTIONS.small_text(system);
+        let mut builder = UiBuilder::new();
+        let rows: Vec<_> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let selected = i == self.index;
+                builder.leaf(
+                    Style { size: ui::full_width(8.0), ..Default::default() },
+                    Content::Text {
+                        text: entry.text().to_string(),
+                        color: if selected { 4 } else { 3 },
+                        center: true,
+                        small,
+                    },
+                    if selected { Decoration::fill(1) } else { Decoration::default() },
+                    Some(i),
+                )
+            })
+            .collect();
+        let root = builder.container(
+            Style {
+                size: ui::size(WIDTH as f32, HEIGHT as f32),
+                padding: ui::pad_lrtb(0.0, 0.0, self.entry_height() as f32, 0.0),
+                ..ui::column(0.0)
+            },
+            Decoration::default(),
+            None,
+            &rows,
+        );
+        builder.finish(root)
     }
     pub fn click(
         &mut self,
@@ -233,17 +284,8 @@ impl MenuState {
             draw_title_rgba(draw_state, system, 120, 53, string, elapsed_frames);
         }
 
-        let strings: Vec<&str> = self.entries.iter().map(|x| x.text()).collect();
-        let current_option = self.index;
-        draw_menu(
-            draw_state,
-            system,
-            &strings,
-            120,
-            self.entry_height().into(),
-            current_option,
-        );
-        self.hover(draw_state, system, current_option);
+        self.build_ui(system).draw(draw_state, system, BG);
+        self.hover(draw_state, system, self.index);
 
         let output = system.output_image();
         output.blit::<RgbaImage>(
@@ -302,73 +344,6 @@ impl MenuEntry {
             _MusicSelect(_, string) => string,
         }
     }
-}
-
-pub fn draw_menu(
-    draw_state: &mut crate::drawstate::DrawState,
-    system: &mut impl ConsoleApi,
-    entries: &[&str],
-    x: i32,
-    y: i32,
-    current_option: usize,
-) {
-    use crate::drawstate::LayerId::*;
-    use crate::system::drawing::Canvas;
-    let c1 = draw_state.colour(1);
-    let c3 = draw_state.colour(3);
-    let c4 = draw_state.colour(4);
-    let options = DIALOGUE_OPTIONS.get_options(system);
-    for (i, string) in entries.iter().enumerate() {
-        let color = if i == current_option { c4 } else { c3 };
-        if i == current_option {
-            draw_state
-                .rgba(BG)
-                .fill_rect(0, y + i as i32 * 8 - 1, WIDTH, 8, c1);
-        }
-        system.print_to_centered(
-            draw_state.rgba(BG),
-            string,
-            x,
-            y + i as i32 * 8,
-            color,
-            PrintOptions {
-                color: if i == current_option { 4 } else { 3 },
-                ..options.clone()
-            },
-        );
-    }
-}
-
-pub fn step_menu(
-    entries: usize,
-    y: i16,
-    index: &mut usize,
-    system: &mut impl ConsoleApi,
-) -> (usize, bool) {
-    let old_index = *index;
-
-    let mouse_pos = Vec2::new(system.mouse().x, system.mouse().y);
-    let mouse_delta = system.mouse_delta();
-    let mut clicked = false;
-    for i in 0..entries {
-        if Hitbox::new(0, y + 8 * i as i16, WIDTH as i16, 8).touches_point(mouse_pos) {
-            clicked = mouse_delta.left;
-            if mouse_delta.x != 0 || mouse_delta.y != 0 || clicked {
-                *index = i;
-            }
-        }
-    }
-    if system.mem_btnp(0) {
-        match old_index.checked_sub(1) {
-            Some(x) => *index = x,
-            None => *index = entries - 1,
-        }
-    }
-    if system.mem_btnp(1) {
-        *index = old_index.saturating_add(1) % entries;
-    }
-
-    (*index, clicked)
 }
 
 /// Indexed-canvas variant of [`draw_title`], used by the migrated intro

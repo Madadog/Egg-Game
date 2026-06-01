@@ -23,7 +23,6 @@ pub mod types;
 pub trait ConsoleApi {
     // Input + memory
     fn get_gamepads(&mut self) -> &mut [u8; 4];
-    fn get_mouse(&mut self) -> &mut MouseInput;
     fn memory(&mut self) -> &mut EggMemory;
     fn get_sprite_flags(&mut self) -> &mut [u8];
 
@@ -45,7 +44,6 @@ pub trait ConsoleApi {
     fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
-    fn previous_mouse(&mut self) -> &mut MouseInput;
 
     // Asset access. Maps + indexed sprites also live on DrawState; these
     // accessors exist for asset-loading and a few non-draw queries (collider
@@ -89,10 +87,6 @@ pub trait ConsoleHelper: ConsoleApi {
         let buttons = self.get_gamepads();
         *self.previous_gamepad() = *buttons;
     }
-    fn update_previous_mouse(&mut self) {
-        let mouse = self.get_mouse();
-        *self.previous_mouse() = mouse.clone();
-    }
     fn mem_btn(&mut self, id: u8) -> bool {
         let controller: usize = (id / 8).min(3).into();
         let id = id % 8;
@@ -121,18 +115,6 @@ pub trait ConsoleHelper: ConsoleApi {
         let buttons = *self.get_gamepads();
         let previous = *self.previous_gamepad();
         buttons != previous
-    }
-    fn mouse_delta(&mut self) -> MouseInput {
-        let old = self.previous_mouse().clone();
-        let new = self.get_mouse();
-        MouseInput {
-            x: new.x - old.x,
-            y: new.y - old.y,
-            left: new.left && !old.left,
-            middle: new.middle && !old.middle,
-            right: new.right && !old.right,
-            ..*new
-        }
     }
     fn zero_pmem(&mut self) {
         self.memory().memory.fill(0);

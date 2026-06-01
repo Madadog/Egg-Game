@@ -441,11 +441,11 @@ fn step_state(
             } else {
                 (0.0, (window.height() - HEIGHT as f32 * size) / 2.0)
             };
-            game.system.input().mouse.x = ((pos.x - x_offset) / size) as i16;
-            game.system.input().mouse.y = ((pos.y - y_offset) / size) as i16;
-            game.system.input().mouse.left = mouse_button.pressed(MouseButton::Left);
-            game.system.input().mouse.right = mouse_button.pressed(MouseButton::Right);
-            game.system.input().mouse.middle = mouse_button.pressed(MouseButton::Middle);
+            game.system.input().mouse.x[0] = ((pos.x - x_offset) / size) as i16;
+            game.system.input().mouse.y[0] = ((pos.y - y_offset) / size) as i16;
+            game.system.input().mouse.left[0] = mouse_button.pressed(MouseButton::Left);
+            game.system.input().mouse.right[0] = mouse_button.pressed(MouseButton::Right);
+            game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
         }
     }
 

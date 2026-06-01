@@ -1,4 +1,4 @@
-use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions};
+use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions, just_pressed};
 
 use crate::{
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY},
@@ -8,6 +8,7 @@ use crate::{
         drawing::{Canvas, EdgePolicy, Transform},
         image::{Rgba, RgbaImage},
     },
+    ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
 };
 
 use super::walkaround::WalkaroundState;
@@ -88,7 +89,7 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
             );
         }
 
-        let mouse_pos = system.mouse();
+        let mouse_pos = system.mouse().pos();
         let grid_index = (i32::from(mouse_pos.x / 8), i32::from(mouse_pos.y / 8));
         let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
         let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
@@ -136,7 +137,61 @@ pub struct MapViewer {
     pub fg: bool,
     pub layer_index: usize,
 }
+/// Identifies the interactive rows of the map-layer viewer for hit-testing:
+/// the title (click flips BG/FG) and one row per layer (click toggles it).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LayerKey {
+    Title,
+    Layer(usize),
+}
+
 impl MapViewer {
+    /// Lay the viewer out as a fixed-width black column: a title row plus one
+    /// row per layer in the current (BG/FG) list, the selected row highlighted.
+    /// Rebuilt each frame for both hit-testing and drawing.
+    fn build_ui(&self, map: &MapInfo) -> Ui<LayerKey> {
+        use crate::system::HEIGHT;
+        let layers = if self.fg { &map.fg_layers } else { &map.layers };
+        let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
+
+        let mut b = UiBuilder::new();
+        let mut rows: Vec<NodeId> = Vec::with_capacity(layers.len() + 1);
+        rows.push(b.leaf(
+            Style { size: ui::full_width(8.0), ..Default::default() },
+            Content::Text { text: title.to_string(), color: 13, center: false, small: false },
+            Decoration::default(),
+            Some(LayerKey::Title),
+        ));
+        for (i, layer) in layers.iter().enumerate() {
+            let hidden = if layer.visible { "" } else { "(Hidden)" };
+            rows.push(b.leaf(
+                Style { size: ui::full_width(8.0), ..Default::default() },
+                Content::Text { text: format!("Layer {i} {hidden}"), color: 12, center: false, small: true },
+                if i == self.layer_index { Decoration::fill(15) } else { Decoration::default() },
+                Some(LayerKey::Layer(i)),
+            ));
+        }
+        let root = b.container(
+            Style { size: ui::size(70.0, HEIGHT as f32), ..ui::column(0.0) },
+            Decoration::fill(0),
+            None,
+            &rows,
+        );
+        b.finish(root)
+    }
+
+    /// Toggle the visibility of the currently selected layer.
+    fn toggle_layer(&self, map: &mut MapInfo) {
+        let layer = if self.fg {
+            map.fg_layers.get_mut(self.layer_index)
+        } else {
+            map.layers.get_mut(self.layer_index)
+        };
+        if let Some(layer) = layer {
+            layer.visible = !layer.visible;
+        }
+    }
+
     pub fn draw_map_viewer(
         &self,
         draw_state: &mut DrawState,
@@ -146,62 +201,44 @@ impl MapViewer {
         if !self.focused {
             return;
         }
-        let height = draw_state.rgba(LayerId::BG).height() as i32;
-        let c0 = draw_state.colour(0);
-        let c12 = draw_state.colour(12);
-        let c13 = draw_state.colour(13);
-        let c15 = draw_state.colour(15);
-        draw_state.rgba(LayerId::BG).fill_rect(0, 0, 70, height, c0);
-        draw_state
-            .rgba(LayerId::BG)
-            .fill_rect(0, 8 + 8 * self.layer_index as i32, 70, 8, c15);
-
-        let (layers, title) = if self.fg {
-            (walkaround.current_map.fg_layers.iter().enumerate(), "FG")
-        } else {
-            (walkaround.current_map.layers.iter().enumerate(), "BG")
-        };
-        system.print_to(
-            draw_state.rgba(LayerId::BG),
-            &format!("{title} LAYERS:"),
-            0,
-            0,
-            c13,
-            PrintOptions::default().with_color(13),
-        );
-        for (i, layer) in layers {
-            let text = if layer.visible { "" } else { "(Hidden)" };
-            system.print_to(
-                draw_state.rgba(LayerId::BG),
-                &format!("Layer {} {text}", i),
-                0,
-                8 + 8 * i as i32,
-                c12,
-                PrintOptions {
-                    color: 12,
-                    small_text: true,
-                    ..PrintOptions::default()
-                },
-            );
-        }
+        self.build_ui(&walkaround.current_map)
+            .draw(draw_state, system, LayerId::BG);
     }
 
     pub fn step_map_viewer(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+        // --- Mouse: hover selects a layer, left-click toggles it (or flips BG/FG on the title). ---
+        let ui = self.build_ui(map);
+        let mouse = system.mouse();
+        let mut mouse_toggled = false;
+        if let Some(key) = ui.hit(mouse.pos()) {
+            match key {
+                LayerKey::Title => {
+                    if just_pressed(mouse.left) {
+                        self.fg = !self.fg;
+                    }
+                }
+                LayerKey::Layer(i) => {
+                    if mouse.moved() {
+                        self.layer_index = i;
+                    }
+                    if just_pressed(mouse.left) {
+                        self.layer_index = i;
+                        self.toggle_layer(map);
+                        mouse_toggled = true;
+                    }
+                }
+            }
+        }
+
+        // --- Keyboard (unchanged). ---
         if system.btnp(0, 0, 0) {
             self.layer_index = self.layer_index.saturating_sub(1);
         }
         if system.btnp(1, 0, 0) {
             self.layer_index = (self.layer_index + 1).min(map.layers.len() - 1);
         }
-        if system.btnp(4, 0, 0) {
-            let layers = if self.fg {
-                map.fg_layers.get_mut(self.layer_index)
-            } else {
-                map.layers.get_mut(self.layer_index)
-            };
-            if let Some(layer) = layers {
-                layer.visible = !layer.visible;
-            }
+        if system.btnp(4, 0, 0) && !mouse_toggled {
+            self.toggle_layer(map);
         }
         if system.btnp(5, 0, 0) {
             self.fg = !self.fg;

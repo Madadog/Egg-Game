@@ -190,10 +190,6 @@ impl ConsoleApi for FantasyConsole {
         &mut self.input.gamepads
     }
 
-    fn get_mouse(&mut self) -> &mut MouseInput {
-        &mut self.input.mouse
-    }
-
     fn memory(&mut self) -> &mut EggMemory {
         &mut self.memory
     }
@@ -227,7 +223,7 @@ impl ConsoleApi for FantasyConsole {
     }
 
     fn mouse(&self) -> MouseInput {
-        self.input.mouse.clone()
+        self.input.mouse
     }
 
     fn music(&mut self, track: Option<&MusicTrack>) {
@@ -257,10 +253,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn previous_gamepad(&mut self) -> &mut [u8; 4] {
         &mut self.input.previous_gamepads
-    }
-
-    fn previous_mouse(&mut self) -> &mut MouseInput {
-        &mut self.input.previous_mouse
     }
 
     fn maps(&mut self) -> &mut Vec<GameMap> {

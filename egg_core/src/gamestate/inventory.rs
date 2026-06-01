@@ -1,7 +1,8 @@
 use crate::{
     data::{dialogue_data::*, sound},
-    dialogue::{Dialogue, print_width},
-    system::{ConsoleApi, ConsoleHelper},
+    dialogue::{DIALOGUE_OPTIONS, Dialogue},
+    system::{ConsoleApi, ConsoleHelper, just_pressed},
+    ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
 };
 
 static ITEM_FF: InventoryItem = InventoryItem {
@@ -141,6 +142,38 @@ impl InventoryUiState {
     }
 }
 
+/// Identifies the interactive boxes of the inventory layout, so a mouse hit
+/// resolves to exactly the page label, item slot, or egg slot under the cursor.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InvKey {
+    /// One of the four side-column page labels (0=Items, 1=Eggs, 2=Options, 3=Back).
+    Page(usize),
+    /// An item slot on the Items page (`0..8`).
+    Slot(usize),
+    /// An egg slot on the Eggs page (`0..4`).
+    Egg(usize),
+}
+
+/// Build a 20×20 item/egg slot: an outlined box keyed for hit-testing, holding
+/// an optional 16×16 sprite inset by 2px (via padding).
+fn make_slot(builder: &mut UiBuilder<InvKey>, key: InvKey, outline: u8, sprite: Option<Content>) -> NodeId {
+    let children: Vec<NodeId> = match sprite {
+        Some(content) => vec![builder.leaf(
+            Style { size: ui::size(16.0, 16.0), ..Default::default() },
+            content,
+            Decoration::default(),
+            None,
+        )],
+        None => Vec::new(),
+    };
+    builder.container(
+        Style { size: ui::size(20.0, 20.0), padding: ui::pad(2.0), ..Default::default() },
+        Decoration::outlined(0, outline),
+        Some(key),
+        &children,
+    )
+}
+
 pub struct InventoryUi {
     pub inventory: Inventory,
     pub state: InventoryUiState,
@@ -201,325 +234,223 @@ impl InventoryUi {
             _ => (),
         }
     }
+    /// Lay out the inventory panel — a centred row of the side page-column and
+    /// a page-specific main area — with Taffy. Rebuilt each frame and used for
+    /// both hit-testing (`step`) and drawing (`draw`). Every label/slot carries
+    /// an [`InvKey`] so a mouse hit resolves straight to the thing under it.
+    pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<InvKey> {
+        use crate::system::{HEIGHT, PrintOptions, WIDTH};
+
+        // Original fixed dimensions, kept so the panel centres exactly as before
+        // (item slot stride was `2*8 + 5 = 21`: a 20px box with a 1px gap).
+        const MAIN_W: f32 = 89.0;
+        const PANEL_H: f32 = 47.0;
+
+        let small = DIALOGUE_OPTIONS.small_text(system);
+        let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
+        let page = self.state.page();
+        let page_select = matches!(self.state, InventoryUiState::PageSelect(_));
+        // While choosing a page the side column is highlighted (palette +2); once
+        // inside a page the main area is highlighted instead.
+        let col_c: u8 = if page_select { 2 } else { 0 };
+        let main_c: u8 = if page_select { 0 } else { 2 };
+        let dragging_from = match &self.state {
+            InventoryUiState::Items(_, Some((old, _))) => Some(*old),
+            _ => None,
+        };
+
+        let mut b = UiBuilder::new();
+
+        // --- Side column: the four page labels. ---
+        let labels = [INVENTORY_ITEMS, INVENTORY_SHELL, INVENTORY_OPTIONS, INVENTORY_BACK];
+        let label_w = labels
+            .iter()
+            .map(|s| system.text_width(s, body_opts.clone()))
+            .max()
+            .unwrap_or(0);
+        let label_nodes: Vec<NodeId> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let selected = i as i32 == page;
+                b.leaf(
+                    Style { size: ui::full_width(8.0), ..Default::default() },
+                    Content::Text { text: s.to_string(), color: 12, center: false, small },
+                    if selected { Decoration::fill(col_c + 1) } else { Decoration::default() },
+                    Some(InvKey::Page(i)),
+                )
+            })
+            .collect();
+        let side = b.container(
+            Style {
+                size: ui::width((label_w + 5) as f32),
+                padding: ui::pad_lrtb(2.0, 2.0, 1.0, 1.0),
+                ..ui::column(0.0)
+            },
+            Decoration::outlined(col_c, col_c + 1),
+            None,
+            &label_nodes,
+        );
+
+        // --- Main area: a slot grid (Items/Eggs) or a hint box (Options/Back). ---
+        let main = match page {
+            0 => {
+                let slots: Vec<NodeId> = self
+                    .inventory
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        // The slot we're currently dragging from is left empty;
+                        // the floating item is drawn over the cursor in `draw`.
+                        let sprite = match item {
+                            Some(item) if dragging_from != Some(i) => {
+                                Some(Content::Sprite { id: item.sprite, scale: 2, w: 1, h: 1, outline: None })
+                            }
+                            _ => None,
+                        };
+                        make_slot(&mut b, InvKey::Slot(i), main_c + 1, sprite)
+                    })
+                    .collect();
+                b.container(
+                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(3.0, 2.0, 3.0, 3.0), ..ui::wrap_row(1.0) },
+                    Decoration::outlined(main_c, main_c + 1),
+                    None,
+                    &slots,
+                )
+            }
+            1 => {
+                let slots: Vec<NodeId> = (0..4)
+                    .map(|i| {
+                        let egg = Content::Sprite { id: 534, scale: 1, w: 2, h: 2, outline: None };
+                        make_slot(&mut b, InvKey::Egg(i), main_c + 1, Some(egg))
+                    })
+                    .collect();
+                b.container(
+                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(3.0, 2.0, 3.0, 3.0), ..ui::wrap_row(1.0) },
+                    Decoration::outlined(main_c, main_c + 1),
+                    None,
+                    &slots,
+                )
+            }
+            n => {
+                let hint = if n == 2 { "Open options menu" } else { "Back to world" };
+                let hint_w = system.text_width(hint, body_opts.clone());
+                let text_node = b.leaf(
+                    Style { size: ui::size(hint_w as f32, 8.0), ..Default::default() },
+                    Content::Text { text: hint.to_string(), color: 12, center: false, small },
+                    Decoration::default(),
+                    None,
+                );
+                let hint_box = b.container(
+                    Style { size: ui::size((hint_w + 3) as f32, 10.0), padding: ui::pad_lrtb(2.0, 0.0, 1.0, 0.0), ..Default::default() },
+                    Decoration::outlined(col_c, col_c + 1),
+                    None,
+                    &[text_node],
+                );
+                // Reserve the full main width so the side column keeps its x, and
+                // drop the hint box level with the selected page label.
+                b.container(
+                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(0.0, 0.0, (n * 8) as f32, 0.0), ..ui::column(0.0) },
+                    Decoration::default(),
+                    None,
+                    &[hint_box],
+                )
+            }
+        };
+
+        // --- Panel (side + main), centred on the 240×136 screen by Taffy. ---
+        let panel = b.container(
+            Style { size: ui::full_width(PANEL_H), ..ui::row_top(2.0) },
+            Decoration::default(),
+            None,
+            &[side, main],
+        );
+        let root = b.container(
+            Style { size: ui::size(WIDTH as f32, HEIGHT as f32), ..ui::centered() },
+            Decoration::default(),
+            None,
+            &[panel],
+        );
+        b.finish(root)
+    }
     pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {
-        use crate::dialogue::DIALOGUE_OPTIONS;
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::image::{Rgba, RgbaImage};
-        use crate::system::{HEIGHT, PrintOptions, StaticSpriteOptions, WIDTH};
-        let entries = [
-            INVENTORY_ITEMS,
-            INVENTORY_SHELL,
-            INVENTORY_OPTIONS,
-            INVENTORY_BACK,
-        ];
-        let small_text = DIALOGUE_OPTIONS.small_text(system);
-        // Entries is fixed-length so this can't fail
-        let width = entries
-            .iter()
-            .map(|x| print_width(system, x, false, small_text))
-            .max()
-            .unwrap();
-        let side_column = width + 3;
-        let column_margin = 2;
-        let scale = 2;
-        let item_slot_size = scale * 8 + 5;
-        let main_width = item_slot_size * 4 + 5;
-        let total_width = main_width + side_column + column_margin;
-        let total_height = item_slot_size * 2 + 5;
-        let x_offset = (WIDTH - total_width) / 2;
-        let y_offset = (HEIGHT - total_height) / 2;
-        let mut column_colour = 0u8;
-        let mut main_colour = 0u8;
-        match self.state {
-            InventoryUiState::PageSelect(_) => column_colour += 2,
-            _ => {
-                main_colour += 2;
-            }
-        };
-        let fg = FG as usize;
-        let pmap = PALETTE_MAP_IDENTITY;
+        use crate::system::{PrintOptions, StaticSpriteOptions};
+
+        let small = DIALOGUE_OPTIONS.small_text(system);
+        let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
         let black = draw_state.colour(0);
         let white = draw_state.colour(12);
-        let c_col = draw_state.colour(column_colour);
-        let c_col_outline = draw_state.colour(column_colour + 1);
-        let c_main = draw_state.colour(main_colour);
-        let c_main_outline = draw_state.colour(main_colour + 1);
-        let body_opts = PrintOptions {
-            color: 12,
-            small_text,
-            ..Default::default()
-        };
+        let c2 = draw_state.colour(2);
+        let c3 = draw_state.colour(3);
 
+        // Foreground starts clear each frame; everything here draws onto it.
         draw_state.rgba(FG).fill(Rgba::TRANSPARENT);
-        system.print_to_centered(
-            draw_state.rgba(FG),
-            crate::data::dialogue_data::INVENTORY_TITLE,
-            120 + 1,
-            37 + 1,
-            black,
-            body_opts.clone(),
-        );
-        system.print_to_centered(
-            draw_state.rgba(FG),
-            crate::data::dialogue_data::INVENTORY_TITLE,
-            120,
-            37,
-            white,
-            body_opts.clone(),
-        );
-        // Side selection: rect_outline = fill_rect + stroke_rect
-        let side_h = 5 + entries.len() as i32 * 8;
-        draw_state.rgba(FG).outlined_rect(
-            x_offset,
-            y_offset,
-            side_column,
-            side_h,
-            c_col,
-            c_col_outline,
-        );
-        draw_state.rgba(FG).fill_rect(
-            x_offset + 1,
-            y_offset + 8 * self.state.page() + 3,
-            side_column - 2,
-            7,
-            c_col_outline,
-        );
-        for (i, string) in entries.iter().enumerate() {
-            system.print_to(
-                draw_state.rgba(FG),
-                string,
-                x_offset + 2,
-                y_offset + i as i32 * 8 + 4,
-                white,
-                body_opts.clone(),
-            );
-        }
-        match self.state.page() {
-            0 => {
-                draw_state.rgba(FG).outlined_rect(
-                    x_offset + side_column + column_margin,
-                    y_offset,
-                    main_width,
-                    total_height,
-                    c_main,
-                    c_main_outline,
-                );
-                for (i, item) in (0..).zip(self.inventory.items.iter()) {
-                    let (sx, sy) = (
-                        x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
-                        y_offset + 3 + (i / 4) * item_slot_size,
-                    );
-                    draw_state.rgba(FG).outlined_rect(
-                        sx,
-                        sy,
-                        item_slot_size - 1,
-                        item_slot_size - 1,
-                        black,
-                        c_main_outline,
-                    );
-                    if let Some(item) = item {
-                        draw_state.spr(
+
+        // Title, white with a 1px black shadow.
+        system.print_to_centered(draw_state.rgba(FG), INVENTORY_TITLE, 121, 38, black, body_opts.clone());
+        system.print_to_centered(draw_state.rgba(FG), INVENTORY_TITLE, 120, 37, white, body_opts.clone());
+
+        // Lay out and draw the whole panel in one pass...
+        let ui = self.build_ui(system);
+        ui.draw(draw_state, system, FG);
+
+        // ...then overlay the state-specific bits using the laid-out rects.
+        match &self.state {
+            InventoryUiState::Items(current, selected) => {
+                if let Some(slot) = ui.rect(InvKey::Slot(*current)) {
+                    draw_state
+                        .rgba(FG)
+                        .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
+                    if let Some((_, item)) = selected {
+                        // Picked-up item floats 4px above its cursor slot, outlined.
+                        draw_state.spr_with_outline(
                             FG,
-                            &pmap,
+                            &PALETTE_MAP_IDENTITY,
                             item.sprite,
-                            sx + 2,
-                            sy + 2,
-                            StaticSpriteOptions {
-                                scale,
-                                transparent: &[0],
-                                ..Default::default()
-                            },
+                            i32::from(slot.x) + 2,
+                            i32::from(slot.y) + 2 - 4,
+                            StaticSpriteOptions { scale: 2, transparent: &[0], ..Default::default() },
+                            12,
                         );
                     }
                 }
-            }
-            1 => {
-                draw_state.rgba(FG).outlined_rect(
-                    x_offset + side_column + column_margin,
-                    y_offset,
-                    main_width,
-                    item_slot_size + 5,
-                    c_main,
-                    c_main_outline,
-                );
-                for i in 0..4 {
-                    let (sx, sy) = (
-                        x_offset + side_column + column_margin + 3 + (i % 4) * item_slot_size,
-                        y_offset + 3 + (i / 4) * item_slot_size,
-                    );
-                    draw_state.rgba(FG).outlined_rect(
-                        sx,
-                        sy,
-                        item_slot_size - 1,
-                        item_slot_size - 1,
-                        black,
-                        c_main_outline,
-                    );
-                    draw_state.spr(
-                        FG,
-                        &pmap,
-                        534,
-                        sx + 2,
-                        sy + 2,
-                        StaticSpriteOptions {
-                            transparent: &[0],
-                            w: 2,
-                            h: 2,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-            n => {
-                let string = match n {
-                    2 => "Open options menu",
-                    _ => "Back to world",
+                let name = match selected {
+                    Some((_, item)) => Some(item.name),
+                    None => self.inventory.items[*current].map(|item| item.name),
                 };
-                let width = system.text_width(string, body_opts.clone());
-                let y_offset = y_offset + n * 8 + 2;
-                draw_state.rgba(FG).outlined_rect(
-                    x_offset + side_column + column_margin,
-                    y_offset,
-                    width + 4,
-                    10,
-                    c_col,
-                    c_col_outline,
-                );
-                system.print_to(
-                    draw_state.rgba(FG),
-                    string,
-                    x_offset + side_column + column_margin + 2,
-                    y_offset + 2,
-                    white,
-                    body_opts.clone(),
-                );
-            }
-        };
-        let c2 = draw_state.colour(2);
-        let c3 = draw_state.colour(3);
-        match &self.state {
-            InventoryUiState::Items(current_index, selected) => {
-                let (sx, sy) = (
-                    x_offset
-                        + side_column
-                        + column_margin
-                        + 3
-                        + (*current_index as i32 % 4) * item_slot_size,
-                    y_offset + 3 + (*current_index as i32 / 4) * item_slot_size,
-                );
-                draw_state.rgba(FG).stroke_rect(
-                    sx,
-                    sy,
-                    item_slot_size - 1,
-                    item_slot_size - 1,
-                    white,
-                );
-                if let Some((selected_index, selected_item)) = selected {
-                    let (old_sx, old_sy) = (
-                        x_offset
-                            + side_column
-                            + column_margin
-                            + 3
-                            + (*selected_index as i32 % 4) * item_slot_size,
-                        y_offset + 3 + (*selected_index as i32 / 4) * item_slot_size,
-                    );
-                    draw_state.rgba_canvas[fg].fill_rect(
-                        old_sx + 1,
-                        old_sy + 1,
-                        item_slot_size - 3,
-                        item_slot_size - 3,
-                        black,
-                    );
-                    draw_state.spr_with_outline(
-                        FG,
-                        &pmap,
-                        selected_item.sprite,
-                        sx + 2,
-                        sy + 2 - 4,
-                        StaticSpriteOptions {
-                            scale,
-                            transparent: &[0],
-                            ..Default::default()
-                        },
-                        12,
-                    );
-                    draw_state.rgba_canvas[fg].outlined_rect(7, 98, 70, 9, c2, c3);
-                    system.print_to(
-                        draw_state.rgba(FG),
-                        selected_item.name,
-                        9,
-                        100,
-                        white,
-                        body_opts.clone(),
-                    );
-                } else if let Some(item) = &self.inventory.items[*current_index] {
-                    draw_state.rgba_canvas[fg].outlined_rect(7, 98, 70, 9, c2, c3);
-                    system.print_to(
-                        draw_state.rgba(FG),
-                        item.name,
-                        9,
-                        100,
-                        white,
-                        body_opts.clone(),
-                    );
+                if let Some(name) = name {
+                    draw_state.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
+                    system.print_to(draw_state.rgba(FG), name, 9, 100, white, body_opts.clone());
                 }
             }
-            InventoryUiState::Eggs(current_index) => {
-                let (sx, sy) = (
-                    x_offset
-                        + side_column
-                        + column_margin
-                        + 3
-                        + (*current_index as i32 % 4) * item_slot_size,
-                    y_offset + 3,
-                );
-                draw_state.rgba_canvas[fg].stroke_rect(
-                    sx,
-                    sy,
-                    item_slot_size - 1,
-                    item_slot_size - 1,
-                    white,
-                );
-            }
-            _ => {}
-        };
-
-        // Dialogue portrait now draws to the same BG layer.
-        match &self.state {
-            InventoryUiState::Items(current_index, selected) => {
-                if let Some((_, selected_item)) = selected {
-                    let string = self.dialogue.fit_text(system, selected_item.desc);
-                    self.dialogue.draw_dialogue_portrait(
-                        draw_state,
-                        FG,
-                        system,
-                        &string,
-                        false,
-                        selected_item.sprite,
-                        3,
-                        1,
-                        1,
-                    );
-                } else if let Some(item) = &self.inventory.items[*current_index] {
-                    let string = self.dialogue.fit_text(system, item.desc);
-                    self.dialogue.draw_dialogue_portrait(
-                        draw_state,
-                        FG,
-                        system,
-                        &string,
-                        false,
-                        item.sprite,
-                        3,
-                        1,
-                        1,
-                    );
+            InventoryUiState::Eggs(current) => {
+                if let Some(slot) = ui.rect(InvKey::Egg(*current)) {
+                    draw_state
+                        .rgba(FG)
+                        .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
                 }
             }
             _ => {}
         }
 
-        // Composite (once, after everything).
+        // Description portrait for the held or hovered item.
+        if let InventoryUiState::Items(current, selected) = &self.state {
+            let item = match selected {
+                Some((_, item)) => Some(*item),
+                None => self.inventory.items[*current],
+            };
+            if let Some(item) = item {
+                let string = self.dialogue.fit_text(system, item.desc);
+                self.dialogue
+                    .draw_dialogue_portrait(draw_state, FG, system, &string, false, item.sprite, 3, 1, 1);
+            }
+        }
+
+        // Composite background then foreground into the output image.
         let output = system.output_image();
         output.blit::<RgbaImage>(
             0,
@@ -532,13 +463,60 @@ impl InventoryUi {
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[fg],
+            &draw_state.rgba_canvas[FG as usize],
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,
         );
     }
     pub fn step(&mut self, system: &mut impl ConsoleApi) {
+        // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
+        let ui = self.build_ui(system);
+        let mouse = system.mouse();
+        let mut mouse_clicked = false;
+        if let Some(key) = ui.hit(mouse.pos()) {
+            match key {
+                InvKey::Page(i) => {
+                    if mouse.moved() {
+                        self.state = InventoryUiState::PageSelect(i as i32);
+                    }
+                    if just_pressed(mouse.left) {
+                        self.state = InventoryUiState::PageSelect(i as i32);
+                        self.state.change(system);
+                        mouse_clicked = true;
+                    }
+                }
+                InvKey::Slot(i) => {
+                    let drag = match &self.state {
+                        InventoryUiState::Items(_, sel) => *sel,
+                        _ => None,
+                    };
+                    if mouse.moved() {
+                        self.state = InventoryUiState::Items(i, drag);
+                    }
+                    if just_pressed(mouse.left) {
+                        self.state = InventoryUiState::Items(i, drag);
+                        self.click(system);
+                        mouse_clicked = true;
+                    }
+                }
+                InvKey::Egg(i) => {
+                    if mouse.moved() {
+                        self.state = InventoryUiState::Eggs(i);
+                    }
+                    if just_pressed(mouse.left) {
+                        self.state = InventoryUiState::Eggs(i);
+                        self.click(system);
+                        mouse_clicked = true;
+                    }
+                }
+            }
+        }
+        if just_pressed(mouse.right) {
+            self.state.back(system);
+        }
+
+        // --- Keyboard / gamepad navigation (unchanged). ---
         let (mut dx, mut dy) = (0, 0);
         if system.mem_btnp(0) {
             dy -= 1
@@ -553,7 +531,7 @@ impl InventoryUi {
             dx += 1
         }
         self.state.arrows(system, dx, dy);
-        if system.mem_btnp(4) {
+        if system.mem_btnp(4) && !mouse_clicked {
             self.click(system)
         };
         if system.mem_btnp(5) {
