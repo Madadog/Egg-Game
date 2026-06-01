@@ -2,6 +2,7 @@
 /Cargo.lock
 /.local
 /ignore
+/save.json
 build-stable.sh
 build.sh
 tic80

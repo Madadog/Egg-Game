@@ -102,6 +102,11 @@ impl FantasyConsole {
     pub fn music_track(&mut self) -> &mut Option<(MusicTrack, bool)> {
         &mut self.music
     }
+    /// A snapshot of the current persistent save data, for the autosave system
+    /// to diff against the last value written to disk.
+    pub fn save_data(&self) -> SaveData {
+        self.memory
+    }
     pub fn blit_to_image(&self, image: &mut [u8]) {
         // Gamestate draw fns composite directly into output_screen each frame.
         image.copy_from_slice(self.output_screen.data());

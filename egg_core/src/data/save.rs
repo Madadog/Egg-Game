@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// Misc. progression flags and numbers. Persisted to the player's storage
 /// device and restored across runs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SaveData {
     // UI / general flags
     pub intro_anim_seen: bool,
@@ -47,4 +49,7 @@ pub struct SaveData {
     pub current_map: u8,
     pub player_x: i16,
     pub player_y: i16,
+
+    /// Number of times the game has saved
+    pub save_count: u32,
 }

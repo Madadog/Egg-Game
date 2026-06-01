@@ -14,6 +14,7 @@ use fantasy_console::FantasyConsole;
 use tiled::{TiledMap, TiledMapPlugin};
 
 mod fantasy_console;
+mod save;
 mod tiled;
 
 /// Bevy frontend: Stores console and game state. Plus stuff for loading assets, pausing sim and window management.
@@ -57,12 +58,13 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugins(TiledMapPlugin)
-        .add_systems(Startup, (setup, setup_assets))
+        .add_systems(Startup, (setup, setup_assets, load_save_game))
         .add_systems(Update, (load_assets, resize_screen))
         .add_systems(
             FixedUpdate,
-            (step_state, play_sounds, play_music, update_texture).chain(),
+            (step_state, autosave, play_sounds, play_music, update_texture).chain(),
         )
+        .add_systems(Last, save_on_exit)
         // 64 FPS
         .insert_resource(Time::<Fixed>::default())
         .run();
@@ -574,6 +576,47 @@ fn step_state(
             colour,
             egg_core::system::PrintOptions::default(),
         );
+    }
+}
+
+/// Load `save.json` into the console at startup, and seed the autosave tracker
+/// so the first frame doesn't rewrite an unchanged save. A missing or unreadable
+/// save falls back to a fresh `SaveData::default()`.
+fn load_save_game(mut game: ResMut<EggGame>, mut commands: Commands) {
+    let loaded = save::load().unwrap_or_default();
+    *game.system.memory() = loaded;
+    commands.insert_resource(save::SaveTracker { last: loaded });
+}
+
+/// Flush save data to disk whenever it differs from the last value written.
+/// Runs after `step_state`, so it captures the frame's changes.
+fn autosave(game: Res<EggGame>, mut tracker: ResMut<save::SaveTracker>) {
+    if !game.loaded {
+        return;
+    }
+    let current = game.system.save_data();
+    if current != tracker.last {
+        save::write(&current);
+        tracker.last = current;
+    }
+}
+
+/// Flush the latest save data when the app is closing, in case it changed on
+/// the same frame as the exit (before the next `autosave` could run).
+fn save_on_exit(
+    mut exit: MessageReader<AppExit>,
+    game: Res<EggGame>,
+    tracker: Option<ResMut<save::SaveTracker>>,
+) {
+    if exit.is_empty() {
+        return;
+    }
+    exit.clear();
+    let Some(mut tracker) = tracker else { return };
+    let current = game.system.save_data();
+    if current != tracker.last {
+        save::write(&current);
+        tracker.last = current;
     }
 }
 
