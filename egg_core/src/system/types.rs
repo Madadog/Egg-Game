@@ -1,43 +1,5 @@
 use crate::data::save;
 
-#[derive(Debug, Default)]
-pub struct SyncHelper {
-    already_synced: bool,
-    last_bank: u8,
-}
-
-impl SyncHelper {
-    pub fn step(&mut self) {
-        self.already_synced = false;
-    }
-    /// Sync can only be called once per frame. Returns result to indicate failure or success.
-    /// Mask lets you switch out sections of cart data:
-    /// * all     = 0    -- 0
-    /// * tiles   = 1<<0 -- 1
-    /// * sprites = 1<<1 -- 2
-    /// * map     = 1<<2 -- 4
-    /// * sfx     = 1<<3 -- 8
-    /// * music   = 1<<4 -- 16
-    /// * palette = 1<<5 -- 32
-    /// * flags   = 1<<6 -- 64
-    /// * screen  = 1<<7 -- 128 (as of 0.90)
-    pub fn sync(&mut self, _mask: i32, bank: u8) -> Result<(), ()> {
-        if self.already_synced() {
-            Err(())
-        } else {
-            self.already_synced = true;
-            self.last_bank = bank;
-            Ok(())
-        }
-    }
-    pub fn already_synced(&self) -> bool {
-        self.already_synced
-    }
-    pub fn last_bank(&self) -> u8 {
-        self.last_bank
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct EggMemory {
     pub memory: [u8; 1024],
@@ -186,7 +148,14 @@ impl<'a> StaticDrawParams<'a> {
                 outline,
             );
         } else {
-            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, self.options);
+            draw_state.spr(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                self.options,
+            );
         }
     }
     pub fn bottom(&self) -> i32 {

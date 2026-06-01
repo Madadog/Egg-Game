@@ -1,14 +1,14 @@
+use crate::system::MapOptions;
 use crate::{
     camera::CameraBounds,
     data::{
         map_data::MapIndex,
-        sound::{music::MusicTrack, SfxData},
+        sound::{SfxData, music::MusicTrack},
     },
     interact::{Interactable, StaticInteractable},
-    position::{touches_tile, Collider, Hitbox, Vec2},
+    position::{Collider, Hitbox, Vec2, touches_tile},
     system::ConsoleApi,
 };
-use crate::system::MapOptions;
 /*
 pub enum TileMapCollision {
     None,
@@ -286,7 +286,7 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
             (point.y - layer_hitbox.y) / 8 + layer.origin.y,
         );
         let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
-        let bank = system.sync_helper().last_bank().into();
+        let bank = system.bank().clone().into();
         let id = system.map_get(bank, 0, map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         let mget_collision = touches_tile(
             *system.get_sprite_flags().get(id).unwrap_or(&0),

@@ -6,8 +6,7 @@ use egg_core::{
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, EggMemory, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode, SfxOptions,
-        SyncHelper, WIDTH,
+        ConsoleApi, EggMemory, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode, SfxOptions, WIDTH,
         image::{IndexedImage, Rgba, RgbaImage},
     },
 };
@@ -48,7 +47,7 @@ pub struct FantasyConsole {
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
     rng: Lcg64Xsh32,
-    sync_helper: SyncHelper,
+    bank: u8,
 }
 
 impl FantasyConsole {
@@ -66,7 +65,7 @@ impl FantasyConsole {
             memory: EggMemory::default(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
-            sync_helper: SyncHelper::default(),
+            bank: 0,
         };
         let mut spr_flags = String::from(
             "00100000000000000000000000000000000000801000000000000000002020000010101010500000001000000000000000101030101000000000001010000000101010002000000000301010400000001000100000400010500000000000000010101010108020100000000000101010203000301080302000000000001010101010100000100010001010100000000010001000001000100010100000000000000000000010101030303010000010100000000000000000000000002030203000000000000000000000101010400000000000000010000000203010102000100000000000000000000000000010101000000000000000100010a060b0101020",
@@ -241,16 +240,12 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    fn sync(&mut self, mask: i32, bank: u8, _to_cart: bool) {
-        self.sync_helper.sync(mask, bank).unwrap();
-    }
-
     fn trace_alloc(text: impl AsRef<str>, _color: u8) {
         println!("{}", text.as_ref());
     }
 
-    fn sync_helper(&mut self) -> &mut SyncHelper {
-        &mut self.sync_helper
+    fn bank(&mut self) -> &mut u8 {
+        &mut self.bank
     }
 
     fn rng(&mut self) -> &mut egg_core::rand::Lcg64Xsh32 {
@@ -311,4 +306,3 @@ impl ConsoleApi for FantasyConsole {
         self.output_screen.fill(Rgba::TRANSPARENT);
     }
 }
-

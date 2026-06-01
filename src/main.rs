@@ -340,7 +340,6 @@ fn step_state(
     }
 
     game.system.input().refresh();
-    game.system.sync_helper().step();
 
     let (
         mut up,

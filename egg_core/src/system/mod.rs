@@ -37,11 +37,10 @@ pub trait ConsoleApi {
     // Audio + IO
     fn music(&mut self, track: Option<&MusicTrack>);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
-    fn sync(&mut self, mask: i32, bank: u8, to_cart: bool);
     fn trace_alloc(text: impl AsRef<str>, color: u8);
 
     // Per-frame state helpers
-    fn sync_helper(&mut self) -> &mut SyncHelper;
+    fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
     fn previous_gamepad(&mut self) -> &mut [u8; 4];
     fn previous_mouse(&mut self) -> &mut MouseInput;

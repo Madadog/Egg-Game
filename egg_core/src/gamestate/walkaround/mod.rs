@@ -93,12 +93,8 @@ impl WalkaroundState {
         }
         self.bg_colour = map_set.bg_colour;
         system.music(map_set.music_track.as_ref());
-        if map_set.bank != system.sync_helper().last_bank().into() {
-            system.sync(
-                1 | 4 | 8 | 16 | 64 | 128,
-                map_set.bank.try_into().unwrap(),
-                false,
-            );
+        if map_set.bank != system.bank().clone().into() {
+            *system.bank() = map_set.bank.try_into().unwrap();
         }
 
         self.map_animations = map_set
