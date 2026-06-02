@@ -138,7 +138,7 @@ impl GameAssets {
                 assets.load("maps/bank2.tmj"),
                 assets.load("maps/office.tmj"),
             ],
-            script: assets.load("script/en.json"),
+            script: assets.load("script/en.eggtext"),
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
@@ -232,7 +232,7 @@ fn load_assets(
 struct PendingLanguage(Option<Handle<ScriptAsset>>);
 
 /// Honour runtime language switches requested via `ConsoleApi::set_language`:
-/// start loading the requested `script/<lang>.json`, then install it as the
+/// start loading the requested `script/<lang>.eggtext`, then install it as the
 /// active language (overlaid on the base) once it finishes loading.
 fn poll_language_change(
     assets: Res<AssetServer>,
@@ -243,7 +243,7 @@ fn poll_language_change(
     if pending.0.is_none() {
         if let Some(language) = state.system.take_pending_language() {
             info!("Loading language {language:?}");
-            pending.0 = Some(assets.load(format!("script/{language}.json")));
+            pending.0 = Some(assets.load(format!("script/{language}.eggtext")));
         }
     }
     if let Some(handle) = pending.0.clone() {

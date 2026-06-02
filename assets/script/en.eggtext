@@ -1,0 +1,481 @@
+// English game script, in the `.eggtext` DSL (see egg_core::data::eggtext).
+//
+// Top-level `key = "value"` lines are UI labels. `#list NAME` blocks are
+// ordered string lists. `#dialogue NAME` blocks are conversations: blank lines
+// split them into messages, `#pic`/`#sound`/`#flip` set the speaker, and a
+// trailing `#delay N` reveals text piece by piece.
+
+// --- UI labels ---
+
+game_title = "super unfinished EGG GAME"
+game_title_blurb = "version 0.1.0"
+menu_play = "Play"
+menu_options = "Options"
+menu_back = "Back"
+menu_exit = "Exit to Menu"
+options_title = "super unfinished OPTIONS MENU"
+options_font_size = "Toggle Font Size"
+options_reset = "Erase Data"
+options_reset_sure = "Erase Data (Press again to confirm)"
+options_lose_data = "You'll lose all data."
+inventory_title = "INVENTORY"
+inventory_items = "Items"
+inventory_shell = "Shell"
+inventory_options = "Options"
+inventory_back = "Back"
+item_ff_name = "French Gry"
+item_ff_desc = "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill."
+item_chegg_name = "Mystery Egg"
+item_chegg_desc = "There's something inside."
+item_lm_name = "Little Man"
+item_lm_desc = "\"... Hello? Somebody there? ... It's awful dark in here...\""
+instructions_title = "Instructions"
+instructions = "Arrow keys: Move around.\n\n[Z]: Interact.\n\n[X]: Open inventory, Skip text.\n\n\nRemember to get regular sleep.\n\n\n\n    Press any button to continue."
+sm_title = "S____MAR__T"
+menu_map_test = "Map Test"
+menu_music_test = "Music Test"
+
+// --- lists ---
+
+#list menu_debug_controls
+    Palette 1
+    Palette 2
+    Palette 3
+    Remove CameraBounds
+    Toggle Dog
+    Add creature
+    Debug Menu
+
+// --- bedroom ---
+
+#dialogue bedroom_mattress
+    You can't get to sleep.
+
+#dialogue bedroom_trolley
+    It's your baby bro's cot.
+
+#dialogue bedroom_closet
+    Everything you have is in here.
+
+#dialogue bedroom_window
+    "It's a beautiful day...\n\n"
+    "... Outside." #delay 30
+
+// --- house: stairwell ---
+
+#dialogue house_stairwell_window
+    The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.
+
+#dialogue house_stairwell_window2
+    By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.
+
+#dialogue house_stairwell_painting_init
+    It's not as good as the real thing.
+
+#dialogue house_stairwell_painting_after
+    A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.
+
+#dialogue house_stairwell_door
+    You shouldn't go in there.
+
+// --- house: living room ---
+
+#dialogue house_living_room_couch
+    He's busy.
+
+#dialogue house_living_room_tv_1
+    It's a cartoon of some sort. The protagonist is still charging up his main attack.
+
+#dialogue house_living_room_tv_2
+    Some sort of cartoon. While the hero was charging his attack, the villain took over the world.
+
+#dialogue house_living_room_tv_3
+    A long cartoon series. After taking over the world, the villain created global stability and happiness.
+
+#dialogue house_living_room_tv_4
+    Still the same cartoon. The hero finished his training arc, beat the villain and became the new ruler.
+
+#dialogue house_living_room_tv_5
+    This cartoon series refuses to end. The hero made some bad choices, now everyone wants the villain back.
+
+#dialogue house_living_room_tv_6
+    This series will last forever. The hero murdered the villain out of spite. His only enemy is the world.
+
+#dialogue house_living_room_window
+    "You harbour some very strong feelings about gothic windows.\n"
+    "None of which are good." #delay 30
+
+// --- house: kitchen ---
+
+#dialogue house_kitchen_cupboard
+    The cupboard is empty. Even the spiders have moved on.
+
+#dialogue house_kitchen_sink
+    #sound gain
+    "Found something down the drain...!\n"
+
+    #sound loss
+    ... You left it there.
+
+#dialogue house_kitchen_window
+    The unholy king of tacky windows. Words fail to convey your antipathy.
+
+#dialogue house_kitchen_microwave
+    Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...
+
+// --- house: backyard ---
+
+#dialogue house_backyard_basement
+    A horrendous stench rises from the cellar.
+
+#dialogue house_backyard_shed
+    The shed door won't budge, but you could easily open it with some of the POWER TOOLS inside... Oh wait.
+
+#dialogue house_backyard_shed_window
+    You can't actually see anything through this window.
+
+#dialogue house_backyard_neighbours
+    You don't know much about the neighbours.
+
+    ... The traffic makes it difficult to get to their house.
+
+#dialogue house_backyard_doghouse
+    SUBROUTINE "DOG" NOT FOUND. INITIATE DEFAULT SUBROUTINE: knock knock. whos there. no response. laughter.
+
+#dialogue house_backyard_stormdrain
+    Over the fence lies a deep canal. There is no way back up, not unless you can return from the dead.
+
+#dialogue house_backyard_anthill
+    Hey sis, let's play "stick our fingers in the anthill!"
+
+    ... Wow, uh,,,,,,
+
+    ... Maybe, let's not????
+
+    Whoever keeps their finger the longest wins~~!!!
+
+    You're on~!!!
+
+    Ok, but seriously, how long have you been playing?
+
+    I've been here *all* morning...... Heh, it kinda stings, actually!
+
+    ... You're bleeding... and we don't have any more PlasterAids...
+
+    I'll be right as rain, don't you sweat, sister... Juuuust as soon as I get all these ants off me...
+
+    ... That is a LOT of ants...
+
+    They're in my socks!
+
+    I'll get the hose.
+
+    Please hurry!!!
+
+// --- town ---
+
+#dialogue town_traffic
+    They've been stuck like this for a while now.
+
+#dialogue town_lamppost
+    Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.
+
+#dialogue town_home_window
+    It's not as bad from the outside.
+
+#dialogue town_wide
+    "T" #delay 10
+    "h" #delay 10
+    "i" #delay 10
+    "s" #delay 10
+    " " #delay 10
+    "t" #delay 10
+    "e" #delay 10
+    "x" #delay 10
+    "t" #delay 10
+    " " #delay 10
+    "i" #delay 10
+    "s" #delay 10
+    " " #delay 10
+    "w" #delay 10
+    "i" #delay 10
+    "d" #delay 10
+    "e" #delay 10
+    "..." #delay 10
+
+// --- supermarket ---
+
+#dialogue sm_coin_return
+    There's no money in the coin return slot.
+
+#dialogue sm_fruit_basket
+    They're not fresh.
+
+#dialogue sm_main_window
+    It's yellow outside.
+
+#dialogue sm_fridge_1
+    If you blow on the glass, it fogs up, revealing all the fingerprints left by prior employees.
+
+#dialogue sm_fridge_2
+    A note on the front says "Out of Order", followed by a smiley face. A sickening contrast.
+
+#dialogue sm_vending_machine
+    The blurb reads "It's SodaTime!". The machine is filled to the brim with cans of motor oil.
+
+#dialogue sm_hall_shelf
+    There's a single bottle of floor cleaner. And no mop.
+
+#dialogue sm_hall_window
+    Looks like this window has recently been painted yellow.
+
+#dialogue sm_storeroom_shelf
+    They're all out of Keratin Krunch.
+
+// --- misc / debug ---
+
+#dialogue construction_1
+    Looks like the creator didn't put too much effort into this part of the map.
+
+#dialogue construction_2
+    Looks like it's still under construction.
+
+#dialogue emergency_exit
+    This is an emergency exit. It's not an emergency right now. Ergo, you cannot use the exit.
+
+#dialogue egg_1
+    It's floating.
+
+#dialogue unknown_1
+    The wispy ethers of your moral fibre hold this door shut.
+
+#dialogue unknown_2
+    ... Quick, recast the "Sleep" shell on your opponent to keep it perma-stunned! Unfair and effective!
+
+#dialogue unknown_3
+    ... Don't get your hopes up.
+
+#dialogue default
+    You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.
+
+#dialogue dog_obtained
+    Dog has joined the party!
+
+#dialogue dog_relinquished
+    Dog has left the party.
+
+// --- mayor's office ---
+
+#dialogue mayor_desk_front
+    It's made of cardboard.
+
+#dialogue mayor_desk_back
+    It's stuffed full of straw. There's a water bottle and a pellet feeder.
+
+#dialogue mayor_plant
+    It clings to the light.
+
+#dialogue mayor_exit
+    The valve won't budge.
+
+#dialogue mayor_vending_machine
+    One of the buttons is worn and faded with use. Press it?
+
+#dialogue mayor_vending_machine_after
+    You got: Rabbit food.
+
+    ... Hooray.
+
+#dialogue office_vending_machine
+    There are 8 options. All of them are "granulated rabbit feed".
+
+// --- the gamedev (debug instructions) ---
+
+#dialogue thing
+    This thing is...
+
+    #autoflip
+    #pic y_normal
+    This thing is absolutely terrifying! Why the heck did I interact with it?!?
+
+    #pic horror
+    Because you are a mere shell occupied by the player, possessing no real control over your actions.
+
+    #pic y_away
+    Pff... That sounds like something a bad writer would say... What are you supposed to be, anyway?
+
+    #pic horror
+    I am the gamedev, and I have come to give the player some useful debug instructions for this unfinished game.
+
+    #pic y_look
+    Uhh... YOU'RE the gamedev?
+
+    #pic horror
+    Yes.
+    "\n..." #delay 30
+    "\n... What's with that look?" #delay 30
+
+    #pic y_look
+    ... WHY
+    " are you an indescribable eldritch monster-thing?" #delay 20
+    " ... Like, you could have picked literally any form." #delay 40
+
+    #pic horror
+    This IS literally any form.
+
+    #pic y_oof
+    I meant literally any OTHER form!
+
+    #pic horror
+    What's wrong with this body in particular?
+    " ... I happen to like it." #delay 30
+
+    #pic y_close
+    It's,
+    " like," #delay 30
+    " really offputting," #delay 30
+    " I guess?!" #delay 30
+    #pic y_oof #flip false
+    " I dunno, I just really hate staring at it!!!" #delay 30
+
+    #pic horror
+    Art is fundamentally about self-expression.
+    " Your opinions are magically invalid." #delay 30
+
+    #pic y_oof
+    Oof.....
+    " You asked for my input," #delay 30
+    " while intending to ignore it from the very beginning?!?" #delay 30
+
+    #pic horror
+    Yep.
+    " On the topic of your input..." #delay 30
+    " as you specifically requested, you can pet the dog now." #delay 30
+
+    #pic y_normal
+    Awesome!
+
+    #pic horror
+    ....
+    " Hardest" #delay 30
+    " feature" #delay 30
+    " yet........" #delay 30
+    " :(" #delay 30
+
+    #pic y_look
+    Uhhh...
+    " You had trouble with..." #delay 20
+    " Petting???" #delay 20
+
+    #pic horror
+    Yes.
+
+    #pic y_look
+    ...
+    " Really?" #delay 30
+    " ... That's..." #delay 20
+    " I don't think it could've been that hard to implement..." #delay 20
+
+    #pic y_look
+    I mean, reaching over and petting the dog...
+    "\n..." #delay 30
+    " It's like, two steps at most?" #delay 30
+
+    #pic horror
+    You fail to grasp just how bad my codebase REALLY IS...
+
+    #pic y_look
+    ...
+    "\n..." #delay 30
+    "\n... How bad can it BE, really?" #delay 30
+
+    #pic horror
+    Well, consider the dog's hitbox.
+
+    #pic horror
+    ... Even now, only the drawing code really knows where each party member is at any time...
+    " Everything else just sort of guesses." #delay 30
+
+    #pic y_regret
+    I shouldn't have asked...
+
+    #pic y_look #flip false
+    Wait...
+    "... Is this why I'm still stuck inside an empty map devoid of content or living creatures even after literal weeks of development?" #delay 30
+
+    #pic horror
+    No, that's just poor planning...
+    " As for \"no living things\"..." #delay 30
+
+    #pic horror
+    #nopause
+    What about that creature on the couch? He seems like quite the fellow if you just got to know him
+
+    #pic y_away
+    ... Wow.
+    " That joke gets funnier every time you reuse it." #delay 30
+    "\n..." #delay 30
+    "\n... What's his deal, anyway?" #delay 30
+
+    #pic horror
+    Why don't you ask HIM that?
+    " ... I mean, I don't believe you've exchanged even a single word with him..." #delay 30
+
+    #pic y_oof
+    Because the game doesn't let me talk to him!
+    " It's" #delay 30
+    " like" #delay 30
+    " he's literally an inanimate object!!!" #delay 30
+    " I'm not ignoring him by choice!" #delay 30
+
+    #pic horror
+    So you're saying that it's somehow my fault that you've neglected that poor creature?
+
+    #pic y_look
+    Uhh, yes?
+    " You're the one who didn't give him any dialogue..." #delay 30
+
+    #pic horror
+    On the topic of moral and ethical responsibility,
+    " do you want some cheat codes?" #delay 30
+
+    #pic y_normal
+    HECK yeah, how do I access the real game?
+
+    #pic horror
+    ... This IS the real game...
+
+    #pic y_away
+    #nopause
+    lame......
+
+    #pic horror
+    Press [a] to access the debug menu. Hold [ctrl+shift] to noclip. [n] to see memory usage. [m] to see map stuff. [d] for player info.
+
+    #pic horror
+    The number keys also do some stuff. If you don't have a keyboard.... Tough luck, dude!
+
+    #pic y_no
+    Hold on, I didn't write any of that down!!!
+
+    #pic horror
+    Sorry, I only say it once. You're just gonna have to replay this entire conversation to see the shortcuts again!
+
+    #pic y_away
+    ... Surely you could just play a shorter version of this dialogue the second time? You already do that with the stairwell text, right?
+
+    #pic horror
+    Haha, you'd think so, but I can only do conditional branches for single-line text!
+    "\nHooray for code!" #delay 30
+
+    #pic y_look
+    Just how bad at programming ARE you???
+
+    #pic horror
+    I prefer to think of myself as a
+    " \"chef\"..." #delay 30
+    "\n... In a restaurant..." #delay 30
+    "\n... Making spaghetti..." #delay 30
+
+    #pic y_regret
+    I wish I was in a different game...

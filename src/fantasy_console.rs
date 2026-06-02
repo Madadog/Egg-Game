@@ -43,7 +43,7 @@ pub struct FantasyConsole {
     pub indexed_sprites: IndexedImage,
     pub maps: Vec<GameMap>,
     pub sprite_flags: Vec<u8>,
-    /// UI labels + dialogue, loaded from `script/<lang>.json`.
+    /// UI labels + dialogue, loaded from `script/<lang>.eggtext`.
     script: Script,
     /// A language requested at runtime via `set_language`, awaiting load by the
     /// host's asset loop (see `take_pending_language`).

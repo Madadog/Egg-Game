@@ -91,7 +91,7 @@ impl WalkaroundState {
         }
         self.bg_colour = map_set.bg_colour;
         system.music(map_set.music_track.as_ref());
-        if map_set.bank != system.bank().clone().into() {
+        if map_set.bank != usize::from(*system.bank()) {
             *system.bank() = map_set.bank.try_into().unwrap();
         }
 

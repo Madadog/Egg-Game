@@ -15,9 +15,10 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 //! Runtime-loaded game text — UI labels, string lists, and dialogue — read from
-//! a per-language script file (e.g. `assets/script/en.json`). The host parses
-//! the JSON into a [`ScriptFile`] and installs it into the [`Script`] registry
-//! it owns (via [`Script::set_base`] / [`Script::set_language`]); gameplay code
+//! a per-language script file (e.g. `assets/script/en.eggtext`). The host parses
+//! it — via the [`eggtext`](crate::data::eggtext) DSL, or straight from JSON —
+//! into a [`ScriptFile`] and installs it into the [`Script`] registry it owns
+//! (via [`Script::set_base`] / [`Script::set_language`]); gameplay code
 //! reads it back through the console (`system.label(..)`, `system.get_dialogue(..)`,
 //! `system.print_label(..)`).
 //!
@@ -41,7 +42,7 @@ use crate::dialogue::{Message, TextContent};
 
 /// A whole language file. All three sections are optional so a language overlay
 /// can define only what it overrides.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct ScriptFile {
     /// Single strings printed directly (menu items, titles, item names…).
     #[serde(default)]
@@ -56,7 +57,7 @@ pub struct ScriptFile {
 
 /// A dialogue entry: a single line, a sequence of manually-advanced pages, or a
 /// full conversation (`{ "messages": [...] }`). Distinguished by JSON shape.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum Entry {
     Line(String),
@@ -65,7 +66,7 @@ pub enum Entry {
 }
 
 /// One "page" of a conversation under a single speaker.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MessageDef {
     /// Portrait name, or absent for narration.
     #[serde(default)]
@@ -81,7 +82,7 @@ pub struct MessageDef {
 /// A single content item within a message. Externally tagged, so JSON is
 /// `{"auto": "..."}`, `{"delayed": ["...", 30]}`, `{"sound": "gain"}`,
 /// `{"portrait": "y_oof"}`, `{"flip": true}`, `{"delay": 30}`, or `"pause"`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentDef {
     /// Plain text (advances manually unless reached via auto-advance).
