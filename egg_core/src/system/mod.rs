@@ -11,14 +11,18 @@ use crate::{
 
 pub use consts::*;
 pub use font::*;
+pub use input::*;
 pub use scancode::*;
+pub use tilemap::*;
 pub use types::*;
 
 pub mod consts;
 pub mod drawing;
 pub mod font;
 pub mod image;
+pub mod input;
 pub mod scancode;
+pub mod tilemap;
 pub mod types;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through

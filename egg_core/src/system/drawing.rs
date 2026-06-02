@@ -1,6 +1,6 @@
 use super::image::{IndexedImage, Rgba, RgbaImage};
 use super::{Flip, MapOptions, StaticSpriteOptions};
-use crate::system::types::MapLayer;
+use crate::system::MapLayer;
 
 /// How `blit` treats destination pixels outside the natural projection of the source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

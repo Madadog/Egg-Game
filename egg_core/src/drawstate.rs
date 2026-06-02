@@ -1,7 +1,6 @@
 use crate::system::{
-    MapOptions, SWEETIE_16, StaticSpriteOptions,
+    MapLayer, MapOptions, SWEETIE_16, StaticSpriteOptions,
     image::{IndexedImage, Rgba, RgbaImage},
-    types::MapLayer,
 };
 
 pub struct DrawState {
