@@ -195,13 +195,13 @@ fn load_assets(
                     info!("Loaded {} maps", maps.len());
                     state.system.set_maps(maps);
                     println!("Just set the maps!!");
-                    // Mirror loaded assets into DrawState (the authoritative
-                    // copies for the new draw paths). The console still keeps
-                    // copies for asset-side queries (e.g. Collider::from_sprite
-                    // reads via get_bitmap_indexed).
+                    // Mirror sprites + flags into DrawState (the authoritative
+                    // copies for the new draw paths). Maps stay on the console
+                    // and are read during drawing via `maps()`. The console also
+                    // keeps copies for asset-side queries (e.g.
+                    // Collider::from_sprite reads via get_bitmap_indexed).
                     state.state.draw_state.rgba_sprites = state.system.sprites.clone();
                     state.state.draw_state.indexed_sprites = state.system.indexed_sprites.clone();
-                    state.state.draw_state.maps = state.system.maps.clone();
                     state.state.draw_state.sprite_flags = state.system.sprite_flags.clone();
                     state.loaded = true;
                     info!("Finished loading assets.");

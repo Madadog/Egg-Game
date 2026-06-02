@@ -49,10 +49,9 @@ pub trait ConsoleApi {
     fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
 
-    // Asset access. Maps + indexed sprites also live on DrawState; these
-    // accessors exist for asset-loading and a few non-draw queries (collider
-    // generation, layer collision checks).
-    fn maps(&mut self) -> &mut Vec<GameMap>;
+    // Asset access.
+    fn maps(&self) -> &[GameMap];
+    fn maps_mut(&mut self) -> &mut Vec<GameMap>;
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
     fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize);
     fn write_file(&mut self, filename: String, data: &[u8]);

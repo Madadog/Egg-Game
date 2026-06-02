@@ -9,7 +9,7 @@ use egg_core::{
         ConsoleApi, Controller, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
         SfxOptions,
         WIDTH,
-        image::{IndexedImage, Rgba, RgbaImage},
+        image::{IndexedImage, RgbaImage},
     },
 };
 
@@ -249,7 +249,10 @@ impl ConsoleApi for FantasyConsole {
         &mut self.rng
     }
 
-    fn maps(&mut self) -> &mut Vec<GameMap> {
+    fn maps(&self) -> &[GameMap] {
+        &self.maps
+    }
+    fn maps_mut(&mut self) -> &mut Vec<GameMap> {
         &mut self.maps
     }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {

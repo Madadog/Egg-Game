@@ -1,7 +1,7 @@
 use crate::system::{
     MapOptions, SWEETIE_16, StaticSpriteOptions,
     image::{IndexedImage, Rgba, RgbaImage},
-    types::GameMap,
+    types::MapLayer,
 };
 
 pub struct DrawState {
@@ -13,7 +13,6 @@ pub struct DrawState {
 
     pub palettes: Vec<Vec<[u8; 3]>>,
 
-    pub maps: Vec<GameMap>,
     pub sprite_flags: Vec<u8>,
 }
 
@@ -25,7 +24,6 @@ impl Default for DrawState {
             indexed_canvas: vec![IndexedImage::new(240, 136); 2],
             indexed_sprites: IndexedImage::new(0, 0),
             palettes: vec![default_palette()],
-            maps: Vec::new(),
             sprite_flags: vec![0; 2048],
         }
     }
@@ -146,21 +144,18 @@ impl DrawState {
         canvas.spr_indexed(&self.indexed_sprites, palette, palette_map, id, x, y, opts);
     }
 
-    /// Draw a region of `self.maps[bank]`'s layer `map_layer` onto the RGBA
-    /// `layer`, using the default indexed sprite sheet and the caller-supplied
-    /// `palette_map`.
+    /// Draw a region of `map_layer` onto the RGBA `layer`, using the default
+    /// indexed sprite sheet and the caller-supplied `palette_map`.
     pub fn map_draw(
         &mut self,
-        layer: LayerId,
-        bank: usize,
-        map_layer: usize,
+        canvas_layer: LayerId,
+        map_layer: &MapLayer,
         palette_map: &[usize],
         opts: MapOptions,
     ) {
-        let Some(m) = self.maps.get(bank) else { return };
-        let canvas = &mut self.rgba_canvas[layer as usize];
+        let canvas = &mut self.rgba_canvas[canvas_layer as usize];
         let palette = self.palettes[0].as_slice();
-        canvas.map_draw_indexed(m, map_layer, &self.indexed_sprites, palette, palette_map, opts);
+        canvas.map_draw_indexed(map_layer, &self.indexed_sprites, palette, palette_map, opts);
     }
 }
 

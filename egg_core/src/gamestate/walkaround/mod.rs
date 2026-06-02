@@ -539,13 +539,10 @@ impl<T: ConsoleApi>
         draw_state.rgba(BG).fill(bg_colour);
 
         // BG map layers
-        self.current_map.draw_bg_indexed(
-            draw_state,
-            BG,
-            self.current_map.bank,
-            self.camera.pos,
-            false,
-        );
+        if let Some(map) = system.maps().get(self.current_map.bank) {
+            self.current_map
+                .draw_bg_indexed(draw_state, BG, map, self.camera.pos, false);
+        }
 
         // Particles
         self.particles
@@ -609,13 +606,10 @@ impl<T: ConsoleApi>
         }
 
         // FG map layers (drawn on top of sprites)
-        self.current_map.draw_fg_indexed(
-            draw_state,
-            BG,
-            self.current_map.bank,
-            self.camera.pos,
-            false,
-        );
+        if let Some(map) = system.maps().get(self.current_map.bank) {
+            self.current_map
+                .draw_fg_indexed(draw_state, BG, map, self.camera.pos, false);
+        }
 
         if let Some(string) = self.dialogue.current_text.clone() {
             self.dialogue

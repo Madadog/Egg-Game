@@ -55,24 +55,24 @@ impl MapInfo {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        bank: usize,
+        map: &crate::system::GameMap,
         offset: Vec2,
         debug: bool,
     ) {
         for l in &self.layers {
-            l.draw_indexed(draw_state, layer, bank, offset, debug);
+            l.draw_indexed(draw_state, layer, map, offset, debug);
         }
     }
     pub fn draw_fg_indexed(
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        bank: usize,
+        map: &crate::system::GameMap,
         offset: Vec2,
         debug: bool,
     ) {
         for l in &self.fg_layers {
-            l.draw_indexed(draw_state, layer, bank, offset, debug);
+            l.draw_indexed(draw_state, layer, map, offset, debug);
         }
     }
 }
@@ -149,7 +149,7 @@ impl LayerInfo {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        bank: usize,
+        map: &crate::system::GameMap,
         offset: Vec2,
         debug: bool,
     ) {
@@ -158,6 +158,9 @@ impl LayerInfo {
         if !self.visible {
             return;
         }
+        let Some(map_layer) = map.layers.get(self.source_layer) else {
+            return;
+        };
         let palette_map = palette_map_rotate(self.palette_rotate().into());
         let mut options: MapOptions = self.clone().into();
         options.sx -= i32::from(offset.x);
@@ -172,7 +175,7 @@ impl LayerInfo {
                 c9,
             );
         }
-        draw_state.map_draw(layer, bank, self.source_layer, &palette_map, options);
+        draw_state.map_draw(layer, map_layer, &palette_map, options);
     }
     pub fn hitbox(&self) -> Hitbox {
         Hitbox::new(

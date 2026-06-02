@@ -1,6 +1,6 @@
 use super::image::{IndexedImage, Rgba, RgbaImage};
 use super::{Flip, MapOptions, StaticSpriteOptions};
-use crate::system::types::{GameMap, MapLayer};
+use crate::system::types::MapLayer;
 
 /// How `blit` treats destination pixels outside the natural projection of the source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -479,20 +479,16 @@ impl RgbaImage {
         }
     }
 
-    /// Draw a region of `map` onto this canvas, sampling `source` for each tile
-    /// and looking colours up through `palette_map` + `palette`.
+    /// Draw a region of `layer` onto this canvas, sampling `source` for each
+    /// tile and looking colours up through `palette_map` + `palette`.
     pub fn map_draw_indexed(
         &mut self,
-        map: &GameMap,
-        layer_idx: usize,
+        layer: &MapLayer,
         source: &IndexedImage,
         palette: &[[u8; 3]],
         palette_map: &[usize],
         mut opts: MapOptions,
     ) {
-        let Some(layer) = map.layers.get(layer_idx) else {
-            return;
-        };
         let dw = self.width() as i32;
         let dh = self.height() as i32;
         if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
@@ -600,17 +596,8 @@ impl IndexedImage {
         });
     }
 
-    /// Draw a region of `map` onto this canvas using `source` for tile pixels.
-    pub fn map_draw(
-        &mut self,
-        map: &GameMap,
-        layer_idx: usize,
-        source: &IndexedImage,
-        mut opts: MapOptions,
-    ) {
-        let Some(layer) = map.layers.get(layer_idx) else {
-            return;
-        };
+    /// Draw a region of `layer` onto this canvas using `source` for tile pixels.
+    pub fn map_draw(&mut self, layer: &MapLayer, source: &IndexedImage, mut opts: MapOptions) {
         let dw = self.width() as i32;
         let dh = self.height() as i32;
         if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
