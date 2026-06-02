@@ -87,6 +87,19 @@ impl Interactable {
             sprite,
         }
     }
+    /// An interactable that shows the dialogue registered under `key`.
+    pub fn dialogue(hitbox: Hitbox, key: &str) -> Self {
+        Self::new(hitbox, Interaction::Dialogue(key.to_string()), None)
+    }
+    /// An interactable that runs a one-off [`InteractFn`].
+    pub fn func(hitbox: Hitbox, func: InteractFn) -> Self {
+        Self::new(hitbox, Interaction::Func(func), None)
+    }
+    /// Attach an animated sprite drawn at the interactable's location.
+    pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
+        self.sprite = Some(frames);
+        self
+    }
 }
 
 impl<'a> From<StaticInteractable<'a>> for Interactable {

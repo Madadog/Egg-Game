@@ -14,48 +14,33 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::animation::*;
+use crate::animation::AnimFrame;
 use crate::camera::CameraBounds;
-use crate::interact::InteractFn;
-use crate::interact::{StaticInteractable, StaticInteraction};
-use crate::map::LayerInfo;
-use crate::map::StaticMapInfo;
-use crate::map::Warp;
-use crate::map::{Axis, WarpMode};
+use crate::interact::{InteractFn, Interactable, Interaction};
+use crate::map::{Axis, LayerInfo, MapInfo, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
-use crate::system::StaticSpriteOptions;
+use crate::system::SpriteOptions;
 
 use super::sound;
-
-pub(crate) const DEFAULT_MAP_SET: StaticMapInfo = StaticMapInfo {
-    layers: &[],
-    fg_layers: &[],
-    warps: &[],
-    interactables: &[],
-    bg_colour: 0,
-    music_track: None,
-    bank: 0,
-    camera_bounds: None,
-};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MapIndex(pub usize);
 impl MapIndex {
-    pub fn map(&self) -> StaticMapInfo<'static> {
+    pub fn map(&self) -> MapInfo {
         match self.0 {
-            0 => SUPERMARKET,
-            1 => SUPERMARKET_HALL,
-            2 => SUPERMARKET_STOREROOM,
-            3 => TEST_PEN,
-            4 => BEDROOM,
-            5 => HOUSE_STAIRWELL,
-            6 => HOUSE_LIVING_ROOM,
-            7 => HOUSE_KITCHEN,
-            8 => BACKYARD,
-            9 => WILDERNESS,
-            10 => TOWN,
-            11 => PIANO_ROOM,
-            _ => SUPERMARKET,
+            0 => supermarket(),
+            1 => supermarket_hall(),
+            2 => supermarket_storeroom(),
+            3 => test_pen(),
+            4 => bedroom(),
+            5 => house_stairwell(),
+            6 => house_living_room(),
+            7 => house_kitchen(),
+            8 => backyard(),
+            9 => wilderness(),
+            10 => town(),
+            11 => piano_room(),
+            _ => supermarket(),
         }
     }
     pub const SUPERMARKET: Self = MapIndex(0);
@@ -72,550 +57,416 @@ impl MapIndex {
     pub const PIANO_ROOM: Self = MapIndex(11);
 }
 
-pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //bg
-        LayerInfo::new(60, 17, 26, 12)
-            .with_trans(&[0])
-            .with_rot_and_shift_flags(1, 0),
-        //fruit stand
-        LayerInfo::new(61, 29, 3, 2)
-            .with_trans(&[0])
-            .with_offset(2 * 8, 8 * 8),
-        //vending machines
-        LayerInfo::new(70, 29, 4, 5)
-            .with_trans(&[0])
-            .with_offset(19 * 8, 4 * 8),
-        //counter
-        LayerInfo::new(60, 31, 8, 3)
-            .with_trans(&[0])
-            .with_offset(5 * 8, 4 * 8),
-        //top vending machine
-        LayerInfo::new(68, 29, 2, 3)
-            .with_trans(&[0])
-            .with_offset(13 * 8, 5 * 4),
-    ],
-    warps: &[
-        Warp::new_tile(17, 4, Some(MapIndex::SUPERMARKET_HALL), 9, 4).with_sound(sound::DOOR),
-        Warp::new_tile(8, 4, Some(MapIndex::SUPERMARKET_HALL), 3, 4).with_sound(sound::DOOR),
-        Warp::new(
-            Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
-            Some(MapIndex::TOWN),
-            Vec2::new(51 * 4, 15 * 8),
-        )
-        .with_sound(sound::DOOR)
-        .with_mode(WarpMode::Auto),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3),
-            interaction: StaticInteraction::Dialogue("sm_coin_return"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2),
-            interaction: StaticInteraction::Dialogue("sm_fruit_basket"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(4 * 8, 5 * 8, 8, 20),
-            interaction: StaticInteraction::Dialogue("sm_main_window"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(19 * 8, 5 * 8, 8, 15),
-            interaction: StaticInteraction::Dialogue("sm_fridge_1"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(20 * 8, 6 * 8, 8, 15),
-            interaction: StaticInteraction::Dialogue("sm_fridge_2"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(21 * 8, 7 * 8, 8, 16),
-            interaction: StaticInteraction::Dialogue("sm_vending_machine"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8),
-            interaction: StaticInteraction::Dialogue("construction_1"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(80, 24, 16, 20),
-            interaction: StaticInteraction::Dialogue("thing"),
-            sprite: Some(&[
-                StaticAnimFrame::new(
+/// A two-frame bobbing sprite (`spr_id` at `y` and `y + 1`), as used by several
+/// egg / object interactables. `transparent_zero` matches the originals.
+fn bob(spr_id: u16) -> Vec<AnimFrame> {
+    vec![
+        AnimFrame::new(Vec2::new(0, 0), spr_id, 30, SpriteOptions::transparent_zero()),
+        AnimFrame::new(Vec2::new(0, -1), spr_id, 30, SpriteOptions::transparent_zero()),
+    ]
+}
+
+fn supermarket() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //bg
+            LayerInfo::new(60, 17, 26, 12)
+                .with_trans(&[0])
+                .with_rot_and_shift_flags(1, 0),
+            //fruit stand
+            LayerInfo::new(61, 29, 3, 2)
+                .with_trans(&[0])
+                .with_offset(2 * 8, 8 * 8),
+            //vending machines
+            LayerInfo::new(70, 29, 4, 5)
+                .with_trans(&[0])
+                .with_offset(19 * 8, 4 * 8),
+            //counter
+            LayerInfo::new(60, 31, 8, 3)
+                .with_trans(&[0])
+                .with_offset(5 * 8, 4 * 8),
+            //top vending machine
+            LayerInfo::new(68, 29, 2, 3)
+                .with_trans(&[0])
+                .with_offset(13 * 8, 5 * 4),
+        ],
+        warps: vec![
+            Warp::new_tile(17, 4, Some(MapIndex::SUPERMARKET_HALL), 9, 4).with_sound(sound::DOOR),
+            Warp::new_tile(8, 4, Some(MapIndex::SUPERMARKET_HALL), 3, 4).with_sound(sound::DOOR),
+            Warp::new(
+                Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
+                Some(MapIndex::TOWN),
+                Vec2::new(51 * 4, 15 * 8),
+            )
+            .with_sound(sound::DOOR)
+            .with_mode(WarpMode::Auto),
+        ],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3), "sm_coin_return"),
+            Interactable::dialogue(Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2), "sm_fruit_basket"),
+            Interactable::dialogue(Hitbox::new(4 * 8, 5 * 8, 8, 20), "sm_main_window"),
+            Interactable::dialogue(Hitbox::new(19 * 8, 5 * 8, 8, 15), "sm_fridge_1"),
+            Interactable::dialogue(Hitbox::new(20 * 8, 6 * 8, 8, 15), "sm_fridge_2"),
+            Interactable::dialogue(Hitbox::new(21 * 8, 7 * 8, 8, 16), "sm_vending_machine"),
+            Interactable::dialogue(Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8), "construction_1"),
+            Interactable::dialogue(Hitbox::new(80, 24, 16, 20), "thing").with_sprite(vec![
+                AnimFrame::new(
                     Vec2::splat(0),
                     661,
                     30,
-                    StaticSpriteOptions {
+                    SpriteOptions {
                         w: 2,
                         h: 2,
-                        ..StaticSpriteOptions::transparent_zero()
+                        ..SpriteOptions::transparent_zero()
                     },
                 )
                 .with_palette_rotate(1),
-                StaticAnimFrame::new(
+                AnimFrame::new(
                     Vec2::new(0, 1),
                     661,
                     30,
-                    StaticSpriteOptions {
+                    SpriteOptions {
                         w: 2,
                         h: 2,
-                        ..StaticSpriteOptions::transparent_zero()
+                        ..SpriteOptions::transparent_zero()
                     },
                 )
                 .with_palette_rotate(1),
             ]),
-        },
-    ],
-    bg_colour: 1,
-    ..DEFAULT_MAP_SET
-};
+        ],
+        bg_colour: 1,
+        ..MapInfo::default()
+    }
+}
 
-pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //bg
-        LayerInfo::new(86, 17, 13, 7)
-            .with_trans(&[0])
-            .with_rot_and_shift_flags(1, 0),
-        //closet
-        LayerInfo::new(87, 24, 3, 4)
-            .with_trans(&[0])
-            .with_offset(5 * 8, 0),
-        //diagonal door
-        LayerInfo::new(86, 24, 1, 3)
-            .with_trans(&[0])
-            .with_offset(11 * 8, 2 * 8),
-    ],
-    warps: &[
-        Warp::new_tile(9, 6, Some(MapIndex::SUPERMARKET), 17, 4)
+fn supermarket_hall() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //bg
+            LayerInfo::new(86, 17, 13, 7)
+                .with_trans(&[0])
+                .with_rot_and_shift_flags(1, 0),
+            //closet
+            LayerInfo::new(87, 24, 3, 4)
+                .with_trans(&[0])
+                .with_offset(5 * 8, 0),
+            //diagonal door
+            LayerInfo::new(86, 24, 1, 3)
+                .with_trans(&[0])
+                .with_offset(11 * 8, 2 * 8),
+        ],
+        warps: vec![
+            Warp::new_tile(9, 6, Some(MapIndex::SUPERMARKET), 17, 4)
+                .with_mode(WarpMode::Auto)
+                .with_sound(sound::DOOR),
+            Warp::new_tile(3, 6, Some(MapIndex::SUPERMARKET), 8, 4)
+                .with_mode(WarpMode::Auto)
+                .with_sound(sound::DOOR),
+            Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3).with_sound(sound::DOOR),
+        ],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(11 * 8, 4 * 8, 8, 8), "emergency_exit"),
+            Interactable::dialogue(Hitbox::new(8 * 8, 3 * 8, 8, 8), "construction_2"),
+            Interactable::dialogue(Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4), "sm_hall_shelf"),
+            Interactable::dialogue(Hitbox::new(8, 3 * 8, 12, 16), "sm_hall_window"),
+        ],
+        bg_colour: 1,
+        ..MapInfo::default()
+    }
+}
+
+fn supermarket_storeroom() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            LayerInfo::new(86, 28, 9, 6)
+                .with_trans(&[0])
+                .with_rot_and_shift_flags(1, 0),
+            LayerInfo::new(93, 24, 5, 4)
+                .with_trans(&[0])
+                .with_offset(2 * 8, 0),
+        ],
+        warps: vec![Warp::new_tile(2, 5, Some(MapIndex::SUPERMARKET_HALL), 4, 2)
             .with_mode(WarpMode::Auto)
-            .with_sound(sound::DOOR),
-        Warp::new_tile(3, 6, Some(MapIndex::SUPERMARKET), 8, 4)
-            .with_mode(WarpMode::Auto)
-            .with_sound(sound::DOOR),
-        Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3).with_sound(sound::DOOR),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(11 * 8, 4 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("emergency_exit"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(8 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("construction_2"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4),
-            interaction: StaticInteraction::Dialogue("sm_hall_shelf"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(8, 3 * 8, 12, 16),
-            interaction: StaticInteraction::Dialogue("sm_hall_window"),
-            sprite: None,
-        },
-    ],
-    bg_colour: 1,
-    ..DEFAULT_MAP_SET
-};
-pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        LayerInfo::new(86, 28, 9, 6)
-            .with_trans(&[0])
-            .with_rot_and_shift_flags(1, 0),
-        LayerInfo::new(93, 24, 5, 4)
-            .with_trans(&[0])
-            .with_offset(2 * 8, 0),
-    ],
-    warps: &[Warp::new_tile(2, 5, Some(MapIndex::SUPERMARKET_HALL), 4, 2)
-        .with_mode(WarpMode::Auto)
-        .with_sound(sound::DOOR)],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(53, 28, 8, 10),
-            interaction: StaticInteraction::Dialogue("egg_1"),
-            sprite: Some(&[
-                StaticAnimFrame::new(
-                    Vec2::new(0, 0),
-                    524,
-                    30,
-                    StaticSpriteOptions::transparent_zero(),
-                ),
-                StaticAnimFrame::new(
-                    Vec2::new(0, -1),
-                    524,
-                    30,
-                    StaticSpriteOptions::transparent_zero(),
-                ),
-            ]),
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(16, 0, 5 * 8, 4 * 7),
-            interaction: StaticInteraction::Dialogue("sm_storeroom_shelf"),
-            sprite: None,
-        },
-    ],
-    bg_colour: 1,
-    ..DEFAULT_MAP_SET
-};
+            .with_sound(sound::DOOR)],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(53, 28, 8, 10), "egg_1").with_sprite(bob(524)),
+            Interactable::dialogue(Hitbox::new(16, 0, 5 * 8, 4 * 7), "sm_storeroom_shelf"),
+        ],
+        bg_colour: 1,
+        ..MapInfo::default()
+    }
+}
 
-pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[LayerInfo::new(53, 17, 7, 9).with_rot_and_shift_flags(1, 0)],
-    warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
-    interactables: &[StaticInteractable {
-        hitbox: Hitbox::new(5 * 8, 8, 8, 10),
-        interaction: StaticInteraction::Dialogue("egg_1"),
-        sprite: Some(&[
-            StaticAnimFrame::new(
-                Vec2::new(0, 0),
-                524,
-                30,
-                StaticSpriteOptions::transparent_zero(),
-            ),
-            StaticAnimFrame::new(
-                Vec2::new(0, -1),
-                524,
-                30,
-                StaticSpriteOptions::transparent_zero(),
-            ),
-        ]),
-    }],
-    bg_colour: 1,
-    ..DEFAULT_MAP_SET
-};
+fn test_pen() -> MapInfo {
+    MapInfo {
+        layers: vec![LayerInfo::new(53, 17, 7, 9).with_rot_and_shift_flags(1, 0)],
+        warps: vec![Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(5 * 8, 8, 8, 10), "egg_1").with_sprite(bob(524)),
+        ],
+        bg_colour: 1,
+        ..MapInfo::default()
+    }
+}
 
-pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //room
-        LayerInfo::new(30, 0, 21, 10),
-        //trolley
-        LayerInfo::new(30, 10, 3, 2)
-            .with_trans(&[0])
-            .with_offset(101 - 16, 22),
-        //mattress
-        LayerInfo::new(37, 10, 3, 2)
-            .with_trans(&[0])
-            .with_offset(38, 27),
-    ],
-    warps: &[Warp::new(
-        Hitbox::new(15 * 8, 6 * 8, 8, 8),
-        Some(MapIndex::HOUSE_STAIRWELL),
-        Vec2::new(8 + 1, 2 * 8),
-    )
-    .with_sound(sound::DOOR)],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("bedroom_mattress"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8),
-            interaction: StaticInteraction::Dialogue("bedroom_closet"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("bedroom_trolley"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("bedroom_window"),
-            sprite: None,
-        },
-    ],
-    ..DEFAULT_MAP_SET
-};
-
-pub const HOUSE_STAIRWELL: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //room
-        LayerInfo::new(51, 0, 16, 9),
-        //left door
-        LayerInfo::new(41, 10, 1, 3)
-            .with_trans(&[0])
-            .with_offset(0, 6),
-        //right door
-        LayerInfo::new(40, 10, 1, 3)
-            .with_trans(&[0])
-            .with_offset(120, 6),
-    ],
-    warps: &[
-        Warp::new(
-            Hitbox::new(1, 3 * 8, 8, 8),
-            Some(MapIndex::BEDROOM),
-            Vec2::new(14 * 8, 5 * 8),
-        )
-        .with_sound(sound::DOOR),
-        Warp::new(
-            Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
-            Some(MapIndex::HOUSE_LIVING_ROOM),
-            Vec2::new(21 * 4, 4 * 8),
-        )
-        .with_sound(sound::STAIRS_DOWN)
-        .with_mode(WarpMode::Auto),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(2 * 8, 2 * 8, 8, 8),
-            interaction: StaticInteraction::Func(InteractFn::StairwellWindow),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8),
-            interaction: StaticInteraction::Func(InteractFn::StairwellPainting),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(13 * 8, 2 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("house_stairwell_window2"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(15 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("house_stairwell_door"),
-            sprite: None,
-        },
-    ],
-    ..DEFAULT_MAP_SET
-};
-
-pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //room
-        LayerInfo::new(67, 0, 23, 13),
-        //couch
-        LayerInfo::new(37, 14, 4, 2)
-            .with_trans(&[0])
-            .with_offset(12 * 8 + 2, 8 * 8),
-        //tv
-        LayerInfo::new(41, 15, 2, 1)
-            .with_trans(&[0])
-            .with_offset(15 * 8 + 2, 11 * 8 - 1),
-    ],
-    fg_layers: &[
-        //tv
-        LayerInfo::new(41, 13, 2, 3)
-            .with_trans(&[0])
-            .with_offset(15 * 8 + 2, 9 * 8 - 1),
-    ],
-    warps: &[
-        Warp::new(
-            Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
+fn bedroom() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //room
+            LayerInfo::new(30, 0, 21, 10),
+            //trolley
+            LayerInfo::new(30, 10, 3, 2)
+                .with_trans(&[0])
+                .with_offset(101 - 16, 22),
+            //mattress
+            LayerInfo::new(37, 10, 3, 2)
+                .with_trans(&[0])
+                .with_offset(38, 27),
+        ],
+        warps: vec![Warp::new(
+            Hitbox::new(15 * 8, 6 * 8, 8, 8),
             Some(MapIndex::HOUSE_STAIRWELL),
-            Vec2::new(15 * 4, 7 * 8),
+            Vec2::new(8 + 1, 2 * 8),
         )
-        .with_sound(sound::STAIRS_UP)
-        .with_mode(WarpMode::Auto),
-        Warp::new(
-            Hitbox::new(3 * 8, 9 * 8, 8, 8),
-            Some(MapIndex::TOWN),
-            Vec2::new(17 * 8, 13 * 8),
-        )
-        .with_sound(sound::DOOR)
-        .with_flip(Axis::Y),
-        Warp::new(
-            Hitbox::new(14 * 8, 5 * 8, 8, 8),
-            Some(MapIndex::HOUSE_KITCHEN),
-            Vec2::new(7 * 4, 7 * 8),
-        )
-        .with_sound(sound::DOOR),
-        Warp::new(
-            Hitbox::new(8 * 8, 5 * 8, 8, 8),
-            Some(MapIndex::PIANO_ROOM),
-            Vec2::new(19 * 4, 6 * 8),
-        )
-        .with_sound(sound::DOOR),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
-            interaction: StaticInteraction::Dialogue("house_living_room_couch"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_living_room_tv_1"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_living_room_window"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
-            interaction: StaticInteraction::None,
-            sprite: Some(&[StaticAnimFrame::new(
-                Vec2::new(0, 0),
-                35,
-                30,
-                StaticSpriteOptions {
-                    w: 3,
-                    h: 2,
-                    ..StaticSpriteOptions::transparent_zero()
-                },
-            )
-            .with_outline(None)]),
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
-            interaction: StaticInteraction::None,
-            sprite: Some(&[
-                StaticAnimFrame::new(
-                    Vec2::new(0, 0),
-                    576,
-                    30,
-                    StaticSpriteOptions {
-                        w: 2,
-                        h: 3,
-                        ..StaticSpriteOptions::transparent_zero()
-                    },
-                ),
-                StaticAnimFrame::new(
-                    Vec2::new(0, 0),
-                    578,
-                    30,
-                    StaticSpriteOptions {
-                        w: 2,
-                        h: 3,
-                        ..StaticSpriteOptions::transparent_zero()
-                    },
-                ),
-            ]),
-        },
-    ],
-    ..DEFAULT_MAP_SET
-};
-pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //room
-        LayerInfo::new(90, 0, 13, 10),
-        //microwave
-        LayerInfo::new(37, 12, 2, 1)
-            .with_offset(7 * 8 + 6, 4 * 8 - 3)
-            .with_trans(&[0]),
-    ],
-    warps: &[
-        Warp::new(
-            Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
-            Some(MapIndex::HOUSE_LIVING_ROOM),
-            Vec2::new(14 * 8, 5 * 8),
-        )
-        .with_sound(sound::DOOR)
-        .with_mode(WarpMode::Auto),
-        Warp::new(
-            Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
-            Some(MapIndex::BACKYARD),
-            Vec2::new(15 * 8, 5 * 8),
-        )
-        .with_sound(sound::DOOR),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_kitchen_cupboard"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_kitchen_sink"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_kitchen_microwave"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_kitchen_window"),
-            sprite: None,
-        },
-    ],
-    ..DEFAULT_MAP_SET
-};
+        .with_sound(sound::DOOR)],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(38, 27, 3 * 8, 2 * 8), "bedroom_mattress"),
+            Interactable::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8), "bedroom_closet"),
+            Interactable::dialogue(Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8), "bedroom_trolley"),
+            Interactable::dialogue(Hitbox::new(9 * 8, 3 * 8, 8, 8), "bedroom_window"),
+        ],
+        ..MapInfo::default()
+    }
+}
 
-pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //room
-        LayerInfo::new(120, 0, 30, 17),
-    ],
-    warps: &[
-        Warp::new(
-            Hitbox::new(15 * 8, 5 * 8, 8, 8),
-            Some(MapIndex::HOUSE_KITCHEN),
-            Vec2::new(10 * 8 - 3, 5 * 8 + 3),
-        )
-        .with_sound(sound::DOOR)
-        .with_flip(Axis::Y),
-        Warp::new(
-            Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
-            Some(MapIndex::WILDERNESS),
-            Vec2::new(8 * 8, 61 * 8),
-        )
-        .with_mode(WarpMode::Auto)
-        .with_flip(Axis::Y),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_backyard_basement"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_backyard_shed"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(22 * 8, 8 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Dialogue("house_backyard_shed_window"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(24 * 8, 10 * 8, 8, 6 * 8),
-            interaction: StaticInteraction::Dialogue("house_backyard_neighbours"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(21 * 8, 13 * 8, 8, 8),
-            interaction: StaticInteraction::Func(InteractFn::ToggleDog),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(5 * 8, 0, 8, 16 * 8),
-            interaction: StaticInteraction::Dialogue("house_backyard_stormdrain"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(3, 2 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("default"),
-            sprite: Some(&[
-                StaticAnimFrame::new(
+fn house_stairwell() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //room
+            LayerInfo::new(51, 0, 16, 9),
+            //left door
+            LayerInfo::new(41, 10, 1, 3)
+                .with_trans(&[0])
+                .with_offset(0, 6),
+            //right door
+            LayerInfo::new(40, 10, 1, 3)
+                .with_trans(&[0])
+                .with_offset(120, 6),
+        ],
+        warps: vec![
+            Warp::new(
+                Hitbox::new(1, 3 * 8, 8, 8),
+                Some(MapIndex::BEDROOM),
+                Vec2::new(14 * 8, 5 * 8),
+            )
+            .with_sound(sound::DOOR),
+            Warp::new(
+                Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
+                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Vec2::new(21 * 4, 4 * 8),
+            )
+            .with_sound(sound::STAIRS_DOWN)
+            .with_mode(WarpMode::Auto),
+        ],
+        interactables: vec![
+            Interactable::func(Hitbox::new(2 * 8, 2 * 8, 8, 8), InteractFn::StairwellWindow),
+            Interactable::func(Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8), InteractFn::StairwellPainting),
+            Interactable::dialogue(Hitbox::new(13 * 8, 2 * 8, 8, 8), "house_stairwell_window2"),
+            Interactable::dialogue(Hitbox::new(15 * 8, 3 * 8, 8, 8), "house_stairwell_door"),
+        ],
+        ..MapInfo::default()
+    }
+}
+
+fn house_living_room() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //room
+            LayerInfo::new(67, 0, 23, 13),
+            //couch
+            LayerInfo::new(37, 14, 4, 2)
+                .with_trans(&[0])
+                .with_offset(12 * 8 + 2, 8 * 8),
+            //tv
+            LayerInfo::new(41, 15, 2, 1)
+                .with_trans(&[0])
+                .with_offset(15 * 8 + 2, 11 * 8 - 1),
+        ],
+        fg_layers: vec![
+            //tv
+            LayerInfo::new(41, 13, 2, 3)
+                .with_trans(&[0])
+                .with_offset(15 * 8 + 2, 9 * 8 - 1),
+        ],
+        warps: vec![
+            Warp::new(
+                Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
+                Some(MapIndex::HOUSE_STAIRWELL),
+                Vec2::new(15 * 4, 7 * 8),
+            )
+            .with_sound(sound::STAIRS_UP)
+            .with_mode(WarpMode::Auto),
+            Warp::new(
+                Hitbox::new(3 * 8, 9 * 8, 8, 8),
+                Some(MapIndex::TOWN),
+                Vec2::new(17 * 8, 13 * 8),
+            )
+            .with_sound(sound::DOOR)
+            .with_flip(Axis::Y),
+            Warp::new(
+                Hitbox::new(14 * 8, 5 * 8, 8, 8),
+                Some(MapIndex::HOUSE_KITCHEN),
+                Vec2::new(7 * 4, 7 * 8),
+            )
+            .with_sound(sound::DOOR),
+            Warp::new(
+                Hitbox::new(8 * 8, 5 * 8, 8, 8),
+                Some(MapIndex::PIANO_ROOM),
+                Vec2::new(19 * 4, 6 * 8),
+            )
+            .with_sound(sound::DOOR),
+        ],
+        interactables: vec![
+            Interactable::dialogue(
+                Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
+                "house_living_room_couch",
+            ),
+            Interactable::dialogue(
+                Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
+                "house_living_room_tv_1",
+            ),
+            Interactable::dialogue(
+                Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
+                "house_living_room_window",
+            ),
+            Interactable::new(
+                Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
+                Interaction::None,
+                Some(vec![AnimFrame::new(
                     Vec2::new(0, 0),
-                    646,
+                    35,
                     30,
-                    StaticSpriteOptions::transparent_zero(),
-                ),
-                StaticAnimFrame::new(
-                    Vec2::new(0, 0),
-                    647,
-                    30,
-                    StaticSpriteOptions::transparent_zero(),
-                ),
+                    SpriteOptions {
+                        w: 3,
+                        h: 2,
+                        ..SpriteOptions::transparent_zero()
+                    },
+                )
+                .with_outline(None)]),
+            ),
+            Interactable::new(
+                Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
+                Interaction::None,
+                Some(vec![
+                    AnimFrame::new(
+                        Vec2::new(0, 0),
+                        576,
+                        30,
+                        SpriteOptions {
+                            w: 2,
+                            h: 3,
+                            ..SpriteOptions::transparent_zero()
+                        },
+                    ),
+                    AnimFrame::new(
+                        Vec2::new(0, 0),
+                        578,
+                        30,
+                        SpriteOptions {
+                            w: 2,
+                            h: 3,
+                            ..SpriteOptions::transparent_zero()
+                        },
+                    ),
+                ]),
+            ),
+        ],
+        ..MapInfo::default()
+    }
+}
+
+fn house_kitchen() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //room
+            LayerInfo::new(90, 0, 13, 10),
+            //microwave
+            LayerInfo::new(37, 12, 2, 1)
+                .with_offset(7 * 8 + 6, 4 * 8 - 3)
+                .with_trans(&[0]),
+        ],
+        warps: vec![
+            Warp::new(
+                Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
+                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Vec2::new(14 * 8, 5 * 8),
+            )
+            .with_sound(sound::DOOR)
+            .with_mode(WarpMode::Auto),
+            Warp::new(
+                Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
+                Some(MapIndex::BACKYARD),
+                Vec2::new(15 * 8, 5 * 8),
+            )
+            .with_sound(sound::DOOR),
+        ],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8), "house_kitchen_cupboard"),
+            Interactable::dialogue(Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8), "house_kitchen_sink"),
+            Interactable::dialogue(
+                Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
+                "house_kitchen_microwave",
+            ),
+            Interactable::dialogue(Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8), "house_kitchen_window"),
+        ],
+        ..MapInfo::default()
+    }
+}
+
+fn backyard() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //room
+            LayerInfo::new(120, 0, 30, 17),
+        ],
+        warps: vec![
+            Warp::new(
+                Hitbox::new(15 * 8, 5 * 8, 8, 8),
+                Some(MapIndex::HOUSE_KITCHEN),
+                Vec2::new(10 * 8 - 3, 5 * 8 + 3),
+            )
+            .with_sound(sound::DOOR)
+            .with_flip(Axis::Y),
+            Warp::new(
+                Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
+                Some(MapIndex::WILDERNESS),
+                Vec2::new(8 * 8, 61 * 8),
+            )
+            .with_mode(WarpMode::Auto)
+            .with_flip(Axis::Y),
+        ],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8), "house_backyard_basement"),
+            Interactable::dialogue(Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8), "house_backyard_shed"),
+            Interactable::dialogue(
+                Hitbox::new(22 * 8, 8 * 8, 8, 2 * 8),
+                "house_backyard_shed_window",
+            ),
+            Interactable::dialogue(
+                Hitbox::new(24 * 8, 10 * 8, 8, 6 * 8),
+                "house_backyard_neighbours",
+            ),
+            Interactable::func(Hitbox::new(21 * 8, 13 * 8, 8, 8), InteractFn::ToggleDog),
+            Interactable::dialogue(Hitbox::new(5 * 8, 0, 8, 16 * 8), "house_backyard_stormdrain"),
+            Interactable::dialogue(Hitbox::new(3, 2 * 8, 8, 8), "default").with_sprite(vec![
+                AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
+                AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
             ]),
-        },
-    ],
-    ..DEFAULT_MAP_SET
-};
+        ],
+        ..MapInfo::default()
+    }
+}
+
 // Somehow reduce code size...
 // Reduce necessary tracked state
 // Functionify
@@ -642,112 +493,97 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
 //TODO: Soundtrack where relevent
 //TODO: Finale
 
-pub const WILDERNESS: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //ground
-        LayerInfo::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
-        //left barrier
-        LayerInfo::new(120, 78, 1, 22)
-            .with_trans(&[0])
-            .with_offset(-8, 37 * 8),
-        //bottom barrier
-        LayerInfo::new(120, 72, 23, 1)
-            .with_trans(&[0])
-            .with_offset(17 * 8, 68 * 8),
-    ],
-    fg_layers: &[
-        //foreground
-        LayerInfo::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
-    ],
-    bg_colour: 3,
-    warps: &[Warp::new(
-        Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
-        Some(MapIndex::BACKYARD),
-        Vec2::new(14 * 8 - 4, 15 * 8),
-    )
-    .with_mode(WarpMode::Auto)
-    .with_flip(Axis::Y)],
-    interactables: &[],
-    bank: 1,
-    ..DEFAULT_MAP_SET
-};
+fn wilderness() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //ground
+            LayerInfo::new(120, 68, 30 * 4, 17 * 4).with_trans(&[0]),
+            //left barrier
+            LayerInfo::new(120, 78, 1, 22)
+                .with_trans(&[0])
+                .with_offset(-8, 37 * 8),
+            //bottom barrier
+            LayerInfo::new(120, 72, 23, 1)
+                .with_trans(&[0])
+                .with_offset(17 * 8, 68 * 8),
+        ],
+        fg_layers: vec![
+            //foreground
+            LayerInfo::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
+        ],
+        bg_colour: 3,
+        warps: vec![Warp::new(
+            Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
+            Some(MapIndex::BACKYARD),
+            Vec2::new(14 * 8 - 4, 15 * 8),
+        )
+        .with_mode(WarpMode::Auto)
+        .with_flip(Axis::Y)],
+        interactables: vec![],
+        bank: 1,
+        ..MapInfo::default()
+    }
+}
 
-pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[
-        //ground
-        LayerInfo::new(0, 0, 30 * 4, 17 * 4)
-            .with_trans(&[0])
-            .with_rot_and_shift_flags(0, 0),
-    ],
-    fg_layers: &[
-        //foreground
-        LayerInfo::new(0, 68, 30 * 4, 17 * 4)
-            .with_trans(&[0])
-            .with_rot_and_shift_flags(0, 0),
-    ],
-    bg_colour: 0,
-    warps: &[
-        Warp::new(
-            Hitbox::new(17 * 8, 13 * 8, 8, 8),
+fn town() -> MapInfo {
+    MapInfo {
+        layers: vec![
+            //ground
+            LayerInfo::new(0, 0, 30 * 4, 17 * 4)
+                .with_trans(&[0])
+                .with_rot_and_shift_flags(0, 0),
+        ],
+        fg_layers: vec![
+            //foreground
+            LayerInfo::new(0, 68, 30 * 4, 17 * 4)
+                .with_trans(&[0])
+                .with_rot_and_shift_flags(0, 0),
+        ],
+        bg_colour: 0,
+        warps: vec![
+            Warp::new(
+                Hitbox::new(17 * 8, 13 * 8, 8, 8),
+                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Vec2::new(4 * 9, 8 * 8),
+            )
+            .with_sound(sound::DOOR),
+            Warp::new(
+                Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
+                Some(MapIndex::SUPERMARKET),
+                Vec2::new(97, 73),
+            )
+            .with_sound(sound::DOOR),
+        ],
+        interactables: vec![
+            Interactable::dialogue(Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8), "town_traffic"),
+            Interactable::dialogue(Hitbox::new(8 * 8, 17 * 8, 8, 8), "town_lamppost"),
+            Interactable::dialogue(Hitbox::new(14 * 8, 13 * 8, 8, 8), "town_home_window"),
+            Interactable::dialogue(Hitbox::new(224, 142, 8 * 2, 8), "town_wide"),
+        ],
+        bank: 1,
+        ..MapInfo::default()
+    }
+}
+
+fn piano_room() -> MapInfo {
+    MapInfo {
+        layers: vec![LayerInfo::new(99, 15, 21, 10)],
+        bg_colour: 0,
+        warps: vec![Warp::new(
+            Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
             Some(MapIndex::HOUSE_LIVING_ROOM),
-            Vec2::new(4 * 9, 8 * 8),
+            Vec2::new(8 * 8, 5 * 8),
         )
-        .with_sound(sound::DOOR),
-        Warp::new(
-            Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
-            Some(MapIndex::SUPERMARKET),
-            Vec2::new(97, 73),
-        )
-        .with_sound(sound::DOOR),
-    ],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8),
-            interaction: StaticInteraction::Dialogue("town_traffic"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(8 * 8, 17 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("town_lamppost"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(14 * 8, 13 * 8, 8, 8),
-            interaction: StaticInteraction::Dialogue("town_home_window"),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(224, 142, 8 * 2, 8),
-            interaction: StaticInteraction::Dialogue("town_wide"),
-            sprite: None,
-        },
-    ],
-    bank: 1,
-    ..DEFAULT_MAP_SET
-};
-
-pub const PIANO_ROOM: StaticMapInfo<'static> = StaticMapInfo {
-    layers: &[LayerInfo::new(99, 15, 21, 10)],
-    bg_colour: 0,
-    warps: &[Warp::new(
-        Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
-        Some(MapIndex::HOUSE_LIVING_ROOM),
-        Vec2::new(8 * 8, 5 * 8),
-    )
-    .with_sound(sound::DOOR)
-    .with_mode(WarpMode::Auto)],
-    interactables: &[
-        StaticInteractable {
-            hitbox: Hitbox::new(4 * 8, 8, 4 * 25, 4 * 9),
-            interaction: StaticInteraction::Func(InteractFn::Piano(Vec2::new(4 * 8, 8))),
-            sprite: None,
-        },
-        StaticInteractable {
-            hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8),
-            interaction: StaticInteraction::Dialogue("unknown_3"),
-            sprite: None,
-        },
-    ],
-    camera_bounds: Some(CameraBounds::stick(21 * 8 / 2 - 120, -64)),
-    ..DEFAULT_MAP_SET
-};
+        .with_sound(sound::DOOR)
+        .with_mode(WarpMode::Auto)],
+        interactables: vec![
+            Interactable::func(
+                Hitbox::new(4 * 8, 8, 4 * 25, 4 * 9),
+                InteractFn::Piano(Vec2::new(4 * 8, 8)),
+            ),
+            Interactable::dialogue(Hitbox::new(0, 6 * 8, 8 * 2, 8), "unknown_3"),
+        ],
+        camera_bounds: Some(CameraBounds::stick(21 * 8 / 2 - 120, -64)),
+        ..MapInfo::default()
+    }
+}

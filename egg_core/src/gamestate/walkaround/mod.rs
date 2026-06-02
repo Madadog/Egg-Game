@@ -1,5 +1,5 @@
 use crate::animation::Animation;
-use crate::data::map_data::{DEFAULT_MAP_SET, MapIndex};
+use crate::data::map_data::MapIndex;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
@@ -56,7 +56,7 @@ impl WalkaroundState {
             map_animations: Vec::new(),
             creatures: Vec::new(),
             camera: Camera::default(),
-            current_map: DEFAULT_MAP_SET.into(),
+            current_map: MapInfo::default(),
             map_viewer: MapViewer::default(),
             dialogue: Dialogue::default(),
             particles: ParticleList::new(),
