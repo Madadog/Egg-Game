@@ -142,23 +142,16 @@ impl GameAssets {
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
-        let mut ids = vec![];
-        ids.push(self.font.id().untyped());
-        ids.push(self.sheet.id().untyped());
-        ids.push(self.script.id().untyped());
-        for map in &self.maps {
-            ids.push(map.id().untyped());
-        }
-        for id in ids {
-            let load_state = assets.get_load_state(id).unwrap();
-            match load_state {
-                LoadState::NotLoaded | LoadState::Loading | LoadState::Failed(_) => {
-                    return load_state;
-                }
-                LoadState::Loaded => (),
-            };
-        }
-        LoadState::Loaded
+        [
+            self.font.id().untyped(),
+            self.sheet.id().untyped(),
+            self.script.id().untyped(),
+        ]
+        .into_iter()
+        .chain(self.maps.iter().map(|m| m.id().untyped()))
+        .map(|id| assets.get_load_state(id).unwrap())
+        .find(|state| !matches!(state, LoadState::Loaded))
+        .unwrap_or(LoadState::Loaded)
     }
 }
 
@@ -278,6 +271,17 @@ impl SfxAssets {
     }
 }
 
+/// Standard audio playback at the game's mixing volume.
+fn playback_settings(mode: bevy::audio::PlaybackMode, speed: f32) -> PlaybackSettings {
+    PlaybackSettings {
+        mode,
+        volume: bevy::audio::Volume::Decibels(-6.0),
+        speed,
+        paused: false,
+        ..Default::default()
+    }
+}
+
 fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggGame>) {
     for (name, options) in state.system.sounds() {
         if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
@@ -285,13 +289,7 @@ fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: R
                 2.0_f32.powf((options.note as f32 + (options.octave as f32 - 5.0) * 12.0) / 12.0);
             commands.spawn((
                 AudioPlayer(sound.clone()),
-                PlaybackSettings {
-                    mode: bevy::audio::PlaybackMode::Despawn,
-                    volume: bevy::audio::Volume::Decibels(-6.0),
-                    speed,
-                    paused: false,
-                    ..Default::default()
-                },
+                playback_settings(bevy::audio::PlaybackMode::Despawn, speed),
             ));
         } else {
             panic!("Unknown sound \"{name:?}\" with {options:?}")
@@ -311,13 +309,7 @@ fn play_music(
             let music: Handle<AudioSource> = assets.load(format!("music/{}.ogg", x.id));
             commands.spawn((
                 AudioPlayer(music.clone()),
-                PlaybackSettings {
-                    mode: bevy::audio::PlaybackMode::Loop,
-                    volume: bevy::audio::Volume::Decibels(-6.0),
-                    speed: 1.0,
-                    paused: false,
-                    ..Default::default()
-                },
+                playback_settings(bevy::audio::PlaybackMode::Loop, 1.0),
                 MusicPlayer,
             ));
             *playing = true;
@@ -358,23 +350,42 @@ fn update_texture(
     }
 }
 
+/// Integer/linear scale factor that fits the WIDTH×HEIGHT screen into `window`.
+fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
+    let fit = (window.width() / WIDTH as f32).min(window.height() / HEIGHT as f32);
+    match mode {
+        ScaleMode::Integer => fit.floor(),
+        ScaleMode::Linear => fit,
+    }
+}
+
 fn resize_screen(
     mut sprite: Query<&mut Transform, With<GameScreenSprite>>,
     mut window: Query<&mut Window>,
     state: Res<EggGame>,
 ) {
     if let Ok(mut window) = window.single_mut() {
-        let w = window.width() / WIDTH as f32;
-        let h = window.height() / HEIGHT as f32;
         window.resolution.set_scale_factor_override(Some(1.0));
-        let size = match state.scale_mode {
-            ScaleMode::Integer => w.min(h).floor(),
-            ScaleMode::Linear => w.min(h),
-        };
+        let size = screen_scale(&window, &state.scale_mode);
         for mut transform in sprite.iter_mut() {
             transform.scale = Vec3::new(size, size, 1.0);
         }
     }
+}
+
+/// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
+fn draw_overlay(game: &mut EggGame, text: &str) {
+    let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
+    let system = &mut game.system;
+    egg_core::system::print_to_with_font(
+        &system.font,
+        &mut system.output_screen,
+        text,
+        100,
+        62,
+        colour,
+        egg_core::system::PrintOptions::default(),
+    );
 }
 
 fn step_state(
@@ -391,49 +402,26 @@ fn step_state(
 
     game.system.input().refresh();
 
-    let (
-        mut up,
-        mut down,
-        mut left,
-        mut right,
-        mut a_button,
-        mut b_button,
-        mut x_button,
-        mut y_button,
-    ) = (
-        keys.any_pressed([KeyCode::ArrowUp, KeyCode::KeyW]),
-        keys.any_pressed([KeyCode::ArrowDown, KeyCode::KeyS]),
-        keys.any_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]),
-        keys.any_pressed([KeyCode::ArrowRight, KeyCode::KeyD]),
-        keys.any_pressed([KeyCode::KeyZ, KeyCode::Space, KeyCode::Enter, KeyCode::KeyE]),
-        keys.any_pressed([KeyCode::KeyX, KeyCode::Escape, KeyCode::KeyQ]),
-        keys.any_pressed([KeyCode::KeyC]),
-        keys.any_pressed([KeyCode::KeyV]),
-    );
-    if let Some((_, gamepad)) = gamepads.iter().next() {
-        up |= gamepad.pressed(GamepadButton::DPadUp)
-            || gamepad.get(GamepadAxis::LeftStickY).unwrap() > 0.2;
-        down |= gamepad.pressed(GamepadButton::DPadDown)
-            || gamepad.get(GamepadAxis::LeftStickY).unwrap() < -0.2;
-        left |= gamepad.pressed(GamepadButton::DPadLeft)
-            || gamepad.get(GamepadAxis::LeftStickX).unwrap() < -0.2;
-        right |= gamepad.pressed(GamepadButton::DPadRight)
-            || gamepad.get(GamepadAxis::LeftStickX).unwrap() > 0.2;
-        a_button |= gamepad.pressed(GamepadButton::South);
-        b_button |= gamepad.pressed(GamepadButton::East);
-        x_button |= gamepad.pressed(GamepadButton::West);
-        y_button |= gamepad.pressed(GamepadButton::North);
-    }
+    // Merge keyboard + (optional) first gamepad into player one's controller.
+    let pad = gamepads.iter().next().map(|(_, gamepad)| gamepad);
+    let stick = |axis: GamepadAxis| pad.and_then(|g| g.get(axis)).unwrap_or(0.0);
+    let held = |kb: &[KeyCode], button: GamepadButton| {
+        keys.any_pressed(kb.iter().copied()) || pad.is_some_and(|g| g.pressed(button))
+    };
+    let c = &mut game.system.input().controllers[0];
+    use KeyCode::*;
+    c.up[0] = held(&[ArrowUp, KeyW], GamepadButton::DPadUp) || stick(GamepadAxis::LeftStickY) > 0.2;
+    c.down[0] =
+        held(&[ArrowDown, KeyS], GamepadButton::DPadDown) || stick(GamepadAxis::LeftStickY) < -0.2;
+    c.left[0] =
+        held(&[ArrowLeft, KeyA], GamepadButton::DPadLeft) || stick(GamepadAxis::LeftStickX) < -0.2;
+    c.right[0] = held(&[ArrowRight, KeyD], GamepadButton::DPadRight)
+        || stick(GamepadAxis::LeftStickX) > 0.2;
+    c.a[0] = held(&[KeyZ, Space, Enter, KeyE], GamepadButton::South);
+    c.b[0] = held(&[KeyX, Escape, KeyQ], GamepadButton::East);
+    c.x[0] = held(&[KeyC], GamepadButton::West);
+    c.y[0] = held(&[KeyV], GamepadButton::North);
 
-    game.system.input().controllers[0].up[0] = up;
-    game.system.input().controllers[0].down[0] = down;
-    game.system.input().controllers[0].left[0] = left;
-    game.system.input().controllers[0].right[0] = right;
-    game.system.input().controllers[0].a[0] = a_button;
-    game.system.input().controllers[0].b[0] = b_button;
-    game.system.input().controllers[0].x[0] = x_button;
-    game.system.input().controllers[0].y[0] = y_button;
-    
     for keycode in keys.get_pressed() {
         if let Some(scancode) = keycode_to_scancode(*keycode) {
             game.system.input().press_key(scancode);
@@ -466,11 +454,7 @@ fn step_state(
         if let Some(pos) = window.cursor_position() {
             let w = window.width() / WIDTH as f32;
             let h = window.height() / HEIGHT as f32;
-            let size = if matches!(game.scale_mode, ScaleMode::Integer) {
-                w.min(h).floor()
-            } else {
-                w.min(h)
-            };
+            let size = screen_scale(&window, &game.scale_mode);
             let (x_offset, y_offset) = if w > h {
                 ((window.width() - WIDTH as f32 * size) / 2.0, 0.0)
             } else {
@@ -491,42 +475,38 @@ fn step_state(
         if keys.just_pressed(KeyCode::KeyN) {
             game.run();
         }
-        let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
-        let system = &mut game.system;
-        egg_core::system::print_to_with_font(
-            &system.font,
-            &mut system.output_screen,
-            "Paused\n[P] to unpause\n[N] to step forward",
-            100,
-            62,
-            colour,
-            egg_core::system::PrintOptions::default(),
-        );
+        draw_overlay(&mut game, "Paused\n[P] to unpause\n[N] to step forward");
         return;
     }
     if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {
-        let x = !game.state.debug_info.player_info();
-        game.state.debug_info.set_player_info(x);
+        let d = &game.state.debug_info;
+        d.set_player_info(!d.player_info());
     }
     if keys.just_pressed(KeyCode::KeyM) {
-        let x = !game.state.debug_info.map_info();
-        game.state.debug_info.set_map_info(x);
+        let d = &game.state.debug_info;
+        d.set_map_info(!d.map_info());
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        let x = !game.state.debug_info.memory_info();
-        game.state.debug_info.set_memory_info(x);
+        let d = &game.state.debug_info;
+        d.set_memory_info(!d.memory_info());
     }
-    if keys.just_pressed(KeyCode::Digit1) && keys.pressed(KeyCode::ShiftLeft) {
-        game.state
-            .walkaround
-            .player()
-            .replace(egg_core::player::Shell::ellie());
-    }
-    if keys.just_pressed(KeyCode::Digit2) && keys.pressed(KeyCode::ShiftLeft) {
-        game.state
-            .walkaround
-            .player()
-            .replace(egg_core::player::Shell::may());
+    // Shift+digit: swap player one for a preset shell.
+    if keys.pressed(KeyCode::ShiftLeft) {
+        use egg_core::player::Shell;
+        let swap = if keys.just_pressed(KeyCode::Digit1) {
+            Some(Shell::ellie())
+        } else if keys.just_pressed(KeyCode::Digit2) {
+            Some(Shell::may())
+        } else if keys.just_pressed(KeyCode::Digit4) {
+            Some(Shell::dog())
+        } else if keys.just_pressed(KeyCode::Digit5) {
+            Some(Shell::bro())
+        } else {
+            None
+        };
+        if let Some(shell) = swap {
+            game.state.walkaround.player().replace(shell);
+        }
     }
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
         let pos = game.state.walkaround.player().pos;
@@ -555,18 +535,6 @@ fn step_state(
             game.state.walkaround.entities.pop();
         }
         info!("we have {} entities", game.state.walkaround.entities.len());
-    }
-    if keys.just_pressed(KeyCode::Digit4) && keys.pressed(KeyCode::ShiftLeft) {
-        game.state
-            .walkaround
-            .player()
-            .replace(egg_core::player::Shell::dog());
-    }
-    if keys.just_pressed(KeyCode::Digit5) && keys.pressed(KeyCode::ShiftLeft) {
-        game.state
-            .walkaround
-            .player()
-            .replace(egg_core::player::Shell::bro());
     }
     if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
         let player = game.state.walkaround.player().clone();
@@ -613,17 +581,7 @@ fn step_state(
     game.run();
     if keys.pressed(KeyCode::KeyN) {
         game.run();
-        let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
-        let system = &mut game.system;
-        egg_core::system::print_to_with_font(
-            &system.font,
-            &mut system.output_screen,
-            "Fast-Forward",
-            100,
-            62,
-            colour,
-            egg_core::system::PrintOptions::default(),
-        );
+        draw_overlay(&mut game, "Fast-Forward");
     }
 }
 
