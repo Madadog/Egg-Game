@@ -421,6 +421,80 @@ fn for_each_tile<F: FnMut(i32, i32, i32)>(
     }
 }
 
+/// Draw a multi-tile sprite from the indexed sheet `source` onto any `Canvas`,
+/// mapping each source index through `convert` (`None` = transparent).
+fn draw_sprite<D, F>(
+    dest: &mut D,
+    source: &IndexedImage,
+    id: i32,
+    x: i32,
+    y: i32,
+    opts: &StaticSpriteOptions<'_>,
+    convert: F,
+) where
+    D: Canvas,
+    F: Fn(u8) -> Option<D::Pixel>,
+{
+    let xform = xform_from_opts(opts);
+    let tpr = tiles_per_row(source.width());
+    for_each_tile(id, x, y, opts, |tile_id, dx, dy| {
+        let (tx, ty) = tile_origin(tile_id, tpr);
+        blit_tile(dest, source, tx, ty, dx, dy, xform, &convert);
+    });
+}
+
+/// Draw a region of `layer` (sampling the indexed sheet `source`) onto any
+/// `Canvas`, mapping each source index through `convert` (`None` = transparent).
+fn draw_map<D, F>(
+    dest: &mut D,
+    layer: &MapLayer,
+    source: &IndexedImage,
+    mut opts: MapOptions,
+    convert: F,
+) where
+    D: Canvas,
+    F: Fn(u8) -> Option<D::Pixel>,
+{
+    let dw = dest.width() as i32;
+    let dh = dest.height() as i32;
+    if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
+        return;
+    }
+    // Crop whole off-screen tiles. Use truncated division (Rust's `/`) so a
+    // partial tile at sx=-1 keeps drawing — `div_euclid` would round away from
+    // zero and crop a whole tile.
+    if opts.sx <= 0 {
+        let x_tiles = -(opts.sx / 8);
+        opts.sx += x_tiles * 8;
+        opts.x += x_tiles;
+        opts.w -= x_tiles;
+    }
+    if opts.sy <= 0 {
+        let y_tiles = -(opts.sy / 8);
+        opts.sy += y_tiles * 8;
+        opts.y += y_tiles;
+        opts.h -= y_tiles;
+    }
+    let tpr = tiles_per_row(source.width());
+    for j in 0..opts.h {
+        for i in 0..opts.w {
+            let Ok(mx) = usize::try_from(opts.x + i) else {
+                continue;
+            };
+            let Ok(my) = usize::try_from(opts.y + j) else {
+                continue;
+            };
+            let Some(tile_id) = MapLayer::get(layer, mx, my) else {
+                continue;
+            };
+            let (tx, ty) = tile_origin(tile_id as i32, tpr);
+            let dx = opts.sx + i * 8;
+            let dy = opts.sy + j * 8;
+            blit_tile(dest, source, tx, ty, dx, dy, Transform::IDENTITY, &convert);
+        }
+    }
+}
+
 impl RgbaImage {
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
     /// `palette_map` is applied to each source pixel index before `palette`
@@ -435,21 +509,16 @@ impl RgbaImage {
         y: i32,
         opts: StaticSpriteOptions<'_>,
     ) {
-        let xform = xform_from_opts(&opts);
-        let tpr = tiles_per_row(source.width());
         let transparent = opts.transparent;
-        for_each_tile(id, x, y, &opts, |tile_id, dx, dy| {
-            let (tx, ty) = tile_origin(tile_id, tpr);
-            blit_tile(self, source, tx, ty, dx, dy, xform, |idx| {
-                if transparent.contains(&idx) {
-                    return None;
-                }
-                let mapped = palette_map
-                    .get(idx as usize)
-                    .copied()
-                    .unwrap_or(idx as usize);
-                palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
-            });
+        draw_sprite(self, source, id, x, y, &opts, |idx| {
+            if transparent.contains(&idx) {
+                return None;
+            }
+            let mapped = palette_map
+                .get(idx as usize)
+                .copied()
+                .unwrap_or(idx as usize);
+            palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
         });
     }
 
@@ -487,58 +556,21 @@ impl RgbaImage {
         source: &IndexedImage,
         palette: &[[u8; 3]],
         palette_map: &[usize],
-        mut opts: MapOptions,
+        opts: MapOptions,
     ) {
-        let dw = self.width() as i32;
-        let dh = self.height() as i32;
-        if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
-            return;
-        }
-        // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
-        // so a partial tile at sx=-1 keeps drawing — `div_euclid` would round
-        // away from zero and crop a whole tile.
-        if opts.sx <= 0 {
-            let x_tiles = -(opts.sx / 8);
-            opts.sx += x_tiles * 8;
-            opts.x += x_tiles;
-            opts.w -= x_tiles;
-        }
-        if opts.sy <= 0 {
-            let y_tiles = -(opts.sy / 8);
-            opts.sy += y_tiles * 8;
-            opts.y += y_tiles;
-            opts.h -= y_tiles;
-        }
         let transparent = opts.transparent;
-        let tpr = tiles_per_row(source.width());
-        for j in 0..opts.h {
-            for i in 0..opts.w {
-                let Ok(mx) = usize::try_from(opts.x + i) else {
-                    continue;
-                };
-                let Ok(my) = usize::try_from(opts.y + j) else {
-                    continue;
-                };
-                let Some(tile_id) = MapLayer::get(layer, mx, my) else {
-                    continue;
-                };
-                let (tx, ty) = tile_origin(tile_id as i32, tpr);
-                let dx = opts.sx + i * 8;
-                let dy = opts.sy + j * 8;
-                blit_tile(self, source, tx, ty, dx, dy, Transform::IDENTITY, |idx| {
-                    if let Some(t) = transparent
-                        && idx == t
-                    {
-                        return None;
-                    }
-                    let mapped = palette_map
-                        .get(idx as usize)
-                        .copied()
-                        .unwrap_or(idx as usize);
-                    palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
-                });
+        draw_map(self, layer, source, opts, |idx| {
+            if let Some(t) = transparent
+                && idx == t
+            {
+                return None;
             }
-        }
+            let mapped = palette_map
+                .get(idx as usize)
+                .copied()
+                .unwrap_or(idx as usize);
+            palette.get(mapped).map(|rgb| Rgba::from_rgb(*rgb))
+        });
     }
 }
 
@@ -581,69 +613,27 @@ impl IndexedImage {
         y: i32,
         opts: StaticSpriteOptions<'_>,
     ) {
-        let xform = xform_from_opts(&opts);
-        let tpr = tiles_per_row(source.width());
         let transparent = opts.transparent;
-        for_each_tile(id, x, y, &opts, |tile_id, dx, dy| {
-            let (tx, ty) = tile_origin(tile_id, tpr);
-            blit_tile(self, source, tx, ty, dx, dy, xform, |idx| {
-                if transparent.contains(&idx) {
-                    None
-                } else {
-                    Some(idx)
-                }
-            });
+        draw_sprite(self, source, id, x, y, &opts, |idx| {
+            if transparent.contains(&idx) {
+                None
+            } else {
+                Some(idx)
+            }
         });
     }
 
     /// Draw a region of `layer` onto this canvas using `source` for tile pixels.
-    pub fn map_draw(&mut self, layer: &MapLayer, source: &IndexedImage, mut opts: MapOptions) {
-        let dw = self.width() as i32;
-        let dh = self.height() as i32;
-        if opts.sx + opts.w * 8 < 0 || opts.sy + opts.h * 8 < 0 || opts.sx >= dw || opts.sy >= dh {
-            return;
-        }
-        // Crop whole off-screen tiles. Use truncated division (Rust's `/`)
-        // so a partial tile at sx=-1 keeps drawing — `div_euclid` would round
-        // away from zero and crop a whole tile.
-        if opts.sx <= 0 {
-            let x_tiles = -(opts.sx / 8);
-            opts.sx += x_tiles * 8;
-            opts.x += x_tiles;
-            opts.w -= x_tiles;
-        }
-        if opts.sy <= 0 {
-            let y_tiles = -(opts.sy / 8);
-            opts.sy += y_tiles * 8;
-            opts.y += y_tiles;
-            opts.h -= y_tiles;
-        }
+    pub fn map_draw(&mut self, layer: &MapLayer, source: &IndexedImage, opts: MapOptions) {
         let transparent = opts.transparent;
-        let tpr = tiles_per_row(source.width());
-        for j in 0..opts.h {
-            for i in 0..opts.w {
-                let Ok(mx) = usize::try_from(opts.x + i) else {
-                    continue;
-                };
-                let Ok(my) = usize::try_from(opts.y + j) else {
-                    continue;
-                };
-                let Some(tile_id) = MapLayer::get(layer, mx, my) else {
-                    continue;
-                };
-                let (tx, ty) = tile_origin(tile_id as i32, tpr);
-                let dx = opts.sx + i * 8;
-                let dy = opts.sy + j * 8;
-                blit_tile(self, source, tx, ty, dx, dy, Transform::IDENTITY, |idx| {
-                    if let Some(t) = transparent
-                        && idx == t
-                    {
-                        None
-                    } else {
-                        Some(idx)
-                    }
-                });
+        draw_map(self, layer, source, opts, |idx| {
+            if let Some(t) = transparent
+                && idx == t
+            {
+                None
+            } else {
+                Some(idx)
             }
-        }
+        });
     }
 }
