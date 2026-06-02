@@ -15,6 +15,7 @@ pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl Cons
         match index {
             Some(0) => {
                 // Black BG, Oblong sun + starfield on FG.
+                draw_state.set_palette(&[[0; 3]; 16]);
                 draw_state.indexed_canvas[BG as usize].fill(0);
                 system.music(Some(&MusicTrack::INTRO));
                 let fg = &mut draw_state.indexed(FG);
