@@ -22,10 +22,7 @@ use crate::{
     interact::{Interactable, Interaction},
     map::{Axis, LayerInfo, MapInfo},
     position::{Hitbox, Vec2},
-    system::{
-        ConsoleApi, ConsoleHelper, DrawParams, Flip, SpriteOptions, StaticDrawParams,
-        StaticSpriteOptions,
-    },
+    system::{ConsoleApi, ConsoleHelper, DrawParams, Flip, SpriteOptions},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -519,12 +516,12 @@ pub enum Companion {
 }
 impl Companion {
     pub fn spr_params(
-        &'_ self,
+        &self,
         position: Vec2,
         direction: (i8, i8),
         walktime: u8,
         camera: &Camera,
-    ) -> StaticDrawParams<'_> {
+    ) -> DrawParams {
         match &self {
             Self::Dog => {
                 let t = (walktime / 10) % 2;
@@ -535,15 +532,15 @@ impl Companion {
                     (_, _) => (1, 712 + t as i32, Flip::None),
                 };
                 let x_offset = if let Flip::Horizontal = flip { -8 } else { 0 };
-                StaticDrawParams::new(
+                DrawParams::new(
                     i,
                     position.x as i32 - camera.x() + x_offset,
                     position.y as i32 - camera.y() - 2,
-                    StaticSpriteOptions {
+                    SpriteOptions {
                         w,
                         h: 2,
                         flip,
-                        ..StaticSpriteOptions::transparent_zero()
+                        ..SpriteOptions::transparent_zero()
                     },
                     Some(1),
                     1,

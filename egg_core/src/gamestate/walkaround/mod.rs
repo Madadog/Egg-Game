@@ -558,7 +558,7 @@ impl<T: ConsoleApi>
         sprites.extend(
             self.creatures
                 .iter()
-                .map(|x| x.draw_params(self.camera.pos).into()),
+                .map(|x| x.draw_params(self.camera.pos)),
         );
 
         sprites.extend(self.entities.iter().map(|x| x.draw_params(self.camera.pos)));
@@ -571,9 +571,7 @@ impl<T: ConsoleApi>
                     self.companion_trail.mid()
                 };
                 let walktime = self.companion_trail.walktime();
-                let params = companion
-                    .spr_params(position, direction, walktime, &self.camera)
-                    .into();
+                let params = companion.spr_params(position, direction, walktime, &self.camera);
                 sprites.push(params);
             }
         }

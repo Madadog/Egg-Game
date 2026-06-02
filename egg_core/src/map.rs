@@ -5,7 +5,7 @@ use crate::{
         map_data::MapIndex,
         sound::{SfxData, music::MusicTrack},
     },
-    interact::{Interactable, StaticInteractable},
+    interact::Interactable,
     position::{Collider, Hitbox, Vec2, touches_tile},
     system::ConsoleApi,
 };
@@ -26,18 +26,6 @@ pub trait TileMap {
     fn draw(&self, console: &mut impl ConsoleApi);
     fn step(&mut self, console: &impl ConsoleApi);
 }*/
-#[derive(Clone, Debug)]
-pub struct StaticMapInfo<'a> {
-    pub layers: &'a [LayerInfo],
-    pub fg_layers: &'a [LayerInfo],
-    pub warps: &'a [Warp],
-    pub interactables: &'a [StaticInteractable<'a>],
-    pub bg_colour: u8,
-    pub music_track: Option<MusicTrack>,
-    pub bank: usize,
-    pub camera_bounds: Option<CameraBounds>,
-}
-
 /// Metadata necessary to load a map into Walkaround.
 #[derive(Clone, Debug, Default)]
 pub struct MapInfo {
@@ -73,24 +61,6 @@ impl MapInfo {
     ) {
         for l in &self.fg_layers {
             l.draw_indexed(draw_state, layer, map, offset, debug);
-        }
-    }
-}
-impl From<StaticMapInfo<'static>> for MapInfo {
-    fn from(value: StaticMapInfo) -> Self {
-        MapInfo {
-            layers: value.layers.into(),
-            fg_layers: value.fg_layers.into(),
-            warps: value.warps.into(),
-            interactables: value
-                .interactables
-                .iter()
-                .map(|x| x.clone().into())
-                .collect(),
-            bg_colour: value.bg_colour,
-            music_track: value.music_track,
-            bank: value.bank,
-            camera_bounds: value.camera_bounds,
         }
     }
 }

@@ -18,54 +18,12 @@ use crate::animation::*;
 use crate::position::Hitbox;
 use crate::position::Vec2;
 
-/// Compile-time interaction. Dialogue is referenced by a `&'static str` key
-/// into the registry built by [`crate::data::script`]; the actual text
-/// is resolved at runtime when the interaction fires.
-#[derive(Debug, Clone)]
-pub enum StaticInteraction {
-    /// A dialogue-registry key. Resolves to a `Vec<Message>` at runtime.
-    Dialogue(&'static str),
-    Func(InteractFn),
-    None,
-}
-
-#[derive(Debug, Clone)]
-pub struct StaticInteractable<'a> {
-    pub hitbox: Hitbox,
-    pub interaction: StaticInteraction,
-    pub sprite: Option<&'a [StaticAnimFrame<'a>]>,
-}
-
-impl<'a> StaticInteractable<'a> {
-    pub const fn new(
-        hitbox: Hitbox,
-        interaction: StaticInteraction,
-        sprite: Option<&'a [StaticAnimFrame<'a>]>,
-    ) -> Self {
-        Self {
-            hitbox,
-            interaction,
-            sprite,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Interaction {
     /// A dialogue-registry key. Resolved to a `Vec<Message>` when it fires.
     Dialogue(String),
     Func(InteractFn),
     None,
-}
-
-impl From<StaticInteraction> for Interaction {
-    fn from(other: StaticInteraction) -> Self {
-        match other {
-            StaticInteraction::Dialogue(key) => Self::Dialogue(key.to_string()),
-            StaticInteraction::Func(x) => Self::Func(x),
-            StaticInteraction::None => Self::None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,18 +57,6 @@ impl Interactable {
     pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
         self.sprite = Some(frames);
         self
-    }
-}
-
-impl<'a> From<StaticInteractable<'a>> for Interactable {
-    fn from(other: StaticInteractable) -> Self {
-        Self {
-            hitbox: other.hitbox,
-            interaction: other.interaction.into(),
-            sprite: other
-                .sprite
-                .map(|x| x.iter().map(|x| x.clone().into()).collect()),
-        }
     }
 }
 
