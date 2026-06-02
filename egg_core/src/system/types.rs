@@ -383,34 +383,6 @@ impl Default for SfxOptions {
     }
 }
 
-pub enum TextureSource {
-    Tiles,
-    Map,
-    VBank1,
-}
-
-pub struct TTriOptions<'a> {
-    pub texture_src: TextureSource,
-    pub transparent: &'a [u8],
-    pub z1: f32,
-    pub z2: f32,
-    pub z3: f32,
-    pub depth: bool,
-}
-
-impl Default for TTriOptions<'_> {
-    fn default() -> Self {
-        Self {
-            texture_src: TextureSource::Tiles,
-            transparent: &[],
-            z1: 0.0,
-            z2: 0.0,
-            z3: 0.0,
-            depth: false,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct MapOptions {
     pub x: i32,
@@ -507,14 +479,9 @@ impl<'a> StaticSpriteOptions<'a> {
 }
 impl Default for StaticSpriteOptions<'_> {
     fn default() -> Self {
-        Self {
-            transparent: &[],
-            scale: 1,
-            flip: Flip::None,
-            rotate: Rotate::None,
-            w: 1,
-            h: 1,
-        }
+        // Delegates to the inherent `const fn default`; inherent associated
+        // functions shadow the trait method here, so this is not recursive.
+        Self::default()
     }
 }
 #[derive(Debug, Clone)]
