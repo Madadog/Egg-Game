@@ -3,8 +3,6 @@ use crate::system::StaticSpriteOptions;
 use crate::system::{HEIGHT, WIDTH};
 
 use crate::camera::CameraBounds;
-use crate::data::dialogue_data::GAME_TITLE;
-use crate::data::dialogue_data::OPTIONS_TITLE;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
@@ -26,7 +24,7 @@ impl MenuState {
         Self {
             index: 0,
             entries: vec![MenuEntry::Play, MenuEntry::Options],
-            draw_title: Some(GAME_TITLE),
+            draw_title: Some("game_title"),
             back_entry: None,
         }
     }
@@ -42,10 +40,10 @@ impl MenuState {
             ..Self::new()
         }
     }
-    pub fn debug_options() -> Self {
+    pub fn debug_options(system: &impl ConsoleApi) -> Self {
         let mut entries = vec![MenuEntry::Walk];
         entries.extend(
-            (0..crate::data::dialogue_data::MENU_DEBUG_CONTROLS.len())
+            (0..system.list("menu_debug_controls").len())
                 .map(|x| MenuEntry::Debug(x as u8))
                 .chain([MenuEntry::MapTest, MenuEntry::MusicTest]),
         );
@@ -123,17 +121,18 @@ impl MenuState {
     /// hit-testing (`step`) and drawing.
     pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<usize> {
         let small = DIALOGUE_OPTIONS.small_text(system);
+        let texts: Vec<String> = self.entries.iter().map(|e| e.text(system)).collect();
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
             .entries
             .iter()
             .enumerate()
-            .map(|(i, entry)| {
+            .map(|(i, _entry)| {
                 let selected = i == self.index;
                 builder.leaf(
                     Style { size: ui::full_width(8.0), ..Default::default() },
                     Content::Text {
-                        text: entry.text().to_string(),
+                        text: texts[i].clone(),
                         color: if selected { 4 } else { 3 },
                         center: true,
                         small,
@@ -175,7 +174,7 @@ impl MenuState {
             Play => return Some(GameMode::Instructions(0)),
             Options => {
                 self.index = 0;
-                self.draw_title = Some(OPTIONS_TITLE);
+                self.draw_title = Some("options_title");
                 self.entries = vec![MainMenu, FontSize, Reset(0)];
                 self.back_entry = Some(MainMenu);
             }
@@ -220,7 +219,7 @@ impl MenuState {
                             system,
                         );
                     }
-                    6 => return Some(GameMode::MainMenu(MenuState::debug_options())),
+                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(system))),
                     _ => {}
                 }
             }
@@ -246,7 +245,6 @@ impl MenuState {
         system: &mut impl ConsoleApi,
         index: usize,
     ) {
-        use crate::data::dialogue_data::OPTIONS_LOSE_DATA;
         use crate::drawstate::LayerId::*;
         use crate::system::drawing::Canvas;
         use MenuEntry::*;
@@ -257,7 +255,7 @@ impl MenuState {
             draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
             system.print_to_centered(
                 draw_state.rgba(BG),
-                OPTIONS_LOSE_DATA,
+                &system.label("options_lose_data"),
                 120,
                 13,
                 c12,
@@ -281,8 +279,8 @@ impl MenuState {
         let c0 = draw_state.colour(0);
         draw_state.rgba(BG).fill(c0);
 
-        if let Some(string) = self.draw_title {
-            draw_title_rgba(draw_state, system, 120, 53, string, elapsed_frames);
+        if let Some(key) = self.draw_title {
+            draw_title_rgba(draw_state, system, 120, 53, &system.label(key), elapsed_frames);
         }
 
         self.build_ui(system).draw(draw_state, system, BG);
@@ -318,31 +316,30 @@ pub enum MenuEntry {
     Walk,
 }
 impl MenuEntry {
-    pub fn text(&self) -> &str {
-        use crate::data::dialogue_data::*;
+    pub fn text(&self, system: &impl ConsoleApi) -> String {
         use MenuEntry::*;
 
         match self {
-            Play => MENU_PLAY,
-            Options => MENU_OPTIONS,
-            MainMenu => MENU_BACK,
-            FontSize => OPTIONS_FONT_SIZE,
+            Play => system.label("menu_play"),
+            Options => system.label("menu_options"),
+            MainMenu => system.label("menu_back"),
+            FontSize => system.label("options_font_size"),
             Reset(x) => {
                 if *x == 0 {
-                    OPTIONS_RESET
+                    system.label("options_reset")
                 } else {
-                    OPTIONS_RESET_SURE
+                    system.label("options_reset_sure")
                 }
             }
-            Inventory => MENU_BACK,
-            ExitToMenu => MENU_EXIT,
-            _Space => "\0",
-            Debug(x) => MENU_DEBUG_CONTROLS[usize::from(*x)],
-            MapTest => MENU_MAP_TEST[0],
-            MusicTest => MENU_MUSIC_TEST[0],
-            Walk => MENU_PLAY,
-            MapBankSelect(_, string) => string,
-            _MusicSelect(_, string) => string,
+            Inventory => system.label("menu_back"),
+            ExitToMenu => system.label("menu_exit"),
+            _Space => String::new(),
+            Debug(x) => (|list_key: &str, i: usize| system.list(list_key).into_iter().nth(i).unwrap_or_default())("menu_debug_controls", usize::from(*x)),
+            MapTest => system.label("menu_map_test"),
+            MusicTest => system.label("menu_music_test"),
+            Walk => system.label("menu_play"),
+            MapBankSelect(_, string) => string.clone(),
+            _MusicSelect(_, string) => string.clone(),
         }
     }
 }
@@ -360,12 +357,10 @@ pub fn draw_title_indexed(
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    use crate::data::dialogue_data::GAME_TITLE_BLURB;
     use crate::system::drawing::Canvas;
-    let game_title_z = format!("{game_title}\0");
     let title_width = system.print_to(
         canvas,
-        &game_title_z,
+        game_title,
         999,
         999,
         2u8,
@@ -376,7 +371,7 @@ pub fn draw_title_indexed(
     );
     system.print_to_centered(
         canvas,
-        &game_title_z,
+        game_title,
         x,
         y + 23,
         2u8,
@@ -387,7 +382,7 @@ pub fn draw_title_indexed(
     );
     system.print_to(
         canvas,
-        GAME_TITLE_BLURB,
+        &system.label("game_title_blurb"),
         3,
         3,
         14u8,
@@ -423,15 +418,13 @@ pub fn draw_title_rgba(
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    use crate::data::dialogue_data::GAME_TITLE_BLURB;
     use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
     use crate::system::drawing::Canvas;
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
-    let game_title_z = format!("{game_title}\0");
     let title_width = system.print_to(
         draw_state.rgba(BG),
-        &game_title_z,
+        game_title,
         999,
         999,
         c2,
@@ -442,7 +435,7 @@ pub fn draw_title_rgba(
     );
     system.print_to_centered(
         draw_state.rgba(BG),
-        &game_title_z,
+        game_title,
         x,
         y + 23,
         c2,
@@ -454,7 +447,7 @@ pub fn draw_title_rgba(
     );
     system.print_to(
         draw_state.rgba(BG),
-        GAME_TITLE_BLURB,
+        &system.label("game_title_blurb"),
         3,
         3,
         c14,

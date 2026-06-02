@@ -33,111 +33,52 @@ use crate::data::{
 };
 
 #[derive(Debug, Clone)]
-pub enum StaticTextContent {
-    Text(&'static str),
-    Delayed(&'static str, u8),
-    Delay(u8),
-    Sound(&'static SfxData),
-    Portrait(Option<&'static Portrait>),
-    PausePortrait(Option<&'static Portrait>),
-    Pause,
-    AutoText(&'static str),
-    Flip(bool),
-}
-impl StaticTextContent {
-    pub fn is_auto(&self) -> bool {
-        use StaticTextContent::*;
-        !matches!(self, Text(_) | Pause)
-    }
-    pub fn is_skip(&self) -> bool {
-        use StaticTextContent::*;
-        matches!(self, Sound(_) | Portrait(_) | Flip(_))
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum TextContent {
-    Text(String),
-    Delayed(String, u8),
+    /// A run of text.
+    ///
+    /// * `pause` — wait for a manual advance (keypress) before showing this
+    ///   text. `false` flows it in automatically once the previous line is
+    ///   done. (The old `AutoText` is just `pause: false`.)
+    /// * `delay` — frames to wait before the text appears. `0` starts a fresh
+    ///   page (clearing the box); `> 0` *appends* to the current page after the
+    ///   delay, so a sentence can build up clause by clause. (The old `Delayed`
+    ///   is just `delay > 0`.)
+    Text { text: String, pause: bool, delay: u8 },
     Delay(u8),
     Sound(SfxData),
     Portrait(Option<Portrait>),
-    PausePortrait(Option<Portrait>),
     Pause,
-    AutoText(String),
     Flip(bool),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
-        !matches!(self, Text(_) | Pause)
+        !matches!(self, Text { pause: true, .. } | Pause)
     }
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
         matches!(self, Sound(_) | Portrait(_) | Flip(_))
     }
-}
-
-impl From<StaticTextContent> for TextContent {
-    fn from(value: StaticTextContent) -> Self {
-        match value {
-            StaticTextContent::Text(x) => Self::Text(x.into()),
-            StaticTextContent::Delayed(x, y) => Self::Delayed(x.into(), y),
-            StaticTextContent::Delay(x) => Self::Delay(x),
-            StaticTextContent::Sound(x) => Self::Sound(x.clone()),
-            StaticTextContent::Portrait(x) => Self::Portrait(x.cloned()),
-            StaticTextContent::PausePortrait(x) => Self::PausePortrait(x.cloned()),
-            StaticTextContent::Pause => Self::Pause,
-            StaticTextContent::AutoText(x) => Self::AutoText(x.into()),
-            StaticTextContent::Flip(x) => Self::Flip(x),
-        }
+    /// Plain text (stops on a manual advance unless reached via auto-advance).
+    pub fn text(s: impl Into<String>) -> Self {
+        Self::Text { text: s.into(), pause: true, delay: 0 }
     }
-}
-/// A single "page" of dialogue: a run of text content shown under one
-/// speaker (`portrait` + `flip_portrait`). `pause_when_done` controls whether
-/// the player must press to continue to the *next* message, or whether it
-/// auto-advances. The compile-time `StaticMessage` is converted to the
-/// runtime-owned `Message` when an interaction fires.
-#[derive(Debug, Clone)]
-pub struct StaticMessage {
-    pub content: &'static [StaticTextContent],
-    pub portrait: Option<Portrait>,
-    pub flip_portrait: bool,
-    pub pause_when_done: bool,
-}
-impl StaticMessage {
-    pub const fn default() -> Self {
-        Self {
-            content: &[],
-            portrait: None,
-            flip_portrait: false,
-            pause_when_done: true,
-        }
+    /// Text that auto-advances into a new frame once the previous line is done.
+    pub fn auto(s: impl Into<String>) -> Self {
+        Self::Text { text: s.into(), pause: false, delay: 0 }
     }
-    pub const fn with_content(self, content: &'static [StaticTextContent]) -> Self {
-        Self { content, ..self }
-    }
-    pub const fn with_portrait(self, portrait: Portrait) -> Self {
-        Self {
-            portrait: Some(portrait),
-            ..self
-        }
-    }
-    pub const fn with_flip(self, flip_portrait: bool) -> Self {
-        Self {
-            flip_portrait,
-            ..self
-        }
-    }
-    /// Don't pause after this message: auto-advance straight into the next one.
-    pub const fn no_pause(self) -> Self {
-        Self {
-            pause_when_done: false,
-            ..self
-        }
+    /// Text appended to the current line after a `delay`-frame pause.
+    pub fn delayed(s: impl Into<String>, delay: u8) -> Self {
+        Self::Text { text: s.into(), pause: false, delay }
     }
 }
 
+/// A single "page" of dialogue: a run of text [`content`](Message::content)
+/// shown under one speaker (`portrait` + `flip_portrait`). `pause_when_done`
+/// controls whether the player must press to continue to the *next* message,
+/// or whether it auto-advances. Dialogue is stored as `Vec<Message>` in the
+/// registry built by [`crate::data::script`] and queued via
+/// [`Dialogue::set_messages`].
 #[derive(Debug, Clone)]
 pub struct Message {
     pub content: Vec<TextContent>,
@@ -154,30 +95,42 @@ impl Message {
             pause_when_done: true,
         }
     }
-    pub fn with_content(self, content: Vec<TextContent>) -> Self {
-        Self { content, ..self }
+    pub fn with_content(mut self, content: Vec<TextContent>) -> Self {
+        self.content = content;
+        self
+    }
+    pub fn with_portrait(mut self, portrait: Portrait) -> Self {
+        self.portrait = Some(portrait);
+        self
+    }
+    pub fn with_flip(mut self, flip_portrait: bool) -> Self {
+        self.flip_portrait = flip_portrait;
+        self
+    }
+    /// Don't pause after this message: auto-advance straight into the next one.
+    pub fn no_pause(mut self) -> Self {
+        self.pause_when_done = false;
+        self
+    }
+    /// The message's text content concatenated into a plain string (ignoring
+    /// sounds/portraits/flips/pauses). Used to read back list entries that were
+    /// stored as single-line messages.
+    pub fn to_plain_string(&self) -> String {
+        let mut out = String::new();
+        for item in &self.content {
+            match item {
+                TextContent::Text { text, .. } => out.push_str(text),
+                _ => {}
+            }
+        }
+        out
     }
 }
 
-impl From<&StaticMessage> for Message {
-    fn from(message: &StaticMessage) -> Self {
-        Self {
-            content: message.content.iter().cloned().map(Into::into).collect(),
-            portrait: message.portrait.clone(),
-            flip_portrait: message.flip_portrait,
-            pause_when_done: message.pause_when_done,
-        }
-    }
-}
-impl From<StaticMessage> for Message {
-    fn from(message: StaticMessage) -> Self {
-        (&message).into()
-    }
-}
 impl From<&str> for Message {
     fn from(text: &str) -> Self {
         Self {
-            content: vec![TextContent::Text(text.to_string())],
+            content: vec![TextContent::text(text)],
             ..Message::default()
         }
     }
@@ -185,7 +138,7 @@ impl From<&str> for Message {
 impl From<String> for Message {
     fn from(text: String) -> Self {
         Self {
-            content: vec![TextContent::Text(text)],
+            content: vec![TextContent::text(text)],
             ..Message::default()
         }
     }
@@ -284,7 +237,7 @@ impl Dialogue {
             self.set_current_text(system, &string);
             true
         } else {
-            self.next_text.push(TextContent::Text(string));
+            self.next_text.push(TextContent::text(string));
             false
         }
     }
@@ -292,14 +245,6 @@ impl Dialogue {
         if self.current_text.is_none() {
             self.set_current_text(system, string);
         }
-    }
-    pub fn set_dialogue(&mut self, system: &mut impl ConsoleApi, dialogue: &[String]) {
-        self.next_text = dialogue
-            .iter()
-            .rev()
-            .map(|x| TextContent::Text(x.clone()))
-            .collect();
-        self.next_text(system, false);
     }
     /// Queue a sequence of [`Message`]s. Each message sets its speaker
     /// (portrait + flip) before emitting its content; a `Pause` is inserted
@@ -341,14 +286,9 @@ impl Dialogue {
         manual_skip: bool,
     ) -> bool {
         match text_content {
-            TextContent::Text(text) | TextContent::AutoText(text) => self.add_text(system, text),
-            TextContent::Delay(x) => {
-                if !manual_skip {
-                    self.add_delay(x.into());
-                }
-                true
-            }
-            TextContent::Delayed(text, delay) => {
+            // `delay > 0` appends to the current page after a beat; `delay == 0`
+            // starts a fresh page. See [`TextContent::Text`].
+            TextContent::Text { text, delay, .. } if delay > 0 => {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(&text);
@@ -361,11 +301,18 @@ impl Dialogue {
                 }
                 true
             }
+            TextContent::Text { text, .. } => self.add_text(system, text),
+            TextContent::Delay(x) => {
+                if !manual_skip {
+                    self.add_delay(x.into());
+                }
+                true
+            }
             TextContent::Sound(x) => {
                 system.play_sound(x.clone());
                 true
             }
-            TextContent::Portrait(x) | TextContent::PausePortrait(x) => {
+            TextContent::Portrait(x) => {
                 if let Some(portrait) = x {
                     self.portrait = Some(portrait.clone());
                 } else {

@@ -1,5 +1,5 @@
 use crate::{
-    data::{dialogue_data::*, sound},
+    data::sound,
     dialogue::{DIALOGUE_OPTIONS, Dialogue},
     system::{ConsoleApi, ConsoleHelper, just_pressed},
     ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
@@ -7,18 +7,18 @@ use crate::{
 
 static ITEM_FF: InventoryItem = InventoryItem {
     sprite: 513,
-    name: ITEM_FF_NAME,
-    desc: ITEM_FF_DESC,
+    name: "item_ff_name",
+    desc: "item_ff_desc",
 };
 static ITEM_LM: InventoryItem = InventoryItem {
     sprite: 514,
-    name: ITEM_LM_NAME,
-    desc: ITEM_LM_DESC,
+    name: "item_lm_name",
+    desc: "item_lm_desc",
 };
 static ITEM_CHEGG: InventoryItem = InventoryItem {
     sprite: 524,
-    name: ITEM_CHEGG_NAME,
-    desc: ITEM_CHEGG_DESC,
+    name: "item_chegg_name",
+    desc: "item_chegg_desc",
 };
 
 #[derive(Debug)]
@@ -262,7 +262,12 @@ impl InventoryUi {
         let mut b = UiBuilder::new();
 
         // --- Side column: the four page labels. ---
-        let labels = [INVENTORY_ITEMS, INVENTORY_SHELL, INVENTORY_OPTIONS, INVENTORY_BACK];
+        let labels = [
+            system.label("inventory_items"),
+            system.label("inventory_shell"),
+            system.label("inventory_options"),
+            system.label("inventory_back"),
+        ];
         let label_w = labels
             .iter()
             .map(|s| system.text_width(s, body_opts.clone()))
@@ -391,8 +396,9 @@ impl InventoryUi {
         draw_state.rgba(FG).fill(Rgba::TRANSPARENT);
 
         // Title, white with a 1px black shadow.
-        system.print_to_centered(draw_state.rgba(FG), INVENTORY_TITLE, 121, 38, black, body_opts.clone());
-        system.print_to_centered(draw_state.rgba(FG), INVENTORY_TITLE, 120, 37, white, body_opts.clone());
+        let inventory_title = system.label("inventory_title");
+        system.print_to_centered(draw_state.rgba(FG), &inventory_title, 121, 38, black, body_opts.clone());
+        system.print_to_centered(draw_state.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
 
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(system);
@@ -424,7 +430,7 @@ impl InventoryUi {
                 };
                 if let Some(name) = name {
                     draw_state.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
-                    system.print_to(draw_state.rgba(FG), name, 9, 100, white, body_opts.clone());
+                    system.print_to(draw_state.rgba(FG), &system.label(name), 9, 100, white, body_opts.clone());
                 }
             }
             InventoryUiState::Eggs(current) => {
@@ -444,7 +450,8 @@ impl InventoryUi {
                 None => self.inventory.items[*current],
             };
             if let Some(item) = item {
-                let string = self.dialogue.fit_text(system, item.desc);
+                let desc = system.label(item.desc);
+                let string = self.dialogue.fit_text(system, &desc);
                 self.dialogue
                     .draw_dialogue_portrait(draw_state, FG, system, &string, false, item.sprite, 3, 1, 1);
             }

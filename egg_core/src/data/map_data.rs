@@ -16,7 +16,6 @@
 
 use crate::animation::*;
 use crate::camera::CameraBounds;
-use crate::data::dialogue_data::*;
 use crate::interact::InteractFn;
 use crate::interact::{StaticInteractable, StaticInteraction};
 use crate::map::LayerInfo;
@@ -110,42 +109,42 @@ pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3),
-            interaction: StaticInteraction::Text(SM_COIN_RETURN),
+            interaction: StaticInteraction::Dialogue("sm_coin_return"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2),
-            interaction: StaticInteraction::Text(SM_FRUIT_BASKET),
+            interaction: StaticInteraction::Dialogue("sm_fruit_basket"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(4 * 8, 5 * 8, 8, 20),
-            interaction: StaticInteraction::Text(SM_MAIN_WINDOW),
+            interaction: StaticInteraction::Dialogue("sm_main_window"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(19 * 8, 5 * 8, 8, 15),
-            interaction: StaticInteraction::Text(SM_FRIDGE_1),
+            interaction: StaticInteraction::Dialogue("sm_fridge_1"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(20 * 8, 6 * 8, 8, 15),
-            interaction: StaticInteraction::Text(SM_FRIDGE_2),
+            interaction: StaticInteraction::Dialogue("sm_fridge_2"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(21 * 8, 7 * 8, 8, 16),
-            interaction: StaticInteraction::Text(SM_VENDING_MACHINE),
+            interaction: StaticInteraction::Dialogue("sm_vending_machine"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8),
-            interaction: StaticInteraction::Text(CONSTRUCTION_1),
+            interaction: StaticInteraction::Dialogue("construction_1"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(80, 24, 16, 20),
-            interaction: StaticInteraction::Conversation(THING),
+            interaction: StaticInteraction::Dialogue("thing"),
             sprite: Some(&[
                 StaticAnimFrame::new(
                     Vec2::splat(0),
@@ -203,22 +202,22 @@ pub const SUPERMARKET_HALL: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(11 * 8, 4 * 8, 8, 8),
-            interaction: StaticInteraction::Text(EMERGENCY_EXIT),
+            interaction: StaticInteraction::Dialogue("emergency_exit"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(8 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Text(CONSTRUCTION_2),
+            interaction: StaticInteraction::Dialogue("construction_2"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4),
-            interaction: StaticInteraction::Text(SM_HALL_SHELF),
+            interaction: StaticInteraction::Dialogue("sm_hall_shelf"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(8, 3 * 8, 12, 16),
-            interaction: StaticInteraction::Text(SM_HALL_WINDOW),
+            interaction: StaticInteraction::Dialogue("sm_hall_window"),
             sprite: None,
         },
     ],
@@ -240,7 +239,7 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(53, 28, 8, 10),
-            interaction: StaticInteraction::Text(EGG_1),
+            interaction: StaticInteraction::Dialogue("egg_1"),
             sprite: Some(&[
                 StaticAnimFrame::new(
                     Vec2::new(0, 0),
@@ -258,7 +257,7 @@ pub const SUPERMARKET_STOREROOM: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(16, 0, 5 * 8, 4 * 7),
-            interaction: StaticInteraction::Text(SM_STOREROOM_SHELF),
+            interaction: StaticInteraction::Dialogue("sm_storeroom_shelf"),
             sprite: None,
         },
     ],
@@ -271,7 +270,7 @@ pub const TEST_PEN: StaticMapInfo<'static> = StaticMapInfo {
     warps: &[Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
     interactables: &[StaticInteractable {
         hitbox: Hitbox::new(5 * 8, 8, 8, 10),
-        interaction: StaticInteraction::Text(EGG_1),
+        interaction: StaticInteraction::Dialogue("egg_1"),
         sprite: Some(&[
             StaticAnimFrame::new(
                 Vec2::new(0, 0),
@@ -313,22 +312,22 @@ pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(38, 27, 3 * 8, 2 * 8),
-            interaction: StaticInteraction::Text(BEDROOM_MATTRESS),
+            interaction: StaticInteraction::Dialogue("bedroom_mattress"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8),
-            interaction: StaticInteraction::Text(BEDROOM_CLOSET),
+            interaction: StaticInteraction::Dialogue("bedroom_closet"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8),
-            interaction: StaticInteraction::Text(BEDROOM_TROLLEY),
+            interaction: StaticInteraction::Dialogue("bedroom_trolley"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Conversation(BEDROOM_WINDOW),
+            interaction: StaticInteraction::Dialogue("bedroom_window"),
             sprite: None,
         },
     ],
@@ -376,12 +375,12 @@ pub const HOUSE_STAIRWELL: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(13 * 8, 2 * 8, 8, 8),
-            interaction: StaticInteraction::Text(HOUSE_STAIRWELL_WINDOW2),
+            interaction: StaticInteraction::Dialogue("house_stairwell_window2"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(15 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::Text(HOUSE_STAIRWELL_DOOR),
+            interaction: StaticInteraction::Dialogue("house_stairwell_door"),
             sprite: None,
         },
     ],
@@ -438,17 +437,17 @@ pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
-            interaction: StaticInteraction::Text(HOUSE_LIVING_ROOM_COUCH),
+            interaction: StaticInteraction::Dialogue("house_living_room_couch"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_LIVING_ROOM_TV_1),
+            interaction: StaticInteraction::Dialogue("house_living_room_tv_1"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Conversation(HOUSE_LIVING_ROOM_WINDOW),
+            interaction: StaticInteraction::Dialogue("house_living_room_window"),
             sprite: None,
         },
         StaticInteractable {
@@ -522,22 +521,22 @@ pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_KITCHEN_CUPBOARD),
+            interaction: StaticInteraction::Dialogue("house_kitchen_cupboard"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8),
-            interaction: StaticInteraction::Conversation(HOUSE_KITCHEN_SINK),
+            interaction: StaticInteraction::Dialogue("house_kitchen_sink"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_KITCHEN_MICROWAVE),
+            interaction: StaticInteraction::Dialogue("house_kitchen_microwave"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_KITCHEN_WINDOW),
+            interaction: StaticInteraction::Dialogue("house_kitchen_window"),
             sprite: None,
         },
     ],
@@ -568,22 +567,22 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_BACKYARD_BASEMENT),
+            interaction: StaticInteraction::Dialogue("house_backyard_basement"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED),
+            interaction: StaticInteraction::Dialogue("house_backyard_shed"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(22 * 8, 8 * 8, 8, 2 * 8),
-            interaction: StaticInteraction::Text(HOUSE_BACKYARD_SHED_WINDOW),
+            interaction: StaticInteraction::Dialogue("house_backyard_shed_window"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(24 * 8, 10 * 8, 8, 6 * 8),
-            interaction: StaticInteraction::Dialogue(HOUSE_BACKYARD_NEIGHBOURS),
+            interaction: StaticInteraction::Dialogue("house_backyard_neighbours"),
             sprite: None,
         },
         StaticInteractable {
@@ -593,12 +592,12 @@ pub const BACKYARD: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 0, 8, 16 * 8),
-            interaction: StaticInteraction::Text(HOUSE_BACKYARD_STORMDRAIN),
+            interaction: StaticInteraction::Dialogue("house_backyard_stormdrain"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(3, 2 * 8, 8, 8),
-            interaction: StaticInteraction::Text(DEFAULT),
+            interaction: StaticInteraction::Dialogue("default"),
             sprite: Some(&[
                 StaticAnimFrame::new(
                     Vec2::new(0, 0),
@@ -704,22 +703,22 @@ pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
     interactables: &[
         StaticInteractable {
             hitbox: Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8),
-            interaction: StaticInteraction::Text(TOWN_TRAFFIC),
+            interaction: StaticInteraction::Dialogue("town_traffic"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(8 * 8, 17 * 8, 8, 8),
-            interaction: StaticInteraction::Text(TOWN_LAMPPOST),
+            interaction: StaticInteraction::Dialogue("town_lamppost"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(14 * 8, 13 * 8, 8, 8),
-            interaction: StaticInteraction::Text(TOWN_HOME_WINDOW),
+            interaction: StaticInteraction::Dialogue("town_home_window"),
             sprite: None,
         },
         StaticInteractable {
             hitbox: Hitbox::new(224, 142, 8 * 2, 8),
-            interaction: StaticInteraction::Conversation(TOWN_WIDE),
+            interaction: StaticInteraction::Dialogue("town_wide"),
             sprite: None,
         },
     ],
@@ -745,7 +744,7 @@ pub const PIANO_ROOM: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(0, 6 * 8, 8 * 2, 8),
-            interaction: StaticInteraction::Text(UNKNOWN_3),
+            interaction: StaticInteraction::Dialogue("unknown_3"),
             sprite: None,
         },
     ],

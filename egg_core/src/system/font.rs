@@ -128,7 +128,6 @@ fn layout(
             32 => {
                 dx += if opts.small_text { 3 } else { 4 };
             }
-            0 => {}
             _ => {
                 let glyph = if opts.small_text {
                     (char as u8 + 128) as char

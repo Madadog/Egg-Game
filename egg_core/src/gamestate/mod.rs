@@ -175,12 +175,12 @@ pub fn draw_instructions(
     draw_state: &mut crate::drawstate::DrawState,
     system: &mut impl ConsoleApi,
 ) {
-    use crate::data::dialogue_data::{INSTRUCTIONS, INSTRUCTIONS_TITLE};
     use crate::drawstate::LayerId;
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::image::RgbaImage;
     let small_text = DIALOGUE_OPTIONS.small_text(system);
-    let title = format!("{INSTRUCTIONS_TITLE}\0");
+    let title = system.label("instructions_title");
+    let instructions = system.label("instructions");
     let colour_12 = draw_state.colour(12);
     let colour_1 = draw_state.colour(1);
     let colour_0 = draw_state.colour(0);
@@ -195,8 +195,8 @@ pub fn draw_instructions(
         canvas.outlined_rect(6, 15, 228, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17, 224, 96, colour_1);
         system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
-        system.print_to_shadow(canvas, INSTRUCTIONS, 11, 36, colour_12, colour_0, opts.clone());
-        let width = system.print_to(canvas, INSTRUCTIONS_TITLE, 999, 999, colour_12, opts) - 1;
+        system.print_to_shadow(canvas, &instructions, 11, 36, colour_12, colour_0, opts.clone());
+        let width = system.print_to(canvas, &title, 999, 999, colour_12, opts) - 1;
         let origin = 11;
         canvas.line(origin, 27, origin + width, 27, colour_12);
         canvas.line(origin + 1, 28, origin + width + 1, 28, colour_0);

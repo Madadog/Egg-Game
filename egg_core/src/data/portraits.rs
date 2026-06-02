@@ -49,6 +49,25 @@ impl Portrait {
     }
 }
 
+/// Resolve a portrait by its script name (lowercased identifier, e.g. `"horror"`).
+pub fn by_name(name: &str) -> Option<Portrait> {
+    Some(match name {
+        "y_normal" => Y_NORMAL,
+        "y_look" => Y_LOOK,
+        "y_close" => Y_CLOSE,
+        "y_oof" => Y_OOF,
+        "y_no" => Y_NO,
+        "y_yell" => Y_YELL,
+        "y_away" => Y_AWAY,
+        "y_smug" => Y_SMUG,
+        "y_frus" => Y_FRUS,
+        "y_hmm" => Y_HMM,
+        "y_regret" => Y_REGRET,
+        "horror" => HORROR,
+        _ => return None,
+    })
+}
+
 pub const Y_NORMAL: Portrait = Portrait {
     spr_ids: [920, 921, 952, 953],
     offset: (8, 13),

@@ -15,15 +15,16 @@
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::animation::*;
-use crate::dialogue::{Message, StaticMessage};
 use crate::position::Hitbox;
 use crate::position::Vec2;
 
+/// Compile-time interaction. Dialogue is referenced by a `&'static str` key
+/// into the registry built by [`crate::data::script`]; the actual text
+/// is resolved at runtime when the interaction fires.
 #[derive(Debug, Clone)]
-pub enum StaticInteraction<'a> {
-    Text(&'static str),
-    Conversation(&'a [StaticMessage]),
-    Dialogue(&'a [&'static str]),
+pub enum StaticInteraction {
+    /// A dialogue-registry key. Resolves to a `Vec<Message>` at runtime.
+    Dialogue(&'static str),
     Func(InteractFn),
     None,
 }
@@ -31,14 +32,14 @@ pub enum StaticInteraction<'a> {
 #[derive(Debug, Clone)]
 pub struct StaticInteractable<'a> {
     pub hitbox: Hitbox,
-    pub interaction: StaticInteraction<'a>,
+    pub interaction: StaticInteraction,
     pub sprite: Option<&'a [StaticAnimFrame<'a>]>,
 }
 
 impl<'a> StaticInteractable<'a> {
     pub const fn new(
         hitbox: Hitbox,
-        interaction: StaticInteraction<'a>,
+        interaction: StaticInteraction,
         sprite: Option<&'a [StaticAnimFrame<'a>]>,
     ) -> Self {
         Self {
@@ -51,23 +52,16 @@ impl<'a> StaticInteractable<'a> {
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
-    Text(String),
-    Conversation(Vec<Message>),
-    Dialogue(Vec<String>),
+    /// A dialogue-registry key. Resolved to a `Vec<Message>` when it fires.
+    Dialogue(String),
     Func(InteractFn),
     None,
 }
 
-impl<'a> From<StaticInteraction<'a>> for Interaction {
-    fn from(other: StaticInteraction<'a>) -> Self {
+impl From<StaticInteraction> for Interaction {
+    fn from(other: StaticInteraction) -> Self {
         match other {
-            StaticInteraction::Text(x) => Self::Text(x.to_string()),
-            StaticInteraction::Conversation(x) => {
-                Self::Conversation(x.iter().map(Message::from).collect())
-            }
-            StaticInteraction::Dialogue(x) => {
-                Self::Dialogue(x.iter().map(|x| x.to_string()).collect())
-            }
+            StaticInteraction::Dialogue(key) => Self::Dialogue(key.to_string()),
             StaticInteraction::Func(x) => Self::Func(x),
             StaticInteraction::None => Self::None,
         }

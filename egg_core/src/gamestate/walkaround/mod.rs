@@ -1,6 +1,6 @@
 use crate::animation::Animation;
 use crate::data::map_data::{DEFAULT_MAP_SET, MapIndex};
-use crate::data::{dialogue_data::*, sound};
+use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
@@ -209,7 +209,8 @@ impl WalkaroundState {
     pub fn cam_state(&mut self) -> &mut crate::camera::CameraBounds {
         &mut self.camera.bounds
     }
-    /// Function that does everything. No anti-pattern here.
+    /// Function that does everything. No anti-pattern here. Returns an optional
+    /// dialogue-registry key for the caller to resolve and display.
     pub fn execute_interact_fn(
         &mut self,
         interact: &InteractFn,
@@ -222,22 +223,22 @@ impl WalkaroundState {
                 if self.companion_list.has(Companion::Dog) {
                     self.companion_list.remove(Companion::Dog);
                     system.play_sound(sound::ALERT_DOWN);
-                    Some(DOG_RELINQUISHED)
+                    Some("dog_relinquished")
                 } else {
                     self.companion_list.add(Companion::Dog);
                     system.play_sound(sound::EQUIP_OBTAINED);
-                    Some(DOG_OBTAINED)
+                    Some("dog_obtained")
                 }
             }
             InteractFn::StairwellWindow => {
                 system.memory().house_stairwell_window_interacted = true;
-                Some(HOUSE_STAIRWELL_WINDOW)
+                Some("house_stairwell_window")
             }
             InteractFn::StairwellPainting => {
                 if system.memory().house_stairwell_window_interacted {
-                    Some(HOUSE_STAIRWELL_PAINTING_AFTER)
+                    Some("house_stairwell_painting_after")
                 } else {
-                    Some(HOUSE_STAIRWELL_PAINTING_INIT)
+                    Some("house_stairwell_painting_init")
                 }
             }
             InteractFn::Note(note) => {
@@ -428,7 +429,7 @@ impl<T: ConsoleApi>
             info!("Attempting interact...");
         }
         if just_pressed(pad.x) {
-            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options()));
+            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(system)));
         }
         if system.any_btnpr() {
             self.player().flip_controls = Axis::None
@@ -500,22 +501,17 @@ impl<T: ConsoleApi>
             ) {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
-                        Interaction::Text(x) => {
-                            self.dialogue.add_text(system, x.clone());
-                        }
-                        Interaction::Dialogue(x) => {
-                            self.dialogue.set_dialogue(system, x);
-                        }
-                        Interaction::Conversation(x) => {
-                            self.dialogue.set_messages(system, x);
+                        Interaction::Dialogue(key) => {
+                            let convo = system.get_dialogue(key);
+                            self.dialogue.set_messages(system, &convo);
                         }
                         Interaction::Func(x) => {
-                            if let Some(dialogue) = self.execute_interact_fn(x, system) {
-                                let dialogue = dialogue.to_string();
-                                self.dialogue.add_text(system, dialogue);
+                            if let Some(key) = self.execute_interact_fn(x, system) {
+                                let convo = system.get_dialogue(key);
+                                self.dialogue.set_messages(system, &convo);
                             };
                         }
-                        _x => {}
+                        Interaction::None => {}
                     }
                     break;
                 }
@@ -640,7 +636,7 @@ impl<T: ConsoleApi>
             };
             system.print_to(
                 draw_state.rgba(BG),
-                &format!("Player: {:#?}\0", self.player_ref()),
+                &format!("Player: {:#?}", self.player_ref()),
                 0,
                 0,
                 c11,
@@ -648,7 +644,7 @@ impl<T: ConsoleApi>
             );
             system.print_to(
                 draw_state.rgba(BG),
-                &format!("Camera: {:#?}\0", self.camera),
+                &format!("Camera: {:#?}", self.camera),
                 74,
                 0,
                 c11,

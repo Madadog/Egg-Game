@@ -1,8 +1,10 @@
 use crate::{
     data::{
         save::SaveData,
+        script::Script,
         sound::{SfxData, music::MusicTrack},
     },
+    dialogue::Message,
     rand::Lcg64Xsh32,
     system::{drawing::Canvas, image::RgbaImage},
 };
@@ -48,6 +50,14 @@ pub trait ConsoleApi {
     // Per-frame state helpers
     fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
+
+    // Text registry (UI labels + dialogue, swappable per language).
+    fn script(&self) -> &Script;
+    fn script_mut(&mut self) -> &mut Script;
+    /// Request switching the active language at runtime. The host loads the
+    /// corresponding script file and applies it to [`script_mut`](Self::script_mut);
+    /// the default does nothing.
+    fn set_language(&mut self, _language: &str) {}
 
     // Asset access.
     fn maps(&self) -> &[GameMap];
@@ -145,5 +155,50 @@ pub trait ConsoleHelper: ConsoleApi {
 
     fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
         text_width(self.font(), text, opts)
+    }
+
+    // --- text registry convenience (read through `self.script()`) ---
+
+    /// A UI label by key (see [`Script::label`]).
+    fn label(&self, key: &str) -> String {
+        self.script().label(key)
+    }
+
+    /// An ordered string list by key (see [`Script::list`]).
+    fn list(&self, key: &str) -> Vec<String> {
+        self.script().list(key)
+    }
+
+    /// A dialogue conversation by key (see [`Script::get_dialogue`]).
+    fn get_dialogue(&self, key: &str) -> Vec<Message> {
+        self.script().get_dialogue(key)
+    }
+
+    /// Look up a label by key and print it in one step.
+    fn print_label<C: Canvas>(
+        &self,
+        target: &mut C,
+        key: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) -> i32 {
+        let text = self.label(key);
+        self.print_to(target, &text, x, y, colour, opts)
+    }
+
+    /// Look up a label by key and print it centred in one step.
+    fn print_label_centered<C: Canvas>(
+        &self,
+        target: &mut C,
+        key: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) -> i32 {
+        let text = self.label(key);
+        self.print_to_centered(target, &text, x, y, colour, opts)
     }
 }

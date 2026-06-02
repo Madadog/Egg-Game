@@ -26,6 +26,26 @@ pub const DEFAULT_SFX: SfxOptions = SfxOptions {
     octave: 5,
 };
 
+/// Resolve a sound effect by its script name (lowercased identifier, e.g.
+/// `"gain"`), for sounds embedded in dialogue.
+pub fn by_name(name: &str) -> Option<SfxData> {
+    Some(match name {
+        "gain" => GAIN,
+        "loss" => LOSS,
+        "fanfare" => FANFARE,
+        "equip_obtained" => EQUIP_OBTAINED,
+        "alert_up" => ALERT_UP,
+        "alert_down" => ALERT_DOWN,
+        "deny" => DENY,
+        "reject" => REJECT,
+        "click" => CLICK,
+        "door" => DOOR,
+        "interact" => INTERACT,
+        "save" => SAVE,
+        _ => return None,
+    })
+}
+
 pub const PIANO: SfxData = SfxData::new(
     "1_piano",
     SfxOptions {

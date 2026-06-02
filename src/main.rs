@@ -11,10 +11,12 @@ use egg_core::gamestate::GameMode;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::FantasyConsole;
+use script_asset::{ScriptAsset, ScriptPlugin};
 use tiled::{TiledMap, TiledMapPlugin};
 
 mod fantasy_console;
 mod save;
+mod script_asset;
 mod tiled;
 
 /// Bevy frontend: Stores console and game state. Plus stuff for loading assets, pausing sim and window management.
@@ -81,8 +83,10 @@ fn main() {
                 }),
         )
         .add_plugins(TiledMapPlugin)
+        .add_plugins(ScriptPlugin)
+        .init_resource::<PendingLanguage>()
         .add_systems(Startup, (setup, setup_assets, load_save_game))
-        .add_systems(Update, (load_assets, resize_screen))
+        .add_systems(Update, (load_assets, poll_language_change, resize_screen))
         .add_systems(
             FixedUpdate,
             (step_state, autosave, play_sounds, play_music, update_texture).chain(),
@@ -122,6 +126,7 @@ pub struct GameAssets {
     pub font: Handle<Image>,
     pub sheet: Handle<Image>,
     pub maps: Vec<Handle<TiledMap>>,
+    pub script: Handle<ScriptAsset>,
 }
 impl GameAssets {
     pub fn new(assets: &AssetServer) -> Self {
@@ -133,12 +138,14 @@ impl GameAssets {
                 assets.load("maps/bank2.tmj"),
                 assets.load("maps/office.tmj"),
             ],
+            script: assets.load("script/en.json"),
         }
     }
     pub fn load_state(&self, assets: &AssetServer) -> LoadState {
         let mut ids = vec![];
         ids.push(self.font.id().untyped());
         ids.push(self.sheet.id().untyped());
+        ids.push(self.script.id().untyped());
         for map in &self.maps {
             ids.push(map.id().untyped());
         }
@@ -166,6 +173,7 @@ fn load_assets(
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMap>>,
+    scripts: Res<Assets<ScriptAsset>>,
     mut state: ResMut<EggGame>,
 ) {
     if let Some(game_assets) = game_assets {
@@ -195,6 +203,10 @@ fn load_assets(
                     info!("Loaded {} maps", maps.len());
                     state.system.set_maps(maps);
                     println!("Just set the maps!!");
+                    if let Some(script) = scripts.get(&game_assets.script) {
+                        state.system.script_mut().set_base(script.0.clone());
+                        info!("Loaded base language script.");
+                    }
                     // Mirror sprites + flags into DrawState (the authoritative
                     // copies for the new draw paths). Maps stay on the console
                     // and are read during drawing via `maps()`. The console also
@@ -211,6 +223,34 @@ fn load_assets(
             LoadState::Loading => info!("Loading assets..."),
             LoadState::NotLoaded => info!("Not yet loaded..."),
             x => panic!("Could not load assets: {x:?}"),
+        }
+    }
+}
+
+/// The script handle for a language requested at runtime, while it loads.
+#[derive(Resource, Default)]
+struct PendingLanguage(Option<Handle<ScriptAsset>>);
+
+/// Honour runtime language switches requested via `ConsoleApi::set_language`:
+/// start loading the requested `script/<lang>.json`, then install it as the
+/// active language (overlaid on the base) once it finishes loading.
+fn poll_language_change(
+    assets: Res<AssetServer>,
+    scripts: Res<Assets<ScriptAsset>>,
+    mut pending: ResMut<PendingLanguage>,
+    mut state: ResMut<EggGame>,
+) {
+    if pending.0.is_none() {
+        if let Some(language) = state.system.take_pending_language() {
+            info!("Loading language {language:?}");
+            pending.0 = Some(assets.load(format!("script/{language}.json")));
+        }
+    }
+    if let Some(handle) = pending.0.clone() {
+        if let Some(script) = scripts.get(&handle) {
+            state.system.script_mut().set_language(script.0.clone());
+            pending.0 = None;
+            info!("Switched active language.");
         }
     }
 }

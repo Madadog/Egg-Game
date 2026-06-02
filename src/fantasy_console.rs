@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::{Image, info};
 use egg_core::{
-    data::{save::SaveData, sound::music::MusicTrack},
+    data::{save::SaveData, script::Script, sound::music::MusicTrack},
     gamestate::EggInput,
     rand::Lcg64Xsh32,
     system::{
@@ -43,6 +43,11 @@ pub struct FantasyConsole {
     pub indexed_sprites: IndexedImage,
     pub maps: Vec<GameMap>,
     pub sprite_flags: Vec<u8>,
+    /// UI labels + dialogue, loaded from `script/<lang>.json`.
+    script: Script,
+    /// A language requested at runtime via `set_language`, awaiting load by the
+    /// host's asset loop (see `take_pending_language`).
+    pending_language: Option<String>,
     files: HashMap<String, Vec<u8>>,
     music: Option<(MusicTrack, bool)>,
     memory: SaveData,
@@ -60,6 +65,8 @@ impl FantasyConsole {
             sprites: RgbaImage::new(1, 1),
             indexed_sprites: IndexedImage::new(1, 1),
             maps: Vec::new(),
+            script: Script::new(),
+            pending_language: None,
             files: HashMap::new(),
             sprite_flags: vec![0; 2048],
             music: None,
@@ -106,6 +113,11 @@ impl FantasyConsole {
     /// to diff against the last value written to disk.
     pub fn save_data(&self) -> SaveData {
         self.memory
+    }
+    /// Take any language requested at runtime via [`ConsoleApi::set_language`],
+    /// for the host's asset loop to load and apply.
+    pub fn take_pending_language(&mut self) -> Option<String> {
+        self.pending_language.take()
     }
     pub fn blit_to_image(&self, image: &mut [u8]) {
         // Gamestate draw fns composite directly into output_screen each frame.
@@ -249,6 +261,15 @@ impl ConsoleApi for FantasyConsole {
         &mut self.rng
     }
 
+    fn script(&self) -> &Script {
+        &self.script
+    }
+    fn script_mut(&mut self) -> &mut Script {
+        &mut self.script
+    }
+    fn set_language(&mut self, language: &str) {
+        self.pending_language = Some(language.to_string());
+    }
     fn maps(&self) -> &[GameMap] {
         &self.maps
     }

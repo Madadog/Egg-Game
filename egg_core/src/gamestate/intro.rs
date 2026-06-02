@@ -1,9 +1,8 @@
-use crate::data::dialogue_data::GAME_TITLE;
 use crate::data::sound::music::MusicTrack;
 use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::menu::draw_title_indexed;
 use crate::system::drawing::{Canvas, EdgePolicy};
-use crate::system::{ConsoleApi, HEIGHT, SWEETIE_16, WIDTH};
+use crate::system::{ConsoleApi, ConsoleHelper, HEIGHT, SWEETIE_16, WIDTH};
 
 pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl ConsoleApi) -> bool {
     let steps: &[u16] = &[0, 700, 760];
@@ -87,7 +86,7 @@ pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl Cons
                     system,
                     120,
                     53,
-                    GAME_TITLE,
+                    &system.label("game_title"),
                     t as i32,
                 );
             }
@@ -109,7 +108,7 @@ pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl Cons
             system,
             120,
             53,
-            GAME_TITLE,
+            &system.label("game_title"),
             t as i32,
         );
         compose_intro_layers(draw_state, system, [0, 0]);
