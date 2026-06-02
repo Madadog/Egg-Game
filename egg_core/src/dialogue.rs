@@ -93,6 +93,103 @@ impl From<StaticTextContent> for TextContent {
         }
     }
 }
+/// A single "page" of dialogue: a run of text content shown under one
+/// speaker (`portrait` + `flip_portrait`). `pause_when_done` controls whether
+/// the player must press to continue to the *next* message, or whether it
+/// auto-advances. The compile-time `StaticMessage` is converted to the
+/// runtime-owned `Message` when an interaction fires.
+#[derive(Debug, Clone)]
+pub struct StaticMessage {
+    pub content: &'static [StaticTextContent],
+    pub portrait: Option<Portrait>,
+    pub flip_portrait: bool,
+    pub pause_when_done: bool,
+}
+impl StaticMessage {
+    pub const fn default() -> Self {
+        Self {
+            content: &[],
+            portrait: None,
+            flip_portrait: false,
+            pause_when_done: true,
+        }
+    }
+    pub const fn with_content(self, content: &'static [StaticTextContent]) -> Self {
+        Self { content, ..self }
+    }
+    pub const fn with_portrait(self, portrait: Portrait) -> Self {
+        Self {
+            portrait: Some(portrait),
+            ..self
+        }
+    }
+    pub const fn with_flip(self, flip_portrait: bool) -> Self {
+        Self {
+            flip_portrait,
+            ..self
+        }
+    }
+    /// Don't pause after this message: auto-advance straight into the next one.
+    pub const fn no_pause(self) -> Self {
+        Self {
+            pause_when_done: false,
+            ..self
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub content: Vec<TextContent>,
+    pub portrait: Option<Portrait>,
+    pub flip_portrait: bool,
+    pub pause_when_done: bool,
+}
+impl Message {
+    pub const fn default() -> Self {
+        Self {
+            content: Vec::new(),
+            portrait: None,
+            flip_portrait: false,
+            pause_when_done: true,
+        }
+    }
+    pub fn with_content(self, content: Vec<TextContent>) -> Self {
+        Self { content, ..self }
+    }
+}
+
+impl From<&StaticMessage> for Message {
+    fn from(message: &StaticMessage) -> Self {
+        Self {
+            content: message.content.iter().cloned().map(Into::into).collect(),
+            portrait: message.portrait.clone(),
+            flip_portrait: message.flip_portrait,
+            pause_when_done: message.pause_when_done,
+        }
+    }
+}
+impl From<StaticMessage> for Message {
+    fn from(message: StaticMessage) -> Self {
+        (&message).into()
+    }
+}
+impl From<&str> for Message {
+    fn from(text: &str) -> Self {
+        Self {
+            content: vec![TextContent::Text(text.to_string())],
+            ..Message::default()
+        }
+    }
+}
+impl From<String> for Message {
+    fn from(text: String) -> Self {
+        Self {
+            content: vec![TextContent::Text(text)],
+            ..Message::default()
+        }
+    }
+}
 
 pub struct DialogueOptions {
     pub fixed: AtomicBool,
@@ -204,8 +301,23 @@ impl Dialogue {
             .collect();
         self.next_text(system, false);
     }
-    pub fn set_enum_text(&mut self, system: &mut impl ConsoleApi, dialogue: &[StaticTextContent]) {
-        self.next_text = dialogue.iter().rev().cloned().map(|x| x.into()).collect();
+    /// Queue a sequence of [`Message`]s. Each message sets its speaker
+    /// (portrait + flip) before emitting its content; a `Pause` is inserted
+    /// between messages whose `pause_when_done` is set, so the player must
+    /// press to continue (otherwise it auto-advances). No pause is added after
+    /// the final message — closing the box handles that.
+    pub fn set_messages(&mut self, system: &mut impl ConsoleApi, messages: &[Message]) {
+        let mut queue: Vec<TextContent> = Vec::new();
+        let last = messages.len().saturating_sub(1);
+        for (i, message) in messages.iter().enumerate() {
+            queue.push(TextContent::Portrait(message.portrait.clone()));
+            queue.push(TextContent::Flip(message.flip_portrait));
+            queue.extend(message.content.iter().cloned());
+            if message.pause_when_done && i != last {
+                queue.push(TextContent::Pause);
+            }
+        }
+        self.next_text = queue.into_iter().rev().collect();
         self.next_text(system, false);
     }
     pub fn next_text(&mut self, system: &mut impl ConsoleApi, manual_skip: bool) -> bool {

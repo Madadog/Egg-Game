@@ -506,8 +506,8 @@ impl<T: ConsoleApi>
                         Interaction::Dialogue(x) => {
                             self.dialogue.set_dialogue(system, x);
                         }
-                        Interaction::EnumText(x) => {
-                            self.dialogue.set_enum_text(system, x);
+                        Interaction::Conversation(x) => {
+                            self.dialogue.set_messages(system, x);
                         }
                         Interaction::Func(x) => {
                             if let Some(dialogue) = self.execute_interact_fn(x, system) {

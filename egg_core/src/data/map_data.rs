@@ -145,7 +145,7 @@ pub const SUPERMARKET: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(80, 24, 16, 20),
-            interaction: StaticInteraction::EnumText(THING),
+            interaction: StaticInteraction::Conversation(THING),
             sprite: Some(&[
                 StaticAnimFrame::new(
                     Vec2::splat(0),
@@ -328,7 +328,7 @@ pub const BEDROOM: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(9 * 8, 3 * 8, 8, 8),
-            interaction: StaticInteraction::EnumText(BEDROOM_WINDOW),
+            interaction: StaticInteraction::Conversation(BEDROOM_WINDOW),
             sprite: None,
         },
     ],
@@ -448,7 +448,7 @@ pub const HOUSE_LIVING_ROOM: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
-            interaction: StaticInteraction::EnumText(HOUSE_LIVING_ROOM_WINDOW),
+            interaction: StaticInteraction::Conversation(HOUSE_LIVING_ROOM_WINDOW),
             sprite: None,
         },
         StaticInteractable {
@@ -527,7 +527,7 @@ pub const HOUSE_KITCHEN: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8),
-            interaction: StaticInteraction::EnumText(HOUSE_KITCHEN_SINK),
+            interaction: StaticInteraction::Conversation(HOUSE_KITCHEN_SINK),
             sprite: None,
         },
         StaticInteractable {
@@ -719,7 +719,7 @@ pub const TOWN: StaticMapInfo<'static> = StaticMapInfo {
         },
         StaticInteractable {
             hitbox: Hitbox::new(224, 142, 8 * 2, 8),
-            interaction: StaticInteraction::EnumText(TOWN_WIDE),
+            interaction: StaticInteraction::Conversation(TOWN_WIDE),
             sprite: None,
         },
     ],
