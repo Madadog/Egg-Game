@@ -71,21 +71,8 @@ impl SpriteAnimation {
     pub fn new(frames: Vec<SpriteOptions>, loopmode: LoopMode) -> Self {
         Self { frames, loopmode }
     }
-    pub fn from_frames(frame_length: usize, loopmode: LoopMode, frames: &[SpriteOptions]) -> Self {
-        let mut animation_frames: Vec<SpriteOptions> =
-            Vec::with_capacity(frame_length * frames.len());
-        for frame in frames {
-            for _ in 0..frame_length {
-                animation_frames.push(frame.clone());
-            }
-        }
-        SpriteAnimation {
-            frames: Vec::from(frames),
-            loopmode,
-        }
-    }
     pub fn from_sprite_frames(frames: &[SpriteOptions]) -> Self {
-        Self::from_frames(1, Default::default(), frames)
+        Self::new(frames.to_vec(), LoopMode::default())
     }
     pub fn from_sprite_ids(ids: &[i32], w: i32, h: i32) -> Self {
         let frames: Vec<SpriteOptions> = ids
@@ -172,27 +159,28 @@ impl WalkSprites {
             },
         }
     }
-    pub fn ellie() -> Self {
+    /// Humanoid 4-direction walk. North/south are 3-frame strips (idle + 2 walk
+    /// frames, looping the walk pair); the north strip sits 3 tiles after
+    /// `south`. The side-on walk cycles `[s, s+1, s, s+2]` from `side`, west
+    /// mirrored from east.
+    fn humanoid(south: i32, side: i32) -> Self {
+        let strip = |base| {
+            SpriteAnimation::from_base_sprite_id(base, 3, 1, 2)
+                .with_loopmode(LoopMode::LoopRange(1, 2))
+        };
+        let walk = || SpriteAnimation::from_sprite_ids(&[side, side + 1, side, side + 2], 1, 2);
         Self::Compass {
-            north: SpriteAnimation::from_base_sprite_id(771, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            south: SpriteAnimation::from_base_sprite_id(768, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            west: SpriteAnimation::from_sprite_ids(&[832, 833, 832, 834], 1, 2)
-                .with_flip(Flip::Horizontal),
-            east: SpriteAnimation::from_sprite_ids(&[832, 833, 832, 834], 1, 2),
+            north: strip(south + 3),
+            south: strip(south),
+            west: walk().with_flip(Flip::Horizontal),
+            east: walk(),
         }
     }
+    pub fn ellie() -> Self {
+        Self::humanoid(768, 832)
+    }
     pub fn may() -> Self {
-        Self::Compass {
-            north: SpriteAnimation::from_base_sprite_id(2187, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            south: SpriteAnimation::from_base_sprite_id(2184, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            west: SpriteAnimation::from_sprite_ids(&[2248, 2249, 2248, 2250], 1, 2)
-                .with_flip(Flip::Horizontal),
-            east: SpriteAnimation::from_sprite_ids(&[2248, 2249, 2248, 2250], 1, 2),
-        }
+        Self::humanoid(2184, 2248)
     }
     pub fn dog() -> Self {
         Self::Compass {
@@ -203,15 +191,7 @@ impl WalkSprites {
         }
     }
     pub fn bro() -> Self {
-        Self::Compass {
-            north: SpriteAnimation::from_base_sprite_id(899, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            south: SpriteAnimation::from_base_sprite_id(896, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2)),
-            west: SpriteAnimation::from_sprite_ids(&[902, 903, 902, 904], 1, 2)
-                .with_flip(Flip::Horizontal),
-            east: SpriteAnimation::from_sprite_ids(&[902, 903, 902, 904], 1, 2),
-        }
+        Self::humanoid(896, 902)
     }
 }
 
@@ -227,29 +207,23 @@ pub struct ShellSprites {
     pub others: Vec<SpriteAnimation>,
 }
 impl ShellSprites {
-    pub fn ellie() -> Self {
+    fn new(walk: WalkSprites, other_ids: &[i32], w: i32, h: i32) -> Self {
         Self {
-            walk: WalkSprites::ellie(),
-            others: vec![SpriteAnimation::from_sprite_ids(&[774, 775], 1, 2)],
+            walk,
+            others: vec![SpriteAnimation::from_sprite_ids(other_ids, w, h)],
         }
+    }
+    pub fn ellie() -> Self {
+        Self::new(WalkSprites::ellie(), &[774, 775], 1, 2)
     }
     pub fn may() -> Self {
-        Self {
-            walk: WalkSprites::may(),
-            others: vec![SpriteAnimation::from_sprite_ids(&[2251, 2252], 1, 2)],
-        }
+        Self::new(WalkSprites::may(), &[2251, 2252], 1, 2)
     }
     pub fn dog() -> Self {
-        Self {
-            walk: WalkSprites::dog(),
-            others: vec![SpriteAnimation::from_sprite_ids(&[968, 970], 2, 2)],
-        }
+        Self::new(WalkSprites::dog(), &[968, 970], 2, 2)
     }
     pub fn bro() -> Self {
-        Self {
-            walk: WalkSprites::bro(),
-            others: vec![SpriteAnimation::from_sprite_ids(&[905, 906], 1, 2)],
-        }
+        Self::new(WalkSprites::bro(), &[905, 906], 1, 2)
     }
 }
 
@@ -464,61 +438,31 @@ impl Shell {
 
 // presets
 impl Shell {
-    pub fn ellie() -> Self {
+    fn preset(local_hitbox: Hitbox, sprites: ShellSprites) -> Self {
         Self {
             pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 10, 7, 5),
+            local_hitbox,
             hp: 3,
             dir: (0, 1),
             walktime: 0,
             walking: false,
             flip_controls: Axis::None,
             pet_timer: None,
-            sprites: ShellSprites::ellie(),
+            sprites,
             move_mode: MoveMode::Wander,
         }
+    }
+    pub fn ellie() -> Self {
+        Self::preset(Hitbox::new(0, 10, 7, 5), ShellSprites::ellie())
     }
     pub fn may() -> Self {
-        Self {
-            pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 12, 7, 5),
-            hp: 3,
-            dir: (0, 1),
-            walktime: 0,
-            walking: false,
-            flip_controls: Axis::None,
-            pet_timer: None,
-            sprites: ShellSprites::may(),
-            move_mode: MoveMode::Wander,
-        }
+        Self::preset(Hitbox::new(0, 12, 7, 5), ShellSprites::may())
     }
     pub fn dog() -> Self {
-        Self {
-            pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 11, 7, 6),
-            hp: 3,
-            dir: (0, 1),
-            walktime: 0,
-            walking: false,
-            flip_controls: Axis::None,
-            pet_timer: None,
-            sprites: ShellSprites::dog(),
-            move_mode: MoveMode::Wander,
-        }
+        Self::preset(Hitbox::new(0, 11, 7, 6), ShellSprites::dog())
     }
     pub fn bro() -> Self {
-        Self {
-            pos: Vec2::new(62, 23),
-            local_hitbox: Hitbox::new(0, 8, 7, 4),
-            hp: 3,
-            dir: (0, 1),
-            walktime: 0,
-            walking: false,
-            flip_controls: Axis::None,
-            pet_timer: None,
-            sprites: ShellSprites::bro(),
-            move_mode: MoveMode::Wander,
-        }
+        Self::preset(Hitbox::new(0, 8, 7, 4), ShellSprites::bro())
     }
 }
 
