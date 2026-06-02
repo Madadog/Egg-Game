@@ -289,9 +289,4 @@ impl ConsoleApi for FantasyConsole {
     fn font(&self) -> &Font {
         &self.font
     }
-
-    fn frame_start(&mut self) {
-        // Wipe output_screen so gamestate draw fns start each frame clean.
-        self.output_screen.fill(Rgba::TRANSPARENT);
-    }
 }

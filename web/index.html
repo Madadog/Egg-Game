@@ -1,44 +1,53 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Egg Game</title>
-    <style>
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        background: #1a1c2c;
-        overflow: hidden;
-      }
-      /* Bevy/winit appends its own <canvas> to the body. */
-      canvas {
-        display: block;
-        margin: 0 auto;
-        /* Keep the pixel art crisp when the browser scales the canvas. */
-        image-rendering: pixelated;
-        outline: none;
-      }
-      #loading {
-        position: fixed;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #f4f4f4;
-        font-family: sans-serif;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="loading">Loading Egg Game…</div>
-    <script type="module">
-      import init from "./egg_game_bevy.js";
-      init().then(() => {
-        // Bevy is running; drop the placeholder.
-        document.getElementById("loading")?.remove();
-      });
-    </script>
-  </body>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Egg Game</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+                background: #1a1c2c;
+                overflow: hidden;
+            }
+            /* winit binds to #game-canvas (see WindowPlugin in main.rs). */
+            canvas {
+                display: block;
+                margin: 0 auto;
+                /* Keep the pixel art crisp when the browser scales the canvas. */
+                image-rendering: pixelated;
+                outline: none;
+            }
+            #loading {
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #f4f4f4;
+                font-family: sans-serif;
+            }
+        </style>
+    </head>
+    <body>
+        <!-- winit binds to this canvas (WindowPlugin.canvas = "#game-canvas").
+         tabindex makes it focusable so it can receive keyboard events. -->
+        <canvas id="game-canvas" tabindex="0"></canvas>
+        <div id="loading">Loading Egg Game…</div>
+        <script type="module">
+            import init from "./egg_game_bevy.js";
+            const canvas = document.getElementById("game-canvas");
+            // Browsers only deliver key events to a focused, focusable element. Grab
+            // focus once the game is up, and again on any click, so keyboard input
+            // works without the player having to click the canvas.
+            const focusCanvas = () => canvas.focus();
+            canvas.addEventListener("pointerdown", focusCanvas);
+            init().then(() => {
+                document.getElementById("loading")?.remove();
+                focusCanvas();
+            });
+        </script>
+    </body>
 </html>

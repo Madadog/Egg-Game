@@ -6,11 +6,39 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = "0.18.1"
+# Bevy with default features off — this is a 2D pixel game that draws its own UI
+# and text, so the 3D pipeline (bevy_pbr, gltf, meshlet, ktx2/luts…), bevy_ui,
+# bevy_text/default_font, scenes, gizmos and picking are all dead weight. We pull
+# in only the 2D sprite render path, PNG decoding, ogg audio, the three input
+# devices we read (keyboard, mouse, gamepad) and the windowing/app plumbing.
+# Platform render backends and OS windowing are added per-target below.
+bevy = { version = "0.18.1", default-features = false, features = [
+    "std",
+    "default_app",       # async_executor, bevy_asset, bevy_log, bevy_state, bevy_window, bevy_input_focus, custom_cursor, reflect_auto_register
+    "bevy_winit",
+    "bevy_render",
+    "bevy_core_pipeline", # Camera2d
+    "bevy_camera",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_image",
+    "png",
+    "bevy_audio",
+    "vorbis",            # .ogg decoding
+    "keyboard",
+    "mouse",
+    "bevy_gilrs",        # gamepad support (pulls in the `gamepad` feature)
+] }
 egg_core = { path = "egg_core" }
 serde = "1.0.173"
 serde_json = "1.0.103"
 itertools = "0.14.0"
+
+# Native: OS windowing backends and the multi-threaded task pool. (Web runs
+# single-threaded — wasm without shared-memory/atomics can't use the threaded
+# executor, so `multi_threaded` is native-only.)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { version = "0.18.1", default-features = false, features = ["x11", "wayland", "multi_threaded"] }
 
 # Web (wasm32) build. Bevy needs a web render backend (webgl2 for broad browser
 # support) and its web platform integration. getrandom's browser backend is
@@ -18,7 +46,7 @@ itertools = "0.14.0"
 # localStorage for save persistence; console_error_panic_hook routes panics to
 # the browser console.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.18.1", features = ["web", "webgl2"] }
+bevy = { version = "0.18.1", default-features = false, features = ["web", "webgl2"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
 console_error_panic_hook = "0.1"

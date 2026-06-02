@@ -72,12 +72,6 @@ pub trait ConsoleApi {
     /// measurement. The font caches each glyph's width so text can be
     /// measured without rasterising to a throwaway canvas.
     fn font(&self) -> &Font;
-
-    /// Called by `EggState::run` at the start of each frame, before any
-    /// drawing happens. Implementations should clear `output_image()` (and
-    /// any legacy scratch surfaces) so the gamestate draw paths start each
-    /// frame on a clean canvas.
-    fn frame_start(&mut self);
 }
 
 impl<T: ConsoleApi> ConsoleHelper for T {}

@@ -61,7 +61,25 @@ fn main() {
     App::new()
         .init_resource::<EggGame>()
         .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
-        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_plugins(
+            DefaultPlugins
+                .set(ImagePlugin::default_nearest())
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        // Bind winit to the <canvas id="game-canvas"> in index.html
+                        // rather than letting it append its own. The HTML canvas
+                        // carries `tabindex` so it can hold keyboard focus, and JS
+                        // focuses it on load/click — without this, key events on
+                        // web go to <body> and the game never sees them. Ignored on
+                        // native.
+                        canvas: Some("#game-canvas".into()),
+                        fit_canvas_to_parent: true,
+                        title: "Egg Game".to_string(),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .add_plugins(TiledMapPlugin)
         .add_systems(Startup, (setup, setup_assets, load_save_game))
         .add_systems(Update, (load_assets, resize_screen))

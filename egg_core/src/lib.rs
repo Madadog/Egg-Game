@@ -46,7 +46,6 @@ pub struct EggState {
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
-        system.frame_start();
         self.time += 1;
         self.gamestate.run(
             &mut self.walkaround,
