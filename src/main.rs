@@ -97,7 +97,7 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, _assets: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
+fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2d);
     let screen = Image::new_fill(
         Extent3d {
@@ -182,30 +182,18 @@ fn load_assets(
                 let font = images.get(&game_assets.font);
                 let sheet = images.get(&game_assets.sheet);
                 if let (Some(font), Some(sheet)) = (font, sheet) {
-                    println!("Okay I got the fonts and stuff!");
-                    let maps: Vec<Option<TiledMap>> = game_assets
+                    let maps: Vec<TiledMap> = game_assets
                         .maps
                         .iter()
-                        .map(|x| maps.get(x).cloned())
+                        .map(|x| maps.get(x).cloned().expect("Map missing!"))
                         .collect();
-                    let maps: Vec<TiledMap> = maps
-                        .into_iter()
-                        .map(|map| map.expect("Map missing!"))
-                        .collect();
-                    println!("Got maps!");
                     state.system.set_font(font);
-                    println!("Set fonts!");
                     state.system.set_sprites(sheet);
-                    println!("And sprites!");
                     let palette = state.state.draw_state.palettes[0].clone();
                     state.system.set_indexed_sprites(sheet, &palette);
-                    println!("And more sprites!");
-                    info!("Loaded {} maps", maps.len());
                     state.system.set_maps(maps);
-                    println!("Just set the maps!!");
                     if let Some(script) = scripts.get(&game_assets.script) {
                         state.system.script_mut().set_base(script.0.clone());
-                        info!("Loaded base language script.");
                     }
                     // Mirror sprites + flags into DrawState (the authoritative
                     // copies for the new draw paths). Maps stay on the console
@@ -220,8 +208,7 @@ fn load_assets(
                     commands.remove_resource::<GameAssets>();
                 }
             }
-            LoadState::Loading => info!("Loading assets..."),
-            LoadState::NotLoaded => info!("Not yet loaded..."),
+            LoadState::Loading | LoadState::NotLoaded => {}
             x => panic!("Could not load assets: {x:?}"),
         }
     }
@@ -320,7 +307,7 @@ fn play_music(
     assets: Res<AssetServer>,
 ) {
     if let Some((x, playing)) = state.system.music_track() {
-        if query.iter().len() == 0 && !*playing {
+        if query.is_empty() && !*playing {
             let music: Handle<AudioSource> = assets.load(format!("music/{}.ogg", x.id));
             commands.spawn((
                 AudioPlayer(music.clone()),
@@ -337,7 +324,6 @@ fn play_music(
         }
     } else {
         for (entity, sink) in query.iter_mut() {
-            info!("Stoppin mussic");
             commands.entity(entity).despawn();
             sink.stop();
         }
@@ -381,7 +367,6 @@ fn resize_screen(
         let w = window.width() / WIDTH as f32;
         let h = window.height() / HEIGHT as f32;
         window.resolution.set_scale_factor_override(Some(1.0));
-        window.title = "Egg Game".to_string();
         let size = match state.scale_mode {
             ScaleMode::Integer => w.min(h).floor(),
             ScaleMode::Linear => w.min(h),

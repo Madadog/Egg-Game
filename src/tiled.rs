@@ -14,37 +14,20 @@ pub struct TileLayer {
 }
 impl TileLayer {
     pub fn get(&self, x: usize, y: usize) -> Option<usize> {
-        self.data
-            .get(
-                y.checked_mul(self.width).unwrap_or_else(|| {
-                    println!("layer.width: {}, y: {}", self.width, y);
-                    1
-                }) + x,
-            )
-            .cloned()
+        self.data.get(y.checked_mul(self.width)? + x).copied()
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
-        self.data.get_mut(
-            y.checked_mul(self.width).unwrap_or_else(|| {
-                println!("layer.width: {}, y: {}", self.width, y);
-                1
-            }) + x,
-        )
+        self.data.get_mut(y.checked_mul(self.width)? + x)
     }
+    /// Subtract each tile's tileset `firstgid` so tile ids become sheet-local.
     pub fn flatten_gids(&mut self, tilesets: &[Tileset]) {
-        let gids = {
-            let mut gids: Vec<usize> = tilesets.iter().map(|x| x.firstgid).collect();
-            gids.sort_unstable_by(|a, b| b.cmp(a));
-            gids
-        };
-        // TODO: actually use the above sort...
         for tile in self.data.iter_mut() {
-            let mut max_gid = 0;
-            for gid in gids.iter() {
-                if *tile >= *gid && *gid > max_gid {
-                    max_gid = *gid;
-                }
-            }
+            let max_gid = tilesets
+                .iter()
+                .map(|ts| ts.firstgid)
+                .filter(|&gid| *tile >= gid)
+                .max()
+                .unwrap_or(0);
             *tile -= max_gid;
         }
     }
@@ -127,13 +110,11 @@ impl TiledMap {
         };
     }
     pub fn get_tile_source(&self, tile: usize) -> Option<Tileset> {
-        let mut source = None;
-        for tileset in self.tilesets.iter() {
-            if tile >= tileset.firstgid {
-                source = Some(tileset.clone());
-            }
-        }
-        source
+        self.tilesets
+            .iter()
+            .filter(|ts| tile >= ts.firstgid)
+            .max_by_key(|ts| ts.firstgid)
+            .cloned()
     }
     pub fn flatten_gids(&mut self) {
         for layer in self.layers.iter_mut() {

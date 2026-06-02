@@ -173,33 +173,22 @@ impl FantasyConsole {
         self.indexed_sprites = IndexedImage::from_vec(data, width, height);
     }
     pub fn set_maps(&mut self, maps: Vec<tiled::TiledMap>) {
-        info!("lodding maps");
-        let maps = maps
+        self.maps = maps
             .into_iter()
-            .enumerate()
-            .map(|(i, map)| {
-                info!("map {i}");
+            .map(|map| {
                 let layers = map
                     .layers
                     .into_iter()
                     .map(|layer| match layer {
                         tiled::TiledMapLayer::TileLayer(layer) => {
-                            info!("layer: {}", layer.name);
                             MapLayer::new(layer.name, layer.width, layer.height, layer.data)
                         }
-                        tiled::TiledMapLayer::ObjectLayer(layer) => {
-                            info!("Oh hey, it's an object layer! ({})", layer.name);
-                            for object in layer.objects {
-                                info!("object: {:?}", object.properties);
-                            }
-                            MapLayer::new_empty(1, 1)
-                        }
+                        tiled::TiledMapLayer::ObjectLayer(_) => MapLayer::new_empty(1, 1),
                     })
                     .collect();
                 GameMap::new(map.width, map.height, layers)
             })
             .collect();
-        self.maps = maps;
     }
 }
 
