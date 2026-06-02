@@ -344,7 +344,41 @@ impl MenuEntry {
     }
 }
 
-/// Indexed-canvas variant of [`draw_title`], used by the migrated intro
+/// Draw the centred game title, its underline, and the corner blurb onto any
+/// canvas, returning the measured title width. The egg icon is blitted
+/// separately by each caller — the indexed and RGBA paths differ.
+fn draw_title_text<C: crate::system::drawing::Canvas>(
+    canvas: &mut C,
+    system: &impl ConsoleApi,
+    x: i32,
+    y: i32,
+    game_title: &str,
+    title_colour: C::Pixel,
+    blurb_colour: C::Pixel,
+) -> i32 {
+    let opts = PrintOptions {
+        scale: 1,
+        ..Default::default()
+    };
+    let title_width = system.print_to(canvas, game_title, 999, 999, title_colour, opts.clone());
+    system.print_to_centered(canvas, game_title, x, y + 23, title_colour, opts);
+    system.print_to(
+        canvas,
+        &system.label("game_title_blurb"),
+        3,
+        3,
+        blurb_colour,
+        PrintOptions {
+            scale: 1,
+            small_text: true,
+            ..Default::default()
+        },
+    );
+    canvas.fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, title_colour);
+    title_width
+}
+
+/// Indexed-canvas variant of the title screen, used by the migrated intro
 /// animation so the palette fades apply uniformly to the title pixels.
 /// `canvas` is the target indexed layer; `indexed_sprites` is the sprite
 /// sheet for the egg icon.
@@ -357,42 +391,7 @@ pub fn draw_title_indexed(
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    use crate::system::drawing::Canvas;
-    let title_width = system.print_to(
-        canvas,
-        game_title,
-        999,
-        999,
-        2u8,
-        PrintOptions {
-            scale: 1,
-            ..Default::default()
-        },
-    );
-    system.print_to_centered(
-        canvas,
-        game_title,
-        x,
-        y + 23,
-        2u8,
-        PrintOptions {
-            scale: 1,
-            ..Default::default()
-        },
-    );
-    system.print_to(
-        canvas,
-        &system.label("game_title_blurb"),
-        3,
-        3,
-        14u8,
-        PrintOptions {
-            scale: 1,
-            small_text: true,
-            ..Default::default()
-        },
-    );
-    canvas.fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, 2);
+    draw_title_text(canvas, system, x, y, game_title, 2u8, 14u8);
     canvas.spr(
         indexed_sprites,
         534,
@@ -408,8 +407,7 @@ pub fn draw_title_indexed(
     );
 }
 
-/// RGBA-canvas variant of [`draw_title_indexed`], used by the migrated
-/// main menu.
+/// RGBA-canvas variant of the title screen, used by the migrated main menu.
 pub fn draw_title_rgba(
     draw_state: &mut crate::drawstate::DrawState,
     system: &impl ConsoleApi,
@@ -419,48 +417,9 @@ pub fn draw_title_rgba(
     elapsed_frames: i32,
 ) {
     use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
-    use crate::system::drawing::Canvas;
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
-    let title_width = system.print_to(
-        draw_state.rgba(BG),
-        game_title,
-        999,
-        999,
-        c2,
-        PrintOptions {
-            scale: 1,
-            ..Default::default()
-        },
-    );
-    system.print_to_centered(
-        draw_state.rgba(BG),
-        game_title,
-        x,
-        y + 23,
-        c2,
-        PrintOptions {
-            scale: 1,
-            color: 2,
-            ..Default::default()
-        },
-    );
-    system.print_to(
-        draw_state.rgba(BG),
-        &system.label("game_title_blurb"),
-        3,
-        3,
-        c14,
-        PrintOptions {
-            scale: 1,
-            color: 14,
-            small_text: true,
-            ..Default::default()
-        },
-    );
-    draw_state
-        .rgba(BG)
-        .fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, c2);
+    draw_title_text(draw_state.rgba(BG), system, x, y, game_title, c2, c14);
     draw_state.spr(
         BG,
         &PALETTE_MAP_IDENTITY,

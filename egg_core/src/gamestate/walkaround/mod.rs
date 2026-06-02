@@ -9,7 +9,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, just_pressed, pressed};
+use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 
@@ -390,18 +390,7 @@ impl<T: ConsoleApi>
             self.map_viewer
                 .step_map_viewer(system, &mut self.current_map);
         } else if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
-            if pressed(pad.up) {
-                dy -= 1;
-            }
-            if pressed(pad.down) {
-                dy += 1;
-            }
-            if pressed(pad.left) {
-                dx -= 1;
-            }
-            if pressed(pad.right) {
-                dx += 1;
-            }
+            (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
                 inventory_ui.open(system);
                 return Some(GameMode::Inventory);

@@ -106,6 +106,14 @@ impl Controller {
     }
 }
 
+/// Cardinal D-pad delta from a controller — each axis in `-1..=1` (right/down
+/// positive). `edge` selects held ([`pressed`]) vs rising-edge
+/// ([`just_pressed`]) reads.
+pub fn dpad_delta(pad: &Controller, edge: impl Fn([bool; 2]) -> bool) -> (i16, i16) {
+    let axis = |neg, pos| edge(pos) as i16 - edge(neg) as i16;
+    (axis(pad.left, pad.right), axis(pad.up, pad.down))
+}
+
 #[cfg(test)]
 mod mouse_tests {
     use super::*;

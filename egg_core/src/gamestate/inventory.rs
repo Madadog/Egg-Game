@@ -1,7 +1,7 @@
 use crate::{
     data::sound,
     dialogue::{DIALOGUE_OPTIONS, Dialogue},
-    system::{ConsoleApi, ConsoleHelper, just_pressed},
+    system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
     ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
 };
 
@@ -525,20 +525,8 @@ impl InventoryUi {
 
         // Keyboard / gamepad navigation
         let pad = system.controller();
-        let (mut dx, mut dy) = (0, 0);
-        if just_pressed(pad.up) {
-            dy -= 1
-        }
-        if just_pressed(pad.down) {
-            dy += 1
-        }
-        if just_pressed(pad.left) {
-            dx -= 1
-        }
-        if just_pressed(pad.right) {
-            dx += 1
-        }
-        self.state.arrows(system, dx, dy);
+        let (dx, dy) = dpad_delta(&pad, just_pressed);
+        self.state.arrows(system, dx.into(), dy.into());
         if just_pressed(pad.a) && !mouse_clicked {
             self.click(system)
         };
