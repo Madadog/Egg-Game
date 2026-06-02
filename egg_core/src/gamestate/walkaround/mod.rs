@@ -1,7 +1,5 @@
 use crate::animation::Animation;
-use crate::data::map_data::{
-    DEFAULT_MAP_SET, MapIndex,
-};
+use crate::data::map_data::{DEFAULT_MAP_SET, MapIndex};
 use crate::data::{dialogue_data::*, sound};
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
@@ -314,10 +312,10 @@ impl WalkaroundState {
         self.entities.len() - 1
     }
 
-    /// TODO: Add actual save system.
     fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
         let pos = self.player_ref().pos;
         let save = system.memory();
+        save.save_count += 1;
         save.current_map = new_map.0 as u8;
         save.player_x = pos.x;
         save.player_y = pos.y;
@@ -328,6 +326,19 @@ impl WalkaroundState {
         self.load_map(system, MapIndex(save.current_map.into()).map());
         self.player().pos.x = save.player_x;
         self.player().pos.y = save.player_y;
+    }
+
+    /// Starts a fresh game and saves over the default zeroed
+    /// player position and map_index.
+    pub fn new_game(&mut self, system: &mut impl ConsoleApi) {
+        // Rebuild the live walkaround to its fresh construction state. "Erase
+        // data" only zeroes `SaveData`; the existing `WalkaroundState` (player
+        // entity, companions, dialogue…) is never rebuilt, so without this the
+        // player keeps the position/shell they had before the reset and the
+        // seed `save()` below would persist that stale position.
+        *self = Self::new();
+        self.load_map(system, MapIndex::BEDROOM.map());
+        self.save(&MapIndex::BEDROOM, system);
     }
 }
 
