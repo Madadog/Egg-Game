@@ -126,6 +126,9 @@ pub struct GameAssets {
     pub font: Handle<Image>,
     pub sheet: Handle<Image>,
     pub maps: Vec<Handle<TiledMap>>,
+    /// Base file names for `maps` (same order). Threaded to the console so an
+    /// edited "modern" map can be saved back to `maps/<name>.tmj`.
+    pub map_names: Vec<String>,
     pub script: Handle<ScriptAsset>,
 }
 impl GameAssets {
@@ -138,6 +141,7 @@ impl GameAssets {
                 assets.load("maps/bank2.tmj"),
                 assets.load("maps/office.tmj"),
             ],
+            map_names: vec!["bank1".into(), "bank2".into(), "office".into()],
             script: assets.load("script/en.eggtext"),
         }
     }
@@ -175,10 +179,16 @@ fn load_assets(
                 let font = images.get(&game_assets.font);
                 let sheet = images.get(&game_assets.sheet);
                 if let (Some(font), Some(sheet)) = (font, sheet) {
-                    let maps: Vec<TiledMap> = game_assets
-                        .maps
+                    let maps: Vec<(String, TiledMap)> = game_assets
+                        .map_names
                         .iter()
-                        .map(|x| maps.get(x).cloned().expect("Map missing!"))
+                        .cloned()
+                        .zip(
+                            game_assets
+                                .maps
+                                .iter()
+                                .map(|x| maps.get(x).cloned().expect("Map missing!")),
+                        )
                         .collect();
                     state.system.set_font(font);
                     state.system.set_sprites(sheet);
@@ -476,6 +486,13 @@ fn step_state(
             game.run();
         }
         draw_overlay(&mut game, "Paused\n[P] to unpause\n[N] to step forward");
+        return;
+    }
+    // While the map editor is capturing typed text, step the game (so it
+    // processes the keystrokes) and skip all global debug/cheat hotkeys, so
+    // dialogue keys like "town_lamppost" don't fire the m/n/k/l/p shortcuts.
+    if game.state.walkaround.map_viewer.is_typing() {
+        game.run();
         return;
     }
     if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {

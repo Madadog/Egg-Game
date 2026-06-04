@@ -28,6 +28,7 @@ use self::menu::MenuState;
 mod debug;
 mod intro;
 pub mod inventory;
+mod mapeditor;
 mod menu;
 pub mod walkaround;
 

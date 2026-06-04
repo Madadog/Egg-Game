@@ -1,17 +1,11 @@
-use crate::system::{PrintOptions, SWEETIE_16, StaticSpriteOptions, just_pressed, pressed};
-
 use crate::{
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY},
-    map::MapInfo,
     system::{
-        ConsoleApi, ConsoleHelper,
+        ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, StaticSpriteOptions, pressed,
         drawing::{Canvas, EdgePolicy, Transform},
         image::{Rgba, RgbaImage},
     },
-    ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
 };
-
-use super::walkaround::WalkaroundState;
 
 const WIDTH: u32 = 32;
 
@@ -130,120 +124,5 @@ pub fn step_sprite_test(system: &mut impl ConsoleApi, indice: &mut u32) {
     }
     if pressed(pad.right) && (*indice % WIDTH) < 2 {
         *indice = indice.saturating_add(1);
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MapViewer {
-    pub focused: bool,
-    pub fg: bool,
-    pub layer_index: usize,
-}
-/// Identifies the interactive rows of the map-layer viewer for hit-testing:
-/// the title (click flips BG/FG) and one row per layer (click toggles it).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LayerKey {
-    Title,
-    Layer(usize),
-}
-
-impl MapViewer {
-    /// Lay the viewer out as a fixed-width black column: a title row plus one
-    /// row per layer in the current (BG/FG) list, the selected row highlighted.
-    /// Rebuilt each frame for both hit-testing and drawing.
-    fn build_ui(&self, map: &MapInfo) -> Ui<LayerKey> {
-        use crate::system::HEIGHT;
-        let layers = if self.fg { &map.fg_layers } else { &map.layers };
-        let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
-
-        let mut b = UiBuilder::new();
-        let mut rows: Vec<NodeId> = Vec::with_capacity(layers.len() + 1);
-        rows.push(b.leaf(
-            Style { size: ui::full_width(8.0), ..Default::default() },
-            Content::Text { text: title.to_string(), color: 13, center: false, small: false },
-            Decoration::default(),
-            Some(LayerKey::Title),
-        ));
-        for (i, layer) in layers.iter().enumerate() {
-            let hidden = if layer.visible { "" } else { "(Hidden)" };
-            rows.push(b.leaf(
-                Style { size: ui::full_width(8.0), ..Default::default() },
-                Content::Text { text: format!("Layer {i} {hidden}"), color: 12, center: false, small: true },
-                if i == self.layer_index { Decoration::fill(15) } else { Decoration::default() },
-                Some(LayerKey::Layer(i)),
-            ));
-        }
-        let root = b.container(
-            Style { size: ui::size(70.0, HEIGHT as f32), ..ui::column(0.0) },
-            Decoration::fill(0),
-            None,
-            &rows,
-        );
-        b.finish(root)
-    }
-
-    /// Toggle the visibility of the currently selected layer.
-    fn toggle_layer(&self, map: &mut MapInfo) {
-        let layer = if self.fg {
-            map.fg_layers.get_mut(self.layer_index)
-        } else {
-            map.layers.get_mut(self.layer_index)
-        };
-        if let Some(layer) = layer {
-            layer.visible = !layer.visible;
-        }
-    }
-
-    pub fn draw_map_viewer(
-        &self,
-        draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
-        walkaround: &WalkaroundState,
-    ) {
-        if !self.focused {
-            return;
-        }
-        self.build_ui(&walkaround.current_map)
-            .draw(draw_state, system, LayerId::BG);
-    }
-
-    pub fn step_map_viewer(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
-        // --- Mouse: hover selects a layer, left-click toggles it (or flips BG/FG on the title). ---
-        let ui = self.build_ui(map);
-        let mouse = system.mouse();
-        let mut mouse_toggled = false;
-        if let Some(key) = ui.hit(mouse.pos()) {
-            match key {
-                LayerKey::Title => {
-                    if just_pressed(mouse.left) {
-                        self.fg = !self.fg;
-                    }
-                }
-                LayerKey::Layer(i) => {
-                    if mouse.moved() {
-                        self.layer_index = i;
-                    }
-                    if just_pressed(mouse.left) {
-                        self.layer_index = i;
-                        self.toggle_layer(map);
-                        mouse_toggled = true;
-                    }
-                }
-            }
-        }
-
-        let pad = system.controller();
-        if just_pressed(pad.up) {
-            self.layer_index = self.layer_index.saturating_sub(1);
-        }
-        if just_pressed(pad.down) {
-            self.layer_index = (self.layer_index + 1).min(map.layers.len() - 1);
-        }
-        if just_pressed(pad.a) && !mouse_toggled {
-            self.toggle_layer(map);
-        }
-        if just_pressed(pad.b) {
-            self.fg = !self.fg;
-        }
     }
 }

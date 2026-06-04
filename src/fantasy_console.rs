@@ -4,6 +4,8 @@ use bevy::prelude::{Image, info};
 use egg_core::{
     data::{save::SaveData, script::Script, sound::music::MusicTrack},
     gamestate::EggInput,
+    interact::Interactable,
+    map::{MapInfo, Warp},
     rand::Lcg64Xsh32,
     system::{
         ConsoleApi, Controller, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
@@ -42,6 +44,11 @@ pub struct FantasyConsole {
     pub sprites: RgbaImage,
     pub indexed_sprites: IndexedImage,
     pub maps: Vec<GameMap>,
+    /// Original Tiled maps (with their base file name) for editable "modern"
+    /// banks (those with an object layer). Kept so object layers can be parsed
+    /// into interactables/warps and serialised back on save; `maps` above is
+    /// the lossy tiles-only view.
+    pub modern_tiled: HashMap<usize, (String, tiled::TiledMap)>,
     pub sprite_flags: Vec<u8>,
     /// UI labels + dialogue, loaded from `script/<lang>.eggtext`.
     script: Script,
@@ -65,6 +72,7 @@ impl FantasyConsole {
             sprites: RgbaImage::new(1, 1),
             indexed_sprites: IndexedImage::new(1, 1),
             maps: Vec::new(),
+            modern_tiled: HashMap::new(),
             script: Script::new(),
             pending_language: None,
             files: HashMap::new(),
@@ -172,10 +180,22 @@ impl FantasyConsole {
         }
         self.indexed_sprites = IndexedImage::from_vec(data, width, height);
     }
-    pub fn set_maps(&mut self, maps: Vec<tiled::TiledMap>) {
+    pub fn set_maps(&mut self, maps: Vec<(String, tiled::TiledMap)>) {
+        self.modern_tiled.clear();
         self.maps = maps
             .into_iter()
-            .map(|map| {
+            .enumerate()
+            .map(|(bank, (name, map))| {
+                // Keep the original Tiled map for any bank carrying an object
+                // layer — these are the editable "modern" maps. The `GameMap`
+                // built below is a tiles-only view that drops the objects.
+                if map
+                    .layers
+                    .iter()
+                    .any(|l| matches!(l, tiled::TiledMapLayer::ObjectLayer(_)))
+                {
+                    self.modern_tiled.insert(bank, (name, map.clone()));
+                }
                 let layers = map
                     .layers
                     .into_iter()
@@ -265,6 +285,23 @@ impl ConsoleApi for FantasyConsole {
     fn maps_mut(&mut self) -> &mut Vec<GameMap> {
         &mut self.maps
     }
+    fn map_objects(&self, bank: usize) -> Option<(Vec<Interactable>, Vec<Warp>)> {
+        self.modern_tiled
+            .get(&bank)
+            .map(|(_, map)| map.parse_objects())
+    }
+    fn write_map(&mut self, map: &MapInfo) {
+        let Some((name, template)) = self.modern_tiled.get(&map.bank) else {
+            info!("write_map: bank {} is not a modern map; not saving", map.bank);
+            return;
+        };
+        let Some(game_map) = self.maps.get(map.bank) else {
+            return;
+        };
+        let layer_data: Vec<Vec<usize>> = game_map.layers.iter().map(|l| l.data.clone()).collect();
+        let json = template.to_tmj(&layer_data, &map.interactables, &map.warps);
+        write_tmj(name, &json);
+    }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
         self.maps[bank]
             .layers
@@ -302,4 +339,26 @@ impl ConsoleApi for FantasyConsole {
     fn font(&self) -> &Font {
         &self.font
     }
+}
+
+/// Persist a serialised Tiled map. Native: write `assets/maps/<name>.tmj`,
+/// backing up any existing file to `<name>.bak.tmj` first. Web: log only (no
+/// filesystem).
+#[cfg(not(target_arch = "wasm32"))]
+fn write_tmj(name: &str, json: &str) {
+    let path = format!("assets/maps/{name}.tmj");
+    if std::path::Path::new(&path).exists() {
+        let backup = format!("assets/maps/{name}.bak.tmj");
+        if let Err(e) = std::fs::copy(&path, &backup) {
+            info!("write_tmj: backup of {path} failed: {e}");
+        }
+    }
+    match std::fs::write(&path, json) {
+        Ok(()) => info!("Saved map to {path} ({} bytes)", json.len()),
+        Err(e) => info!("write_tmj: failed to write {path}: {e}"),
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn write_tmj(name: &str, json: &str) {
+    info!("Map save not persisted on web ({name}, {} bytes)", json.len());
 }

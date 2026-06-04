@@ -16,7 +16,7 @@ use log::info;
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
-use super::debug::MapViewer;
+use super::mapeditor::MapViewer;
 use super::inventory::InventoryUi;
 
 mod creatures;
@@ -191,12 +191,18 @@ impl WalkaroundState {
                     }),
             )
             .collect();
-        let map_info = MapInfo {
+        let mut map_info = MapInfo {
             layers,
             fg_layers: fg,
             bank,
             ..Default::default()
         };
+        // Modern (Tiled) maps carry their interactables + warps in an object
+        // layer; attach them if the host parsed any for this bank.
+        if let Some((interactables, warps)) = system.map_objects(bank) {
+            map_info.interactables = interactables;
+            map_info.warps = warps;
+        }
 
         self.load_map(system, map_info);
     }
@@ -368,6 +374,14 @@ impl<T: ConsoleApi>
             return None;
         }
 
+        // When the map editor is open it takes over all input and freezes the
+        // sim, so painting/typing can't move the player or trip warps/reloads.
+        if self.map_viewer.focused {
+            self.map_viewer
+                .step_map_viewer(system, &mut self.current_map, self.camera.pos);
+            return None;
+        }
+
         if system.keyp(ScanCode::Digit5) {
             self.load_pmem(system);
         }
@@ -386,10 +400,7 @@ impl<T: ConsoleApi>
         let mut interact = false;
 
         let pad = system.controller();
-        if self.map_viewer.focused {
-            self.map_viewer
-                .step_map_viewer(system, &mut self.current_map);
-        } else if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
+        if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
                 inventory_ui.open(system);

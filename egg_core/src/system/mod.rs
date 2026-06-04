@@ -5,6 +5,8 @@ use crate::{
         sound::{SfxData, music::MusicTrack},
     },
     dialogue::Message,
+    interact::Interactable,
+    map::{MapInfo, Warp},
     rand::Lcg64Xsh32,
     system::{drawing::Canvas, image::RgbaImage},
 };
@@ -66,8 +68,16 @@ pub trait ConsoleApi {
     // Asset access.
     fn maps(&self) -> &[GameMap];
     fn maps_mut(&mut self) -> &mut Vec<GameMap>;
+    /// Parsed interactables + warps for a "modern" (Tiled) map bank, if the
+    /// host has them. Default none — legacy maps embed their objects in code.
+    fn map_objects(&self, _bank: usize) -> Option<(Vec<Interactable>, Vec<Warp>)> {
+        None
+    }
     fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
     fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize);
+    /// Persist an edited "modern" map (host resolves its name/location from the
+    /// map's `bank`). Default no-op — only hosts that load modern maps save them.
+    fn write_map(&mut self, _map: &MapInfo) {}
     fn write_file(&mut self, filename: String, data: &[u8]);
     fn read_file(&mut self, filename: String) -> Option<&[u8]>;
     /// Grab a whole bitmap. By convention:
