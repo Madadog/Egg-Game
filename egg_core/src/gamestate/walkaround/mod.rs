@@ -535,28 +535,61 @@ impl<T: ConsoleApi>
         &self,
         (draw_state, system, debug_info): (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
     ) {
-        use crate::drawstate::LayerId::*;
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-        use crate::system::image::RgbaImage;
+        // Draw the live world from the player-following camera, with this
+        // walkaround's own map editor overlay, then composite into the console's
+        // canonical output surface. The world build leaves its result in
+        // `draw_state`, so the final composite is a separate step that takes the
+        // output (avoiding a borrow conflict with `system`).
+        self.draw_world(
+            draw_state,
+            system,
+            self.camera.pos,
+            &self.map_viewer,
+            debug_info,
+        );
+        WalkaroundState::composite_into(draw_state, system.output_image());
+    }
+}
 
-        let bg = BG as usize;
+impl WalkaroundState {
+    /// Render the walkaround world from an arbitrary `camera_pos` into
+    /// `draw_state`, using `editor` for the map-editor overlay (so an extra view
+    /// can drive its own free camera + editor without touching the live
+    /// `self.camera`/`self.map_viewer`). The shared `system` is read for
+    /// assets/maps only; the finished frame is left in `draw_state.rgba(BG)` —
+    /// call [`composite_into`](Self::composite_into) to blit it onto a surface.
+    ///
+    /// Engine-agnostic: it only touches `draw_state` (the layer canvases) and
+    /// reads `system` for assets, with no knowledge of windows or the host.
+    pub fn draw_world<T: ConsoleApi>(
+        &self,
+        draw_state: &mut crate::drawstate::DrawState,
+        system: &mut T,
+        camera_pos: Vec2,
+        editor: &MapViewer,
+        debug_info: &DebugInfo,
+    ) {
+        use crate::drawstate::LayerId::*;
+
+        let cam_x = i32::from(camera_pos.x);
+        let cam_y = i32::from(camera_pos.y);
+
         let bg_colour = draw_state.colour(self.bg_colour);
         draw_state.rgba(BG).fill(bg_colour);
 
         // BG map layers
         if let Some(map) = system.maps().get(self.current_map.bank) {
             self.current_map
-                .draw_bg_indexed(draw_state, BG, map, self.camera.pos, false);
+                .draw_bg_indexed(draw_state, BG, map, camera_pos, false);
         }
 
         // Particles
-        self.particles
-            .draw_indexed(draw_state, BG, -self.cam_x(), -self.cam_y());
+        self.particles.draw_indexed(draw_state, BG, -cam_x, -cam_y);
 
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
 
-        sprites.push(self.player_ref().draw_params(self.camera.pos));
+        sprites.push(self.player_ref().draw_params(camera_pos));
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
@@ -567,21 +600,17 @@ impl<T: ConsoleApi>
         ) {
             sprites.push(DrawParams::new(
                 anim.current_frame().spr_id.into(),
-                anim.current_frame().pos.x as i32 + hitbox.x as i32 - self.cam_x(),
-                anim.current_frame().pos.y as i32 + hitbox.y as i32 - self.cam_y(),
+                anim.current_frame().pos.x as i32 + hitbox.x as i32 - cam_x,
+                anim.current_frame().pos.y as i32 + hitbox.y as i32 - cam_y,
                 anim.current_frame().options.clone(),
                 anim.current_frame().outline_colour,
                 anim.current_frame().palette_rotate,
             ));
         }
 
-        sprites.extend(
-            self.creatures
-                .iter()
-                .map(|x| x.draw_params(self.camera.pos)),
-        );
+        sprites.extend(self.creatures.iter().map(|x| x.draw_params(camera_pos)));
 
-        sprites.extend(self.entities.iter().map(|x| x.draw_params(self.camera.pos)));
+        sprites.extend(self.entities.iter().map(|x| x.draw_params(camera_pos)));
 
         for (i, companion) in self.companion_list.companions.iter().enumerate() {
             if let Some(companion) = companion {
@@ -591,7 +620,11 @@ impl<T: ConsoleApi>
                     self.companion_trail.mid()
                 };
                 let walktime = self.companion_trail.walktime();
-                let params = companion.spr_params(position, direction, walktime, &self.camera);
+                // The companion sprite helper bounds against a camera; build a
+                // throwaway camera at `camera_pos` so an extra view's free
+                // camera offsets them correctly too.
+                let cam = Camera::new(camera_pos, self.camera.bounds.clone());
+                let params = companion.spr_params(position, direction, walktime, &cam);
                 sprites.push(params);
             }
         }
@@ -611,7 +644,7 @@ impl<T: ConsoleApi>
         // FG map layers (drawn on top of sprites)
         if let Some(map) = system.maps().get(self.current_map.bank) {
             self.current_map
-                .draw_fg_indexed(draw_state, BG, map, self.camera.pos, false);
+                .draw_fg_indexed(draw_state, BG, map, camera_pos, false);
         }
 
         if let Some(string) = self.dialogue.current_text.clone() {
@@ -621,16 +654,16 @@ impl<T: ConsoleApi>
         if debug_info.map_info() {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
-                    .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
+                    .offset_xy(-camera_pos.x, -camera_pos.y)
                     .draw(draw_state, BG, 12);
             }
             self.player_ref()
                 .hitbox()
-                .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
+                .offset_xy(-camera_pos.x, -camera_pos.y)
                 .draw(draw_state, BG, 12);
             for item in self.current_map.interactables.iter() {
                 item.hitbox
-                    .offset_xy(-self.camera.pos.x, -self.camera.pos.y)
+                    .offset_xy(-camera_pos.x, -camera_pos.y)
                     .draw(draw_state, BG, 14);
             }
         }
@@ -651,22 +684,32 @@ impl<T: ConsoleApi>
             );
             system.print_to(
                 draw_state.rgba(BG),
-                &format!("Camera: {:#?}", self.camera),
+                &format!("Camera: {camera_pos:#?}"),
                 74,
                 0,
                 c11,
                 opts,
             );
         }
-        self.map_viewer.draw_map_viewer(draw_state, system, self);
+        editor.draw_at(draw_state, system, &self.current_map, camera_pos);
+    }
 
-        // Composite all migrated draw output to output_image (once, at the
-        // end of the draw fn).
-        let output = system.output_image();
+    /// Composite the finished walkaround frame (left in `draw_state.rgba(BG)` by
+    /// [`draw_world`](Self::draw_world)) onto `output`. Kept separate from the
+    /// world build so the caller chooses the destination surface — the main
+    /// window uses `system.output_image()`, an extra view its own framebuffer.
+    pub fn composite_into(
+        draw_state: &mut crate::drawstate::DrawState,
+        output: &mut crate::system::image::RgbaImage,
+    ) {
+        use crate::drawstate::LayerId::*;
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+        use crate::system::image::RgbaImage;
+
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[bg],
+            &draw_state.rgba_canvas[BG as usize],
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,

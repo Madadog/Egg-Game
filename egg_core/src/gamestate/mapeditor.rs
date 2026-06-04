@@ -681,12 +681,25 @@ impl MapViewer {
         system: &mut impl ConsoleApi,
         walkaround: &WalkaroundState,
     ) {
+        self.draw_at(draw_state, system, &walkaround.current_map, walkaround.camera.pos);
+    }
+
+    /// Draw the editor overlay + panel for `map` from an explicit `camera_pos`.
+    /// Generalises [`draw_map_viewer`](Self::draw_map_viewer) so an extra view
+    /// can run its own editor against its own free camera, rather than the live
+    /// walkaround camera. No-op while unfocused.
+    pub fn draw_at(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        map: &MapInfo,
+        camera_pos: Vec2,
+    ) {
         if !self.focused {
             return;
         }
-        let map = &walkaround.current_map;
         let screen = (system.width() as f32, system.height() as f32);
-        self.draw_canvas_overlay(draw_state, system, map, walkaround.camera.pos);
+        self.draw_canvas_overlay(draw_state, system, map, camera_pos);
         self.build_ui(map, screen).draw(draw_state, system, LayerId::BG);
     }
 

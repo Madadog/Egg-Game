@@ -18,6 +18,7 @@ mod fantasy_console;
 mod save;
 mod script_asset;
 mod tiled;
+mod views;
 
 /// Bevy frontend: Stores console and game state. Plus stuff for loading assets, pausing sim and window management.
 #[derive(Resource)]
@@ -103,11 +104,29 @@ fn main() {
         .add_plugins(TiledMapPlugin)
         .add_plugins(ScriptPlugin)
         .init_resource::<PendingLanguage>()
+        .init_resource::<views::ViewWindows>()
         .add_systems(Startup, (setup, setup_assets, load_save_game))
-        .add_systems(Update, (load_assets, poll_language_change, resize_screen))
+        .add_systems(
+            Update,
+            (
+                load_assets,
+                poll_language_change,
+                resize_screen,
+                views::resize_views,
+                views::handle_closed_views,
+            ),
+        )
         .add_systems(
             FixedUpdate,
-            (step_state, autosave, play_sounds, play_music, update_texture).chain(),
+            (
+                step_state,
+                views::update_views,
+                autosave,
+                play_sounds,
+                play_music,
+                update_texture,
+            )
+                .chain(),
         )
         .add_systems(Last, save_on_exit)
         // 64 FPS
@@ -415,10 +434,12 @@ fn framebuffer_pixel(cursor: Vec2, window: Vec2, fb: Vec2, scale: f32) -> (i16, 
 /// exactly that integer factor (crisp N×N pixels).
 fn resize_screen(
     mut sprite: Query<(&Sprite, &mut Transform), With<GameScreenSprite>>,
-    mut window: Query<&mut Window>,
+    mut window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
     mut images: ResMut<Assets<Image>>,
     mut game: ResMut<EggGame>,
 ) {
+    // The main framebuffer follows the PRIMARY window only; extra view windows
+    // are sized independently by `views::resize_views`.
     let Ok(mut window) = window.single_mut() else {
         return;
     };
@@ -470,13 +491,17 @@ fn draw_overlay(game: &mut EggGame, text: &str) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_state(
     mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard_events: MessageReader<KeyboardInput>,
-    mut window: Query<&mut Window>,
+    mut windows: Query<(Entity, &mut Window, Has<bevy::window::PrimaryWindow>)>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut views: ResMut<views::ViewWindows>,
 ) {
     if !game.loaded {
         return;
@@ -484,11 +509,23 @@ fn step_state(
 
     game.system.input().refresh();
 
+    // Which window owns keyboard input this frame? Only the primary window
+    // drives the player; an extra window drives its own free camera/editor
+    // (handled in `views::update_views`). We gate the player controller's dpad
+    // on this so arrow keys panning an extra view can't also move the player.
+    let focused_entity = windows.iter().find(|(_, w, _)| w.focused).map(|(e, ..)| e);
+    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
+    let focus = views::resolve_focus(focused_entity, &view_entities);
+    let drives_player = views::drives_player(focus);
+
     // Merge keyboard + (optional) first gamepad into player one's controller.
+    // The directional/action keys only apply while the primary window is
+    // focused; a gamepad always drives the player (it isn't window-routed).
     let pad = gamepads.iter().next().map(|(_, gamepad)| gamepad);
     let stick = |axis: GamepadAxis| pad.and_then(|g| g.get(axis)).unwrap_or(0.0);
     let held = |kb: &[KeyCode], button: GamepadButton| {
-        keys.any_pressed(kb.iter().copied()) || pad.is_some_and(|g| g.pressed(button))
+        (drives_player && keys.any_pressed(kb.iter().copied()))
+            || pad.is_some_and(|g| g.pressed(button))
     };
     let c = &mut game.system.input().controllers[0];
     use KeyCode::*;
@@ -506,7 +543,18 @@ fn step_state(
 
     for keycode in keys.get_pressed() {
         if let Some(scancode) = keycode_to_scancode(*keycode) {
-            game.system.input().press_key(scancode);
+            // While an extra window is focused, only the editor's text-entry
+            // scancodes reach the shared console — so the primary sim's raw-key
+            // shortcuts (palette swaps, load-from-memory…) don't fire from keys
+            // meant for an extra view. Typed characters (below) always pass, so
+            // text entry works in any focused editor.
+            let editor_key = matches!(
+                scancode,
+                ScanCode::Backspace | ScanCode::Escape | ScanCode::Return
+            );
+            if drives_player || editor_key {
+                game.system.input().press_key(scancode);
+            }
         }
     }
     for event in keyboard_events.read() {
@@ -519,7 +567,10 @@ fn step_state(
         }
     }
 
-    if let Ok(mut window) = window.single_mut() {
+    // Screen-mode hotkeys + the scale-factor override apply to the PRIMARY
+    // window only — they drive the main framebuffer. F8 opens an extra view.
+    if let Some((_, mut window, _)) = windows.iter_mut().find(|(.., primary)| *primary) {
+        window.resolution.set_scale_factor_override(Some(1.0));
         if keys.just_pressed(KeyCode::F11) {
             use bevy::window::WindowMode;
             window.mode = match window.mode {
@@ -549,28 +600,52 @@ fn step_state(
                 _ => 1,
             };
         }
-        if let Some(pos) = window.cursor_position() {
-            // Map the window cursor to a framebuffer pixel. The screen sprite is
-            // centred and drawn at `scale` device px per framebuffer px, so invert
-            // that: subtract the centring letterbox, then divide by the scale.
+    }
+    // F8 spawns an extra walkaround window with its own free camera, starting at
+    // the main camera's current position. Only in walkaround (where the camera
+    // is meaningful and the editor lives).
+    if keys.just_pressed(KeyCode::F8)
+        && matches!(game.state.gamestate, GameMode::Walkaround)
+    {
+        let start = game.state.walkaround.camera.pos;
+        views::spawn_view(&mut commands, &mut images, &mut views, start);
+    }
+
+    // Map the FOCUSED window's cursor to its framebuffer pixel, so the editor in
+    // whichever window is focused (primary or an extra view) gets the right
+    // cursor. The screen sprite is centred and drawn at `scale` device px per
+    // framebuffer px, so invert that: subtract the centring letterbox, then
+    // divide by the scale.
+    if let Some((_, window, primary)) = windows.iter().find(|(_, w, _)| w.focused)
+        && let Some(pos) = window.cursor_position()
+    {
+        let (fb_w, fb_h, scale) = if primary {
             let fb_w = game.system.width() as f32;
             let fb_h = game.system.height() as f32;
             let scale = match game.screen_mode {
-                ScreenMode::Fit => screen_scale(&window, &game.scale_mode),
+                ScreenMode::Fit => screen_scale(window, &game.scale_mode),
                 ScreenMode::Mirror => game.mirror_scale.max(1) as f32,
             };
-            let (mx, my) = framebuffer_pixel(
-                pos,
-                Vec2::new(window.width(), window.height()),
-                Vec2::new(fb_w, fb_h),
-                scale,
-            );
-            game.system.input().mouse.x[0] = mx;
-            game.system.input().mouse.y[0] = my;
-            game.system.input().mouse.left[0] = mouse_button.pressed(MouseButton::Left);
-            game.system.input().mouse.right[0] = mouse_button.pressed(MouseButton::Right);
-            game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
-        }
+            (fb_w, fb_h, scale)
+        } else {
+            // Extra views render at the fixed base resolution and fit-scale
+            // their sprite (see `views::resize_views`).
+            let fb_w = WIDTH as f32;
+            let fb_h = HEIGHT as f32;
+            let scale = (window.width() / fb_w).min(window.height() / fb_h);
+            (fb_w, fb_h, scale)
+        };
+        let (mx, my) = framebuffer_pixel(
+            pos,
+            Vec2::new(window.width(), window.height()),
+            Vec2::new(fb_w, fb_h),
+            scale,
+        );
+        game.system.input().mouse.x[0] = mx;
+        game.system.input().mouse.y[0] = my;
+        game.system.input().mouse.left[0] = mouse_button.pressed(MouseButton::Left);
+        game.system.input().mouse.right[0] = mouse_button.pressed(MouseButton::Right);
+        game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
     }
 
     if keys.just_pressed(KeyCode::KeyP) {
@@ -583,10 +658,20 @@ fn step_state(
         draw_overlay(&mut game, "Paused\n[P] to unpause\n[N] to step forward");
         return;
     }
-    // While the map editor is capturing typed text, step the game (so it
-    // processes the keystrokes) and skip all global debug/cheat hotkeys, so
-    // dialogue keys like "town_lamppost" don't fire the m/n/k/l/p shortcuts.
-    if game.state.walkaround.map_viewer.is_typing() {
+    // While the map editor is capturing typed text — in the primary window OR
+    // any extra view — step the game (so the primary processes its keystrokes)
+    // and skip all global debug/cheat hotkeys, so dialogue keys like
+    // "town_lamppost" don't fire the m/n/k/l/p shortcuts. (Typed characters go
+    // into the shared console and are consumed by whichever editor is focused.)
+    if game.state.walkaround.map_viewer.is_typing() || views.any_editor_typing() {
+        game.run();
+        return;
+    }
+    // When an extra view is focused, its arrow keys / `L` / editor are handled in
+    // `views::update_views`; here we just keep the primary simulating + drawing
+    // (with a zeroed player controller, set above) and skip the primary window's
+    // global gameplay/debug hotkeys so they don't fire from keys aimed elsewhere.
+    if !drives_player {
         game.run();
         return;
     }

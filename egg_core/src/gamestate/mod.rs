@@ -28,7 +28,9 @@ use self::menu::MenuState;
 mod debug;
 mod intro;
 pub mod inventory;
-mod mapeditor;
+// Public so a host can give an extra walkaround window its own `MapViewer`
+// (the in-game map editor) instance — see the frontend's multi-window views.
+pub mod mapeditor;
 mod menu;
 pub mod walkaround;
 
