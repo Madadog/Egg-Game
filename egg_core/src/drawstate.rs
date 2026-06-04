@@ -58,6 +58,16 @@ impl DrawState {
         &mut self.indexed_canvas[layer as usize]
     }
 
+    /// Reallocate every screen layer canvas (RGBA + indexed) to `w`×`h`. Used
+    /// when the framebuffer follows the window ("mirror" mode). Contents are
+    /// dropped — each layer is fully redrawn per frame. The sprite sheets
+    /// (`rgba_sprites`/`indexed_sprites`) are left untouched.
+    pub fn resize(&mut self, w: u32, h: u32) {
+        self.rgba_canvas = vec![RgbaImage::new(w, h); self.rgba_canvas.len()];
+        self.indexed_canvas =
+            vec![IndexedImage::new(w as usize, h as usize); self.indexed_canvas.len()];
+    }
+
     /// Resolve a palette index to an Rgba using the default palette
     /// (`palettes[0]`).
     pub fn colour(&self, idx: u8) -> Rgba {
@@ -246,5 +256,33 @@ mod tests {
             },
         );
         assert_eq!(s.rgba_canvas[0].get_pixel(5, 5), Rgba::new(255, 0, 0, 255));
+    }
+
+    #[test]
+    fn resize_tracks_layer_canvases_and_spares_sprites() {
+        let mut s = fresh_state();
+        let layers = s.rgba_canvas.len();
+        assert_eq!(
+            (s.rgba_canvas[0].width(), s.rgba_canvas[0].height()),
+            (240, 136),
+            "default screen is the base resolution"
+        );
+
+        s.resize(960, 540);
+
+        // Every screen layer (RGBA + indexed) follows the new size...
+        assert_eq!(s.rgba_canvas.len(), layers);
+        assert_eq!(s.indexed_canvas.len(), layers);
+        for c in &s.rgba_canvas {
+            assert_eq!((c.width(), c.height()), (960, 540));
+        }
+        for c in &s.indexed_canvas {
+            assert_eq!((c.width(), c.height()), (960, 540));
+        }
+        // ...while the sprite sheet is left untouched.
+        assert_eq!(
+            (s.indexed_sprites.width(), s.indexed_sprites.height()),
+            (256, 128)
+        );
     }
 }

@@ -107,8 +107,7 @@ impl MapViewer {
 
     /// Lay the editor out as a fixed-width black column: tool tabs, the active
     /// tool's controls, then a save button.
-    fn build_ui(&self, map: &MapInfo) -> Ui<EditorKey> {
-        use crate::system::HEIGHT;
+    fn build_ui(&self, map: &MapInfo, screen: (f32, f32)) -> Ui<EditorKey> {
         let mut b = UiBuilder::new();
         let mut rows: Vec<NodeId> = Vec::new();
 
@@ -143,12 +142,12 @@ impl MapViewer {
         ));
 
         let root = b.container(
-            Style { size: ui::size(PANEL_W, HEIGHT as f32), ..ui::column(0.0) },
+            Style { size: ui::size(PANEL_W, screen.1), ..ui::column(0.0) },
             Decoration::fill(0),
             None,
             &rows,
         );
-        b.finish(root)
+        b.finish(root, screen)
     }
 
     fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -398,7 +397,8 @@ impl MapViewer {
             self.step_text_entry(system, map);
         }
 
-        let panel_hit = self.build_ui(map).hit(system.mouse().pos());
+        let screen = (system.width() as f32, system.height() as f32);
+        let panel_hit = self.build_ui(map, screen).hit(system.mouse().pos());
         let mouse = system.mouse();
         match panel_hit {
             Some(key) => self.handle_panel(system, map, key, &mouse, camera_pos),
@@ -480,7 +480,7 @@ impl MapViewer {
             }
             EditorKey::NewObject => {
                 if click {
-                    self.new_object(map, camera_pos);
+                    self.new_object(map, camera_pos, system.width() as i16, system.height() as i16);
                 }
             }
             EditorKey::DeleteObject => {
@@ -562,9 +562,9 @@ impl MapViewer {
         }
     }
 
-    fn new_object(&mut self, map: &mut MapInfo, camera_pos: Vec2) {
-        let x = camera_pos.x + crate::system::WIDTH as i16 / 2;
-        let y = camera_pos.y + crate::system::HEIGHT as i16 / 2;
+    fn new_object(&mut self, map: &mut MapInfo, camera_pos: Vec2, w: i16, h: i16) {
+        let x = camera_pos.x + w / 2;
+        let y = camera_pos.y + h / 2;
         self.create_object(map, Hitbox::new(x, y, 16, 16));
     }
 
@@ -685,8 +685,9 @@ impl MapViewer {
             return;
         }
         let map = &walkaround.current_map;
+        let screen = (system.width() as f32, system.height() as f32);
         self.draw_canvas_overlay(draw_state, system, map, walkaround.camera.pos);
-        self.build_ui(map).draw(draw_state, system, LayerId::BG);
+        self.build_ui(map, screen).draw(draw_state, system, LayerId::BG);
     }
 
     /// Draw tool overlays onto the live world: a tile cursor (paint) or object

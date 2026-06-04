@@ -91,6 +91,18 @@ pub trait ConsoleApi {
     /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;
 
+    /// Current screen/framebuffer size in pixels. Defaults to the base
+    /// [`WIDTH`]/[`HEIGHT`]; a host whose framebuffer can grow (e.g. the
+    /// "mirror window size" mode) overrides these to the live dimensions.
+    /// Engine code reads these instead of the consts so content re-centres at
+    /// any resolution.
+    fn width(&self) -> i32 {
+        WIDTH
+    }
+    fn height(&self) -> i32 {
+        HEIGHT
+    }
+
     /// Default 8×8 bitmap [`Font`] used by `print_to_with_font` and text
     /// measurement. The font caches each glyph's width so text can be
     /// measured without rasterising to a throwaway canvas.

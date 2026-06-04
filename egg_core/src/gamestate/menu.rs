@@ -1,6 +1,5 @@
 use crate::system::PrintOptions;
 use crate::system::StaticSpriteOptions;
-use crate::system::{HEIGHT, WIDTH};
 
 use crate::camera::CameraBounds;
 use crate::data::sound;
@@ -122,6 +121,7 @@ impl MenuState {
     pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<usize> {
         let small = DIALOGUE_OPTIONS.small_text(system);
         let texts: Vec<String> = self.entries.iter().map(|e| e.text(system)).collect();
+        let screen = (system.width() as f32, system.height() as f32);
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
             .entries
@@ -144,7 +144,7 @@ impl MenuState {
             .collect();
         let root = builder.container(
             Style {
-                size: ui::size(WIDTH as f32, HEIGHT as f32),
+                size: ui::size(screen.0, screen.1),
                 padding: ui::pad_lrtb(0.0, 0.0, self.entry_height() as f32, 0.0),
                 ..ui::column(0.0)
             },
@@ -152,7 +152,7 @@ impl MenuState {
             None,
             &rows,
         );
-        builder.finish(root)
+        builder.finish(root, screen)
     }
     pub fn click(
         &mut self,

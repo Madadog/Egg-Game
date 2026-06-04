@@ -131,6 +131,16 @@ impl FantasyConsole {
         // Gamestate draw fns composite directly into output_screen each frame.
         image.copy_from_slice(self.output_screen.data());
     }
+    /// Reallocate the final screen surface to `w`×`h` (no-op if already that
+    /// size). Used by "mirror window" mode, where the framebuffer follows the
+    /// window. Must stay in lock-step with [`DrawState::resize`] (the layer
+    /// canvases) and the host's presentation texture, since
+    /// [`blit_to_image`](Self::blit_to_image) copies `output_screen` verbatim.
+    pub fn resize_screen(&mut self, w: u32, h: u32) {
+        if self.output_screen.width() != w || self.output_screen.height() != h {
+            self.output_screen = RgbaImage::new(w, h);
+        }
+    }
     pub fn set_font(&mut self, font: &Image) {
         assert!(font.size().x == 128);
         assert!(font.size().y >= 128);
@@ -334,6 +344,15 @@ impl ConsoleApi for FantasyConsole {
 
     fn output_image(&mut self) -> &mut RgbaImage {
         &mut self.output_screen
+    }
+
+    /// Live framebuffer size — tracks `output_screen`, which grows to match the
+    /// window in "mirror" mode. Engine code reads these so content re-centres.
+    fn width(&self) -> i32 {
+        self.output_screen.width() as i32
+    }
+    fn height(&self) -> i32 {
+        self.output_screen.height() as i32
     }
 
     fn font(&self) -> &Font {

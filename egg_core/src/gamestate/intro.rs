@@ -2,7 +2,7 @@ use crate::data::sound::music::MusicTrack;
 use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::menu::draw_title_indexed;
 use crate::system::drawing::{Canvas, EdgePolicy};
-use crate::system::{ConsoleApi, ConsoleHelper, HEIGHT, SWEETIE_16, WIDTH};
+use crate::system::{ConsoleApi, ConsoleHelper, SWEETIE_16};
 
 pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl ConsoleApi) -> bool {
     let steps: &[u16] = &[0, 700, 760];
@@ -25,8 +25,8 @@ pub fn draw_animation(t: u16, draw_state: &mut DrawState, system: &mut impl Cons
                 fg.fill_circle(90, 36, 2, 12);
                 let (fw, fh) = (fg.width(), fg.height());
                 for _ in 0..420 {
-                    let x = system.rng().next_u32() as i32 % WIDTH;
-                    let y = system.rng().next_u32() as i32 % HEIGHT;
+                    let x = system.rng().next_u32() as i32 % (fw as i32);
+                    let y = system.rng().next_u32() as i32 % (fh as i32);
                     if x >= 0 && y >= 0 && (x as u32) < fw && (y as u32) < fh {
                         fg.set_pixel(x as u32, y as u32, 12);
                     }

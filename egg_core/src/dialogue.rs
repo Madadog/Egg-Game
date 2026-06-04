@@ -413,7 +413,7 @@ impl Dialogue {
     ) {
         use crate::drawstate::PALETTE_MAP_IDENTITY;
         use crate::system::drawing::Canvas;
-        use crate::system::{HEIGHT, WIDTH};
+        let (screen_w, screen_h) = (system.width(), system.height());
 
         let w = self.width as i32;
         let h = 24;
@@ -422,8 +422,8 @@ impl Dialogue {
         let rect_outline = draw_state.colour(3);
         //TODO: flexbox
         draw_state.rgba(layer).outlined_rect(
-            (WIDTH - w) / 2 - 13,
-            (HEIGHT - h) - 6,
+            (screen_w -w) / 2 - 13,
+            (screen_h -h) - 6,
             h + 4,
             h + 4,
             rect_fill,
@@ -433,8 +433,8 @@ impl Dialogue {
             layer,
             &PALETTE_MAP_IDENTITY,
             portrait,
-            (WIDTH - w) / 2 - 13 + 2,
-            (HEIGHT - h) - 6 + 2,
+            (screen_w -w) / 2 - 13 + 2,
+            (screen_h -h) - 6 + 2,
             StaticSpriteOptions {
                 scale,
                 transparent: &[0],
@@ -457,7 +457,7 @@ impl Dialogue {
         mut height: i32,
     ) {
         use crate::system::drawing::Canvas;
-        use crate::system::{HEIGHT, WIDTH};
+        let (screen_w, screen_h) = (system.width(), system.height());
 
         let print_timer = self.characters;
         let w = self.width as i32;
@@ -480,8 +480,8 @@ impl Dialogue {
             };
             y -= 2;
             draw_state.rgba(layer).outlined_rect(
-                (WIDTH - pw) / 2 - 13,
-                (HEIGHT - h) - 6,
+                (screen_w -pw) / 2 - 13,
+                (screen_h -h) - 6,
                 h + 4,
                 h + 4,
                 dark,
@@ -491,11 +491,11 @@ impl Dialogue {
             portrait.draw_offset(
                 draw_state,
                 layer,
-                Vec2::new(((WIDTH - pw) / 2 - 15) as i16, ((HEIGHT - h) - 8) as i16),
+                Vec2::new(((screen_w -pw) / 2 - 15) as i16, ((screen_h -h) - 8) as i16),
             );
             draw_state.rgba(layer).stroke_rect(
-                (WIDTH - pw) / 2 - 13,
-                (HEIGHT - h) - 6,
+                (screen_w -pw) / 2 - 13,
+                (screen_h -h) - 6,
                 h + 4,
                 h + 4,
                 outline_colour,
@@ -504,8 +504,8 @@ impl Dialogue {
         // Text box
         if self.dark_theme {
             draw_state.rgba(layer).outlined_rect(
-                (WIDTH - w) / 2 + x - 2,
-                (HEIGHT - h) - 4 + y - 2,
+                (screen_w -w) / 2 + x - 2,
+                (screen_h -h) - 4 + y - 2,
                 w + 4,
                 h + height + 4,
                 darkish,
@@ -513,8 +513,8 @@ impl Dialogue {
             );
         }
         draw_state.rgba(layer).outlined_rect(
-            (WIDTH - w) / 2 + x,
-            (HEIGHT - h) - 4 + y,
+            (screen_w -w) / 2 + x,
+            (screen_h -h) - 4 + y,
             w,
             h + height,
             bg_colour,
@@ -529,8 +529,8 @@ impl Dialogue {
         system.print_to(
             draw_state.rgba(layer),
             text,
-            (WIDTH - w) / 2 + 3 + x,
-            (HEIGHT - h) - 4 + 3 + y,
+            (screen_w -w) / 2 + 3 + x,
+            (screen_h -h) - 4 + 3 + y,
             bright,
             PrintOptions {
                 color: 12,

@@ -1,6 +1,10 @@
 use crate::position::Vec2;
 use CameraRange::*;
 
+// Base resolution, used only by the `const fn` constructors (`default`/`bounded`)
+// that build the placeholder camera before a map loads. Live cameras receive the
+// runtime viewport size (which can grow in "mirror window" mode) via `center_on`
+// and `from_map_size`, so a bigger framebuffer reveals more of the map.
 const WIDTH: i16 = crate::system::WIDTH as i16;
 const HEIGHT: i16 = crate::system::HEIGHT as i16;
 
@@ -28,16 +32,19 @@ impl Camera {
     pub fn y(&self) -> i32 {
         self.pos.y.into()
     }
-    pub fn center_on(&mut self, x: i16, y: i16) {
-        self.pos = self.bound(Some(x - WIDTH / 2), Some(y - HEIGHT / 2));
+    /// Centre the viewport on `(x, y)` for a `w`×`h` pixel screen.
+    pub fn center_on(&mut self, x: i16, y: i16, w: i16, h: i16) {
+        self.pos = self.bound(Some(x - w / 2), Some(y - h / 2));
     }
-    pub fn from_map_size(size: Vec2, offset: Vec2) -> Self {
+    /// Build a camera framing a map area of `size` tiles at pixel `offset`, sized
+    /// for a `w`×`h` pixel screen. A larger screen frames more of the map.
+    pub fn from_map_size(size: Vec2, offset: Vec2, w: i16, h: i16) -> Self {
         assert!(size.x.is_positive() && size.y.is_positive());
 
-        let cam_offset = Vec2::new(WIDTH / 2, HEIGHT / 2);
+        let cam_offset = Vec2::new(w / 2, h / 2);
         let center = size * 4 + offset - cam_offset;
 
-        if size.x <= WIDTH / 8 && size.y <= HEIGHT / 8 {
+        if size.x <= w / 8 && size.y <= h / 8 {
             // Area fits inside screen, center and display.
             Camera::new(
                 Vec2::new(center.x, center.y),
@@ -48,13 +55,13 @@ impl Camera {
             Camera::new(
                 Vec2::new(center.x, center.y),
                 CameraBounds {
-                    x_bounds: if size.x >= WIDTH / 8 {
-                        CameraRange::Range(offset.x, offset.x + size.x * 8 - WIDTH)
+                    x_bounds: if size.x >= w / 8 {
+                        CameraRange::Range(offset.x, offset.x + size.x * 8 - w)
                     } else {
                         CameraRange::Stick(center.x)
                     },
-                    y_bounds: if size.y >= HEIGHT / 8 {
-                        CameraRange::Range(offset.y, offset.y + size.y * 8 - HEIGHT)
+                    y_bounds: if size.y >= h / 8 {
+                        CameraRange::Range(offset.y, offset.y + size.y * 8 - h)
                     } else {
                         CameraRange::Stick(center.y)
                     },

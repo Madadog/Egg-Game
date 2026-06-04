@@ -26,7 +26,7 @@ use taffy::prelude::{
 use crate::drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY};
 use crate::position::Vec2;
 use crate::system::drawing::Canvas;
-use crate::system::{ConsoleApi, ConsoleHelper, HEIGHT, PrintOptions, StaticSpriteOptions, WIDTH};
+use crate::system::{ConsoleApi, ConsoleHelper, PrintOptions, StaticSpriteOptions};
 
 /// Re-exported so consumers can write `Style { .. }` literals (with the
 /// [`row`]/[`column`]/[`size`]/[`pad`] helpers) and node-building helpers
@@ -162,13 +162,16 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
     }
 
     /// Compute layout from `root` and resolve every node to an absolute [`Rect`].
-    pub fn finish(mut self, root: NodeId) -> Ui<K> {
+    /// `avail` is the screen size (px) the root lays out within — pass the live
+    /// [`ConsoleApi::width`]/[`height`](crate::system::ConsoleApi::height) so the
+    /// UI fills the framebuffer at any resolution.
+    pub fn finish(mut self, root: NodeId, avail: (f32, f32)) -> Ui<K> {
         self.tree
             .compute_layout(
                 root,
                 Size {
-                    width: AvailableSpace::Definite(WIDTH as f32),
-                    height: AvailableSpace::Definite(HEIGHT as f32),
+                    width: AvailableSpace::Definite(avail.0),
+                    height: AvailableSpace::Definite(avail.1),
                 },
             )
             .expect("taffy compute_layout");
@@ -478,7 +481,7 @@ mod tests {
             None,
             &rows,
         );
-        let ui = b.finish(root);
+        let ui = b.finish(root, (240.0, 136.0));
 
         // Rows stretch to the full 240px width and stack 8px apart from y=40.
         for i in 0..3 {
@@ -519,7 +522,7 @@ mod tests {
             None,
             &[panel],
         );
-        let ui = b.finish(root);
+        let ui = b.finish(root, (240.0, 136.0));
         // Resolved list is [root, panel]; the panel is centred: (240-100)/2, (136-40)/2.
         let panel_rect = ui.resolved.last().unwrap().rect;
         assert_eq!((panel_rect.x, panel_rect.y), (70, 48));

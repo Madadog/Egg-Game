@@ -239,7 +239,7 @@ impl InventoryUi {
     /// both hit-testing (`step`) and drawing (`draw`). Every label/slot carries
     /// an [`InvKey`] so a mouse hit resolves straight to the thing under it.
     pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<InvKey> {
-        use crate::system::{HEIGHT, PrintOptions, WIDTH};
+        use crate::system::PrintOptions;
 
         // Original fixed dimensions, kept so the panel centres exactly as before
         // (item slot stride was `2*8 + 5 = 21`: a 20px box with a 1px gap).
@@ -248,6 +248,7 @@ impl InventoryUi {
 
         let small = DIALOGUE_OPTIONS.small_text(system);
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
+        let screen = (system.width() as f32, system.height() as f32);
         let page = self.state.page();
         let page_select = matches!(self.state, InventoryUiState::PageSelect(_));
         // While choosing a page the side column is highlighted (palette +2); once
@@ -372,12 +373,12 @@ impl InventoryUi {
             &[side, main],
         );
         let root = b.container(
-            Style { size: ui::size(WIDTH as f32, HEIGHT as f32), ..ui::centered() },
+            Style { size: ui::size(screen.0, screen.1), ..ui::centered() },
             Decoration::default(),
             None,
             &[panel],
         );
-        b.finish(root)
+        b.finish(root, screen)
     }
     pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};

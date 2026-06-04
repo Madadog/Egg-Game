@@ -87,7 +87,12 @@ impl WalkaroundState {
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else {
-            self.camera = Camera::from_map_size(map1.size, map1.offset);
+            self.camera = Camera::from_map_size(
+                map1.size,
+                map1.offset,
+                system.width() as i16,
+                system.height() as i16,
+            );
         }
         self.bg_colour = map_set.bg_colour;
         system.music(map_set.music_track.as_ref());
@@ -518,8 +523,12 @@ impl<T: ConsoleApi>
             }
         }
 
-        self.camera
-            .center_on(self.player_ref().pos.x + 4, self.player_ref().pos.y + 8);
+        self.camera.center_on(
+            self.player_ref().pos.x + 4,
+            self.player_ref().pos.y + 8,
+            system.width() as i16,
+            system.height() as i16,
+        );
         None
     }
     fn draw(

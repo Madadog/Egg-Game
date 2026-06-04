@@ -28,6 +28,10 @@ pub struct EggGame {
     pub loaded: bool,
     pub pause: bool,
     pub scale_mode: ScaleMode,
+    /// Fixed-resolution fit vs. window-mirroring framebuffer (toggle: F2).
+    pub screen_mode: ScreenMode,
+    /// In `Mirror` mode, the window:framebuffer pixel ratio — 1/2/4/8 (cycle: F3).
+    pub mirror_scale: u32,
 }
 impl EggGame {
     pub fn run(&mut self) {
@@ -45,13 +49,27 @@ impl Default for EggGame {
             loaded: false,
 
             scale_mode: ScaleMode::Linear,
+            screen_mode: ScreenMode::Fit,
+            mirror_scale: 1,
         }
     }
 }
 
+/// How the framebuffer is scaled into the window in [`ScreenMode::Fit`].
+#[derive(Clone, Copy, PartialEq)]
 pub enum ScaleMode {
     Linear,
     Integer,
+}
+
+/// Screen-sizing policy. `Fit` renders at the fixed base resolution and scales
+/// it to fit the window (the classic look). `Mirror` makes the framebuffer
+/// follow the window size (÷ `mirror_scale`) for genuinely more drawing room —
+/// each game pixel then covers an N×N block of window pixels.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ScreenMode {
+    Fit,
+    Mirror,
 }
 
 fn main() {
@@ -99,18 +117,7 @@ fn main() {
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2d);
-    let screen = Image::new_fill(
-        Extent3d {
-            width: WIDTH as u32,
-            height: HEIGHT as u32,
-            ..default()
-        },
-        TextureDimension::D2,
-        &[0, 0, 0, 255],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::all(),
-    );
-    let screen_handle = images.add(screen);
+    let screen_handle = images.add(new_screen_image(WIDTH as u32, HEIGHT as u32));
     commands.spawn((
         Sprite {
             image: screen_handle.clone(),
@@ -360,7 +367,28 @@ fn update_texture(
     }
 }
 
-/// Integer/linear scale factor that fits the WIDTH×HEIGHT screen into `window`.
+/// Smallest framebuffer Mirror mode will allocate, so a tiny window or a large
+/// scale factor can't produce a degenerate (or zero-sized) screen.
+const MIN_FB_W: u32 = 64;
+const MIN_FB_H: u32 = 48;
+
+/// A fresh black RGBA screen texture of `width`×`height`. Shared by `setup` and
+/// the resize path so the format/usages always match.
+fn new_screen_image(width: u32, height: u32) -> Image {
+    Image::new_fill(
+        Extent3d {
+            width,
+            height,
+            ..default()
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
+    )
+}
+
+/// Integer/linear scale factor that fits the framebuffer into `window` (Fit mode).
 fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
     let fit = (window.width() / WIDTH as f32).min(window.height() / HEIGHT as f32);
     match mode {
@@ -369,18 +397,62 @@ fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
     }
 }
 
+/// Map a window-space `cursor` to a framebuffer pixel. The `fb`-sized screen is
+/// drawn centred at `scale` device-px per framebuffer-px, so subtract the
+/// centring letterbox then divide by the scale. Pure so it can be unit-tested.
+fn framebuffer_pixel(cursor: Vec2, window: Vec2, fb: Vec2, scale: f32) -> (i16, i16) {
+    let offset = (window - fb * scale) / 2.0;
+    (
+        ((cursor.x - offset.x) / scale) as i16,
+        ((cursor.y - offset.y) / scale) as i16,
+    )
+}
+
+/// Reconcile the framebuffer with the active screen mode + window size, then
+/// scale the screen sprite so it fills the window. In `Fit` the framebuffer
+/// stays at the base resolution and the sprite scales to fit; in `Mirror` the
+/// framebuffer follows the window (÷ `mirror_scale`) and the sprite scales by
+/// exactly that integer factor (crisp N×N pixels).
 fn resize_screen(
-    mut sprite: Query<&mut Transform, With<GameScreenSprite>>,
+    mut sprite: Query<(&Sprite, &mut Transform), With<GameScreenSprite>>,
     mut window: Query<&mut Window>,
-    state: Res<EggGame>,
+    mut images: ResMut<Assets<Image>>,
+    mut game: ResMut<EggGame>,
 ) {
-    if let Ok(mut window) = window.single_mut() {
-        window.resolution.set_scale_factor_override(Some(1.0));
-        let size = screen_scale(&window, &state.scale_mode);
-        for mut transform in sprite.iter_mut() {
-            transform.scale = Vec3::new(size, size, 1.0);
+    let Ok(mut window) = window.single_mut() else {
+        return;
+    };
+    window.resolution.set_scale_factor_override(Some(1.0));
+    let Ok((sprite, mut transform)) = sprite.single_mut() else {
+        return;
+    };
+
+    let (target, scale) = match game.screen_mode {
+        ScreenMode::Fit => (
+            (WIDTH as u32, HEIGHT as u32),
+            screen_scale(&window, &game.scale_mode),
+        ),
+        ScreenMode::Mirror => {
+            let n = game.mirror_scale.max(1);
+            let w = (window.width() as u32 / n).max(MIN_FB_W);
+            let h = (window.height() as u32 / n).max(MIN_FB_H);
+            ((w, h), n as f32)
+        }
+    };
+
+    // Resize the three lock-step buffers (console screen, draw layers, GPU
+    // texture) together, only when the size actually changes — `blit_to_image`
+    // copies the screen verbatim, so all three must match.
+    if (game.system.width() as u32, game.system.height() as u32) != target {
+        let g = &mut *game;
+        g.system.resize_screen(target.0, target.1);
+        g.state.draw_state.resize(target.0, target.1);
+        if let Some(image) = images.get_mut(&sprite.image) {
+            *image = new_screen_image(target.0, target.1);
         }
     }
+
+    transform.scale = Vec3::new(scale, scale, 1.0);
 }
 
 /// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
@@ -461,17 +533,40 @@ fn step_state(
                 _ => ScaleMode::Linear,
             };
         }
-        if let Some(pos) = window.cursor_position() {
-            let w = window.width() / WIDTH as f32;
-            let h = window.height() / HEIGHT as f32;
-            let size = screen_scale(&window, &game.scale_mode);
-            let (x_offset, y_offset) = if w > h {
-                ((window.width() - WIDTH as f32 * size) / 2.0, 0.0)
-            } else {
-                (0.0, (window.height() - HEIGHT as f32 * size) / 2.0)
+        // F2 toggles fixed-resolution Fit vs. window-mirroring; F3 cycles the
+        // Mirror pixel ratio 1→2→4→8 (no effect in Fit).
+        if keys.just_pressed(KeyCode::F2) {
+            game.screen_mode = match game.screen_mode {
+                ScreenMode::Fit => ScreenMode::Mirror,
+                ScreenMode::Mirror => ScreenMode::Fit,
             };
-            game.system.input().mouse.x[0] = ((pos.x - x_offset) / size) as i16;
-            game.system.input().mouse.y[0] = ((pos.y - y_offset) / size) as i16;
+        }
+        if keys.just_pressed(KeyCode::F3) {
+            game.mirror_scale = match game.mirror_scale {
+                1 => 2,
+                2 => 4,
+                4 => 8,
+                _ => 1,
+            };
+        }
+        if let Some(pos) = window.cursor_position() {
+            // Map the window cursor to a framebuffer pixel. The screen sprite is
+            // centred and drawn at `scale` device px per framebuffer px, so invert
+            // that: subtract the centring letterbox, then divide by the scale.
+            let fb_w = game.system.width() as f32;
+            let fb_h = game.system.height() as f32;
+            let scale = match game.screen_mode {
+                ScreenMode::Fit => screen_scale(&window, &game.scale_mode),
+                ScreenMode::Mirror => game.mirror_scale.max(1) as f32,
+            };
+            let (mx, my) = framebuffer_pixel(
+                pos,
+                Vec2::new(window.width(), window.height()),
+                Vec2::new(fb_w, fb_h),
+                scale,
+            );
+            game.system.input().mouse.x[0] = mx;
+            game.system.input().mouse.y[0] = my;
             game.system.input().mouse.left[0] = mouse_button.pressed(MouseButton::Left);
             game.system.input().mouse.right[0] = mouse_button.pressed(MouseButton::Right);
             game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
@@ -727,4 +822,47 @@ fn keycode_to_scancode(keycode: KeyCode) -> Option<ScanCode> {
         F12 => ScanCode::F12,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framebuffer_pixel_centres_and_unscales() {
+        // 960x540 framebuffer drawn at 2x exactly fills a 1920x1080 window (no
+        // letterbox): the window centre maps to the framebuffer centre.
+        assert_eq!(
+            framebuffer_pixel(
+                Vec2::new(960.0, 540.0),
+                Vec2::new(1920.0, 1080.0),
+                Vec2::new(960.0, 540.0),
+                2.0,
+            ),
+            (480, 270),
+        );
+
+        // 240x136 framebuffer at 4x = 960x544, centred in a 1000x600 window:
+        // x letterbox = (1000-960)/2 = 20, y letterbox = (600-544)/2 = 28. A
+        // cursor on the image's top-left corner maps to pixel (0, 0)...
+        assert_eq!(
+            framebuffer_pixel(
+                Vec2::new(20.0, 28.0),
+                Vec2::new(1000.0, 600.0),
+                Vec2::new(240.0, 136.0),
+                4.0,
+            ),
+            (0, 0),
+        );
+        // ...and 4 device px further right is exactly one framebuffer px right.
+        assert_eq!(
+            framebuffer_pixel(
+                Vec2::new(24.0, 28.0),
+                Vec2::new(1000.0, 600.0),
+                Vec2::new(240.0, 136.0),
+                4.0,
+            ),
+            (1, 0),
+        );
+    }
 }
