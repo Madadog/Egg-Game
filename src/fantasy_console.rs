@@ -11,7 +11,7 @@ use egg_core::{
         ConsoleApi, Controller, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
         SfxOptions,
         WIDTH,
-        image::{IndexedImage, RgbaImage},
+        drawing::image::{IndexedImage, RgbaImage},
     },
 };
 

@@ -700,11 +700,11 @@ impl WalkaroundState {
     /// window uses `system.output_image()`, an extra view its own framebuffer.
     pub fn composite_into(
         draw_state: &mut crate::drawstate::DrawState,
-        output: &mut crate::system::image::RgbaImage,
+        output: &mut crate::system::drawing::image::RgbaImage,
     ) {
         use crate::drawstate::LayerId::*;
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-        use crate::system::image::RgbaImage;
+        use crate::system::drawing::image::RgbaImage;
 
         output.blit::<RgbaImage>(
             0,

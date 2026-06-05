@@ -478,7 +478,7 @@ fn resize_screen(
 
 /// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
 fn draw_overlay(game: &mut EggGame, text: &str) {
-    let colour = egg_core::system::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
+    let colour = egg_core::system::drawing::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
     let system = &mut game.system;
     egg_core::system::print_to_with_font(
         &system.font,

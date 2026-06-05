@@ -1,9 +1,9 @@
 //! Bitmap font: a glyph atlas plus cached glyph widths, and the free
 //! functions that measure and render text with it.
 
-use super::drawing::Canvas;
 use super::image::RgbaImage;
-use super::types::PrintOptions;
+use super::Canvas;
+use crate::system::types::PrintOptions;
 
 /// An 8×8 bitmap font: an [`RgbaImage`] laid out as a 16×16 grid of glyphs
 /// (indexed by `char as u8`) plus the precomputed visual width of every
@@ -88,7 +88,7 @@ pub fn text_width(font: &Font, text: &str, opts: PrintOptions) -> i32 {
 /// `&Font` reference (e.g. when split-borrowing the console's font and
 /// output_image at the same time). Returns the maximum line width in pixels.
 ///
-/// [`ConsoleHelper::print_to`]: super::ConsoleHelper::print_to
+/// [`ConsoleHelper::print_to`]: crate::system::ConsoleHelper::print_to
 pub fn print_to_with_font<C: Canvas>(
     font: &Font,
     target: &mut C,

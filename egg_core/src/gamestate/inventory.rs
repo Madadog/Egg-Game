@@ -383,7 +383,7 @@ impl InventoryUi {
     pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-        use crate::system::image::{Rgba, RgbaImage};
+        use crate::system::drawing::image::{Rgba, RgbaImage};
         use crate::system::{PrintOptions, StaticSpriteOptions};
 
         let small = DIALOGUE_OPTIONS.small_text(system);

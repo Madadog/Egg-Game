@@ -8,11 +8,11 @@ use crate::{
     interact::Interactable,
     map::{MapInfo, Warp},
     rand::Lcg64Xsh32,
-    system::{drawing::Canvas, image::RgbaImage},
+    system::drawing::{image::RgbaImage, Canvas},
 };
 
 pub use consts::*;
-pub use font::*;
+pub use drawing::font::*;
 pub use input::*;
 pub use scancode::*;
 pub use tilemap::*;
@@ -20,8 +20,6 @@ pub use types::*;
 
 pub mod consts;
 pub mod drawing;
-pub mod font;
-pub mod image;
 pub mod input;
 pub mod scancode;
 pub mod tilemap;

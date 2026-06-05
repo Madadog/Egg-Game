@@ -274,7 +274,7 @@ impl MenuState {
     ) {
         use crate::drawstate::LayerId::*;
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-        use crate::system::image::RgbaImage;
+        use crate::system::drawing::image::RgbaImage;
 
         let c0 = draw_state.colour(0);
         draw_state.rgba(BG).fill(c0);
@@ -383,8 +383,8 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
 /// `canvas` is the target indexed layer; `indexed_sprites` is the sprite
 /// sheet for the egg icon.
 pub fn draw_title_indexed(
-    canvas: &mut crate::system::image::IndexedImage,
-    indexed_sprites: &crate::system::image::IndexedImage,
+    canvas: &mut crate::system::drawing::image::IndexedImage,
+    indexed_sprites: &crate::system::drawing::image::IndexedImage,
     system: &impl ConsoleApi,
     x: i32,
     y: i32,

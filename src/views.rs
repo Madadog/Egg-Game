@@ -58,7 +58,7 @@ pub struct ViewWindow {
     /// GPU texture this view's framebuffer is blitted into each frame.
     pub image: Handle<Image>,
     /// This view's final composited frame (size `VIEW_W`×`VIEW_H`).
-    pub output: egg_core::system::image::RgbaImage,
+    pub output: egg_core::system::drawing::image::RgbaImage,
     /// This view's private layer canvases (never the main `EggState.draw_state`).
     pub draw_state: DrawState,
     /// Independent free camera, panned by the arrow keys while focused.
@@ -151,7 +151,7 @@ pub fn spawn_view(
         camera,
         sprite,
         image,
-        output: egg_core::system::image::RgbaImage::new(VIEW_W, VIEW_H),
+        output: egg_core::system::drawing::image::RgbaImage::new(VIEW_W, VIEW_H),
         draw_state,
         free_cam: start_cam,
         editor: MapViewer::default(),

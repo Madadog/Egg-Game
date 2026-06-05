@@ -180,7 +180,7 @@ pub fn draw_instructions(
 ) {
     use crate::drawstate::LayerId;
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
-    use crate::system::image::RgbaImage;
+    use crate::system::drawing::image::RgbaImage;
     let small_text = DIALOGUE_OPTIONS.small_text(system);
     let title = system.label("instructions_title");
     let instructions = system.label("instructions");

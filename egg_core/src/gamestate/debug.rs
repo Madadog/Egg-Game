@@ -3,7 +3,7 @@ use crate::{
     system::{
         ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, StaticSpriteOptions, pressed,
         drawing::{Canvas, EdgePolicy, Transform},
-        image::{Rgba, RgbaImage},
+        drawing::image::{Rgba, RgbaImage},
     },
 };
 

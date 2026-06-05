@@ -125,13 +125,19 @@ pub enum Flip {
     Both,
 }
 
-#[derive(Debug, Clone)]
-pub enum Rotate {
-    None,
-    By90,
-    By180,
-    By270,
+impl Flip {
+    /// Whether this flip mirrors horizontally.
+    pub const fn x(&self) -> bool {
+        matches!(self, Flip::Horizontal | Flip::Both)
+    }
+    /// Whether this flip mirrors vertically.
+    pub const fn y(&self) -> bool {
+        matches!(self, Flip::Vertical | Flip::Both)
+    }
 }
+
+// Sprite options share the raster core's rotation type directly.
+pub use super::drawing::Rotate;
 
 #[derive(Debug, Clone)]
 pub struct StaticSpriteOptions<'a> {
@@ -204,7 +210,7 @@ impl SpriteOptions {
             transparent: self.transparent.as_slice(),
             scale: self.scale,
             flip: self.flip.clone(),
-            rotate: self.rotate.clone(),
+            rotate: self.rotate,
             w: self.w,
             h: self.h,
         }
