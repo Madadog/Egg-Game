@@ -584,21 +584,33 @@ fn step_state(
                 _ => ScaleMode::Linear,
             };
         }
-        // F2 toggles fixed-resolution Fit vs. window-mirroring; F3 cycles the
-        // Mirror pixel ratio 1→2→4→8 (no effect in Fit).
+        // F2 toggles fixed-resolution Fit vs. window-mirroring. F3 cycles the
+        // Mirror pixel ratio 1→2→4→8 — and since that ratio only means anything
+        // in Mirror, F3 also flips Fit→Mirror so it's never a silent no-op (the
+        // "F3 does nothing in Fit" surprise). Both log so it's clear the key
+        // registered and what state you're now in.
         if keys.just_pressed(KeyCode::F2) {
             game.screen_mode = match game.screen_mode {
                 ScreenMode::Fit => ScreenMode::Mirror,
                 ScreenMode::Mirror => ScreenMode::Fit,
             };
+            let mode = if matches!(game.screen_mode, ScreenMode::Fit) { "Fit" } else { "Mirror" };
+            info!("Screen mode: {mode} ({}x)", game.mirror_scale);
         }
         if keys.just_pressed(KeyCode::F3) {
-            game.mirror_scale = match game.mirror_scale {
-                1 => 2,
-                2 => 4,
-                4 => 8,
-                _ => 1,
-            };
+            if matches!(game.screen_mode, ScreenMode::Fit) {
+                // Enter Mirror first (at the current ratio) so F3 always shows
+                // a visible change rather than silently doing nothing in Fit.
+                game.screen_mode = ScreenMode::Mirror;
+            } else {
+                game.mirror_scale = match game.mirror_scale {
+                    1 => 2,
+                    2 => 4,
+                    4 => 8,
+                    _ => 1,
+                };
+            }
+            info!("Screen mode: Mirror ({}x)", game.mirror_scale);
         }
     }
     // F8 spawns an extra walkaround window with its own free camera, starting at
@@ -608,7 +620,13 @@ fn step_state(
         && matches!(game.state.gamestate, GameMode::Walkaround)
     {
         let start = game.state.walkaround.camera.pos;
-        views::spawn_view(&mut commands, &mut images, &mut views, start);
+        views::spawn_view(
+            &mut commands,
+            &mut images,
+            &mut views,
+            start,
+            &game.state.draw_state,
+        );
     }
 
     // Map the FOCUSED window's cursor to its framebuffer pixel, so the editor in

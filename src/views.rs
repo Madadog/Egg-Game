@@ -87,12 +87,16 @@ impl ViewWindows {
 
 /// Spawn one extra walkaround window, with its own camera (render layer + order),
 /// screen sprite, and framebuffer. The free camera starts at `start_cam` (the
-/// main camera's current position).
+/// main camera's current position). `main_draw` is the loaded main `DrawState`:
+/// the sprite sheets/flags are copied from it into the view's own draw state
+/// (a bare `DrawState::default()` has an empty sheet, which the tile blitter
+/// can't draw from).
 pub fn spawn_view(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     views: &mut ViewWindows,
     start_cam: EggVec2,
+    main_draw: &DrawState,
 ) {
     views.next_layer += 1;
     let layer = views.next_layer;
@@ -135,13 +139,20 @@ pub fn spawn_view(
         ))
         .id();
 
+    // Give the view its own draw state, but share the loaded sprite assets —
+    // the default state's sheets are empty (0×0) and would render nothing.
+    let mut draw_state = DrawState::default();
+    draw_state.rgba_sprites = main_draw.rgba_sprites.clone();
+    draw_state.indexed_sprites = main_draw.indexed_sprites.clone();
+    draw_state.sprite_flags = main_draw.sprite_flags.clone();
+
     views.views.push(ViewWindow {
         window,
         camera,
         sprite,
         image,
         output: egg_core::system::image::RgbaImage::new(VIEW_W, VIEW_H),
-        draw_state: DrawState::default(),
+        draw_state,
         free_cam: start_cam,
         editor: MapViewer::default(),
     });

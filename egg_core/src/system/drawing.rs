@@ -437,6 +437,11 @@ fn draw_sprite<D, F>(
 {
     let xform = xform_from_opts(opts);
     let tpr = tiles_per_row(source.width());
+    if tpr <= 0 {
+        // Empty/unloaded sheet: nothing to draw (and `tile_origin` would
+        // divide by zero).
+        return;
+    }
     for_each_tile(id, x, y, opts, |tile_id, dx, dy| {
         let (tx, ty) = tile_origin(tile_id, tpr);
         blit_tile(dest, source, tx, ty, dx, dy, xform, &convert);
@@ -476,12 +481,15 @@ fn draw_map<D, F>(
         opts.h -= y_tiles;
     }
     let tpr = tiles_per_row(source.width());
+    if tpr <= 0 {
+        // Empty/unloaded sheet: nothing to draw (and `tile_origin` would
+        // divide by zero).
+        return;
+    }
     for j in 0..opts.h {
         for i in 0..opts.w {
-            let Ok(mx) = usize::try_from(opts.x + i) else {
-                continue;
-            };
-            let Ok(my) = usize::try_from(opts.y + j) else {
+            let (Ok(mx), Ok(my)) = (usize::try_from(opts.x + i), usize::try_from(opts.y + j))
+            else {
                 continue;
             };
             let Some(tile_id) = MapLayer::get(layer, mx, my) else {
