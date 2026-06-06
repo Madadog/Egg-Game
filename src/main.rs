@@ -7,7 +7,6 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::EggState;
 
-use egg_core::gamestate::GameMode;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::FantasyConsole;
@@ -15,6 +14,7 @@ use script_asset::{ScriptAsset, ScriptPlugin};
 use tiled::{TiledMap, TiledMapPlugin};
 
 mod fantasy_console;
+mod hotkeys;
 mod save;
 mod script_asset;
 mod tiled;
@@ -111,6 +111,8 @@ fn main() {
             (
                 load_assets,
                 poll_language_change,
+                hotkeys::primary_hotkeys,
+                views::view_hotkeys,
                 resize_screen,
                 views::resize_views,
                 views::handle_closed_views,
@@ -491,17 +493,20 @@ fn draw_overlay(game: &mut EggGame, text: &str) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Per-fixed-step simulation driver: held-key input (controller, panning,
+/// fast-forward, the `Digit3` cheats), typed text, mouse mapping, and the sim
+/// step itself. Edge-triggered hotkeys live in [`hotkeys::primary_hotkeys`] /
+/// [`views::view_hotkeys`] (Update schedule), where `just_pressed` fires
+/// exactly once per tap — here it would re-fire on every catch-up step of a
+/// lagging frame.
 fn step_state(
     mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard_events: MessageReader<KeyboardInput>,
-    mut windows: Query<(Entity, &mut Window, Has<bevy::window::PrimaryWindow>)>,
+    windows: Query<(Entity, &Window, Has<bevy::window::PrimaryWindow>)>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut views: ResMut<views::ViewWindows>,
+    views: Res<views::ViewWindows>,
 ) {
     if !game.loaded {
         return;
@@ -543,14 +548,32 @@ fn step_state(
 
     for keycode in keys.get_pressed() {
         if let Some(scancode) = keycode_to_scancode(*keycode) {
-            // While an extra window is focused, only the editor's text-entry
-            // scancodes reach the shared console — so the primary sim's raw-key
-            // shortcuts (palette swaps, load-from-memory…) don't fire from keys
-            // meant for an extra view. Typed characters (below) always pass, so
-            // text entry works in any focused editor.
+            // While an extra window is focused, only the editor's keys reach the
+            // shared console — so the primary sim's raw-key shortcuts (palette
+            // swaps, load-from-memory…) don't fire from keys meant for an extra
+            // view. Typed characters (below) always pass, so text entry works in
+            // any focused editor.
+            //
+            // Two groups pass: text-entry control keys (used while a field is
+            // focused), and the editor's command shortcuts — Ctrl/Shift modifiers,
+            // Ctrl+Z/Y/S, Delete, and the 1-4 tool switches. They're inert unless
+            // the editor reads them, and the editor's typing guard stops them
+            // firing while a dialogue field is being typed into.
             let editor_key = matches!(
                 scancode,
-                ScanCode::Backspace | ScanCode::Escape | ScanCode::Return
+                ScanCode::Backspace
+                    | ScanCode::Escape
+                    | ScanCode::Return
+                    | ScanCode::Ctrl
+                    | ScanCode::Shift
+                    | ScanCode::Z
+                    | ScanCode::Y
+                    | ScanCode::S
+                    | ScanCode::Delete
+                    | ScanCode::Digit1
+                    | ScanCode::Digit2
+                    | ScanCode::Digit3
+                    | ScanCode::Digit4
             );
             if drives_player || editor_key {
                 game.system.input().press_key(scancode);
@@ -565,68 +588,6 @@ fn step_state(
         {
             game.system.input().push_char(c);
         }
-    }
-
-    // Screen-mode hotkeys + the scale-factor override apply to the PRIMARY
-    // window only — they drive the main framebuffer. F8 opens an extra view.
-    if let Some((_, mut window, _)) = windows.iter_mut().find(|(.., primary)| *primary) {
-        window.resolution.set_scale_factor_override(Some(1.0));
-        if keys.just_pressed(KeyCode::F11) {
-            use bevy::window::WindowMode;
-            window.mode = match window.mode {
-                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                _ => WindowMode::Windowed,
-            };
-        }
-        if keys.just_pressed(KeyCode::F5) {
-            game.scale_mode = match game.scale_mode {
-                ScaleMode::Linear => ScaleMode::Integer,
-                _ => ScaleMode::Linear,
-            };
-        }
-        // F2 toggles fixed-resolution Fit vs. window-mirroring. F3 cycles the
-        // Mirror pixel ratio 1→2→4→8 — and since that ratio only means anything
-        // in Mirror, F3 also flips Fit→Mirror so it's never a silent no-op (the
-        // "F3 does nothing in Fit" surprise). Both log so it's clear the key
-        // registered and what state you're now in.
-        if keys.just_pressed(KeyCode::F2) {
-            game.screen_mode = match game.screen_mode {
-                ScreenMode::Fit => ScreenMode::Mirror,
-                ScreenMode::Mirror => ScreenMode::Fit,
-            };
-            let mode = if matches!(game.screen_mode, ScreenMode::Fit) { "Fit" } else { "Mirror" };
-            info!("Screen mode: {mode} ({}x)", game.mirror_scale);
-        }
-        if keys.just_pressed(KeyCode::F3) {
-            if matches!(game.screen_mode, ScreenMode::Fit) {
-                // Enter Mirror first (at the current ratio) so F3 always shows
-                // a visible change rather than silently doing nothing in Fit.
-                game.screen_mode = ScreenMode::Mirror;
-            } else {
-                game.mirror_scale = match game.mirror_scale {
-                    1 => 2,
-                    2 => 4,
-                    4 => 8,
-                    _ => 1,
-                };
-            }
-            info!("Screen mode: Mirror ({}x)", game.mirror_scale);
-        }
-    }
-    // F8 spawns an extra walkaround window with its own free camera, starting at
-    // the main camera's current position. Only in walkaround (where the camera
-    // is meaningful and the editor lives).
-    if keys.just_pressed(KeyCode::F8)
-        && matches!(game.state.gamestate, GameMode::Walkaround)
-    {
-        let start = game.state.walkaround.camera.pos;
-        views::spawn_view(
-            &mut commands,
-            &mut images,
-            &mut views,
-            start,
-            &game.state.draw_state,
-        );
     }
 
     // Map the FOCUSED window's cursor to its framebuffer pixel, so the editor in
@@ -645,13 +606,20 @@ fn step_state(
                 ScreenMode::Mirror => game.mirror_scale.max(1) as f32,
             };
             (fb_w, fb_h, scale)
+        } else if let views::Focus::Extra(i) = focus {
+            // Extra views render Mirror-style: the framebuffer is the window ÷
+            // the view's pixel ratio and the sprite is scaled by exactly that
+            // ratio (see `views::update_views`/`resize_views`).
+            let v = &views.views[i];
+            (
+                v.output.width() as f32,
+                v.output.height() as f32,
+                v.scale.max(1) as f32,
+            )
         } else {
-            // Extra views render at the fixed base resolution and fit-scale
-            // their sprite (see `views::resize_views`).
-            let fb_w = WIDTH as f32;
-            let fb_h = HEIGHT as f32;
-            let scale = (window.width() / fb_w).min(window.height() / fb_h);
-            (fb_w, fb_h, scale)
+            // Focused window is neither the primary nor a known view (shouldn't
+            // happen); fall back to the base resolution unscaled.
+            (WIDTH as f32, HEIGHT as f32, 1.0)
         };
         let (mx, my) = framebuffer_pixel(
             pos,
@@ -666,13 +634,9 @@ fn step_state(
         game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
     }
 
-    if keys.just_pressed(KeyCode::KeyP) {
-        game.pause = !game.pause;
-    }
+    // Pause (P) and single-step (N) are toggled in `hotkeys::primary_hotkeys`;
+    // here the paused sim just keeps showing the overlay and skips stepping.
     if game.pause {
-        if keys.just_pressed(KeyCode::KeyN) {
-            game.run();
-        }
         draw_overlay(&mut game, "Paused\n[P] to unpause\n[N] to step forward");
         return;
     }
@@ -693,36 +657,16 @@ fn step_state(
         game.run();
         return;
     }
-    if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {
-        let d = &game.state.debug_info;
-        d.set_player_info(!d.player_info());
+    // The primary map editor is open (but not typing): it owns the keyboard
+    // (its `L`-off toggle and shortcuts are handled in `primary_hotkeys` /
+    // `step_map_viewer`), so the held-key cheats below are suppressed — bare
+    // keys (e.g. Digit3) must not fire while editing.
+    if game.state.walkaround.map_viewer.focused {
+        game.run();
+        return;
     }
-    if keys.just_pressed(KeyCode::KeyM) {
-        let d = &game.state.debug_info;
-        d.set_map_info(!d.map_info());
-    }
-    if keys.just_pressed(KeyCode::KeyN) {
-        let d = &game.state.debug_info;
-        d.set_memory_info(!d.memory_info());
-    }
-    // Shift+digit: swap player one for a preset shell.
-    if keys.pressed(KeyCode::ShiftLeft) {
-        use egg_core::player::Shell;
-        let swap = if keys.just_pressed(KeyCode::Digit1) {
-            Some(Shell::ellie())
-        } else if keys.just_pressed(KeyCode::Digit2) {
-            Some(Shell::may())
-        } else if keys.just_pressed(KeyCode::Digit4) {
-            Some(Shell::dog())
-        } else if keys.just_pressed(KeyCode::Digit5) {
-            Some(Shell::bro())
-        } else {
-            None
-        };
-        if let Some(shell) = swap {
-            game.state.walkaround.player().replace(shell);
-        }
-    }
+    // Held-key cheats stay in the fixed step deliberately: they repeat per
+    // simulation step, so their rate is frame-rate independent.
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
         let pos = game.state.walkaround.player().pos;
         let rand = game.system.rng().rand_u8();
@@ -751,48 +695,6 @@ fn step_state(
         }
         info!("we have {} entities", game.state.walkaround.entities.len());
     }
-    if keys.just_pressed(KeyCode::Digit6) && keys.pressed(KeyCode::ShiftLeft) {
-        let player = game.state.walkaround.player().clone();
-        if let Some(shell) = game.state.walkaround.entities.get_mut(0) {
-            let temp = shell.clone();
-            *shell = player;
-            *game.state.walkaround.player() = temp;
-        }
-    }
-
-    if keys.just_pressed(KeyCode::KeyL) && keys.pressed(KeyCode::ShiftLeft) {
-        info!("------------------------");
-        info!("START CURRENT MAP");
-        info!("------------------------");
-        info!("{:#?}", game.state.walkaround.current_map);
-        info!("------------------------");
-        info!("END CURRENT MAP");
-        info!("------------------------");
-    } else if keys.just_pressed(KeyCode::KeyL) {
-        game.state.walkaround.map_viewer.focused = !game.state.walkaround.map_viewer.focused;
-        game.state.walkaround.map_viewer.layer_index = 0;
-    }
-    if keys.just_pressed(KeyCode::Semicolon) && !game.state.walkaround.current_map.layers.is_empty()
-    {
-        info!("------------------------");
-        info!("REMOVED BG LAYER");
-        info!("{:#?}", game.state.walkaround.current_map.layers.remove(0));
-        info!("------------------------");
-    }
-    if keys.just_pressed(KeyCode::Quote) && !game.state.walkaround.current_map.fg_layers.is_empty()
-    {
-        info!("------------------------");
-        info!("REMOVED FG LAYER");
-        info!(
-            "{:#?}",
-            game.state.walkaround.current_map.fg_layers.remove(0)
-        );
-        info!("------------------------");
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        game.state.gamestate = GameMode::SpriteTest(0);
-    }
-
     game.run();
     if keys.pressed(KeyCode::KeyN) {
         game.run();

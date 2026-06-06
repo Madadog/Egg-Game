@@ -2,7 +2,9 @@
 //! game world through its own **independent free camera** (panned with the arrow
 //! keys when that window is focused) and can run the in-game map editor (`L`) on
 //! its own view. The primary window keeps normal gameplay: the player moves with
-//! the arrows/WASD and its camera follows the player.
+//! the arrows/WASD and its camera follows the player. Each view is resizable:
+//! its framebuffer follows its window (Mirror-style) at a per-view pixel ratio
+//! cycled with `F3` while that view is focused.
 //!
 //! Architecture (the Bevy multi-window way, with one shared console):
 //! - Every extra view is a [`Window`] entity + a [`Camera2d`] whose
@@ -36,10 +38,16 @@ use crate::{EggGame, new_screen_image};
 #[derive(Component)]
 pub struct ViewScreenSprite;
 
-/// Internal resolution each extra view renders at. Fixed (the base resolution),
-/// matching the classic look; the window is bigger and the sprite scales to fit.
+/// Internal resolution each extra view *starts* at (the base resolution). The
+/// framebuffer then follows the window — like the main window's Mirror mode —
+/// at the view's pixel ratio ([`ViewWindow::scale`], cycled with `F3`).
 const VIEW_W: u32 = egg_core::system::WIDTH as u32;
 const VIEW_H: u32 = egg_core::system::HEIGHT as u32;
+
+/// Pixel ratio a fresh view starts at (window px per framebuffer px); the spawn
+/// resolution is the base resolution at this ratio, so a new view looks exactly
+/// like the classic fixed-resolution one until resized.
+const VIEW_SCALE: u32 = 3;
 
 /// Free-camera pan speed (framebuffer px per fixed step), and the faster speed
 /// while a Shift key is held.
@@ -65,6 +73,10 @@ pub struct ViewWindow {
     pub free_cam: EggVec2,
     /// This view's own map editor (toggled with `L` while focused).
     pub editor: MapViewer,
+    /// Window px per framebuffer px — the view's framebuffer is the window size
+    /// divided by this (Mirror-style), so resizing the window resizes the view.
+    /// Cycled 1→2→4→8 with `F3` while the view is focused.
+    pub scale: u32,
 }
 
 /// All currently-open extra views. Empty until the first `F8`.
@@ -104,7 +116,7 @@ pub fn spawn_view(
     let window = commands
         .spawn(Window {
             title: format!("Egg Game — view {layer}"),
-            resolution: (VIEW_W * 3, VIEW_H * 3).into(),
+            resolution: (VIEW_W * VIEW_SCALE, VIEW_H * VIEW_SCALE).into(),
             ..default()
         })
         .id();
@@ -155,6 +167,7 @@ pub fn spawn_view(
         draw_state,
         free_cam: start_cam,
         editor: MapViewer::default(),
+        scale: VIEW_SCALE,
     });
     info!("Opened extra view window (layer {layer}); {} open.", views.views.len());
 }
@@ -223,6 +236,41 @@ pub fn handle_closed_views(
     }
 }
 
+/// Edge-triggered hotkeys for the focused extra view: `L` toggles its map
+/// editor, `F3` cycles its pixel ratio. In the `Update` schedule (like
+/// [`hotkeys`](crate::hotkeys)) so `just_pressed` fires exactly once per tap —
+/// the held-key panning stays in the fixed step ([`update_views`]).
+pub fn view_hotkeys(
+    mut views: ResMut<ViewWindows>,
+    keys: Res<ButtonInput<KeyCode>>,
+    windows: Query<(Entity, &Window)>,
+) {
+    let focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
+    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
+    let Focus::Extra(i) = resolve_focus(focused, &view_entities) else {
+        return;
+    };
+    let view = &mut views.views[i];
+
+    // While the editor captures text, leave the `L` toggle alone so a typed
+    // literal "l" doesn't close the editor. F3 is a function key — no clash.
+    if !view.editor.is_typing() && keys.just_pressed(KeyCode::KeyL) {
+        view.editor.focused = !view.editor.focused;
+        view.editor.layer_index = 0;
+    }
+    // F3 cycles this view's pixel ratio (the framebuffer follows in
+    // `update_views`), mirroring the main window's Mirror-ratio hotkey.
+    if keys.just_pressed(KeyCode::F3) {
+        view.scale = match view.scale {
+            1 => 2,
+            2 => 4,
+            4 => 8,
+            _ => 1,
+        };
+        info!("View pixel ratio: {}x", view.scale);
+    }
+}
+
 /// Per-frame update for every extra view: pan/route input for the focused view,
 /// then render the world (or its editor) from each view's free camera into its
 /// own framebuffer and blit that into its GPU texture. The main window is never
@@ -246,15 +294,15 @@ pub fn update_views(
     let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
     let focus = resolve_focus(focused, &view_entities);
 
-    // Route arrow keys + `L` to the focused extra view (if any). The player is
-    // handled in `step_state`, which reads the same `Focus` to decide whether to
-    // drive the controller — so we only move a free camera / toggle an editor.
+    // Route the held arrow keys to the focused extra view's free camera (if
+    // any). The player is handled in `step_state`, which reads the same `Focus`
+    // to decide whether to drive the controller; the view's edge-triggered
+    // hotkeys (`L`/`F3`) live in `view_hotkeys` (Update schedule).
     if let Focus::Extra(i) = focus {
         let fast = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-        let editor_typing = views.views[i].editor.is_typing();
-        // While the editor captures text, leave panning + the `L` toggle alone
-        // so typed keys (incl. a literal "l") don't pan or close the editor.
-        if !editor_typing {
+        // While the editor captures text, leave panning alone so typed keys
+        // don't pan the camera.
+        if !views.views[i].editor.is_typing() {
             let (dx, dy) = free_cam_delta(
                 keys.pressed(KeyCode::ArrowUp),
                 keys.pressed(KeyCode::ArrowDown),
@@ -265,31 +313,46 @@ pub fn update_views(
             let cam = &mut views.views[i].free_cam;
             cam.x = cam.x.saturating_add(dx);
             cam.y = cam.y.saturating_add(dy);
-
-            if keys.just_pressed(KeyCode::KeyL) {
-                let editor = &mut views.views[i].editor;
-                editor.focused = !editor.focused;
-                editor.layer_index = 0;
-            }
         }
 
         // The shared console's mouse was already mapped from the focused window's
         // cursor in `step_state`. Step this view's editor against its own map +
-        // free camera so painting/placing works on the extra window.
+        // free camera — at this view's framebuffer size, so the panel layout and
+        // hit-testing match what `draw_at` renders below.
         if views.views[i].editor.focused {
             let cam = views.views[i].free_cam;
+            let screen = (
+                views.views[i].output.width() as f32,
+                views.views[i].output.height() as f32,
+            );
             let g = &mut *game;
-            views.views[i].editor.step_map_viewer(
+            views.views[i].editor.step_map_viewer_at(
                 &mut g.system,
                 &mut g.state.walkaround.current_map,
                 cam,
+                screen,
             );
         }
     }
 
-    // Render + present every extra view from its own free camera. The view's
-    // DrawState + output are created at the fixed `VIEW_W`×`VIEW_H` and never
-    // change size, so no per-frame reallocation is needed.
+    // Reconcile each view's framebuffer with its window size ÷ pixel ratio
+    // (Mirror-style), keeping the three lock-step buffers (draw state, output,
+    // GPU texture) the same size — `update_views` blits them verbatim.
+    for view in views.views.iter_mut() {
+        let Ok((_, window)) = windows.get(view.window) else {
+            continue;
+        };
+        let target = view_fb_size(window.width(), window.height(), view.scale);
+        if (view.output.width(), view.output.height()) != target {
+            view.draw_state.resize(target.0, target.1);
+            view.output = egg_core::system::drawing::image::RgbaImage::new(target.0, target.1);
+            if let Some(image) = images.get_mut(&view.image) {
+                *image = crate::new_screen_image(target.0, target.1);
+            }
+        }
+    }
+
+    // Render + present every extra view from its own free camera.
     let g = &mut *game;
     for view in views.views.iter_mut() {
         // Draw the world from this view's free camera + editor into its own
@@ -317,22 +380,37 @@ pub fn update_views(
     }
 }
 
-/// Scale each extra view's screen sprite to fill its window (centred fit), the
-/// same letterboxed integer/linear fit the main window uses, but always at the
-/// fixed `VIEW_W`×`VIEW_H` internal resolution.
+/// A view's framebuffer size for its window size and pixel ratio: the window ÷
+/// the ratio, floored at the same minimum as the main Mirror mode so a tiny
+/// window or large ratio can't produce a degenerate framebuffer. Pure so the
+/// sizing rule is unit-testable.
+pub fn view_fb_size(window_w: f32, window_h: f32, scale: u32) -> (u32, u32) {
+    let n = scale.max(1);
+    (
+        (window_w as u32 / n).max(crate::MIN_FB_W),
+        (window_h as u32 / n).max(crate::MIN_FB_H),
+    )
+}
+
+/// Scale each extra view's screen sprite by exactly its pixel ratio (crisp N×N
+/// pixels, like the main window's Mirror mode) — the framebuffer itself follows
+/// the window in `update_views`, so the scaled sprite always fills the window
+/// (bar a sub-ratio remainder strip). Also pins the OS scale factor to 1 so
+/// window units equal device pixels, matching the primary window.
 pub fn resize_views(
     views: Res<ViewWindows>,
-    windows: Query<&Window>,
+    mut windows: Query<&mut Window, Without<bevy::window::PrimaryWindow>>,
     mut transforms: Query<&mut Transform, With<ViewScreenSprite>>,
 ) {
     for view in views.views.iter() {
-        let Ok(window) = windows.get(view.window) else {
+        let Ok(mut window) = windows.get_mut(view.window) else {
             continue;
         };
+        window.resolution.set_scale_factor_override(Some(1.0));
         let Ok(mut transform) = transforms.get_mut(view.sprite) else {
             continue;
         };
-        let scale = (window.width() / VIEW_W as f32).min(window.height() / VIEW_H as f32);
+        let scale = view.scale.max(1) as f32;
         transform.scale = Vec3::new(scale, scale, 1.0);
     }
 }
@@ -362,6 +440,22 @@ mod tests {
         );
         // Opposing keys cancel out.
         assert_eq!(free_cam_delta(true, true, true, true, false), (0, 0));
+    }
+
+    #[test]
+    fn view_fb_follows_window_at_ratio_with_floor() {
+        // Window ÷ ratio, truncated.
+        assert_eq!(view_fb_size(720.0, 408.0, 3), (240, 136));
+        assert_eq!(view_fb_size(721.0, 409.0, 3), (240, 136));
+        // Ratio 1 mirrors the window exactly.
+        assert_eq!(view_fb_size(640.0, 480.0, 1), (640, 480));
+        // Tiny window / large ratio is floored at the Mirror-mode minimum.
+        assert_eq!(
+            view_fb_size(100.0, 100.0, 8),
+            (crate::MIN_FB_W, crate::MIN_FB_H)
+        );
+        // A zero ratio is treated as 1, not a divide-by-zero.
+        assert_eq!(view_fb_size(320.0, 240.0, 0), (320, 240));
     }
 
     #[test]

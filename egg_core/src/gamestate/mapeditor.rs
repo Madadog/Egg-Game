@@ -58,6 +58,95 @@ enum CycleField {
     Sound,
 }
 
+/// Which object list an [`EditAction`] refers to. Captured at record time so
+/// undo/redo replays into the right collection even if the active tool has
+/// since changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObjKind {
+    Interactable,
+    Warp,
+}
+
+/// A whole-object snapshot used by the object undo entries. One of the two
+/// fields is always `Some`, matching the [`ObjKind`] — cloning the object is
+/// cheap (a hitbox + a small interaction/warp) and keeps undo trivially correct
+/// without per-field diffing.
+#[derive(Debug, Clone)]
+enum ObjSnapshot {
+    Interactable(Interactable),
+    Warp(Warp),
+}
+
+/// One reversible edit, the unit of the undo/redo stacks. Tile paints batch a
+/// whole press-drag-release stroke into a single entry (so one Ctrl+Z undoes a
+/// brush stroke, not one pixel of it); object edits snapshot the affected object
+/// before and/or after so they replay exactly.
+#[derive(Debug, Clone)]
+enum EditAction {
+    /// Tiles changed by one paint stroke: `(x, y, old, new)` per cell, in the
+    /// `(bank, layer)` the stroke painted into.
+    Tiles {
+        bank: usize,
+        layer: usize,
+        cells: Vec<(i32, i32, usize, usize)>,
+    },
+    /// An object was appended at `index` (always the end of its list).
+    Add {
+        kind: ObjKind,
+        index: usize,
+        after: ObjSnapshot,
+    },
+    /// An object was removed from `index`; `before` is the object as it was.
+    Remove {
+        kind: ObjKind,
+        index: usize,
+        before: ObjSnapshot,
+    },
+    /// An object was mutated in place (moved, retyped, or a field edited).
+    Modify {
+        kind: ObjKind,
+        index: usize,
+        before: ObjSnapshot,
+        after: ObjSnapshot,
+    },
+}
+
+/// Cap on each undo/redo stack. Tile strokes can be large, so this is a count of
+/// *actions*, not cells — generous enough for a long editing session while still
+/// bounding memory.
+const HISTORY_LIMIT: usize = 128;
+
+/// Bounded undo/redo history. Pushing a new action clears the redo stack (the
+/// usual linear-history model) and drops the oldest undo entry once full.
+#[derive(Debug, Clone, Default)]
+struct History {
+    undo: Vec<EditAction>,
+    redo: Vec<EditAction>,
+}
+
+impl History {
+    /// Record a freshly performed action, invalidating any redo future.
+    fn push(&mut self, action: EditAction) {
+        self.redo.clear();
+        self.undo.push(action);
+        if self.undo.len() > HISTORY_LIMIT {
+            self.undo.remove(0);
+        }
+    }
+    /// Pop the most recent action to be undone, moving it onto the redo stack.
+    fn take_undo(&mut self) -> Option<EditAction> {
+        let action = self.undo.pop()?;
+        self.redo.push(action.clone());
+        Some(action)
+    }
+    /// Pop the most recently undone action to be redone, moving it back onto undo.
+    fn take_redo(&mut self) -> Option<EditAction> {
+        let action = self.redo.pop()?;
+        self.undo.push(action.clone());
+        Some(action)
+    }
+}
+
 /// Hit-test keys for the editor's left-hand panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum EditorKey {
@@ -72,6 +161,10 @@ enum EditorKey {
     DeleteObject,
     Field(EditField),
     Cycle(CycleField),
+    /// Selects the empty tile (0) as the brush — i.e. an eraser.
+    Eraser,
+    Undo,
+    Redo,
     Save,
 }
 
@@ -79,6 +172,8 @@ const PANEL_W: f32 = 84.0;
 const PALETTE_COLS: usize = 9;
 const PALETTE_ROWS: usize = 7;
 const SHEET_TILES: usize = 2048;
+/// Frames a save-confirmation toast stays on screen. At ~64 fps this is ~1.4s.
+const SAVE_TOAST_FRAMES: u32 = 90;
 
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
@@ -92,8 +187,20 @@ pub struct MapViewer {
     drag: Option<Vec2>,
     /// While dragging an existing object: the grab offset (cursor − hitbox origin).
     moving: Option<Vec2>,
+    /// Origin of the object being dragged, captured at grab time so a completed
+    /// drag records a single [`EditAction::Modify`] from there to the drop point.
+    move_from: Option<Vec2>,
     editing: Option<EditField>,
     buffer: String,
+    /// In-progress paint stroke: the cells touched since the mouse went down,
+    /// flushed into one history entry on release so a stroke undoes atomically.
+    stroke: Option<EditAction>,
+    /// Bounded undo/redo stacks for tile and object edits.
+    history: History,
+    /// Set on any edit, cleared on save — drives the unsaved-changes marker.
+    dirty: bool,
+    /// Counts down a "saved" toast after a successful write (purely cosmetic).
+    save_toast: u32,
 }
 
 impl MapViewer {
@@ -114,14 +221,21 @@ impl MapViewer {
         for tool in EditorTool::ALL {
             let selected = tool == self.tool;
             rows.push(b.leaf(
-                Style { size: ui::full_width(7.0), ..Default::default() },
+                Style {
+                    size: ui::full_width(7.0),
+                    ..Default::default()
+                },
                 Content::Text {
                     text: tool.label().to_string(),
                     color: if selected { 0 } else { 12 },
                     center: false,
                     small: true,
                 },
-                if selected { Decoration::fill(11) } else { Decoration::default() },
+                if selected {
+                    Decoration::fill(11)
+                } else {
+                    Decoration::default()
+                },
                 Some(EditorKey::Tool(tool)),
             ));
         }
@@ -130,19 +244,19 @@ impl MapViewer {
         match self.tool {
             EditorTool::Layers => self.build_layers(&mut b, &mut rows, map),
             EditorTool::Paint => self.build_paint(&mut b, &mut rows),
-            EditorTool::Interactables | EditorTool::Warps => self.build_objects(&mut b, &mut rows, map),
+            EditorTool::Interactables | EditorTool::Warps => {
+                self.build_objects(&mut b, &mut rows, map)
+            }
         }
 
         rows.push(spacer(&mut b, 2.0));
-        rows.push(b.leaf(
-            Style { size: ui::full_width(8.0), ..Default::default() },
-            Content::Text { text: "[ SAVE MAP ]".to_string(), color: 6, center: true, small: true },
-            Decoration::outlined(0, 6),
-            Some(EditorKey::Save),
-        ));
+        self.build_footer(&mut b, &mut rows);
 
         let root = b.container(
-            Style { size: ui::size(PANEL_W, screen.1), ..ui::column(0.0) },
+            Style {
+                size: ui::size(PANEL_W, screen.1),
+                ..ui::column(0.0)
+            },
             Decoration::fill(0),
             None,
             &rows,
@@ -150,21 +264,124 @@ impl MapViewer {
         b.finish(root, screen)
     }
 
+    /// The fixed bottom of the panel: an undo/redo row, the save button (with an
+    /// unsaved `*` marker / save toast), and a one-line shortcut/status hint.
+    fn build_footer(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        // Undo/redo, greyed when the respective stack is empty.
+        let undo = b.leaf(
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "<undo".to_string(),
+                color: if self.history.undo.is_empty() { 13 } else { 12 },
+                center: true,
+                small: true,
+            },
+            Decoration::outlined(0, 13),
+            Some(EditorKey::Undo),
+        );
+        let redo = b.leaf(
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "redo>".to_string(),
+                color: if self.history.redo.is_empty() { 13 } else { 12 },
+                center: true,
+                small: true,
+            },
+            Decoration::outlined(0, 13),
+            Some(EditorKey::Redo),
+        );
+        rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[undo, redo]));
+
+        // Save button: a `*` flags unsaved edits; a transient toast confirms a
+        // write. Green outline normally, amber while dirty.
+        let (label, outline) = if self.save_toast > 0 {
+            ("[  SAVED!  ]".to_string(), 11)
+        } else if self.dirty {
+            ("[ SAVE * ]".to_string(), 9)
+        } else {
+            ("[ SAVE MAP ]".to_string(), 6)
+        };
+        rows.push(b.leaf(
+            Style {
+                size: ui::full_width(8.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: label,
+                color: outline,
+                center: true,
+                small: true,
+            },
+            Decoration::outlined(0, outline),
+            Some(EditorKey::Save),
+        ));
+
+        // Status line: the keys most worth remembering for the active tool. Kept
+        // short so it fits the 84px column; `^Z`/`^Y` are the undo/redo chords.
+        let hint = match self.tool {
+            EditorTool::Paint => "Rclk:erase Mclk:pick\nShift+drag:fill\n1-4:tool ^Z/^Y:undo",
+            EditorTool::Interactables | EditorTool::Warps => {
+                "drag:move Del:remove\n1-4:tool ^Z/^Y:undo"
+            }
+            EditorTool::Layers => "1-4:tool ^S:save\n^Z/^Y:undo/redo",
+        };
+        rows.push(b.leaf(
+            Style {
+                size: ui::full_width(20.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: hint.to_string(),
+                color: 14,
+                center: false,
+                small: true,
+            },
+            Decoration::default(),
+            None,
+        ));
+    }
+
     fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
         let layers = if self.fg { &map.fg_layers } else { &map.layers };
         let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
         rows.push(b.leaf(
-            Style { size: ui::full_width(8.0), ..Default::default() },
-            Content::Text { text: title.to_string(), color: 13, center: false, small: false },
+            Style {
+                size: ui::full_width(8.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: title.to_string(),
+                color: 13,
+                center: false,
+                small: false,
+            },
             Decoration::default(),
             Some(EditorKey::Title),
         ));
         for (i, layer) in layers.iter().enumerate() {
             let hidden = if layer.visible { "" } else { "(H)" };
             rows.push(b.leaf(
-                Style { size: ui::full_width(7.0), ..Default::default() },
-                Content::Text { text: format!("Layer {i} {hidden}"), color: 12, center: false, small: true },
-                if i == self.layer_index { Decoration::fill(15) } else { Decoration::default() },
+                Style {
+                    size: ui::full_width(7.0),
+                    ..Default::default()
+                },
+                Content::Text {
+                    text: format!("Layer {i} {hidden}"),
+                    color: 12,
+                    center: false,
+                    small: true,
+                },
+                if i == self.layer_index {
+                    Decoration::fill(15)
+                } else {
+                    Decoration::default()
+                },
                 Some(EditorKey::Layer(i)),
             ));
         }
@@ -173,7 +390,10 @@ impl MapViewer {
     fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         let target = if self.fg { "FG" } else { "BG" };
         rows.push(b.leaf(
-            Style { size: ui::full_width(8.0), ..Default::default() },
+            Style {
+                size: ui::full_width(8.0),
+                ..Default::default()
+            },
             Content::Text {
                 text: format!("Tile {} {target}{}", self.selected_tile, self.layer_index),
                 color: 13,
@@ -184,18 +404,55 @@ impl MapViewer {
             None,
         ));
         let up = b.leaf(
-            Style { size: ui::size(PANEL_W / 2.0 - 1.0, 7.0), ..Default::default() },
-            Content::Text { text: "-up".to_string(), color: 12, center: true, small: true },
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "-up".to_string(),
+                color: 12,
+                center: true,
+                small: true,
+            },
             Decoration::outlined(0, 12),
             Some(EditorKey::PaletteUp),
         );
         let down = b.leaf(
-            Style { size: ui::size(PANEL_W / 2.0 - 1.0, 7.0), ..Default::default() },
-            Content::Text { text: "dn+".to_string(), color: 12, center: true, small: true },
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "dn+".to_string(),
+                color: 12,
+                center: true,
+                small: true,
+            },
             Decoration::outlined(0, 12),
             Some(EditorKey::PaletteDown),
         );
         rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[up, down]));
+
+        // Eraser: paints the empty tile (0). Highlights when it's the brush.
+        let erasing = self.selected_tile == 0;
+        rows.push(b.leaf(
+            Style {
+                size: ui::full_width(7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "eraser".to_string(),
+                color: if erasing { 0 } else { 12 },
+                center: true,
+                small: true,
+            },
+            if erasing {
+                Decoration::fill(8)
+            } else {
+                Decoration::outlined(0, 8)
+            },
+            Some(EditorKey::Eraser),
+        ));
 
         let start = self.palette_scroll * PALETTE_COLS;
         let mut tiles = Vec::with_capacity(PALETTE_COLS * PALETTE_ROWS);
@@ -205,7 +462,10 @@ impl MapViewer {
                 break;
             }
             tiles.push(b.leaf(
-                Style { size: ui::size(8.0, 8.0), ..Default::default() },
+                Style {
+                    size: ui::size(8.0, 8.0),
+                    ..Default::default()
+                },
                 Content::Sprite {
                     id: id as i32,
                     scale: 1,
@@ -218,8 +478,11 @@ impl MapViewer {
             ));
         }
         let grid = b.container(
-            Style { size: ui::width(PALETTE_COLS as f32 * 8.0), ..ui::wrap_row(0.0) },
-            Decoration::fill(1),
+            Style {
+                size: ui::width(PALETTE_COLS as f32 * 8.0),
+                ..ui::wrap_row(0.0)
+            },
+            Decoration::fill(0),
             None,
             &tiles,
         );
@@ -229,7 +492,10 @@ impl MapViewer {
     fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
         let warps = self.tool == EditorTool::Warps;
         rows.push(b.leaf(
-            Style { size: ui::full_width(8.0), ..Default::default() },
+            Style {
+                size: ui::full_width(8.0),
+                ..Default::default()
+            },
             Content::Text {
                 text: if warps { "WARPS:" } else { "INTERACTS:" }.to_string(),
                 color: 13,
@@ -240,20 +506,40 @@ impl MapViewer {
             None,
         ));
         let new = b.leaf(
-            Style { size: ui::size(PANEL_W / 2.0 - 1.0, 7.0), ..Default::default() },
-            Content::Text { text: "+new".to_string(), color: 11, center: true, small: true },
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "+new".to_string(),
+                color: 11,
+                center: true,
+                small: true,
+            },
             Decoration::outlined(0, 11),
             Some(EditorKey::NewObject),
         );
         let del = b.leaf(
-            Style { size: ui::size(PANEL_W / 2.0 - 1.0, 7.0), ..Default::default() },
-            Content::Text { text: "-del".to_string(), color: 8, center: true, small: true },
+            Style {
+                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: "-del".to_string(),
+                color: 8,
+                center: true,
+                small: true,
+            },
             Decoration::outlined(0, 8),
             Some(EditorKey::DeleteObject),
         );
         rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[new, del]));
 
-        let count = if warps { map.warps.len() } else { map.interactables.len() };
+        let count = if warps {
+            map.warps.len()
+        } else {
+            map.interactables.len()
+        };
         for i in 0..count {
             let label = if warps {
                 let dest = map.warps[i].map.map(|m| m.0 as i32).unwrap_or(-1);
@@ -266,9 +552,21 @@ impl MapViewer {
                 }
             };
             rows.push(b.leaf(
-                Style { size: ui::full_width(7.0), ..Default::default() },
-                Content::Text { text: label, color: 12, center: false, small: true },
-                if Some(i) == self.selected { Decoration::fill(15) } else { Decoration::default() },
+                Style {
+                    size: ui::full_width(7.0),
+                    ..Default::default()
+                },
+                Content::Text {
+                    text: label,
+                    color: 12,
+                    center: false,
+                    small: true,
+                },
+                if Some(i) == self.selected {
+                    Decoration::fill(15)
+                } else {
+                    Decoration::default()
+                },
                 Some(EditorKey::Object(i)),
             ));
         }
@@ -277,7 +575,10 @@ impl MapViewer {
             rows.push(spacer(b, 2.0));
             if warps {
                 if let Some(w) = map.warps.get(i) {
-                    let dest = w.map.map(|m| m.0.to_string()).unwrap_or_else(|| "-".to_string());
+                    let dest = w
+                        .map
+                        .map(|m| m.0.to_string())
+                        .unwrap_or_else(|| "-".to_string());
                     self.field_row(b, rows, EditField::ToMap, "map", &dest);
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
@@ -310,9 +611,21 @@ impl MapViewer {
             format!("{label}:{value}")
         };
         rows.push(b.leaf(
-            Style { size: ui::full_width(7.0), ..Default::default() },
-            Content::Text { text, color: if editing { 0 } else { 12 }, center: false, small: true },
-            if editing { Decoration::fill(14) } else { Decoration::default() },
+            Style {
+                size: ui::full_width(7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text,
+                color: if editing { 0 } else { 12 },
+                center: false,
+                small: true,
+            },
+            if editing {
+                Decoration::fill(14)
+            } else {
+                Decoration::default()
+            },
             Some(EditorKey::Field(field)),
         ));
     }
@@ -326,8 +639,16 @@ impl MapViewer {
         value: &str,
     ) {
         rows.push(b.leaf(
-            Style { size: ui::full_width(7.0), ..Default::default() },
-            Content::Text { text: format!("{label}:{value}"), color: 12, center: false, small: true },
+            Style {
+                size: ui::full_width(7.0),
+                ..Default::default()
+            },
+            Content::Text {
+                text: format!("{label}:{value}"),
+                color: 12,
+                center: false,
+                small: true,
+            },
             Decoration::default(),
             Some(EditorKey::Cycle(field)),
         ));
@@ -348,7 +669,11 @@ impl MapViewer {
     }
 
     fn layer_list_len(&self, map: &MapInfo) -> usize {
-        if self.fg { map.fg_layers.len() } else { map.layers.len() }
+        if self.fg {
+            map.fg_layers.len()
+        } else {
+            map.layers.len()
+        }
     }
 
     /// The layer the paint tool writes into (selected in the Layers tool).
@@ -360,16 +685,23 @@ impl MapViewer {
     /// Index of the interactable/warp whose hitbox contains `world` (px).
     fn object_at(&self, map: &MapInfo, world: Vec2) -> Option<usize> {
         if self.tool == EditorTool::Warps {
-            map.warps.iter().position(|w| w.hitbox().touches_point(world))
+            map.warps
+                .iter()
+                .position(|w| w.hitbox().touches_point(world))
         } else {
-            map.interactables.iter().position(|it| it.hitbox.touches_point(world))
+            map.interactables
+                .iter()
+                .position(|it| it.hitbox.touches_point(world))
         }
     }
 
     /// Top-left (px) of object `i`'s hitbox for the active object tool.
     fn object_origin(&self, map: &MapInfo, i: usize) -> Vec2 {
         if self.tool == EditorTool::Warps {
-            map.warps.get(i).map(|w| w.from.0).unwrap_or(Vec2::new(0, 0))
+            map.warps
+                .get(i)
+                .map(|w| w.from.0)
+                .unwrap_or(Vec2::new(0, 0))
         } else {
             map.interactables
                 .get(i)
@@ -390,14 +722,145 @@ impl MapViewer {
         }
     }
 
+    /// The object kind the active object tool edits.
+    fn obj_kind(&self) -> ObjKind {
+        if self.tool == EditorTool::Warps {
+            ObjKind::Warp
+        } else {
+            ObjKind::Interactable
+        }
+    }
+
+    /// Clone object `i` of `kind` into a snapshot, if it exists.
+    fn snapshot(map: &MapInfo, kind: ObjKind, i: usize) -> Option<ObjSnapshot> {
+        match kind {
+            ObjKind::Interactable => map
+                .interactables
+                .get(i)
+                .cloned()
+                .map(ObjSnapshot::Interactable),
+            ObjKind::Warp => map.warps.get(i).cloned().map(ObjSnapshot::Warp),
+        }
+    }
+
+    // --- History --------------------------------------------------------------
+
+    /// Record an action onto the undo stack and flag the map as unsaved. Every
+    /// mutating editor operation funnels through here so dirty-tracking and
+    /// history stay in lock-step.
+    fn record(&mut self, action: EditAction) {
+        self.history.push(action);
+        self.dirty = true;
+    }
+
+    /// Undo the most recent edit (Ctrl+Z). Object indices may shift on
+    /// add/remove, so undo restores list shape as well as contents.
+    fn undo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+        if let Some(action) = self.history.take_undo() {
+            self.revert(system, map, &action);
+            self.dirty = true;
+        }
+    }
+
+    /// Redo the most recently undone edit (Ctrl+Y / Ctrl+Shift+Z).
+    fn redo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+        if let Some(action) = self.history.take_redo() {
+            self.reapply(system, map, &action);
+            self.dirty = true;
+        }
+    }
+
+    /// Reverse an action's effect (the undo direction).
+    fn revert(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, action: &EditAction) {
+        match action {
+            EditAction::Tiles { bank, layer, cells } => {
+                for &(x, y, old, _new) in cells {
+                    system.map_set(*bank, *layer, x, y, old);
+                }
+            }
+            // Undo an add by removing the (last) object it appended.
+            EditAction::Add { kind, index, .. } => {
+                remove_object(map, *kind, *index);
+                self.selected = None;
+            }
+            // Undo a remove by re-inserting the snapshot at its old index.
+            EditAction::Remove {
+                kind,
+                index,
+                before,
+            } => {
+                insert_object(map, *kind, *index, before.clone());
+            }
+            // Undo a modify by restoring the "before" snapshot.
+            EditAction::Modify {
+                kind,
+                index,
+                before,
+                ..
+            } => {
+                set_object(map, *kind, *index, before.clone());
+            }
+        }
+    }
+
+    /// Re-perform an action's effect (the redo direction).
+    fn reapply(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, action: &EditAction) {
+        match action {
+            EditAction::Tiles { bank, layer, cells } => {
+                for &(x, y, _old, new) in cells {
+                    system.map_set(*bank, *layer, x, y, new);
+                }
+            }
+            EditAction::Add { kind, index, after } => {
+                insert_object(map, *kind, *index, after.clone());
+            }
+            EditAction::Remove { kind, index, .. } => {
+                remove_object(map, *kind, *index);
+                self.selected = None;
+            }
+            EditAction::Modify {
+                kind, index, after, ..
+            } => {
+                set_object(map, *kind, *index, after.clone());
+            }
+        }
+    }
+
     // --- Step (input) ---------------------------------------------------------
 
-    pub fn step_map_viewer(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, camera_pos: Vec2) {
-        if self.editing.is_some() {
-            self.step_text_entry(system, map);
+    pub fn step_map_viewer(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        camera_pos: Vec2,
+    ) {
+        let screen = (system.width() as f32, system.height() as f32);
+        self.step_map_viewer_at(system, map, camera_pos, screen);
+    }
+
+    /// Like [`step_map_viewer`](Self::step_map_viewer) but with an explicit
+    /// `screen` size for the panel layout/hit-testing. An extra view's
+    /// framebuffer can be any size, while `system.width()/height()` is always
+    /// the *main* window's framebuffer.
+    pub fn step_map_viewer_at(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        camera_pos: Vec2,
+        screen: (f32, f32),
+    ) {
+        if self.save_toast > 0 {
+            self.save_toast -= 1;
         }
 
-        let screen = (system.width() as f32, system.height() as f32);
+        if self.editing.is_some() {
+            // While a text field is focused all keys feed the buffer — don't let
+            // editor shortcuts (incl. a typed "z") fire.
+            self.step_text_entry(system, map);
+        } else {
+            self.handle_shortcuts(system, map);
+        }
+
         let panel_hit = self.build_ui(map, screen).hit(system.mouse().pos());
         let mouse = system.mouse();
         match panel_hit {
@@ -424,6 +887,67 @@ impl MapViewer {
         }
     }
 
+    /// Global editor keyboard shortcuts (only while no text field is focused):
+    /// Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo, Ctrl+S save, Delete removes the
+    /// selected object, and `1`–`4` switch tools. These keys are forwarded to the
+    /// console by the host's editor-key gate (see `main.rs`).
+    fn handle_shortcuts(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+        let ctrl = system.key(ScanCode::Ctrl);
+        let shift = system.key(ScanCode::Shift);
+        if ctrl {
+            if system.keyp(ScanCode::Z) {
+                if shift {
+                    self.redo(system, map);
+                } else {
+                    self.undo(system, map);
+                }
+            }
+            if system.keyp(ScanCode::Y) {
+                self.redo(system, map);
+            }
+            if system.keyp(ScanCode::S) {
+                self.save(system, map);
+            }
+            // Ctrl-chorded: don't also treat the digit as a tool switch.
+            return;
+        }
+
+        // Delete the selected object (object tools only).
+        if system.keyp(ScanCode::Delete)
+            && matches!(self.tool, EditorTool::Interactables | EditorTool::Warps)
+        {
+            self.delete_object(map);
+        }
+
+        // Number-row tool switching, mirroring the tab order.
+        let tool = if system.keyp(ScanCode::Digit1) {
+            Some(EditorTool::Layers)
+        } else if system.keyp(ScanCode::Digit2) {
+            Some(EditorTool::Paint)
+        } else if system.keyp(ScanCode::Digit3) {
+            Some(EditorTool::Interactables)
+        } else if system.keyp(ScanCode::Digit4) {
+            Some(EditorTool::Warps)
+        } else {
+            None
+        };
+        if let Some(tool) = tool {
+            self.switch_tool(tool);
+        }
+    }
+
+    /// Switch the active tool, clearing any per-tool transient state (selection,
+    /// in-progress drag/stroke) so it can't leak across tools.
+    fn switch_tool(&mut self, tool: EditorTool) {
+        self.tool = tool;
+        self.selected = None;
+        self.editing = None;
+        self.drag = None;
+        self.stroke = None;
+        self.moving = None;
+        self.move_from = None;
+    }
+
     fn handle_panel(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -436,9 +960,7 @@ impl MapViewer {
         match key {
             EditorKey::Tool(tool) => {
                 if click {
-                    self.tool = tool;
-                    self.selected = None;
-                    self.editing = None;
+                    self.switch_tool(tool);
                 }
             }
             EditorKey::Title => {
@@ -468,7 +990,9 @@ impl MapViewer {
             }
             EditorKey::PaletteDown => {
                 if click {
-                    let max = SHEET_TILES.div_ceil(PALETTE_COLS).saturating_sub(PALETTE_ROWS);
+                    let max = SHEET_TILES
+                        .div_ceil(PALETTE_COLS)
+                        .saturating_sub(PALETTE_ROWS);
                     self.palette_scroll = (self.palette_scroll + PALETTE_ROWS).min(max);
                 }
             }
@@ -480,7 +1004,12 @@ impl MapViewer {
             }
             EditorKey::NewObject => {
                 if click {
-                    self.new_object(map, camera_pos, system.width() as i16, system.height() as i16);
+                    self.new_object(
+                        map,
+                        camera_pos,
+                        system.width() as i16,
+                        system.height() as i16,
+                    );
                 }
             }
             EditorKey::DeleteObject => {
@@ -498,9 +1027,24 @@ impl MapViewer {
                     self.cycle(map, field);
                 }
             }
+            EditorKey::Eraser => {
+                if click {
+                    self.selected_tile = 0;
+                }
+            }
+            EditorKey::Undo => {
+                if click {
+                    self.undo(system, map);
+                }
+            }
+            EditorKey::Redo => {
+                if click {
+                    self.redo(system, map);
+                }
+            }
             EditorKey::Save => {
                 if click {
-                    system.write_map(map);
+                    self.save(system, map);
                 }
             }
         }
@@ -514,28 +1058,19 @@ impl MapViewer {
         mouse: &MouseInput,
     ) {
         match self.tool {
-            EditorTool::Paint => {
-                if pressed(mouse.left) || pressed(mouse.right) {
-                    let (tx, ty) = world_tile(mouse, camera_pos);
-                    if tx >= 0 && ty >= 0 {
-                        let value = if pressed(mouse.right) { 0 } else { self.selected_tile };
-                        if let Some((bank, src)) =
-                            self.active_layer(map).map(|l| (map.bank, l.source_layer))
-                        {
-                            system.map_set(bank, src, tx, ty, value);
-                        }
-                    }
-                }
-            }
+            EditorTool::Paint => self.handle_paint(system, map, camera_pos, mouse),
             EditorTool::Interactables | EditorTool::Warps => {
                 let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
                 if just_pressed(mouse.left) {
                     if let Some(i) = self.object_at(map, world) {
-                        // Grab the object under the cursor to drag it around.
+                        // Grab the object under the cursor to drag it around. Note
+                        // the start origin so a completed drag records one undo
+                        // step (start → drop), not a step per moved frame.
                         self.selected = Some(i);
                         self.editing = None;
                         self.drag = None;
                         self.moving = Some(world - self.object_origin(map, i));
+                        self.move_from = Some(self.object_origin(map, i));
                     } else {
                         // Empty space: drag out a box for a new object.
                         self.drag = Some(world);
@@ -549,7 +1084,7 @@ impl MapViewer {
                     self.set_object_origin(map, i, world - offset);
                 }
                 if released(mouse.left) {
-                    self.moving = None;
+                    self.finish_move(map);
                     if let Some(start) = self.drag.take() {
                         let hitbox = hitbox_between(start, world);
                         if hitbox.w >= 4 && hitbox.h >= 4 {
@@ -562,6 +1097,157 @@ impl MapViewer {
         }
     }
 
+    /// Paint tool input: drag-paint with the brush, erase with right-click, pick
+    /// the tile under the cursor with middle-click (eyedropper), or hold Shift to
+    /// drag out a filled rectangle. All of a press-drag-release is one undo step.
+    fn handle_paint(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        camera_pos: Vec2,
+        mouse: &MouseInput,
+    ) {
+        let Some((bank, layer)) = self.active_layer(map).map(|l| (map.bank, l.source_layer)) else {
+            return;
+        };
+        let (tx, ty) = world_tile(mouse, camera_pos);
+
+        // Middle-click eyedropper: lift the existing tile into the brush.
+        if just_pressed(mouse.middle) && tx >= 0 && ty >= 0 {
+            self.selected_tile = system.map_get(bank, layer, tx, ty);
+            return;
+        }
+
+        let rect_mode = system.key(ScanCode::Shift);
+        if rect_mode {
+            // Shift held: drag a rectangle in world space, fill it on release.
+            let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
+            if just_pressed(mouse.left) {
+                self.drag = Some(world);
+            }
+            if released(mouse.left)
+                && let Some(start) = self.drag.take()
+            {
+                self.fill_rect(system, bank, layer, start, world);
+            }
+            return;
+        }
+
+        // Freehand mode: drop any rectangle-drag start left over from releasing
+        // Shift mid-drag (so its preview/fill can't bleed into a freehand stroke).
+        if !pressed(mouse.left) {
+            self.drag = None;
+        }
+
+        // Freehand: paint (or erase with right-click) each cell the cursor passes
+        // over, batching the whole stroke into `self.stroke` until release.
+        if pressed(mouse.left) || pressed(mouse.right) {
+            if self.stroke.is_none() {
+                self.stroke = Some(EditAction::Tiles {
+                    bank,
+                    layer,
+                    cells: Vec::new(),
+                });
+            }
+            if tx >= 0 && ty >= 0 {
+                let value = if pressed(mouse.right) {
+                    0
+                } else {
+                    self.selected_tile
+                };
+                self.paint_cell(system, bank, layer, tx, ty, value);
+            }
+        }
+        if released(mouse.left) || released(mouse.right) {
+            self.flush_stroke();
+        }
+    }
+
+    /// Set one tile, recording its `(old, new)` into the in-progress stroke.
+    /// Skips no-op writes so an undo step only holds cells that actually changed.
+    fn paint_cell(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        bank: usize,
+        layer: usize,
+        tx: i32,
+        ty: i32,
+        value: usize,
+    ) {
+        let old = system.map_get(bank, layer, tx, ty);
+        if old == value {
+            return;
+        }
+        system.map_set(bank, layer, tx, ty, value);
+        if let Some(EditAction::Tiles { cells, .. }) = &mut self.stroke {
+            cells.push((tx, ty, old, value));
+        }
+    }
+
+    /// Flush the in-progress paint stroke into history, if it changed anything.
+    fn flush_stroke(&mut self) {
+        if let Some(EditAction::Tiles { cells, .. }) = &self.stroke
+            && cells.is_empty()
+        {
+            self.stroke = None;
+            return;
+        }
+        if let Some(action) = self.stroke.take() {
+            self.record(action);
+        }
+    }
+
+    /// Fill the tile rectangle between two world points with the current brush,
+    /// as a single undo step.
+    fn fill_rect(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        bank: usize,
+        layer: usize,
+        a: Vec2,
+        b: Vec2,
+    ) {
+        let (x0, y0, x1, y1) = tile_bounds(a, b);
+        self.stroke = Some(EditAction::Tiles {
+            bank,
+            layer,
+            cells: Vec::new(),
+        });
+        for ty in y0..=y1 {
+            for tx in x0..=x1 {
+                if tx >= 0 && ty >= 0 {
+                    self.paint_cell(system, bank, layer, tx, ty, self.selected_tile);
+                }
+            }
+        }
+        self.flush_stroke();
+    }
+
+    /// Settle a finished object drag: if the origin actually changed, record a
+    /// single move as one undo step.
+    fn finish_move(&mut self, map: &mut MapInfo) {
+        let (Some(i), Some(from)) = (self.selected, self.move_from.take()) else {
+            self.moving = None;
+            return;
+        };
+        self.moving = None;
+        let kind = self.obj_kind();
+        let to = self.object_origin(map, i);
+        if to != from
+            && let Some(after) = Self::snapshot(map, kind, i)
+        {
+            // Rebuild the "before" snapshot by re-deriving it from `after`'s
+            // contents with the original origin restored.
+            let before = move_snapshot(after.clone(), from);
+            self.record(EditAction::Modify {
+                kind,
+                index: i,
+                before,
+                after,
+            });
+        }
+    }
+
     fn new_object(&mut self, map: &mut MapInfo, camera_pos: Vec2, w: i16, h: i16) {
         let x = camera_pos.x + w / 2;
         let y = camera_pos.y + h / 2;
@@ -569,28 +1255,36 @@ impl MapViewer {
     }
 
     fn create_object(&mut self, map: &mut MapInfo, hitbox: Hitbox) {
-        if self.tool == EditorTool::Warps {
+        let kind = self.obj_kind();
+        let index = if kind == ObjKind::Warp {
             let to = Vec2::new(hitbox.x, hitbox.y);
             map.warps.push(Warp::new(hitbox, None, to));
-            self.selected = Some(map.warps.len() - 1);
+            map.warps.len() - 1
         } else {
-            map.interactables.push(Interactable::dialogue(hitbox, "new_key"));
-            self.selected = Some(map.interactables.len() - 1);
-        }
+            map.interactables
+                .push(Interactable::dialogue(hitbox, "new_key"));
+            map.interactables.len() - 1
+        };
+        self.selected = Some(index);
         self.editing = None;
+        if let Some(after) = Self::snapshot(map, kind, index) {
+            self.record(EditAction::Add { kind, index, after });
+        }
     }
 
     fn delete_object(&mut self, map: &mut MapInfo) {
-        if let Some(i) = self.selected {
-            if self.tool == EditorTool::Warps {
-                if i < map.warps.len() {
-                    map.warps.remove(i);
-                }
-            } else if i < map.interactables.len() {
-                map.interactables.remove(i);
-            }
-            self.selected = None;
-            self.editing = None;
+        let Some(i) = self.selected else { return };
+        let kind = self.obj_kind();
+        let before = Self::snapshot(map, kind, i);
+        remove_object(map, kind, i);
+        self.selected = None;
+        self.editing = None;
+        if let Some(before) = before {
+            self.record(EditAction::Remove {
+                kind,
+                index: i,
+                before,
+            });
         }
     }
 
@@ -606,12 +1300,16 @@ impl MapViewer {
                 .and_then(|w| w.map)
                 .map(|m| m.0.to_string())
                 .unwrap_or_default(),
-            (Some(i), EditField::ToX) => {
-                map.warps.get(i).map(|w| w.to.x.to_string()).unwrap_or_default()
-            }
-            (Some(i), EditField::ToY) => {
-                map.warps.get(i).map(|w| w.to.y.to_string()).unwrap_or_default()
-            }
+            (Some(i), EditField::ToX) => map
+                .warps
+                .get(i)
+                .map(|w| w.to.x.to_string())
+                .unwrap_or_default(),
+            (Some(i), EditField::ToY) => map
+                .warps
+                .get(i)
+                .map(|w| w.to.y.to_string())
+                .unwrap_or_default(),
             _ => String::new(),
         };
         self.editing = Some(field);
@@ -635,42 +1333,84 @@ impl MapViewer {
         }
     }
 
-    fn commit_edit(&mut self, map: &mut MapInfo) {
-        let (Some(i), Some(field)) = (self.selected, self.editing) else {
+    /// Snapshot the selected object, run `f` to mutate it, then record a single
+    /// [`EditAction::Modify`] if it actually changed. The before/after snapshots
+    /// make every field edit undoable without per-field bookkeeping.
+    fn modify_object(
+        &mut self,
+        map: &mut MapInfo,
+        kind: ObjKind,
+        f: impl FnOnce(&mut MapInfo, usize),
+    ) {
+        let Some(i) = self.selected else { return };
+        let Some(before) = Self::snapshot(map, kind, i) else {
             return;
         };
-        match field {
+        f(map, i);
+        let Some(after) = Self::snapshot(map, kind, i) else {
+            return;
+        };
+        if !snapshot_eq(&before, &after) {
+            self.record(EditAction::Modify {
+                kind,
+                index: i,
+                before,
+                after,
+            });
+        }
+    }
+
+    fn commit_edit(&mut self, map: &mut MapInfo) {
+        let (Some(_), Some(field)) = (self.selected, self.editing) else {
+            return;
+        };
+        let buffer = self.buffer.trim().to_string();
+        let kind = match field {
+            EditField::Key => ObjKind::Interactable,
+            _ => ObjKind::Warp,
+        };
+        self.modify_object(map, kind, |map, i| match field {
             EditField::Key => {
                 if let Some(it) = map.interactables.get_mut(i) {
-                    it.interaction = Interaction::Dialogue(self.buffer.trim().to_string());
+                    it.interaction = Interaction::Dialogue(buffer.clone());
                 }
             }
             EditField::ToMap => {
                 if let Some(w) = map.warps.get_mut(i) {
-                    w.map = self.buffer.trim().parse::<usize>().ok().map(MapIndex);
+                    w.map = buffer.parse::<usize>().ok().map(MapIndex);
                 }
             }
             EditField::ToX => {
-                if let (Some(w), Ok(x)) = (map.warps.get_mut(i), self.buffer.trim().parse()) {
+                if let (Some(w), Ok(x)) = (map.warps.get_mut(i), buffer.parse()) {
                     w.to.x = x;
                 }
             }
             EditField::ToY => {
-                if let (Some(w), Ok(y)) = (map.warps.get_mut(i), self.buffer.trim().parse()) {
+                if let (Some(w), Ok(y)) = (map.warps.get_mut(i), buffer.parse()) {
                     w.to.y = y;
                 }
             }
-        }
+        });
     }
 
     fn cycle(&mut self, map: &mut MapInfo, field: CycleField) {
-        let Some(i) = self.selected else { return };
-        let Some(w) = map.warps.get_mut(i) else { return };
-        match field {
-            CycleField::Flip => w.flip = cycle_flip(&w.flip),
-            CycleField::Mode => w.mode = cycle_mode(&w.mode),
-            CycleField::Sound => w.sound = cycle_sound(&w.sound),
-        }
+        self.modify_object(map, ObjKind::Warp, |map, i| {
+            let Some(w) = map.warps.get_mut(i) else {
+                return;
+            };
+            match field {
+                CycleField::Flip => w.flip = cycle_flip(&w.flip),
+                CycleField::Mode => w.mode = cycle_mode(&w.mode),
+                CycleField::Sound => w.sound = cycle_sound(&w.sound),
+            }
+        });
+    }
+
+    /// Persist the map and start the save-confirmation toast.
+    fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo) {
+        system.write_map(map);
+        self.dirty = false;
+        self.save_toast = SAVE_TOAST_FRAMES;
     }
 
     // --- Draw -----------------------------------------------------------------
@@ -681,7 +1421,12 @@ impl MapViewer {
         system: &mut impl ConsoleApi,
         walkaround: &WalkaroundState,
     ) {
-        self.draw_at(draw_state, system, &walkaround.current_map, walkaround.camera.pos);
+        self.draw_at(
+            draw_state,
+            system,
+            &walkaround.current_map,
+            walkaround.camera.pos,
+        );
     }
 
     /// Draw the editor overlay + panel for `map` from an explicit `camera_pos`.
@@ -698,9 +1443,13 @@ impl MapViewer {
         if !self.focused {
             return;
         }
-        let screen = (system.width() as f32, system.height() as f32);
+        // Lay the panel out against the canvas actually being drawn to — an
+        // extra view's framebuffer can differ from the console's screen size.
+        let canvas = draw_state.rgba(LayerId::BG);
+        let screen = (canvas.width() as f32, canvas.height() as f32);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
-        self.build_ui(map, screen).draw(draw_state, system, LayerId::BG);
+        self.build_ui(map, screen)
+            .draw(draw_state, system, LayerId::BG);
     }
 
     /// Draw tool overlays onto the live world: a tile cursor (paint) or object
@@ -716,11 +1465,29 @@ impl MapViewer {
         let cy = i32::from(camera_pos.y);
         match self.tool {
             EditorTool::Paint => {
-                let (tx, ty) = world_tile(&system.mouse(), camera_pos);
                 let colour = draw_state.colour(11);
-                draw_state
-                    .rgba(LayerId::BG)
-                    .stroke_rect(tx * 8 - cx, ty * 8 - cy, 8, 8, colour);
+                if let Some(start) = self.drag {
+                    // Shift+drag rectangle fill: outline the tile-snapped region.
+                    let m = system.mouse();
+                    let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
+                    let (x0, y0, x1, y1) = tile_bounds(start, world);
+                    draw_state.rgba(LayerId::BG).stroke_rect(
+                        x0 * 8 - cx,
+                        y0 * 8 - cy,
+                        (x1 - x0 + 1) * 8,
+                        (y1 - y0 + 1) * 8,
+                        colour,
+                    );
+                } else {
+                    let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+                    draw_state.rgba(LayerId::BG).stroke_rect(
+                        tx * 8 - cx,
+                        ty * 8 - cy,
+                        8,
+                        8,
+                        colour,
+                    );
+                }
             }
             EditorTool::Interactables => {
                 let base = draw_state.colour(14);
@@ -729,7 +1496,13 @@ impl MapViewer {
                 for (i, it) in map.interactables.iter().enumerate() {
                     let colour = if Some(i) == self.selected { sel } else { base };
                     let h = it.hitbox;
-                    canvas.stroke_rect(i32::from(h.x) - cx, i32::from(h.y) - cy, i32::from(h.w), i32::from(h.h), colour);
+                    canvas.stroke_rect(
+                        i32::from(h.x) - cx,
+                        i32::from(h.y) - cy,
+                        i32::from(h.w),
+                        i32::from(h.h),
+                        colour,
+                    );
                 }
                 self.draw_drag_preview(draw_state, system, camera_pos);
             }
@@ -740,7 +1513,13 @@ impl MapViewer {
                 for (i, w) in map.warps.iter().enumerate() {
                     let h = w.hitbox();
                     let colour = if Some(i) == self.selected { sel } else { base };
-                    canvas.stroke_rect(i32::from(h.x) - cx, i32::from(h.y) - cy, i32::from(h.w), i32::from(h.h), colour);
+                    canvas.stroke_rect(
+                        i32::from(h.x) - cx,
+                        i32::from(h.y) - cy,
+                        i32::from(h.w),
+                        i32::from(h.h),
+                        colour,
+                    );
                 }
                 self.draw_drag_preview(draw_state, system, camera_pos);
             }
@@ -748,7 +1527,12 @@ impl MapViewer {
         }
     }
 
-    fn draw_drag_preview(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi, camera_pos: Vec2) {
+    fn draw_drag_preview(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        camera_pos: Vec2,
+    ) {
         if let Some(start) = self.drag {
             let m = system.mouse();
             let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
@@ -767,7 +1551,10 @@ impl MapViewer {
 
 fn spacer(b: &mut UiBuilder<EditorKey>, height: f32) -> NodeId {
     b.leaf(
-        Style { size: ui::full_width(height), ..Default::default() },
+        Style {
+            size: ui::full_width(height),
+            ..Default::default()
+        },
         Content::None,
         Decoration::default(),
         None,
@@ -795,6 +1582,113 @@ fn hitbox_between(a: Vec2, b: Vec2) -> Hitbox {
         (a.x - b.x).abs().max(1),
         (a.y - b.y).abs().max(1),
     )
+}
+
+/// Inclusive `(x0, y0, x1, y1)` tile range (8px grid) covered by the rectangle
+/// between two world points — used by the rectangle-fill paint mode.
+fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
+    let ax = i32::from(a.x).div_euclid(8);
+    let ay = i32::from(a.y).div_euclid(8);
+    let bx = i32::from(b.x).div_euclid(8);
+    let by = i32::from(b.y).div_euclid(8);
+    (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
+}
+
+/// Return a copy of `snapshot` with its hitbox origin set to `origin` — used to
+/// reconstruct the pre-drag "before" snapshot for a move's undo entry.
+fn move_snapshot(snapshot: ObjSnapshot, origin: Vec2) -> ObjSnapshot {
+    match snapshot {
+        ObjSnapshot::Interactable(mut it) => {
+            it.hitbox.x = origin.x;
+            it.hitbox.y = origin.y;
+            ObjSnapshot::Interactable(it)
+        }
+        ObjSnapshot::Warp(mut w) => {
+            w.from.0 = origin;
+            ObjSnapshot::Warp(w)
+        }
+    }
+}
+
+/// Structural equality for object snapshots. `Interactable`/`Warp` don't derive
+/// `PartialEq` (their interaction can hold a fn pointer), so compare the fields
+/// the editor can actually change — enough to skip recording no-op edits.
+fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
+    match (a, b) {
+        (ObjSnapshot::Interactable(x), ObjSnapshot::Interactable(y)) => {
+            let same_box = x.hitbox.x == y.hitbox.x
+                && x.hitbox.y == y.hitbox.y
+                && x.hitbox.w == y.hitbox.w
+                && x.hitbox.h == y.hitbox.h;
+            same_box && interaction_eq(&x.interaction, &y.interaction)
+        }
+        (ObjSnapshot::Warp(x), ObjSnapshot::Warp(y)) => {
+            x.from == y.from
+                && x.map.map(|m| m.0) == y.map.map(|m| m.0)
+                && x.to == y.to
+                && axis_label(&x.flip) == axis_label(&y.flip)
+                && mode_label(&x.mode) == mode_label(&y.mode)
+                && sound_label(&x.sound) == sound_label(&y.sound)
+        }
+        _ => false,
+    }
+}
+
+/// Compare two interactions by their editable content (dialogue key / kind).
+fn interaction_eq(a: &Interaction, b: &Interaction) -> bool {
+    match (a, b) {
+        (Interaction::Dialogue(x), Interaction::Dialogue(y)) => x == y,
+        (Interaction::None, Interaction::None) => true,
+        (Interaction::Func(_), Interaction::Func(_)) => true,
+        _ => false,
+    }
+}
+
+/// Remove object `i` of `kind` from its list, ignoring out-of-range indices.
+fn remove_object(map: &mut MapInfo, kind: ObjKind, i: usize) {
+    match kind {
+        ObjKind::Interactable if i < map.interactables.len() => {
+            map.interactables.remove(i);
+        }
+        ObjKind::Warp if i < map.warps.len() => {
+            map.warps.remove(i);
+        }
+        _ => {}
+    }
+}
+
+/// Insert `snapshot` at index `i` of its list, clamping past-the-end inserts to
+/// a push so undo of a delete always lands the object back.
+fn insert_object(map: &mut MapInfo, kind: ObjKind, i: usize, snapshot: ObjSnapshot) {
+    match snapshot {
+        ObjSnapshot::Interactable(it) if kind == ObjKind::Interactable => {
+            let i = i.min(map.interactables.len());
+            map.interactables.insert(i, it);
+        }
+        ObjSnapshot::Warp(w) if kind == ObjKind::Warp => {
+            let i = i.min(map.warps.len());
+            map.warps.insert(i, w);
+        }
+        _ => {}
+    }
+}
+
+/// Overwrite object `i` of `kind` in place with `snapshot` (used to replay an
+/// in-place modify). No-op if the index or kind no longer match.
+fn set_object(map: &mut MapInfo, kind: ObjKind, i: usize, snapshot: ObjSnapshot) {
+    match snapshot {
+        ObjSnapshot::Interactable(it) if kind == ObjKind::Interactable => {
+            if let Some(slot) = map.interactables.get_mut(i) {
+                *slot = it;
+            }
+        }
+        ObjSnapshot::Warp(w) if kind == ObjKind::Warp => {
+            if let Some(slot) = map.warps.get_mut(i) {
+                *slot = w;
+            }
+        }
+        _ => {}
+    }
 }
 
 fn axis_label(axis: &Axis) -> &'static str {
@@ -845,5 +1739,138 @@ fn cycle_sound(sound: &Option<SfxData>) -> Option<SfxData> {
         Some(s) if s.id == sound::DOOR.id => Some(sound::STAIRS_DOWN),
         Some(s) if s.id == sound::STAIRS_DOWN.id => Some(sound::STAIRS_UP),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tiles(cells: Vec<(i32, i32, usize, usize)>) -> EditAction {
+        EditAction::Tiles {
+            bank: 0,
+            layer: 0,
+            cells,
+        }
+    }
+
+    /// Pushing onto the undo stack clears any redo future and bounds the stack at
+    /// [`HISTORY_LIMIT`], dropping the oldest entry — the standard linear model.
+    #[test]
+    fn history_push_clears_redo_and_bounds() {
+        let mut h = History::default();
+        h.push(tiles(vec![(0, 0, 1, 2)]));
+        // An undo then push should discard the redo entry.
+        assert!(h.take_undo().is_some());
+        assert_eq!(h.redo.len(), 1);
+        h.push(tiles(vec![(1, 1, 0, 3)]));
+        assert!(h.redo.is_empty(), "new push invalidates redo");
+
+        // Overflow drops the oldest, keeping the cap.
+        let mut h = History::default();
+        for n in 0..(HISTORY_LIMIT + 10) {
+            h.push(tiles(vec![(n as i32, 0, 0, 1)]));
+        }
+        assert_eq!(h.undo.len(), HISTORY_LIMIT);
+    }
+
+    /// `take_undo`/`take_redo` move entries between the two stacks so a sequence
+    /// of undo→redo→undo round-trips correctly.
+    #[test]
+    fn history_undo_redo_round_trip() {
+        let mut h = History::default();
+        h.push(tiles(vec![(0, 0, 1, 2)]));
+        h.push(tiles(vec![(1, 0, 3, 4)]));
+
+        // Undo the latest, then redo it back.
+        assert!(
+            matches!(h.take_undo(), Some(EditAction::Tiles { cells, .. }) if cells == vec![(1, 0, 3, 4)])
+        );
+        assert_eq!((h.undo.len(), h.redo.len()), (1, 1));
+        assert!(
+            matches!(h.take_redo(), Some(EditAction::Tiles { cells, .. }) if cells == vec![(1, 0, 3, 4)])
+        );
+        assert_eq!((h.undo.len(), h.redo.len()), (2, 0));
+        // Nothing left to redo.
+        assert!(h.take_redo().is_none());
+    }
+
+    /// `tile_bounds` returns an inclusive, normalised tile range regardless of
+    /// drag direction — the basis for rectangle fill.
+    #[test]
+    fn tile_bounds_normalises_and_snaps() {
+        // (3..=20) px on x spans tiles 0..=2; y from 9..=1 normalises and snaps.
+        assert_eq!(tile_bounds(Vec2::new(20, 1), Vec2::new(3, 9)), (0, 0, 2, 1),);
+        // A point within one tile is a 1x1 range.
+        assert_eq!(tile_bounds(Vec2::new(4, 4), Vec2::new(7, 7)), (0, 0, 0, 0));
+    }
+
+    /// `hitbox_between` spans two points with a 1px minimum (so a click without a
+    /// drag still yields a valid, non-panicking hitbox).
+    #[test]
+    fn hitbox_between_min_size() {
+        let h = hitbox_between(Vec2::new(10, 20), Vec2::new(4, 5));
+        assert_eq!((h.x, h.y, h.w, h.h), (4, 5, 6, 15));
+        let dot = hitbox_between(Vec2::new(7, 7), Vec2::new(7, 7));
+        assert_eq!((dot.w, dot.h), (1, 1));
+    }
+
+    /// `move_snapshot` relocates an object's origin without touching its size or
+    /// payload, so a drag's "before" snapshot is exact for undo.
+    #[test]
+    fn move_snapshot_relocates_origin() {
+        let it = Interactable::dialogue(Hitbox::new(40, 50, 16, 8), "k");
+        let moved = move_snapshot(ObjSnapshot::Interactable(it), Vec2::new(1, 2));
+        let ObjSnapshot::Interactable(out) = moved else {
+            panic!("kind")
+        };
+        assert_eq!((out.hitbox.x, out.hitbox.y), (1, 2));
+        assert_eq!((out.hitbox.w, out.hitbox.h), (16, 8)); // size preserved
+    }
+
+    /// `snapshot_eq` is true only for identical editable content, so no-op edits
+    /// aren't recorded as undo steps.
+    #[test]
+    fn snapshot_eq_detects_changes() {
+        let a = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "x"));
+        let same = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "x"));
+        let diff_key =
+            ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "y"));
+        let diff_box =
+            ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(1, 0, 8, 8), "x"));
+        assert!(snapshot_eq(&a, &same));
+        assert!(!snapshot_eq(&a, &diff_key));
+        assert!(!snapshot_eq(&a, &diff_box));
+        // Cross-kind never compares equal.
+        let warp = ObjSnapshot::Warp(Warp::new(Hitbox::new(0, 0, 8, 8), None, Vec2::new(0, 0)));
+        assert!(!snapshot_eq(&a, &warp));
+    }
+
+    /// Object add/remove undo replays into the right list at the right index:
+    /// undo of a remove re-inserts the exact object, undo of an add removes it.
+    #[test]
+    fn object_insert_remove_round_trip() {
+        let mut map = MapInfo::default();
+        map.interactables
+            .push(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "a"));
+        map.interactables
+            .push(Interactable::dialogue(Hitbox::new(8, 0, 8, 8), "b"));
+
+        // Snapshot + remove index 0, then re-insert it: list shape is restored.
+        let snap = MapViewer::snapshot(&map, ObjKind::Interactable, 0).unwrap();
+        remove_object(&mut map, ObjKind::Interactable, 0);
+        assert_eq!(map.interactables.len(), 1);
+        insert_object(&mut map, ObjKind::Interactable, 0, snap);
+        assert_eq!(map.interactables.len(), 2);
+        let key = match &map.interactables[0].interaction {
+            Interaction::Dialogue(k) => k.as_str(),
+            _ => "",
+        };
+        assert_eq!(key, "a", "re-inserted at original index");
+
+        // A past-the-end insert clamps to a push rather than panicking.
+        let extra = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "c"));
+        insert_object(&mut map, ObjKind::Interactable, 99, extra);
+        assert_eq!(map.interactables.len(), 3);
     }
 }
