@@ -1,10 +1,14 @@
-//! Format-agnostic raster core: the [`Canvas`] trait (pixel access, `blit`,
-//! immediate-mode primitives) and the discrete [`Transform`] applied during
-//! blits. Knows nothing about sprite sheets, maps, or palettes — that layer
-//! lives in [`sheet`].
+//! The drawing subsystem: pixel containers ([`image`]), this module's
+//! format-agnostic raster core (the [`Canvas`] trait — pixel access, `blit`,
+//! immediate-mode primitives — and the discrete [`Transform`] applied during
+//! blits), bitmap text ([`font`]), and the TIC-80 sheet/palette layer
+//! ([`sheet`]). The core here knows nothing about sprite sheets, maps, or
+//! palettes.
 
-use super::image::{IndexedImage, Rgba, RgbaImage};
+use self::image::{IndexedImage, Rgba, RgbaImage};
 
+pub mod font;
+pub mod image;
 pub mod sheet;
 
 /// How `blit` treats destination pixels outside the natural projection of the source.

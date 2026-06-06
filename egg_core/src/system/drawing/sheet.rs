@@ -4,8 +4,8 @@
 //! pixels to colours. The public surface is the inherent methods on
 //! [`RgbaImage`] and [`IndexedImage`] below.
 
+use super::image::{IndexedImage, Rgba, RgbaImage};
 use super::{Canvas, EdgePolicy, Rotate, Transform};
-use crate::system::image::{IndexedImage, Rgba, RgbaImage};
 use crate::system::{MapLayer, MapOptions, StaticSpriteOptions};
 
 /// Number of 8-pixel tiles in one row of a sprite sheet.
