@@ -2,7 +2,7 @@ use crate::{
     data::sound,
     dialogue::{DIALOGUE_OPTIONS, Dialogue},
     system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
-    ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
+    ui::{NodeId, Ui, UiBuilder},
 };
 
 static ITEM_FF: InventoryItem = InventoryItem {
@@ -154,24 +154,15 @@ pub enum InvKey {
     Egg(usize),
 }
 
-/// Build a 20×20 item/egg slot: an outlined box keyed for hit-testing, holding
-/// an optional 16×16 sprite inset by 2px (via padding).
-fn make_slot(builder: &mut UiBuilder<InvKey>, key: InvKey, outline: u8, sprite: Option<Content>) -> NodeId {
-    let children: Vec<NodeId> = match sprite {
-        Some(content) => vec![builder.leaf(
-            Style { size: ui::size(16.0, 16.0), ..Default::default() },
-            content,
-            Decoration::default(),
-            None,
-        )],
-        None => Vec::new(),
-    };
-    builder.container(
-        Style { size: ui::size(20.0, 20.0), padding: ui::pad(2.0), ..Default::default() },
-        Decoration::outlined(0, outline),
-        Some(key),
-        &children,
-    )
+/// A 20×20 item/egg slot: an outlined box keyed for hit-testing, wrapping an
+/// optional pre-built 16×16 sprite `child` inset 2px by the padding.
+fn slot(b: &mut UiBuilder<InvKey>, key: InvKey, outline: u8, child: Option<NodeId>) -> NodeId {
+    b.boxed(child)
+        .size(20.0, 20.0)
+        .pad(2.0)
+        .outlined(0, outline)
+        .key(key)
+        .id()
 }
 
 pub struct InventoryUi {
@@ -278,25 +269,20 @@ impl InventoryUi {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                let selected = i as i32 == page;
-                b.leaf(
-                    Style { size: ui::full_width(8.0), ..Default::default() },
-                    Content::Text { text: s.to_string(), color: 12, center: false, small },
-                    if selected { Decoration::fill(col_c + 1) } else { Decoration::default() },
-                    Some(InvKey::Page(i)),
-                )
+                b.text(s.as_str())
+                    .small(small)
+                    .full_width(8.0)
+                    .fill_if(i as i32 == page, col_c + 1)
+                    .key(InvKey::Page(i))
+                    .id()
             })
             .collect();
-        let side = b.container(
-            Style {
-                size: ui::width((label_w + 5) as f32),
-                padding: ui::pad_lrtb(2.0, 2.0, 1.0, 1.0),
-                ..ui::column(0.0)
-            },
-            Decoration::outlined(col_c, col_c + 1),
-            None,
-            &label_nodes,
-        );
+        let side = b
+            .column(0.0, label_nodes)
+            .width((label_w + 5) as f32)
+            .pad_lrtb(2.0, 2.0, 1.0, 1.0)
+            .outlined(col_c, col_c + 1)
+            .id();
 
         // --- Main area: a slot grid (Items/Eggs) or a hint box (Options/Back). ---
         let main = match page {
@@ -309,75 +295,56 @@ impl InventoryUi {
                     .map(|(i, item)| {
                         // The slot we're currently dragging from is left empty;
                         // the floating item is drawn over the cursor in `draw`.
-                        let sprite = match item {
+                        let child = match item {
                             Some(item) if dragging_from != Some(i) => {
-                                Some(Content::Sprite { id: item.sprite, scale: 2, w: 1, h: 1, outline: None })
+                                Some(b.sprite(item.sprite, 1, 1).scale(2).size(16.0, 16.0).id())
                             }
                             _ => None,
                         };
-                        make_slot(&mut b, InvKey::Slot(i), main_c + 1, sprite)
+                        slot(&mut b, InvKey::Slot(i), main_c + 1, child)
                     })
                     .collect();
-                b.container(
-                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(3.0, 2.0, 3.0, 3.0), ..ui::wrap_row(1.0) },
-                    Decoration::outlined(main_c, main_c + 1),
-                    None,
-                    &slots,
-                )
+                b.wrap_row(1.0, slots)
+                    .width(MAIN_W)
+                    .pad_lrtb(3.0, 2.0, 3.0, 3.0)
+                    .outlined(main_c, main_c + 1)
+                    .id()
             }
             1 => {
                 let slots: Vec<NodeId> = (0..4)
                     .map(|i| {
-                        let egg = Content::Sprite { id: 534, scale: 1, w: 2, h: 2, outline: None };
-                        make_slot(&mut b, InvKey::Egg(i), main_c + 1, Some(egg))
+                        let egg = b.sprite(534, 2, 2).size(16.0, 16.0).id();
+                        slot(&mut b, InvKey::Egg(i), main_c + 1, Some(egg))
                     })
                     .collect();
-                b.container(
-                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(3.0, 2.0, 3.0, 3.0), ..ui::wrap_row(1.0) },
-                    Decoration::outlined(main_c, main_c + 1),
-                    None,
-                    &slots,
-                )
+                b.wrap_row(1.0, slots)
+                    .width(MAIN_W)
+                    .pad_lrtb(3.0, 2.0, 3.0, 3.0)
+                    .outlined(main_c, main_c + 1)
+                    .id()
             }
             n => {
                 let hint = if n == 2 { "Open options menu" } else { "Back to world" };
                 let hint_w = system.text_width(hint, body_opts.clone());
-                let text_node = b.leaf(
-                    Style { size: ui::size(hint_w as f32, 8.0), ..Default::default() },
-                    Content::Text { text: hint.to_string(), color: 12, center: false, small },
-                    Decoration::default(),
-                    None,
-                );
-                let hint_box = b.container(
-                    Style { size: ui::size((hint_w + 3) as f32, 10.0), padding: ui::pad_lrtb(2.0, 0.0, 1.0, 0.0), ..Default::default() },
-                    Decoration::outlined(col_c, col_c + 1),
-                    None,
-                    &[text_node],
-                );
+                let text_node = b.text(hint).small(small).size(hint_w as f32, 8.0).id();
+                let hint_box = b
+                    .boxed([text_node])
+                    .size((hint_w + 3) as f32, 10.0)
+                    .pad_lrtb(2.0, 0.0, 1.0, 0.0)
+                    .outlined(col_c, col_c + 1)
+                    .id();
                 // Reserve the full main width so the side column keeps its x, and
                 // drop the hint box level with the selected page label.
-                b.container(
-                    Style { size: ui::width(MAIN_W), padding: ui::pad_lrtb(0.0, 0.0, (n * 8) as f32, 0.0), ..ui::column(0.0) },
-                    Decoration::default(),
-                    None,
-                    &[hint_box],
-                )
+                b.column(0.0, [hint_box])
+                    .width(MAIN_W)
+                    .pad_lrtb(0.0, 0.0, (n * 8) as f32, 0.0)
+                    .id()
             }
         };
 
         // --- Panel (side + main), centred on the 240×136 screen by Taffy. ---
-        let panel = b.container(
-            Style { size: ui::full_width(PANEL_H), ..ui::row_top(2.0) },
-            Decoration::default(),
-            None,
-            &[side, main],
-        );
-        let root = b.container(
-            Style { size: ui::size(screen.0, screen.1), ..ui::centered() },
-            Decoration::default(),
-            None,
-            &[panel],
-        );
+        let panel = b.row_top(2.0, [side, main]).full_width(PANEL_H).id();
+        let root = b.centered(panel).size(screen.0, screen.1).id();
         b.finish(root, screen)
     }
     pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {

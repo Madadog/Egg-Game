@@ -14,7 +14,7 @@ use crate::{
     system::{
         ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
     },
-    ui::{self, Content, Decoration, NodeId, Style, Ui, UiBuilder},
+    ui::{NodeId, Ui, UiBuilder},
 };
 
 use super::walkaround::WalkaroundState;
@@ -220,26 +220,17 @@ impl MapViewer {
 
         for tool in EditorTool::ALL {
             let selected = tool == self.tool;
-            rows.push(b.leaf(
-                Style {
-                    size: ui::full_width(7.0),
-                    ..Default::default()
-                },
-                Content::Text {
-                    text: tool.label().to_string(),
-                    color: if selected { 0 } else { 12 },
-                    center: false,
-                    small: true,
-                },
-                if selected {
-                    Decoration::fill(11)
-                } else {
-                    Decoration::default()
-                },
-                Some(EditorKey::Tool(tool)),
-            ));
+            rows.push(
+                b.text(tool.label())
+                    .small(true)
+                    .color(if selected { 0 } else { 12 })
+                    .full_width(7.0)
+                    .fill_if(selected, 11)
+                    .key(EditorKey::Tool(tool))
+                    .id(),
+            );
         }
-        rows.push(spacer(&mut b, 2.0));
+        rows.push(b.spacer(2.0).id());
 
         match self.tool {
             EditorTool::Layers => self.build_layers(&mut b, &mut rows, map),
@@ -249,18 +240,10 @@ impl MapViewer {
             }
         }
 
-        rows.push(spacer(&mut b, 2.0));
+        rows.push(b.spacer(2.0).id());
         self.build_footer(&mut b, &mut rows);
 
-        let root = b.container(
-            Style {
-                size: ui::size(PANEL_W, screen.1),
-                ..ui::column(0.0)
-            },
-            Decoration::fill(0),
-            None,
-            &rows,
-        );
+        let root = b.column(0.0, rows).size(PANEL_W, screen.1).fill(0).id();
         b.finish(root, screen)
     }
 
@@ -268,59 +251,45 @@ impl MapViewer {
     /// unsaved `*` marker / save toast), and a one-line shortcut/status hint.
     fn build_footer(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         // Undo/redo, greyed when the respective stack is empty.
-        let undo = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "<undo".to_string(),
-                color: if self.history.undo.is_empty() { 13 } else { 12 },
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 13),
-            Some(EditorKey::Undo),
-        );
-        let redo = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "redo>".to_string(),
-                color: if self.history.redo.is_empty() { 13 } else { 12 },
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 13),
-            Some(EditorKey::Redo),
-        );
-        rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[undo, redo]));
+        let undo = b
+            .text("<undo")
+            .small(true)
+            .center()
+            .color(if self.history.undo.is_empty() { 13 } else { 12 })
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 13)
+            .key(EditorKey::Undo)
+            .id();
+        let redo = b
+            .text("redo>")
+            .small(true)
+            .center()
+            .color(if self.history.redo.is_empty() { 13 } else { 12 })
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 13)
+            .key(EditorKey::Redo)
+            .id();
+        rows.push(b.row(2.0, [undo, redo]).id());
 
         // Save button: a `*` flags unsaved edits; a transient toast confirms a
         // write. Green outline normally, amber while dirty.
         let (label, outline) = if self.save_toast > 0 {
-            ("[  SAVED!  ]".to_string(), 11)
+            ("[  SAVED!  ]", 11)
         } else if self.dirty {
-            ("[ SAVE * ]".to_string(), 9)
+            ("[ SAVE * ]", 9)
         } else {
-            ("[ SAVE MAP ]".to_string(), 6)
+            ("[ SAVE MAP ]", 6)
         };
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(8.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: label,
-                color: outline,
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, outline),
-            Some(EditorKey::Save),
-        ));
+        rows.push(
+            b.text(label)
+                .small(true)
+                .center()
+                .color(outline)
+                .full_width(8.0)
+                .outlined(0, outline)
+                .key(EditorKey::Save)
+                .id(),
+        );
 
         // Status line: the keys most worth remembering for the active tool. Kept
         // short so it fits the 84px column; `^Z`/`^Y` are the undo/redo chords.
@@ -331,128 +300,70 @@ impl MapViewer {
             }
             EditorTool::Layers => "1-4:tool ^S:save\n^Z/^Y:undo/redo",
         };
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(20.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: hint.to_string(),
-                color: 14,
-                center: false,
-                small: true,
-            },
-            Decoration::default(),
-            None,
-        ));
+        rows.push(b.text(hint).small(true).color(14).full_width(20.0).id());
     }
 
     fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
         let layers = if self.fg { &map.fg_layers } else { &map.layers };
         let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(8.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: title.to_string(),
-                color: 13,
-                center: false,
-                small: false,
-            },
-            Decoration::default(),
-            Some(EditorKey::Title),
-        ));
+        rows.push(
+            b.text(title)
+                .color(13)
+                .full_width(8.0)
+                .key(EditorKey::Title)
+                .id(),
+        );
         for (i, layer) in layers.iter().enumerate() {
             let hidden = if layer.visible { "" } else { "(H)" };
-            rows.push(b.leaf(
-                Style {
-                    size: ui::full_width(7.0),
-                    ..Default::default()
-                },
-                Content::Text {
-                    text: format!("Layer {i} {hidden}"),
-                    color: 12,
-                    center: false,
-                    small: true,
-                },
-                if i == self.layer_index {
-                    Decoration::fill(15)
-                } else {
-                    Decoration::default()
-                },
-                Some(EditorKey::Layer(i)),
-            ));
+            rows.push(
+                b.text(format!("Layer {i} {hidden}"))
+                    .small(true)
+                    .full_width(7.0)
+                    .fill_if(i == self.layer_index, 15)
+                    .key(EditorKey::Layer(i))
+                    .id(),
+            );
         }
     }
 
     fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         let target = if self.fg { "FG" } else { "BG" };
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(8.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: format!("Tile {} {target}{}", self.selected_tile, self.layer_index),
-                color: 13,
-                center: false,
-                small: true,
-            },
-            Decoration::default(),
-            None,
-        ));
-        let up = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "-up".to_string(),
-                color: 12,
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 12),
-            Some(EditorKey::PaletteUp),
+        rows.push(
+            b.text(format!("Tile {} {target}{}", self.selected_tile, self.layer_index))
+                .small(true)
+                .color(13)
+                .full_width(8.0)
+                .id(),
         );
-        let down = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "dn+".to_string(),
-                color: 12,
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 12),
-            Some(EditorKey::PaletteDown),
-        );
-        rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[up, down]));
+        let up = b
+            .text("-up")
+            .small(true)
+            .center()
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 12)
+            .key(EditorKey::PaletteUp)
+            .id();
+        let down = b
+            .text("dn+")
+            .small(true)
+            .center()
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 12)
+            .key(EditorKey::PaletteDown)
+            .id();
+        rows.push(b.row(2.0, [up, down]).id());
 
         // Eraser: paints the empty tile (0). Highlights when it's the brush.
         let erasing = self.selected_tile == 0;
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "eraser".to_string(),
-                color: if erasing { 0 } else { 12 },
-                center: true,
-                small: true,
-            },
-            if erasing {
-                Decoration::fill(8)
-            } else {
-                Decoration::outlined(0, 8)
-            },
-            Some(EditorKey::Eraser),
-        ));
+        let eraser = b
+            .text("eraser")
+            .small(true)
+            .center()
+            .color(if erasing { 0 } else { 12 })
+            .full_width(7.0)
+            .key(EditorKey::Eraser);
+        let eraser = if erasing { eraser.fill(8) } else { eraser.outlined(0, 8) };
+        rows.push(eraser.id());
 
         let start = self.palette_scroll * PALETTE_COLS;
         let mut tiles = Vec::with_capacity(PALETTE_COLS * PALETTE_ROWS);
@@ -461,79 +372,49 @@ impl MapViewer {
             if id >= SHEET_TILES {
                 break;
             }
-            tiles.push(b.leaf(
-                Style {
-                    size: ui::size(8.0, 8.0),
-                    ..Default::default()
-                },
-                Content::Sprite {
-                    id: id as i32,
-                    scale: 1,
-                    w: 1,
-                    h: 1,
-                    outline: (id == self.selected_tile).then_some(11),
-                },
-                Decoration::default(),
-                Some(EditorKey::Tile(id)),
-            ));
+            tiles.push(
+                b.sprite(id as i32, 1, 1)
+                    .size(8.0, 8.0)
+                    .sprite_outline((id == self.selected_tile).then_some(11))
+                    .key(EditorKey::Tile(id))
+                    .id(),
+            );
         }
-        let grid = b.container(
-            Style {
-                size: ui::width(PALETTE_COLS as f32 * 8.0),
-                ..ui::wrap_row(0.0)
-            },
-            Decoration::fill(0),
-            None,
-            &tiles,
+        rows.push(
+            b.wrap_row(0.0, tiles)
+                .width(PALETTE_COLS as f32 * 8.0)
+                .fill(0)
+                .id(),
         );
-        rows.push(grid);
     }
 
     fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
         let warps = self.tool == EditorTool::Warps;
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(8.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: if warps { "WARPS:" } else { "INTERACTS:" }.to_string(),
-                color: 13,
-                center: false,
-                small: false,
-            },
-            Decoration::default(),
-            None,
-        ));
-        let new = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "+new".to_string(),
-                color: 11,
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 11),
-            Some(EditorKey::NewObject),
+        rows.push(
+            b.text(if warps { "WARPS:" } else { "INTERACTS:" })
+                .color(13)
+                .full_width(8.0)
+                .id(),
         );
-        let del = b.leaf(
-            Style {
-                size: ui::size(PANEL_W / 2.0 - 1.0, 7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: "-del".to_string(),
-                color: 8,
-                center: true,
-                small: true,
-            },
-            Decoration::outlined(0, 8),
-            Some(EditorKey::DeleteObject),
-        );
-        rows.push(b.container(ui::row(2.0), Decoration::default(), None, &[new, del]));
+        let new = b
+            .text("+new")
+            .small(true)
+            .center()
+            .color(11)
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 11)
+            .key(EditorKey::NewObject)
+            .id();
+        let del = b
+            .text("-del")
+            .small(true)
+            .center()
+            .color(8)
+            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .outlined(0, 8)
+            .key(EditorKey::DeleteObject)
+            .id();
+        rows.push(b.row(2.0, [new, del]).id());
 
         let count = if warps {
             map.warps.len()
@@ -551,28 +432,18 @@ impl MapViewer {
                     Interaction::None => format!("{i}: <->"),
                 }
             };
-            rows.push(b.leaf(
-                Style {
-                    size: ui::full_width(7.0),
-                    ..Default::default()
-                },
-                Content::Text {
-                    text: label,
-                    color: 12,
-                    center: false,
-                    small: true,
-                },
-                if Some(i) == self.selected {
-                    Decoration::fill(15)
-                } else {
-                    Decoration::default()
-                },
-                Some(EditorKey::Object(i)),
-            ));
+            rows.push(
+                b.text(label)
+                    .small(true)
+                    .full_width(7.0)
+                    .fill_if(Some(i) == self.selected, 15)
+                    .key(EditorKey::Object(i))
+                    .id(),
+            );
         }
 
         if let Some(i) = self.selected {
-            rows.push(spacer(b, 2.0));
+            rows.push(b.spacer(2.0).id());
             if warps {
                 if let Some(w) = map.warps.get(i) {
                     let dest = w
@@ -610,24 +481,15 @@ impl MapViewer {
         } else {
             format!("{label}:{value}")
         };
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text,
-                color: if editing { 0 } else { 12 },
-                center: false,
-                small: true,
-            },
-            if editing {
-                Decoration::fill(14)
-            } else {
-                Decoration::default()
-            },
-            Some(EditorKey::Field(field)),
-        ));
+        rows.push(
+            b.text(text)
+                .small(true)
+                .color(if editing { 0 } else { 12 })
+                .full_width(7.0)
+                .fill_if(editing, 14)
+                .key(EditorKey::Field(field))
+                .id(),
+        );
     }
 
     fn cycle_row(
@@ -638,20 +500,13 @@ impl MapViewer {
         label: &str,
         value: &str,
     ) {
-        rows.push(b.leaf(
-            Style {
-                size: ui::full_width(7.0),
-                ..Default::default()
-            },
-            Content::Text {
-                text: format!("{label}:{value}"),
-                color: 12,
-                center: false,
-                small: true,
-            },
-            Decoration::default(),
-            Some(EditorKey::Cycle(field)),
-        ));
+        rows.push(
+            b.text(format!("{label}:{value}"))
+                .small(true)
+                .full_width(7.0)
+                .key(EditorKey::Cycle(field))
+                .id(),
+        );
     }
 
     // --- Helpers --------------------------------------------------------------
@@ -1547,18 +1402,6 @@ impl MapViewer {
             );
         }
     }
-}
-
-fn spacer(b: &mut UiBuilder<EditorKey>, height: f32) -> NodeId {
-    b.leaf(
-        Style {
-            size: ui::full_width(height),
-            ..Default::default()
-        },
-        Content::None,
-        Decoration::default(),
-        None,
-    )
 }
 
 /// The map tile (8px grid) under the cursor, in world coordinates.

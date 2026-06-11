@@ -161,6 +161,89 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
         node
     }
 
+    // --- Fluent node constructors --------------------------------------------
+    //
+    // These return a [`Node`] that accumulates style/decoration/key through
+    // chained, defaulted modifiers and commits to the tree on [`Node::id`]. They
+    // sit on top of [`leaf`](Self::leaf)/[`container`](Self::container) so a call
+    // site reads as the node's shape rather than a `Style { .. }` literal.
+
+    /// Start a [`Node`] with the given content and leaf/container role.
+    fn node(&mut self, content: Content, container: bool) -> Node<'_, K> {
+        Node {
+            builder: self,
+            style: Style::default(),
+            content,
+            deco: Decoration::default(),
+            key: None,
+            children: Vec::new(),
+            container,
+        }
+    }
+
+    /// A container [`Node`] with a preset flex `style`, wrapping `children`.
+    fn stack(&mut self, style: Style, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        let children: Vec<NodeId> = children.into_iter().collect();
+        let mut node = self.node(Content::None, true);
+        node.style = style;
+        node.children = children;
+        node
+    }
+
+    /// A single line of text: palette colour 12, left-aligned, large font —
+    /// override via [`color`](Node::color)/[`small`](Node::small)/[`center`](Node::center).
+    pub fn text(&mut self, text: impl Into<String>) -> Node<'_, K> {
+        self.node(
+            Content::Text { text: text.into(), color: 12, center: false, small: false },
+            false,
+        )
+    }
+
+    /// A `w`×`h`-tile sprite from the default sheet at scale 1 — override via
+    /// [`scale`](Node::scale)/[`sprite_outline`](Node::sprite_outline).
+    pub fn sprite(&mut self, id: i32, w: i32, h: i32) -> Node<'_, K> {
+        self.node(Content::Sprite { id, scale: 1, w, h, outline: None }, false)
+    }
+
+    /// An empty full-width box of fixed `height` — vertical spacing in a column.
+    pub fn spacer(&mut self, height: f32) -> Node<'_, K> {
+        let mut node = self.node(Content::None, false);
+        node.style.size = full_width(height);
+        node
+    }
+
+    /// A horizontal flex row, `gap` px between `children`.
+    pub fn row(&mut self, gap: f32, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        self.stack(row(gap), children)
+    }
+
+    /// A horizontal row whose children keep their natural heights, top-aligned.
+    pub fn row_top(&mut self, gap: f32, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        self.stack(row_top(gap), children)
+    }
+
+    /// A vertical flex column, `gap` px between `children`.
+    pub fn column(&mut self, gap: f32, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        self.stack(column(gap), children)
+    }
+
+    /// A wrapping row — give it a fixed [`width`](Node::width) and fixed-size
+    /// children to get a grid.
+    pub fn wrap_row(&mut self, gap: f32, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        self.stack(wrap_row(gap), children)
+    }
+
+    /// Centre `child` in both axes (used to centre a panel on screen).
+    pub fn centered(&mut self, child: NodeId) -> Node<'_, K> {
+        self.stack(centered(), [child])
+    }
+
+    /// A bare flex box wrapping `children` — default layout, for slots and
+    /// single-child wrappers that only carry size/decoration.
+    pub fn boxed(&mut self, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+        self.stack(Style::default(), children)
+    }
+
     /// Compute layout from `root` and resolve every node to an absolute [`Rect`].
     /// `avail` is the screen size (px) the root lays out within — pass the live
     /// [`ConsoleApi::width`]/[`height`](crate::system::ConsoleApi::height) so the
@@ -187,6 +270,127 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
 impl<K: Copy + PartialEq> Default for UiBuilder<K> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A node under construction, returned by the [`UiBuilder`] constructors
+/// ([`text`](UiBuilder::text), [`row`](UiBuilder::row), …). Configure it with
+/// chained, defaulted modifiers, then [`id`](Self::id) inserts it into the tree
+/// and yields its [`NodeId`] for use as a parent's child:
+///
+/// ```ignore
+/// let row = b.text("Items").full_width(8.0).fill_if(selected, 1).key(k).id();
+/// ```
+///
+/// Text/sprite modifiers are no-ops on the wrong node kind, so chains stay flat.
+pub struct Node<'a, K: Copy + PartialEq> {
+    builder: &'a mut UiBuilder<K>,
+    style: Style,
+    content: Content,
+    deco: Decoration,
+    key: Option<K>,
+    children: Vec<NodeId>,
+    container: bool,
+}
+
+impl<K: Copy + PartialEq> Node<'_, K> {
+    /// Fixed `w`×`h` px.
+    pub fn size(mut self, w: f32, h: f32) -> Self {
+        self.style.size = size(w, h);
+        self
+    }
+    /// Fixed width, automatic (content/stretch) height.
+    pub fn width(mut self, w: f32) -> Self {
+        self.style.size = width(w);
+        self
+    }
+    /// Automatic (stretch) width, fixed height — a full-width row.
+    pub fn full_width(mut self, h: f32) -> Self {
+        self.style.size = full_width(h);
+        self
+    }
+    /// Uniform padding on all four sides.
+    pub fn pad(mut self, p: f32) -> Self {
+        self.style.padding = pad(p);
+        self
+    }
+    /// Per-side padding (left, right, top, bottom).
+    pub fn pad_lrtb(mut self, l: f32, r: f32, t: f32, b: f32) -> Self {
+        self.style.padding = pad_lrtb(l, r, t, b);
+        self
+    }
+
+    /// Fill the box with palette colour `c`.
+    pub fn fill(mut self, c: u8) -> Self {
+        self.deco.fill = Some(c);
+        self
+    }
+    /// Fill only when `cond` — the common "highlight the selected entry" case.
+    pub fn fill_if(self, cond: bool, c: u8) -> Self {
+        if cond { self.fill(c) } else { self }
+    }
+    /// A 1px box outline in palette colour `c`.
+    pub fn outline(mut self, c: u8) -> Self {
+        self.deco.outline = Some(c);
+        self
+    }
+    /// Fill and outline in one call.
+    pub fn outlined(self, fill: u8, outline: u8) -> Self {
+        self.fill(fill).outline(outline)
+    }
+
+    /// Text colour (palette index); no-op on non-text nodes. Defaults to 12.
+    pub fn color(mut self, c: u8) -> Self {
+        if let Content::Text { color, .. } = &mut self.content {
+            *color = c;
+        }
+        self
+    }
+    /// Select the small font; no-op on non-text nodes.
+    pub fn small(mut self, small: bool) -> Self {
+        if let Content::Text { small: s, .. } = &mut self.content {
+            *s = small;
+        }
+        self
+    }
+    /// Centre the text within the node; no-op on non-text nodes.
+    pub fn center(mut self) -> Self {
+        if let Content::Text { center, .. } = &mut self.content {
+            *center = true;
+        }
+        self
+    }
+
+    /// Integer upscale for a sprite node; no-op on non-sprite nodes. Defaults to 1.
+    pub fn scale(mut self, scale: i32) -> Self {
+        if let Content::Sprite { scale: s, .. } = &mut self.content {
+            *s = scale;
+        }
+        self
+    }
+    /// Draw a 1px outline around the sprite's pixels (e.g. to flag a selection);
+    /// no-op on non-sprite nodes. Pass a `then_some`-style `Option` to toggle it.
+    pub fn sprite_outline(mut self, outline: Option<u8>) -> Self {
+        if let Content::Sprite { outline: o, .. } = &mut self.content {
+            *o = outline;
+        }
+        self
+    }
+
+    /// Tag the node so a mouse hit over it resolves to `k`.
+    pub fn key(mut self, k: K) -> Self {
+        self.key = Some(k);
+        self
+    }
+
+    /// Insert the configured node into the tree and return its [`NodeId`].
+    pub fn id(self) -> NodeId {
+        let Node { builder, style, content, deco, key, children, container } = self;
+        if container {
+            builder.container(style, deco, key, &children)
+        } else {
+            builder.leaf(style, content, deco, key)
+        }
     }
 }
 

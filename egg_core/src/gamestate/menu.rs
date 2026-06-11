@@ -5,7 +5,7 @@ use crate::camera::CameraBounds;
 use crate::data::sound;
 use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
-use crate::ui::{self, Content, Decoration, Style, Ui, UiBuilder};
+use crate::ui::{Ui, UiBuilder};
 
 use super::GameMode;
 use super::inventory::InventoryUi;
@@ -129,29 +129,22 @@ impl MenuState {
             .enumerate()
             .map(|(i, _entry)| {
                 let selected = i == self.index;
-                builder.leaf(
-                    Style { size: ui::full_width(8.0), ..Default::default() },
-                    Content::Text {
-                        text: texts[i].clone(),
-                        color: if selected { 4 } else { 3 },
-                        center: true,
-                        small,
-                    },
-                    if selected { Decoration::fill(1) } else { Decoration::default() },
-                    Some(i),
-                )
+                builder
+                    .text(texts[i].as_str())
+                    .color(if selected { 4 } else { 3 })
+                    .center()
+                    .small(small)
+                    .full_width(8.0)
+                    .fill_if(selected, 1)
+                    .key(i)
+                    .id()
             })
             .collect();
-        let root = builder.container(
-            Style {
-                size: ui::size(screen.0, screen.1),
-                padding: ui::pad_lrtb(0.0, 0.0, self.entry_height() as f32, 0.0),
-                ..ui::column(0.0)
-            },
-            Decoration::default(),
-            None,
-            &rows,
-        );
+        let root = builder
+            .column(0.0, rows)
+            .size(screen.0, screen.1)
+            .pad_lrtb(0.0, 0.0, self.entry_height() as f32, 0.0)
+            .id();
         builder.finish(root, screen)
     }
     pub fn click(
