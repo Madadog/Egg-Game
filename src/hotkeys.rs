@@ -18,8 +18,10 @@ use egg_core::gamestate::GameMode;
 use crate::{EggGame, ScaleMode, ScreenMode, views};
 
 /// Primary-window hotkeys: window/screen modes, F8 view spawning, pause, and
-/// the debug/cheat toggles, with the same suppression rules `step_state` uses
-/// for its held keys (editor typing, window focus, editor-owns-keyboard).
+/// the debug/cheat toggles. The same suppression rules `step_state` applies to
+/// its held keys (editor typing, window focus, editor-owns-keyboard) come from
+/// the shared [`views::InputRouting`], so the two stay in lock-step by sharing
+/// one derivation rather than by hand-kept parallel checks.
 #[allow(clippy::too_many_arguments)]
 pub fn primary_hotkeys(
     mut game: ResMut<EggGame>,
@@ -33,13 +35,14 @@ pub fn primary_hotkeys(
         return;
     }
 
-    // Same focus routing as `step_state`: most hotkeys only apply while the
-    // primary window is focused, so keys aimed at an extra view (or its
-    // editor) can't fire them.
+    // Same routing decisions as `step_state`, from the shared brain
+    // ([`views::InputRouting`]): most hotkeys only apply while the primary window
+    // is focused, so keys aimed at an extra view (or its editor) can't fire them.
+    // Computed here (in `Update`) at this schedule's moment — see `InputRouting`
+    // for why each consumer computes its own rather than sharing a `Resource`.
     let focused_entity = windows.iter().find(|(_, w, _)| w.focused).map(|(e, ..)| e);
-    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
-    let focus = views::resolve_focus(focused_entity, &view_entities);
-    let drives_player = views::drives_player(focus);
+    let routing = views::InputRouting::compute(focused_entity, &game, &views);
+    let drives_player = routing.drives_player;
 
     // Window/screen-mode hotkeys drive the PRIMARY window's framebuffer.
     if let Some((_, mut window, _)) = windows.iter_mut().find(|(.., primary)| *primary) {
@@ -105,7 +108,7 @@ pub fn primary_hotkeys(
     // Everything below is a letter/digit key, so it's suppressed while any map
     // editor is capturing typed text — dialogue labels like "town_lamppost"
     // must not toggle pause or fire the m/n/k/l shortcuts.
-    if game.state.walkaround.map_viewer.is_typing() || views.any_editor_typing() {
+    if routing.editor_typing {
         return;
     }
 
@@ -131,7 +134,7 @@ pub fn primary_hotkeys(
     // `L` (toggle the editor off) passes, while the editor's own shortcuts
     // (Ctrl+Z/Y/S, Delete, 1-4) are read inside `step_map_viewer` via the
     // shared console.
-    if game.state.walkaround.map_viewer.focused {
+    if routing.primary_editor_open {
         if keys.just_pressed(KeyCode::KeyL) {
             game.state.walkaround.map_viewer.focused = false;
         }

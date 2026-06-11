@@ -511,10 +511,14 @@ fn step_state(
     // drives the player; an extra window drives its own free camera/editor
     // (handled in `views::update_views`). We gate the player controller's dpad
     // on this so arrow keys panning an extra view can't also move the player.
+    // All the focus/typing/editor-open decisions come from the shared routing
+    // brain ([`views::InputRouting`]) so this stays in lock-step with the
+    // hotkeys and the view systems instead of re-deriving them here. Computed up
+    // front (nothing below mutates the editor's focus/typing before the guards
+    // read it), so the snapshot matches the per-schedule rule documented there.
     let focused_entity = windows.iter().find(|(_, w, _)| w.focused).map(|(e, ..)| e);
-    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
-    let focus = views::resolve_focus(focused_entity, &view_entities);
-    let drives_player = views::drives_player(focus);
+    let routing = views::InputRouting::compute(focused_entity, &game, &views);
+    let drives_player = routing.drives_player;
 
     // Merge keyboard + (optional) first gamepad into player one's controller.
     // The directional/action keys only apply while the primary window is
@@ -545,30 +549,11 @@ fn step_state(
             // shared console — so the primary sim's raw-key shortcuts (palette
             // swaps, load-from-memory…) don't fire from keys meant for an extra
             // view. Typed characters (below) always pass, so text entry works in
-            // any focused editor.
-            //
-            // Two groups pass: text-entry control keys (used while a field is
-            // focused), and the editor's command shortcuts — Ctrl/Shift modifiers,
-            // Ctrl+Z/Y/S, Delete, and the 1-4 tool switches. They're inert unless
-            // the editor reads them, and the editor's typing guard stops them
-            // firing while a dialogue field is being typed into.
-            let editor_key = matches!(
-                scancode,
-                ScanCode::Backspace
-                    | ScanCode::Escape
-                    | ScanCode::Return
-                    | ScanCode::Ctrl
-                    | ScanCode::Shift
-                    | ScanCode::Z
-                    | ScanCode::Y
-                    | ScanCode::S
-                    | ScanCode::Delete
-                    | ScanCode::Digit1
-                    | ScanCode::Digit2
-                    | ScanCode::Digit3
-                    | ScanCode::Digit4
-            );
-            if drives_player || editor_key {
+            // any focused editor. The editor-key allowlist lives on the engine
+            // (`MapViewer::wants_key`) so the host can't drift from what the
+            // editor actually reads; the keys are inert unless an editor reads
+            // them.
+            if drives_player || egg_core::gamestate::mapeditor::MapViewer::wants_key(scancode) {
                 game.system.input().press_key(scancode);
             }
         }
@@ -599,7 +584,7 @@ fn step_state(
                 ScreenMode::Mirror => game.mirror_scale.max(1) as f32,
             };
             (fb_w, fb_h, scale)
-        } else if let views::Focus::Extra(i) = focus {
+        } else if let views::Focus::Extra(i) = routing.focus {
             // Extra views render Mirror-style: the framebuffer is the window ÷
             // the view's pixel ratio and the sprite is scaled by exactly that
             // ratio (see `views::update_views`/`resize_views`).
@@ -638,7 +623,7 @@ fn step_state(
     // and skip all global debug/cheat hotkeys, so dialogue keys like
     // "town_lamppost" don't fire the m/n/k/l/p shortcuts. (Typed characters go
     // into the shared console and are consumed by whichever editor is focused.)
-    if game.state.walkaround.map_viewer.is_typing() || views.any_editor_typing() {
+    if routing.editor_typing {
         game.run();
         return;
     }
@@ -654,7 +639,7 @@ fn step_state(
     // (its `L`-off toggle and shortcuts are handled in `primary_hotkeys` /
     // `step_map_viewer`), so the held-key cheats below are suppressed — bare
     // keys (e.g. Digit3) must not fire while editing.
-    if game.state.walkaround.map_viewer.focused {
+    if routing.primary_editor_open {
         game.run();
         return;
     }

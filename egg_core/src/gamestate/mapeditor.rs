@@ -681,6 +681,31 @@ impl MapViewer {
 
     // --- Step (input) ---------------------------------------------------------
 
+    /// The keys the map editor consumes from the shared console — text-entry
+    /// control keys plus its command shortcuts (Ctrl+Z/Y/S, Delete, the 1-4 tool
+    /// switches and their modifiers). The host forwards these even when the key
+    /// wasn't aimed at the primary window, so editor shortcuts work over any
+    /// view; they're inert unless an editor is actually reading them (see
+    /// [`step_text_entry`](Self::step_text_entry) / [`handle_shortcuts`](Self::handle_shortcuts)).
+    pub fn wants_key(scancode: ScanCode) -> bool {
+        matches!(
+            scancode,
+            ScanCode::Backspace
+                | ScanCode::Escape
+                | ScanCode::Return
+                | ScanCode::Ctrl
+                | ScanCode::Shift
+                | ScanCode::Z
+                | ScanCode::Y
+                | ScanCode::S
+                | ScanCode::Delete
+                | ScanCode::Digit1
+                | ScanCode::Digit2
+                | ScanCode::Digit3
+                | ScanCode::Digit4
+        )
+    }
+
     pub fn step_map_viewer(
         &mut self,
         system: &mut impl ConsoleApi,

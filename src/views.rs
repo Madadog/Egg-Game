@@ -222,6 +222,49 @@ pub fn resolve_focus(focused: Option<Entity>, view_windows: &[Entity]) -> Focus 
     }
 }
 
+/// One frame's keyboard/window-focus routing decisions, derived once by
+/// [`InputRouting::compute`] so every consumer (the fixed-step
+/// [`step_state`](crate::step_state), the [`hotkeys`](crate::hotkeys), and this
+/// module's view systems) reads the same answers instead of re-deriving them by
+/// hand and drifting apart.
+///
+/// Deliberately a plain value, **not** a Bevy `Resource`: `step_state` runs in
+/// `FixedUpdate` and the hotkeys in `Update`, and the engine's typing/focus
+/// state (`MapViewer`) mutates between those schedules. Each consumer therefore
+/// computes its own routing at its own moment — exactly as the duplicated blocks
+/// did — but now through one shared derivation rather than four hand-kept copies.
+pub struct InputRouting {
+    pub focus: Focus,
+    pub drives_player: bool,
+    /// A map editor (the primary window's or any extra view's) is capturing
+    /// typed text — the host then suppresses its global letter/digit hotkeys so
+    /// typed dialogue keys don't fire them.
+    pub editor_typing: bool,
+    /// The primary window's map editor is open (focused): it owns the keyboard,
+    /// so the primary held-key cheats are suppressed and only its `L`-off toggle
+    /// passes through.
+    pub primary_editor_open: bool,
+}
+
+impl InputRouting {
+    /// Derive this frame's routing from the focused window, the shared game
+    /// state, and the open extra views. `focused_entity` is the OS-focused
+    /// window (the caller queries `Window.focused`); `views` supplies the
+    /// extra-view windows that [`resolve_focus`] maps against and whose editors
+    /// feed `editor_typing`.
+    pub fn compute(focused_entity: Option<Entity>, game: &EggGame, views: &ViewWindows) -> Self {
+        let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
+        let focus = resolve_focus(focused_entity, &view_entities);
+        let map_viewer = &game.state.walkaround.map_viewer;
+        Self {
+            focus,
+            drives_player: drives_player(focus),
+            editor_typing: map_viewer.is_typing() || views.any_editor_typing(),
+            primary_editor_open: map_viewer.focused,
+        }
+    }
+}
+
 /// Drop the `ViewWindow` bookkeeping (and render entities) for any extra window
 /// the user closed with its OS close button. Bevy despawns the `Window` entity
 /// itself and raises `WindowClosed`.
@@ -244,13 +287,16 @@ pub fn handle_closed_views(
 /// [`hotkeys`](crate::hotkeys)) so `just_pressed` fires exactly once per tap —
 /// the held-key panning stays in the fixed step ([`update_views`]).
 pub fn view_hotkeys(
+    game: Res<EggGame>,
     mut views: ResMut<ViewWindows>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<(Entity, &Window)>,
 ) {
+    // Shared routing brain ([`InputRouting`]); these hotkeys only act on the
+    // focused *extra* view, so anything else (primary focused, nothing focused)
+    // falls through.
     let focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
-    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
-    let Focus::Extra(i) = resolve_focus(focused, &view_entities) else {
+    let Focus::Extra(i) = InputRouting::compute(focused, &game, &views).focus else {
         return;
     };
     let view = &mut views.views[i];
@@ -289,13 +335,14 @@ pub fn update_views(
         return;
     }
 
-    // Which window is focused? `Window.focused` is the live OS focus state.
+    // Which window is focused? `Window.focused` is the live OS focus state. Read
+    // it through the shared routing brain ([`InputRouting`]) so this matches what
+    // `step_state` decides for the player from the same moment.
     let focused = windows
         .iter()
         .find(|(_, w)| w.focused)
         .map(|(e, _)| e);
-    let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
-    let focus = resolve_focus(focused, &view_entities);
+    let focus = InputRouting::compute(focused, &game, &views).focus;
 
     // Route the held arrow keys to the focused extra view's free camera (if
     // any). The player is handled in `step_state`, which reads the same `Focus`
