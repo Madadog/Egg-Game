@@ -30,7 +30,9 @@ pub mod rand;
 pub mod system;
 pub mod ui;
 
+use crate::data::script::Script;
 use crate::debug::DebugInfo;
+use crate::dialogue::Message;
 use crate::drawstate::DrawState;
 use crate::gamestate::GameMode;
 use crate::gamestate::inventory::InventoryUi;
@@ -40,12 +42,12 @@ use crate::rand::Lcg64Xsh32;
 use crate::system::ConsoleApi;
 
 /// The shared world every game state steps and draws against — the layer
-/// canvases, the console, and the loaded maps — passed as one parameter so
-/// gamestate signatures stop growing element-by-element. Game-data helpers
-/// (labels, dialogue lookups) are expected to accumulate here as the console
-/// shrinks to a hardware-only surface. Deliberately lean: per-state things
-/// (`InventoryUi`, `DebugInfo`, `elapsed_frames`) stay explicit parameters of
-/// the few methods that need them.
+/// canvases, the console, the loaded maps, and the loaded text — passed as one
+/// parameter so gamestate signatures stop growing element-by-element. Game-data
+/// helpers (labels, dialogue lookups) accumulate here as the console shrinks to
+/// a hardware-only surface. Deliberately lean: per-state things (`InventoryUi`,
+/// `DebugInfo`, `elapsed_frames`) stay explicit parameters of the few methods
+/// that need them.
 pub struct Ctx<'a, S: ConsoleApi> {
     pub draw: &'a mut DrawState,
     pub system: &'a mut S,
@@ -53,6 +55,27 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// The game's pseudo-random generator. Lives on [`EggState`] (not the
     /// console) so randomness is a piece of game state, not a hardware service.
     pub rng: &'a mut Lcg64Xsh32,
+    /// The loaded UI labels + dialogue. Read-only here: gameplay only reads
+    /// text, while the host installs the base script and swaps languages by
+    /// mutating [`EggState::script`] directly (see [`EggState::set_language`]).
+    pub script: &'a Script,
+}
+
+impl<S: ConsoleApi> Ctx<'_, S> {
+    /// A UI label by key (see [`Script::label`]).
+    pub fn label(&self, key: &str) -> String {
+        self.script.label(key)
+    }
+
+    /// An ordered string list by key (see [`Script::list`]).
+    pub fn list(&self, key: &str) -> Vec<String> {
+        self.script.list(key)
+    }
+
+    /// A dialogue conversation by key (see [`Script::get_dialogue`]).
+    pub fn get_dialogue(&self, key: &str) -> Vec<Message> {
+        self.script.get_dialogue(key)
+    }
 }
 
 pub struct EggState {
@@ -67,6 +90,14 @@ pub struct EggState {
     pub maps: MapStore,
     /// The game's RNG, threaded into every state through [`Ctx::rng`].
     pub rng: Lcg64Xsh32,
+    /// The loaded UI labels + dialogue, threaded into every state through
+    /// [`Ctx::script`]. The host installs the base language at asset-load time
+    /// (`set_base`) and applies runtime language switches (`set_language`) by
+    /// mutating this directly; gameplay only ever reads it.
+    pub script: Script,
+    /// A language requested at runtime via [`EggState::set_language`], awaiting
+    /// load by the host's asset loop (see [`EggState::take_pending_language`]).
+    pending_language: Option<String>,
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
@@ -76,6 +107,7 @@ impl EggState {
             system,
             maps: &mut self.maps,
             rng: &mut self.rng,
+            script: &self.script,
         };
         self.gamestate.run(
             &mut ctx,
@@ -84,6 +116,18 @@ impl EggState {
             &mut self.debug_info,
             self.time,
         );
+    }
+    /// Request switching the active language at runtime. The host's asset loop
+    /// drains the request via [`take_pending_language`](Self::take_pending_language),
+    /// loads the matching script file, and applies it to [`script`](Self::script).
+    /// (No game-code callers yet — plumbing for a future language menu.)
+    pub fn set_language(&mut self, language: &str) {
+        self.pending_language = Some(language.to_string());
+    }
+    /// Take any language requested at runtime via [`set_language`](Self::set_language),
+    /// for the host's asset loop to load and apply.
+    pub fn take_pending_language(&mut self) -> Option<String> {
+        self.pending_language.take()
     }
 }
 impl Default for EggState {
@@ -97,6 +141,8 @@ impl Default for EggState {
             debug_info: DebugInfo::default(),
             maps: MapStore::default(),
             rng: Lcg64Xsh32::default(),
+            script: Script::new(),
+            pending_language: None,
         }
     }
 }

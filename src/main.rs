@@ -225,7 +225,7 @@ fn load_assets(
                         state.state.maps.insert(name.clone(), map);
                     }
                     if let Some(script) = scripts.get(&game_assets.script) {
-                        state.system.script_mut().set_base(script.0.clone());
+                        state.state.script.set_base(script.0.clone());
                     }
                     state.loaded = true;
                     info!("Finished loading assets.");
@@ -252,7 +252,7 @@ fn poll_language_change(
     mut state: ResMut<EggGame>,
 ) {
     if pending.0.is_none()
-        && let Some(language) = state.system.take_pending_language()
+        && let Some(language) = state.state.take_pending_language()
     {
         info!("Loading language {language:?}");
         pending.0 = Some(assets.load(format!("script/{language}.eggtext")));
@@ -260,7 +260,7 @@ fn poll_language_change(
     if let Some(handle) = pending.0.clone()
         && let Some(script) = scripts.get(&handle)
     {
-        state.system.script_mut().set_language(script.0.clone());
+        state.state.script.set_language(script.0.clone());
         pending.0 = None;
         info!("Switched active language.");
     }

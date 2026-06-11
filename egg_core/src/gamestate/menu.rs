@@ -3,6 +3,7 @@ use crate::system::SpriteOptions;
 
 use crate::Ctx;
 use crate::camera::CameraBounds;
+use crate::data::script::Script;
 use crate::data::sound;
 use crate::dialogue::print_options;
 use crate::map::MapStore;
@@ -41,10 +42,10 @@ impl MenuState {
             ..Self::new()
         }
     }
-    pub fn debug_options(system: &impl ConsoleApi) -> Self {
+    pub fn debug_options(script: &Script) -> Self {
         let mut entries = vec![MenuEntry::Walk];
         entries.extend(
-            (0..system.list("menu_debug_controls").len())
+            (0..script.list("menu_debug_controls").len())
                 .map(|x| MenuEntry::Debug(x as u8))
                 .chain([MenuEntry::MapTest]),
         );
@@ -81,7 +82,7 @@ impl MenuState {
     ) -> Option<GameMode> {
         let old_index = self.index;
         let entries = self.entries.len();
-        let ui = self.build_ui(ctx.system);
+        let ui = self.build_ui(ctx.system, ctx.script);
         let mouse = ctx.system.mouse();
         let pad = ctx.system.controller();
         let mut clicked = false;
@@ -125,9 +126,9 @@ impl MenuState {
     /// Lay the menu out as a full-screen vertical column of selectable rows,
     /// one per entry and keyed by its index. Rebuilt each frame for both
     /// hit-testing (`step`) and drawing.
-    pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<usize> {
+    pub fn build_ui(&self, system: &mut impl ConsoleApi, script: &Script) -> Ui<usize> {
         let small = system.memory().small_text_on;
-        let texts: Vec<String> = self.entries.iter().map(|e| e.text(system)).collect();
+        let texts: Vec<String> = self.entries.iter().map(|e| e.text(script)).collect();
         let screen = (system.width() as f32, system.height() as f32);
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
@@ -221,7 +222,7 @@ impl MenuState {
                             ctx.system,
                         );
                     }
-                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.system))),
+                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.script))),
                     _ => {}
                 }
             }
@@ -243,6 +244,7 @@ impl MenuState {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         system: &mut impl ConsoleApi,
+        script: &Script,
         index: usize,
     ) {
         use crate::drawstate::LayerId::*;
@@ -252,10 +254,11 @@ impl MenuState {
             let c2 = draw_state.colour(2);
             let c12 = draw_state.colour(12);
             let options = print_options(system);
+            let lose_data = script.label("options_lose_data");
             draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
             system.print_to_centered(
                 draw_state.rgba(BG),
-                &system.label("options_lose_data"),
+                &lose_data,
                 120,
                 13,
                 c12,
@@ -275,11 +278,12 @@ impl MenuState {
         ctx.draw.rgba(BG).fill(c0);
 
         if let Some(key) = self.draw_title {
-            draw_title_rgba(ctx.draw, ctx.system, 120, 53, &ctx.system.label(key), elapsed_frames);
+            let title = ctx.script.label(key);
+            draw_title_rgba(ctx.draw, ctx.system, ctx.script, 120, 53, &title, elapsed_frames);
         }
 
-        self.build_ui(ctx.system).draw(ctx.draw, ctx.system, BG);
-        self.hover(ctx.draw, ctx.system, self.index);
+        self.build_ui(ctx.system, ctx.script).draw(ctx.draw, ctx.system, BG);
+        self.hover(ctx.draw, ctx.system, ctx.script, self.index);
 
         let output = ctx.system.output_image();
         output.blit::<RgbaImage>(
@@ -309,30 +313,29 @@ pub enum MenuEntry {
     Walk,
 }
 impl MenuEntry {
-    pub fn text(&self, system: &impl ConsoleApi) -> String {
+    pub fn text(&self, script: &Script) -> String {
         use MenuEntry::*;
 
         match self {
-            Play => system.label("menu_play"),
-            Options => system.label("menu_options"),
-            MainMenu => system.label("menu_back"),
-            FontSize => system.label("options_font_size"),
+            Play => script.label("menu_play"),
+            Options => script.label("menu_options"),
+            MainMenu => script.label("menu_back"),
+            FontSize => script.label("options_font_size"),
             Reset(x) => {
                 if *x == 0 {
-                    system.label("options_reset")
+                    script.label("options_reset")
                 } else {
-                    system.label("options_reset_sure")
+                    script.label("options_reset_sure")
                 }
             }
-            Inventory => system.label("menu_back"),
-            ExitToMenu => system.label("menu_exit"),
+            Inventory => script.label("menu_back"),
+            ExitToMenu => script.label("menu_exit"),
             _Space => String::new(),
-            Debug(x) => system
-                .script()
+            Debug(x) => script
                 .list_get("menu_debug_controls", usize::from(*x))
                 .unwrap_or_default(),
-            MapTest => system.label("menu_map_test"),
-            Walk => system.label("menu_play"),
+            MapTest => script.label("menu_map_test"),
+            Walk => script.label("menu_play"),
             MapSelect(name) => name.clone(),
         }
     }
@@ -341,9 +344,11 @@ impl MenuEntry {
 /// Draw the centred game title, its underline, and the corner blurb onto any
 /// canvas, returning the measured title width. The egg icon is blitted
 /// separately by each caller — the indexed and RGBA paths differ.
+#[allow(clippy::too_many_arguments)]
 fn draw_title_text<C: crate::system::drawing::Canvas>(
     canvas: &mut C,
     system: &impl ConsoleApi,
+    script: &Script,
     x: i32,
     y: i32,
     game_title: &str,
@@ -358,7 +363,7 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
     system.print_to_centered(canvas, game_title, x, y + 23, title_colour, opts);
     system.print_to(
         canvas,
-        &system.label("game_title_blurb"),
+        &script.label("game_title_blurb"),
         3,
         3,
         blurb_colour,
@@ -376,16 +381,18 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
 /// animation so the palette fades apply uniformly to the title pixels.
 /// `canvas` is the target indexed layer; `indexed_sprites` is the sprite
 /// sheet for the egg icon.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_title_indexed(
     canvas: &mut crate::system::drawing::image::IndexedImage,
     indexed_sprites: &crate::system::drawing::image::IndexedImage,
     system: &impl ConsoleApi,
+    script: &Script,
     x: i32,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    draw_title_text(canvas, system, x, y, game_title, 2u8, 14u8);
+    draw_title_text(canvas, system, script, x, y, game_title, 2u8, 14u8);
     canvas.spr(
         indexed_sprites,
         534,
@@ -405,6 +412,7 @@ pub fn draw_title_indexed(
 pub fn draw_title_rgba(
     draw_state: &mut crate::drawstate::DrawState,
     system: &impl ConsoleApi,
+    script: &Script,
     x: i32,
     y: i32,
     game_title: &str,
@@ -413,7 +421,7 @@ pub fn draw_title_rgba(
     use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
-    draw_title_text(draw_state.rgba(BG), system, x, y, game_title, c2, c14);
+    draw_title_text(draw_state.rgba(BG), system, script, x, y, game_title, c2, c14);
     draw_state.spr(
         BG,
         &PALETTE_MAP_IDENTITY,

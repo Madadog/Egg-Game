@@ -365,7 +365,7 @@ impl WalkaroundState {
             info!("Attempting interact...");
         }
         if just_pressed(pad.x) {
-            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(ctx.system)));
+            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(ctx.script)));
         }
         if ctx.system.any_btnpr() {
             self.player().flip_controls = Axis::None
@@ -453,12 +453,12 @@ impl WalkaroundState {
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
                         Interaction::Dialogue(key) => {
-                            let convo = ctx.system.get_dialogue(key);
+                            let convo = ctx.get_dialogue(key);
                             self.dialogue.set_messages(ctx.system, &convo);
                         }
                         Interaction::Func(x) => {
                             if let Some(key) = self.execute_interact_fn(x, ctx.system) {
-                                let convo = ctx.system.get_dialogue(key);
+                                let convo = ctx.get_dialogue(key);
                                 self.dialogue.set_messages(ctx.system, &convo);
                             };
                         }

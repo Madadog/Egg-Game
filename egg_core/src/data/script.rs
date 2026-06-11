@@ -19,8 +19,8 @@
 //! it — via the [`eggtext`](crate::data::eggtext) DSL, or straight from JSON —
 //! into a [`ScriptFile`] and installs it into the [`Script`] registry it owns
 //! (via [`Script::set_base`] / [`Script::set_language`]); gameplay code
-//! reads it back through the console (`system.label(..)`, `system.get_dialogue(..)`,
-//! `system.print_label(..)`).
+//! reads it back through the shared context ([`Ctx::label`](crate::Ctx::label),
+//! [`Ctx::list`](crate::Ctx::list), [`Ctx::get_dialogue`](crate::Ctx::get_dialogue)).
 //!
 //! A *base* language is always kept as a fallback. A *language* can be swapped
 //! in at runtime; any key it doesn't define falls back to the base, so partial

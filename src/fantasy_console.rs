@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::{Image, info};
 use egg_core::{
-    data::{save::SaveData, script::Script, sound::music::MusicTrack},
+    data::{save::SaveData, sound::music::MusicTrack},
     gamestate::EggInput,
     system::{
         ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode,
@@ -32,11 +32,6 @@ use egg_core::{
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
-    /// UI labels + dialogue, loaded from `script/<lang>.eggtext`.
-    script: Script,
-    /// A language requested at runtime via `set_language`, awaiting load by the
-    /// host's asset loop (see `take_pending_language`).
-    pending_language: Option<String>,
     music: Option<(MusicTrack, bool)>,
     memory: SaveData,
     sounds: HashMap<String, SfxOptions>,
@@ -48,8 +43,6 @@ impl FantasyConsole {
         Self {
             output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             font: Font::blank(),
-            script: Script::new(),
-            pending_language: None,
             music: None,
             sounds: HashMap::new(),
             memory: SaveData::default(),
@@ -69,11 +62,6 @@ impl FantasyConsole {
     /// to diff against the last value written to disk.
     pub fn save_data(&self) -> SaveData {
         self.memory.clone()
-    }
-    /// Take any language requested at runtime via [`ConsoleApi::set_language`],
-    /// for the host's asset loop to load and apply.
-    pub fn take_pending_language(&mut self) -> Option<String> {
-        self.pending_language.take()
     }
     pub fn blit_to_image(&self, image: &mut [u8]) {
         // Gamestate draw fns composite directly into output_screen each frame.
@@ -187,15 +175,6 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    fn script(&self) -> &Script {
-        &self.script
-    }
-    fn script_mut(&mut self) -> &mut Script {
-        &mut self.script
-    }
-    fn set_language(&mut self, language: &str) {
-        self.pending_language = Some(language.to_string());
-    }
     /// Write `path` under `assets/`, backing up any existing file to
     /// `<path>.bak` first. The engine only hands over relative forward-slash
     /// paths; anything absolute or escaping the data root is refused.

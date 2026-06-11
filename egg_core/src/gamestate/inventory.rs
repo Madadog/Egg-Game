@@ -1,5 +1,6 @@
 use crate::{
     Ctx,
+    data::script::Script,
     data::sound,
     dialogue::Dialogue,
     system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
@@ -230,7 +231,7 @@ impl InventoryUi {
     /// a page-specific main area — with Taffy. Rebuilt each frame and used for
     /// both hit-testing (`step`) and drawing (`draw`). Every label/slot carries
     /// an [`InvKey`] so a mouse hit resolves straight to the thing under it.
-    pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<InvKey> {
+    pub fn build_ui(&self, system: &mut impl ConsoleApi, script: &Script) -> Ui<InvKey> {
         use crate::system::PrintOptions;
 
         // Original fixed dimensions, kept so the panel centres exactly as before
@@ -256,10 +257,10 @@ impl InventoryUi {
 
         // --- Side column: the four page labels. ---
         let labels = [
-            system.label("inventory_items"),
-            system.label("inventory_shell"),
-            system.label("inventory_options"),
-            system.label("inventory_back"),
+            script.label("inventory_items"),
+            script.label("inventory_shell"),
+            script.label("inventory_options"),
+            script.label("inventory_back"),
         ];
         let label_w = labels
             .iter()
@@ -365,12 +366,12 @@ impl InventoryUi {
         ctx.draw.rgba(FG).fill(Rgba::TRANSPARENT);
 
         // Title, white with a 1px black shadow.
-        let inventory_title = ctx.system.label("inventory_title");
+        let inventory_title = ctx.label("inventory_title");
         ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 121, 38, black, body_opts.clone());
         ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
 
         // Lay out and draw the whole panel in one pass...
-        let ui = self.build_ui(ctx.system);
+        let ui = self.build_ui(ctx.system, ctx.script);
         ui.draw(ctx.draw, ctx.system, FG);
 
         // ...then overlay the state-specific bits using the laid-out rects.
@@ -398,8 +399,9 @@ impl InventoryUi {
                     None => self.inventory.items[*current].map(|item| item.name),
                 };
                 if let Some(name) = name {
+                    let name = ctx.label(name);
                     ctx.draw.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
-                    ctx.system.print_to(ctx.draw.rgba(FG), &ctx.system.label(name), 9, 100, white, body_opts.clone());
+                    ctx.system.print_to(ctx.draw.rgba(FG), &name, 9, 100, white, body_opts.clone());
                 }
             }
             InventoryUiState::Eggs(current) => {
@@ -419,7 +421,7 @@ impl InventoryUi {
                 None => self.inventory.items[*current],
             };
             if let Some(item) = item {
-                let desc = ctx.system.label(item.desc);
+                let desc = ctx.label(item.desc);
                 let string = self.dialogue.fit_text(ctx.system, &desc);
                 self.dialogue
                     .draw_dialogue_portrait(ctx.draw, FG, ctx.system, &string, false, item.sprite, 3, 1, 1);
@@ -447,7 +449,7 @@ impl InventoryUi {
     }
     pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
-        let ui = self.build_ui(ctx.system);
+        let ui = self.build_ui(ctx.system, ctx.script);
         let mouse = ctx.system.mouse();
         let mut mouse_clicked = false;
         if let Some(key) = ui.hit(mouse.pos()) {

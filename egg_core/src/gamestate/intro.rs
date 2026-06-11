@@ -3,7 +3,7 @@ use crate::data::sound::music::MusicTrack;
 use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::menu::draw_title_indexed;
 use crate::system::drawing::{Canvas, EdgePolicy};
-use crate::system::{ConsoleApi, ConsoleHelper, SWEETIE_16};
+use crate::system::{ConsoleApi, SWEETIE_16};
 
 pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
     let steps: &[u16] = &[0, 700, 760];
@@ -85,9 +85,10 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                     fg,
                     &ctx.draw.indexed_sprites,
                     ctx.system,
+                    ctx.script,
                     120,
                     53,
-                    &ctx.system.label("game_title"),
+                    &ctx.script.label("game_title"),
                     t as i32,
                 );
             }
@@ -107,9 +108,10 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
             fg,
             &ctx.draw.indexed_sprites,
             ctx.system,
+            ctx.script,
             120,
             53,
-            &ctx.system.label("game_title"),
+            &ctx.script.label("game_title"),
             t as i32,
         );
         compose_intro_layers(ctx.draw, ctx.system, [0, 0]);

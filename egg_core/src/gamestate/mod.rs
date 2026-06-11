@@ -170,8 +170,8 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::drawing::image::RgbaImage;
     let small_text = ctx.system.memory().small_text_on;
-    let title = ctx.system.label("instructions_title");
-    let instructions = ctx.system.label("instructions");
+    let title = ctx.label("instructions_title");
+    let instructions = ctx.label("instructions");
     let colour_12 = ctx.draw.colour(12);
     let colour_1 = ctx.draw.colour(1);
     let colour_0 = ctx.draw.colour(0);
