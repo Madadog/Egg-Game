@@ -5,7 +5,6 @@ use crate::{
         sound::{SfxData, music::MusicTrack},
     },
     dialogue::Message,
-    rand::Lcg64Xsh32,
     system::drawing::{image::RgbaImage, Canvas},
 };
 
@@ -19,6 +18,8 @@ pub mod consts;
 pub mod drawing;
 pub mod input;
 pub mod scancode;
+#[cfg(test)]
+pub mod test_console;
 pub mod types;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
@@ -33,7 +34,6 @@ pub trait ConsoleApi {
     /// for the single-player shorthand.
     fn controllers(&self) -> &[Controller; 4];
     fn memory(&mut self) -> &mut SaveData;
-    fn get_sprite_flags(&mut self) -> &mut [u8];
 
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
@@ -45,9 +45,6 @@ pub trait ConsoleApi {
     // Audio
     fn music(&mut self, track: Option<&MusicTrack>);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
-
-    // Per-frame state helpers
-    fn rng(&mut self) -> &mut Lcg64Xsh32;
 
     // Text registry (UI labels + dialogue, swappable per language).
     fn script(&self) -> &Script;
@@ -63,13 +60,6 @@ pub trait ConsoleApi {
     /// names files, the host decides where they really live (under its data
     /// root). Hosts without writable storage may log and drop the write.
     fn write_file(&mut self, path: &str, bytes: &[u8]);
-    /// Grab a whole bitmap. By convention:
-    ///
-    /// 0. Screen
-    /// 1. OVR layer
-    /// 2. Indexed sprites
-    /// 3. RGBA sprites
-    fn get_bitmap_indexed(&self, id: usize) -> &[u8];
 
     /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;

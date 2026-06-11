@@ -26,8 +26,8 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 fg.fill_circle(90, 36, 2, 12);
                 let (fw, fh) = (fg.width(), fg.height());
                 for _ in 0..420 {
-                    let x = ctx.system.rng().next_u32() as i32 % (fw as i32);
-                    let y = ctx.system.rng().next_u32() as i32 % (fh as i32);
+                    let x = ctx.rng.next_u32() as i32 % (fw as i32);
+                    let y = ctx.rng.next_u32() as i32 % (fh as i32);
                     if x >= 0 && y >= 0 && (x as u32) < fw && (y as u32) < fh {
                         fg.set_pixel(x as u32, y as u32, 12);
                     }
@@ -52,8 +52,8 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 fg.fill_circle(120, 68, t, 15);
                 fg.stroke_circle(120, 68, t, 2);
                 let (horizontal, vertical) = (
-                    (ctx.system.rng().next_u32() % 2) as i8 - 1,
-                    (ctx.system.rng().next_u32() % 2) as i8 - 1,
+                    (ctx.rng.next_u32() % 2) as i8 - 1,
+                    (ctx.rng.next_u32() % 2) as i8 - 1,
                 );
                 if local_time > 400 {
                     if local_time < 450 {

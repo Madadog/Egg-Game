@@ -22,7 +22,7 @@ use crate::{
     system::{ConsoleApi, ConsoleHelper},
 };
 
-use crate::system::{PrintOptions, StaticSpriteOptions};
+use crate::system::{PrintOptions, SpriteOptions};
 
 use crate::data::{
     portraits::Portrait,
@@ -392,9 +392,9 @@ impl Dialogue {
             portrait,
             (screen_w -w) / 2 - 13 + 2,
             (screen_h -h) - 6 + 2,
-            StaticSpriteOptions {
+            SpriteOptions {
                 scale,
-                transparent: &[0],
+                transparent: Some(0),
                 w: sw,
                 h: sh,
                 ..Default::default()

@@ -4,7 +4,6 @@ use bevy::prelude::{Image, info};
 use egg_core::{
     data::{save::SaveData, script::Script, sound::music::MusicTrack},
     gamestate::EggInput,
-    rand::Lcg64Xsh32,
     system::{
         ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode,
         SfxOptions,
@@ -33,12 +32,6 @@ use egg_core::{
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
-    // sprites + indexed_sprites + sprite_flags also live on
-    // EggState::draw_state. These copies are kept around for the asset
-    // loaders and Collider::from_sprite reads via get_bitmap_indexed.
-    pub sprites: RgbaImage,
-    pub indexed_sprites: IndexedImage,
-    pub sprite_flags: Vec<u8>,
     /// UI labels + dialogue, loaded from `script/<lang>.eggtext`.
     script: Script,
     /// A language requested at runtime via `set_language`, awaiting load by the
@@ -48,47 +41,19 @@ pub struct FantasyConsole {
     memory: SaveData,
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
-    rng: Lcg64Xsh32,
 }
 
 impl FantasyConsole {
     pub fn new() -> Self {
-        let mut x = Self {
+        Self {
             output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             font: Font::blank(),
-            sprites: RgbaImage::new(1, 1),
-            indexed_sprites: IndexedImage::new(1, 1),
             script: Script::new(),
             pending_language: None,
-            sprite_flags: vec![0; 2048],
             music: None,
             sounds: HashMap::new(),
             memory: SaveData::default(),
             input: EggInput::new(),
-            rng: Lcg64Xsh32::default(),
-        };
-        let mut spr_flags = String::from(
-            "00100000000000000000000000000000000000801000000000000000002020000010101010500000001000000000000000101030101000000000001010000000101010002000000000301010400000001000100000400010500000000000000010101010108020100000000000101010203000301080302000000000001010101010100000100010001010100000000010001000001000100010100000000000000000000010101030303010000010100000000000000000000000002030203000000000000000000000101010400000000000000010000000203010102000100000000000000000000000000010101000000000000000100010a060b0101020",
-        );
-        spr_flags.push_str("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
-        spr_flags.push_str("000000001010101000000000000000000070601010700000000000000000000010000000001000000000000000000000601010606060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000000010100000000000000000000000001010101000000000000000700000302030200000000000000000d0006000");
-        spr_flags.push_str("00000000101010100000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000010001000000000000000000000000000100010000000000000000000000010001010100000000000000000000000000000000000000000000000000000000000001010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
-        x.load_sprite_flags(&spr_flags);
-        x
-    }
-    pub fn load_sprite_flags(&mut self, string: &str) {
-        for i in 0..string.len() / 2 {
-            let (char1, char2) = (
-                string.chars().nth(i * 2).unwrap(),
-                string.chars().nth(i * 2 + 1).unwrap(),
-            );
-            let mut string = String::new();
-            string.push(char2);
-            string.push(char1);
-            let flag = u8::from_str_radix(&string, 16).unwrap();
-            let (x, y) = (i % 16, i / 16);
-            let index = x + y * 32;
-            self.sprite_flags[index] = flag;
         }
     }
     pub fn input(&mut self) -> &mut EggInput {
@@ -139,8 +104,12 @@ impl FantasyConsole {
         self.font.refresh();
     }
 
-    pub fn set_sprites(&mut self, sheet: &Image) {
-        self.sprites = RgbaImage::from_vec(
+    /// Convert a Bevy RGBA sprite-sheet `Image` into the engine's [`RgbaImage`].
+    /// Host-side asset plumbing: the result is stored on
+    /// [`DrawState`](egg_core::drawstate::DrawState), the single owner of the
+    /// sheets, by `load_assets`.
+    pub fn sprites_from_image(sheet: &Image) -> RgbaImage {
+        RgbaImage::from_vec(
             sheet
                 .data
                 .as_ref()
@@ -148,12 +117,13 @@ impl FantasyConsole {
                 .clone(),
             sheet.size().x,
             sheet.size().y,
-        );
+        )
     }
     /// Convert an RGBA sprite sheet to indexed form by matching each pixel
     /// against `palette`. Pixels that don't match a palette entry become
-    /// index 0.
-    pub fn set_indexed_sprites(&mut self, sheet: &Image, palette: &[[u8; 3]]) {
+    /// index 0. Host-side: the palette-matching policy is the host's, and the
+    /// result is stored on [`DrawState`](egg_core::drawstate::DrawState).
+    pub fn indexed_sprites_from_image(sheet: &Image, palette: &[[u8; 3]]) -> IndexedImage {
         let width = sheet.size().x as usize;
         let height = sheet.size().y as usize;
         let mut data = Vec::with_capacity(width * height);
@@ -171,7 +141,7 @@ impl FantasyConsole {
             }
             data.push(0);
         }
-        self.indexed_sprites = IndexedImage::from_vec(data, width, height);
+        IndexedImage::from_vec(data, width, height)
     }
 }
 
@@ -182,10 +152,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn memory(&mut self) -> &mut SaveData {
         &mut self.memory
-    }
-
-    fn get_sprite_flags(&mut self) -> &mut [u8] {
-        self.sprite_flags.as_mut_slice()
     }
 
     fn exit(&mut self) {
@@ -219,10 +185,6 @@ impl ConsoleApi for FantasyConsole {
 
     fn sfx(&mut self, sfx_id: &str, opts: egg_core::system::SfxOptions) {
         self.sounds.insert(sfx_id.to_string(), opts);
-    }
-
-    fn rng(&mut self) -> &mut egg_core::rand::Lcg64Xsh32 {
-        &mut self.rng
     }
 
     fn script(&self) -> &Script {
@@ -265,12 +227,6 @@ impl ConsoleApi for FantasyConsole {
     #[cfg(target_arch = "wasm32")]
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
         info!("File write not persisted on web ({path}, {} bytes)", bytes.len());
-    }
-    fn get_bitmap_indexed(&self, id: usize) -> &[u8] {
-        match id {
-            2 => &self.indexed_sprites.data,
-            _ => panic!("bitmap {id} does not exist"),
-        }
     }
 
     fn output_image(&mut self) -> &mut RgbaImage {

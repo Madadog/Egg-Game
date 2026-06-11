@@ -365,6 +365,7 @@ pub fn update_views(
             draw: &mut view.draw_state,
             system: &mut g.system,
             maps: &mut g.state.maps,
+            rng: &mut g.state.rng,
         };
         g.state
             .walkaround

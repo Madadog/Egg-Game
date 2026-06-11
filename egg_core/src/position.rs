@@ -16,7 +16,7 @@
 
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::system::ConsoleApi;
+use crate::system::drawing::image::IndexedImage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vec2 {
@@ -262,8 +262,12 @@ impl Collider {
         let (x, y) = (x % 8, y % 8);
         self.data[y][x] = value;
     }
-    pub fn from_sprite(system: &impl ConsoleApi, index: usize) -> Collider {
-        let bitmap = system.get_bitmap_indexed(2);
+    /// Derive an 8×8 collider from a tile's art in the indexed sprite sheet:
+    /// any pixel that isn't index 0 or 255 is solid. Reads the sheet directly
+    /// (it's [`crate::drawstate::DrawState::indexed_sprites`]) rather than going
+    /// through the console.
+    pub fn from_sprite(indexed_sprites: &IndexedImage, index: usize) -> Collider {
+        let bitmap = &indexed_sprites.data;
         let mut collider = Collider::default();
         for i in 0..8 {
             for j in 0..8 {

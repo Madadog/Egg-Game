@@ -1,5 +1,5 @@
 use crate::position::Vec2;
-use crate::system::StaticSpriteOptions;
+use crate::system::SpriteOptions;
 
 #[derive(Clone, Debug)]
 pub enum ParticleDraw {
@@ -39,7 +39,7 @@ impl ParticleDraw {
                     id,
                     x,
                     y,
-                    StaticSpriteOptions::transparent_zero(),
+                    SpriteOptions::transparent_zero(),
                 );
             }
         }

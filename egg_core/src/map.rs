@@ -10,7 +10,7 @@ use crate::{
     },
     interact::Interactable,
     position::{Collider, Hitbox, Vec2, touches_tile},
-    system::ConsoleApi,
+    system::drawing::image::IndexedImage,
 };
 /*
 pub enum TileMapCollision {
@@ -72,9 +72,14 @@ impl MapStore {
 /// name table (the one place old numeric saves and numeric `to_map`
 /// properties in existing `.tmj` files are translated); otherwise a "modern"
 /// map's [`MapInfo`] is built straight from its own layers. `None` when the
-/// name matches nothing. `system` is only read for the sprite art the modern
-/// collision layer derives its colliders from.
-pub fn map_by_name(system: &impl ConsoleApi, name: &str, maps: &MapStore) -> Option<MapInfo> {
+/// name matches nothing. `indexed_sprites` is only read for the sprite art the
+/// modern collision layer derives its colliders from (the sheet that lives on
+/// [`crate::drawstate::DrawState`]).
+pub fn map_by_name(
+    indexed_sprites: &IndexedImage,
+    name: &str,
+    maps: &MapStore,
+) -> Option<MapInfo> {
     if let Some(map) = legacy_map(name) {
         return Some(map);
     }
@@ -82,7 +87,7 @@ pub fn map_by_name(system: &impl ConsoleApi, name: &str, maps: &MapStore) -> Opt
         return legacy_map(MapIndex(index).name());
     }
     if maps.is_modern(name) {
-        return Some(modern_map_info(system, name, maps.get(name)?));
+        return Some(modern_map_info(indexed_sprites, name, maps.get(name)?));
     }
     None
 }
@@ -94,7 +99,7 @@ pub fn map_by_name(system: &impl ConsoleApi, name: &str, maps: &MapStore) -> Opt
 /// layer. `source_layer` is each layer's index in `TiledMap::layers` — object
 /// layers occupy indices too ([`TiledMap::get`] returns `None` for them), so
 /// the numbering stays aligned with the file.
-fn modern_map_info(system: &impl ConsoleApi, name: &str, map: &TiledMap) -> MapInfo {
+fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -> MapInfo {
     let (width, height) = match map.layers.first() {
         Some(TiledMapLayer::TileLayer(layer)) => (
             layer.width.try_into().unwrap(),
@@ -115,7 +120,7 @@ fn modern_map_info(system: &impl ConsoleApi, name: &str, map: &TiledMap) -> MapI
     for j in 0..collision_layer.size.y {
         for i in 0..collision_layer.size.x {
             let tile = map.get(0, i as usize, j as usize).unwrap_or(0);
-            colliders.push(Collider::from_sprite(system, tile));
+            colliders.push(Collider::from_sprite(indexed_sprites, tile));
         }
     }
     collision_layer.colliders = colliders;
@@ -382,8 +387,11 @@ impl Axis {
     }
 }
 
+/// Whether `point` collides with `layer` at this map position. `sprite_flags`
+/// is the per-tile flag table ([`crate::drawstate::DrawState::sprite_flags`]),
+/// consulted by tile id; the layer's own bitmap colliders are the second source.
 pub fn layer_collides_flags(
-    system: &mut impl ConsoleApi,
+    sprite_flags: &[u8],
     point: Vec2,
     layer: &LayerInfo,
     tiles: &TiledMap,
@@ -400,7 +408,7 @@ pub fn layer_collides_flags(
             .unwrap_or(0)
             + spr_flag_offset;
         let mget_collision = touches_tile(
-            *system.get_sprite_flags().get(id).unwrap_or(&0),
+            *sprite_flags.get(id).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
         );
         let bitmap_collision = layer
@@ -417,87 +425,8 @@ pub fn layer_collides_flags(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::save::SaveData;
-    use crate::data::script::Script;
-    use crate::data::sound::music::MusicTrack;
     use crate::data::tmj::{ObjectLayer, TileLayer};
-    use crate::rand::Lcg64Xsh32;
-    use crate::system::drawing::image::RgbaImage;
-    use crate::system::{Controller, Font, MouseInput, ScanCode, SfxOptions};
-
-    /// Minimal in-memory console, just enough surface for `map_by_name` (which
-    /// reads the indexed sprite sheet to derive colliders).
-    struct TestConsole {
-        controllers: [Controller; 4],
-        memory: SaveData,
-        sprite_flags: Vec<u8>,
-        indexed_sprites: Vec<u8>,
-        script: Script,
-        rng: Lcg64Xsh32,
-        output: RgbaImage,
-        font: Font,
-    }
-    impl TestConsole {
-        fn new() -> Self {
-            Self {
-                controllers: [Controller::default(); 4],
-                memory: SaveData::default(),
-                sprite_flags: vec![0; 2048],
-                // One blank 256px-wide sheet row block: enough for
-                // `Collider::from_sprite` to read any low tile id.
-                indexed_sprites: vec![0; 256 * 64],
-                script: Script::new(),
-                rng: Lcg64Xsh32::default(),
-                output: RgbaImage::new(1, 1),
-                font: Font::blank(),
-            }
-        }
-    }
-    impl ConsoleApi for TestConsole {
-        fn controllers(&self) -> &[Controller; 4] {
-            &self.controllers
-        }
-        fn memory(&mut self) -> &mut SaveData {
-            &mut self.memory
-        }
-        fn get_sprite_flags(&mut self) -> &mut [u8] {
-            &mut self.sprite_flags
-        }
-        fn exit(&mut self) {}
-        fn key(&self, _scancode: ScanCode) -> bool {
-            false
-        }
-        fn keyp(&self, _scancode: ScanCode) -> bool {
-            false
-        }
-        fn key_chars(&self) -> &[char] {
-            &[]
-        }
-        fn mouse(&self) -> MouseInput {
-            MouseInput::default()
-        }
-        fn music(&mut self, _track: Option<&MusicTrack>) {}
-        fn sfx(&mut self, _sfx_id: &str, _opts: SfxOptions) {}
-        fn rng(&mut self) -> &mut Lcg64Xsh32 {
-            &mut self.rng
-        }
-        fn script(&self) -> &Script {
-            &self.script
-        }
-        fn script_mut(&mut self) -> &mut Script {
-            &mut self.script
-        }
-        fn write_file(&mut self, _path: &str, _bytes: &[u8]) {}
-        fn get_bitmap_indexed(&self, _id: usize) -> &[u8] {
-            &self.indexed_sprites
-        }
-        fn output_image(&mut self) -> &mut RgbaImage {
-            &mut self.output
-        }
-        fn font(&self) -> &Font {
-            &self.font
-        }
-    }
+    use crate::system::test_console::TestConsole;
 
     /// A tiny self-contained modern map: one 4×4 tile layer (the collision
     /// layer) plus an empty object layer (which is what marks it as modern).
@@ -527,10 +456,11 @@ mod tests {
     fn map_by_name_resolves_legacy_name() {
         let console = TestConsole::new();
         let store = MapStore::default();
-        let town = map_by_name(&console, "town", &store).expect("town is a legacy map");
+        let town =
+            map_by_name(&console.indexed_sprites, "town", &store).expect("town is a legacy map");
         assert_eq!(town.source, "bank2");
         assert_eq!(town.fg_layers.len(), 1);
-        assert!(map_by_name(&console, "no_such_map", &store).is_none());
+        assert!(map_by_name(&console.indexed_sprites, "no_such_map", &store).is_none());
     }
 
     /// Numeric strings (old saves / numeric `to_map` properties) fall back to
@@ -539,7 +469,8 @@ mod tests {
     fn map_by_name_resolves_numeric_fallback() {
         let console = TestConsole::new();
         let store = MapStore::default();
-        let bedroom = map_by_name(&console, "4", &store).expect("4 is a legacy index");
+        let bedroom =
+            map_by_name(&console.indexed_sprites, "4", &store).expect("4 is a legacy index");
         assert_eq!(bedroom.source, "bank1");
         // The bedroom's room layer windows into bank1 at (30, 0).
         assert_eq!(bedroom.layers[0].origin, Vec2::new(30, 0));
@@ -558,7 +489,7 @@ mod tests {
         let mut store = MapStore::default();
         store.insert("lab", synthetic_modern_map());
         assert!(store.is_modern("lab"));
-        let lab = map_by_name(&console, "lab", &store).expect("lab is in the store");
+        let lab = map_by_name(&console.indexed_sprites, "lab", &store).expect("lab is in the store");
         assert_eq!(lab.source, "lab");
         assert_eq!(lab.layers.len(), 1, "collision layer only");
         assert!(!lab.layers[0].visible);

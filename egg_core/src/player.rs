@@ -317,9 +317,11 @@ impl Shell {
 
         (dx, dy)
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn walk(
         &mut self,
         system: &mut impl ConsoleApi,
+        sprite_flags: &[u8],
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
@@ -371,21 +373,21 @@ impl Shell {
                 continue;
             }
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
-                system,
+                sprite_flags,
                 layer,
                 tiles,
                 [points_dx, points_dx_up, points_dx_down],
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
-                system,
+                sprite_flags,
                 layer,
                 tiles,
                 [points_dy, points_dy_left, points_dy_right],
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag
-                && layer_collides_flags(system, point_diag, layer, tiles)
+                && layer_collides_flags(sprite_flags, point_diag, layer, tiles)
             {
                 diagonal_collision = true;
             }
@@ -473,7 +475,7 @@ impl Shell {
 }
 
 fn test_many_points(
-    system: &mut impl ConsoleApi,
+    sprite_flags: &[u8],
     layer: &LayerInfo,
     tiles: &TiledMap,
     points: [Option<[Vec2; 2]>; 3],
@@ -483,7 +485,7 @@ fn test_many_points(
     for (i, points) in points.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides_flags(system, *point, layer, tiles) {
+                if layer_collides_flags(sprite_flags, *point, layer, tiles) {
                     side_flags[i] = true;
                 }
             });

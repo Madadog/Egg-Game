@@ -109,9 +109,9 @@ impl GameMode {
                 *i += 1;
                 if (*i > 60 || ctx.system.memory().instructions_read) && ctx.system.any_btnp() {
                     if ctx.system.memory().instructions_read {
-                        walkaround_state.load_pmem(ctx.system, ctx.maps);
+                        walkaround_state.load_pmem(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
                     } else {
-                        walkaround_state.new_game(ctx.system, ctx.maps);
+                        walkaround_state.new_game(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
                     }
                     ctx.system.memory().instructions_read = true;
                     *self = Self::Walkaround;

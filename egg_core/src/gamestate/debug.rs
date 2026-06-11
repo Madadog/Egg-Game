@@ -2,7 +2,7 @@ use crate::{
     Ctx,
     drawstate::{LayerId, PALETTE_MAP_IDENTITY},
     system::{
-        ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, StaticSpriteOptions, pressed,
+        ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, SpriteOptions, pressed,
         drawing::{Canvas, EdgePolicy, Transform},
         drawing::image::{Rgba, RgbaImage},
     },
@@ -32,7 +32,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
                 x + y * (WIDTH as i32) + indice as i32,
                 x * 8,
                 y * 8,
-                StaticSpriteOptions::default(),
+                SpriteOptions::default(),
             );
         }
     }

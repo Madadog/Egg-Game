@@ -9,6 +9,7 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
+use crate::system::drawing::image::IndexedImage;
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
@@ -118,8 +119,16 @@ impl WalkaroundState {
     /// fallback, then modern maps from `maps`). Unknown names log and leave
     /// the current map in place — the old bank-indexed loader panicked on a
     /// bad index, which a typo'd warp or stale save shouldn't do.
-    pub fn load_map_by_name(&mut self, system: &mut impl ConsoleApi, maps: &MapStore, name: &str) {
-        let Some(map_info) = map_by_name(system, name, maps) else {
+    /// `indexed_sprites` is the sheet `map_by_name` derives modern colliders
+    /// from (it lives on `DrawState`); `system` covers the camera/audio setup.
+    pub fn load_map_by_name(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        indexed_sprites: &IndexedImage,
+        maps: &MapStore,
+        name: &str,
+    ) {
+        let Some(map_info) = map_by_name(indexed_sprites, name, maps) else {
             info!("load_map_by_name: unknown map {name:?}");
             return;
         };
@@ -248,28 +257,38 @@ impl WalkaroundState {
         save.player_y = pos.y;
     }
 
-    pub fn load_pmem(&mut self, system: &mut impl ConsoleApi, maps: &MapStore) {
+    pub fn load_pmem(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        indexed_sprites: &IndexedImage,
+        maps: &MapStore,
+    ) {
         let save = system.memory().clone();
         // Pre-rename saves only carry the numeric id; translate it to a name
         // and resolve everything through the one name-based loader.
         let name = save
             .current_map_name
             .unwrap_or_else(|| MapIndex(save.current_map.into()).name().to_string());
-        self.load_map_by_name(system, maps, &name);
+        self.load_map_by_name(system, indexed_sprites, maps, &name);
         self.player().pos.x = save.player_x;
         self.player().pos.y = save.player_y;
     }
 
     /// Starts a fresh game and saves over the default zeroed
     /// player position and map name.
-    pub fn new_game(&mut self, system: &mut impl ConsoleApi, maps: &MapStore) {
+    pub fn new_game(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        indexed_sprites: &IndexedImage,
+        maps: &MapStore,
+    ) {
         // Rebuild the live walkaround to its fresh construction state. "Erase
         // data" only zeroes `SaveData`; the existing `WalkaroundState` (player
         // entity, companions, dialogue…) is never rebuilt, so without this the
         // player keeps the position/shell they had before the reset and the
         // seed `save()` below would persist that stale position.
         *self = Self::new();
-        self.load_map_by_name(system, maps, "bedroom");
+        self.load_map_by_name(system, indexed_sprites, maps, "bedroom");
         self.save("bedroom", system);
     }
 }
@@ -285,7 +304,7 @@ impl WalkaroundState {
             .for_each(|anim| anim.advance());
 
         self.particles.step();
-        self.creatures.iter_mut().for_each(|x| x.step(ctx.system));
+        self.creatures.iter_mut().for_each(|x| x.step(ctx.rng));
 
         if self.play_cutscene(ctx.system) {
             return None;
@@ -300,7 +319,7 @@ impl WalkaroundState {
         }
 
         if ctx.system.keyp(ScanCode::Digit5) {
-            self.load_pmem(ctx.system, ctx.maps);
+            self.load_pmem(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
             ctx.draw.set_palette(&crate::system::SWEETIE_16);
@@ -363,19 +382,35 @@ impl WalkaroundState {
         for shell in self.entities.iter_mut() {
             match shell.move_mode {
                 MoveMode::Player => {
-                    let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
+                    let (dx, dy) = shell.walk(
+                        ctx.system,
+                        &ctx.draw.sprite_flags,
+                        dx,
+                        dy,
+                        noclip,
+                        &self.current_map,
+                        tiles,
+                    );
                     shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
                 }
                 MoveMode::Wander => {
-                    let (dx, dy) = if ctx.system.rng().rand_u8() < 25 {
+                    let (dx, dy) = if ctx.rng.rand_u8() < 25 {
                         (
-                            (ctx.system.rng().rand_u8() % 3) as i16 - 1,
-                            (ctx.system.rng().rand_u8() % 3) as i16 - 1,
+                            (ctx.rng.rand_u8() % 3) as i16 - 1,
+                            (ctx.rng.rand_u8() % 3) as i16 - 1,
                         )
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    let (dx, dy) = shell.walk(ctx.system, dx, dy, false, &self.current_map, tiles);
+                    let (dx, dy) = shell.walk(
+                        ctx.system,
+                        &ctx.draw.sprite_flags,
+                        dx,
+                        dy,
+                        false,
+                        &self.current_map,
+                        tiles,
+                    );
                     shell.apply_motion::<8>(dx, dy, None);
                 }
             }
@@ -406,7 +441,7 @@ impl WalkaroundState {
                 .fill(self.player_ref().pos, self.player_ref().dir);
             if let Some(new_map) = target.map {
                 self.save(&new_map, ctx.system);
-                self.load_map_by_name(ctx.system, ctx.maps, &new_map);
+                self.load_map_by_name(ctx.system, &ctx.draw.indexed_sprites, ctx.maps, &new_map);
             }
         } else if interact {
             for item in self.current_map.interactables.iter().cloned().chain(

@@ -1,6 +1,7 @@
 use crate::{
     position::{Hitbox, Vec2},
-    system::{ConsoleApi, DrawParams, Flip, SpriteOptions},
+    rand::Lcg64Xsh32,
+    system::{DrawParams, Flip, SpriteOptions},
 };
 
 #[derive(Clone, Debug)]
@@ -25,22 +26,22 @@ impl Creature {
             ..self
         }
     }
-    pub fn step(&mut self, system: &mut impl ConsoleApi) {
+    pub fn step(&mut self, rng: &mut Lcg64Xsh32) {
         match &mut self.state {
             CreatureState::Idle(timer) => {
                 if timer.tick() {
                     self.state = CreatureState::Walking(
-                        Timer(system.rng().rand_u8().min(80)),
+                        Timer(rng.rand_u8().min(80)),
                         Vec2::new(
-                            (system.rng().rand_u8() % 3) as i16 - 1,
-                            (system.rng().rand_u8() % 3) as i16 - 1,
+                            (rng.rand_u8() % 3) as i16 - 1,
+                            (rng.rand_u8() % 3) as i16 - 1,
                         ),
                     );
                 }
             }
             CreatureState::Walking(timer, vec) => {
                 if timer.tick() {
-                    self.state = CreatureState::Idle(Timer(system.rng().rand_u8().min(80)));
+                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
                 } else if timer.0 % 3 == 0 {
                     if vec.x != 0 {
                         self.flip_h = vec.x.is_negative()
@@ -50,7 +51,7 @@ impl Creature {
             }
             CreatureState::Egg(timer) => {
                 if timer.tick() {
-                    self.state = CreatureState::Idle(Timer(system.rng().rand_u8().min(80)));
+                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
                 }
             }
         }

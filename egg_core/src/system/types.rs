@@ -32,7 +32,6 @@ impl DrawParams {
         layer: crate::drawstate::LayerId,
     ) {
         let palette_map = crate::drawstate::palette_map_rotate(self.palette_rotate.into());
-        let opts = self.options.compatibility_mode();
         if let Some(outline) = self.outline {
             draw_state.spr_with_outline(
                 layer,
@@ -40,11 +39,11 @@ impl DrawParams {
                 self.index,
                 self.x,
                 self.y,
-                opts,
+                self.options,
                 outline,
             );
         } else {
-            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, opts);
+            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, self.options);
         }
     }
     pub fn bottom(&self) -> i32 {
@@ -140,40 +139,11 @@ impl Flip {
 // Sprite options share the raster core's rotation type directly.
 pub use super::drawing::Rotate;
 
-#[derive(Debug, Clone)]
-pub struct StaticSpriteOptions<'a> {
-    pub transparent: &'a [u8],
-    pub scale: i32,
-    pub flip: Flip,
-    pub rotate: Rotate,
-    pub w: i32,
-    pub h: i32,
-}
-impl<'a> StaticSpriteOptions<'a> {
-    pub const fn default() -> Self {
-        Self {
-            transparent: &[],
-            scale: 1,
-            flip: Flip::None,
-            rotate: Rotate::None,
-            w: 1,
-            h: 1,
-        }
-    }
-    pub const fn transparent_zero() -> Self {
-        Self {
-            transparent: &[0],
-            ..Self::default()
-        }
-    }
-}
-impl Default for StaticSpriteOptions<'_> {
-    fn default() -> Self {
-        // Delegates to the inherent `const fn default`; inherent associated
-        // functions shadow the trait method here, so this is not recursive.
-        Self::default()
-    }
-}
+/// Per-sprite draw settings: which colour key is transparent, scale, flip,
+/// rotation and the multi-tile `w`×`h` footprint. `id`/`x_offset`/`y_offset`
+/// describe a sprite *frame* (used by the animation/player code to position
+/// frames); the raster core ignores them. A single colour key suffices for
+/// every call site, so `transparent` is one optional index rather than a slice.
 #[derive(Debug, Clone)]
 pub struct SpriteOptions {
     pub id: i32,
@@ -206,31 +176,13 @@ impl SpriteOptions {
             ..Self::default()
         }
     }
-    pub fn compatibility_mode(&'_ self) -> StaticSpriteOptions<'_> {
-        StaticSpriteOptions {
-            transparent: self.transparent.as_slice(),
-            scale: self.scale,
-            flip: self.flip.clone(),
-            rotate: self.rotate,
-            w: self.w,
-            h: self.h,
-        }
-    }
 }
 
-impl<'a> From<StaticSpriteOptions<'a>> for SpriteOptions {
-    fn from(other: StaticSpriteOptions) -> Self {
-        Self {
-            id: 0,
-            x_offset: 0,
-            y_offset: 0,
-            transparent: other.transparent.first().cloned(),
-            scale: other.scale,
-            flip: other.flip,
-            rotate: other.rotate,
-            w: other.w,
-            h: other.h,
-        }
+impl Default for SpriteOptions {
+    fn default() -> Self {
+        // Delegates to the inherent `const fn default`; inherent associated
+        // functions shadow the trait method here, so this is not recursive.
+        Self::default()
     }
 }
 

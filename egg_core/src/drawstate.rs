@@ -1,6 +1,6 @@
 use crate::data::tmj::TileLayer;
 use crate::system::{
-    HEIGHT, MapOptions, SWEETIE_16, StaticSpriteOptions, WIDTH,
+    HEIGHT, MapOptions, SWEETIE_16, SpriteOptions, WIDTH,
     drawing::image::{IndexedImage, Rgba, RgbaImage},
 };
 
@@ -13,6 +13,11 @@ pub struct DrawState {
 
     pub palettes: Vec<Vec<[u8; 3]>>,
 
+    /// Per-tile collision/behaviour flags, indexed by tile id (see
+    /// [`crate::map::layer_collides_flags`]). The single source of truth for
+    /// flags. Initialised from the built-in blob in
+    /// [`crate::data::sprite_flags`]; the plan is to load these from the Tiled
+    /// tileset's per-tile properties instead (flags-as-data), retiring the blob.
     pub sprite_flags: Vec<u8>,
 }
 
@@ -24,7 +29,7 @@ impl Default for DrawState {
             indexed_canvas: vec![IndexedImage::new(WIDTH as usize, HEIGHT as usize); 2],
             indexed_sprites: IndexedImage::new(0, 0),
             palettes: vec![default_palette()],
-            sprite_flags: vec![0; 2048],
+            sprite_flags: crate::data::sprite_flags::default_sprite_flags(),
         }
     }
 }
@@ -105,7 +110,7 @@ impl DrawState {
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
     ) {
         let canvas = &mut self.rgba_canvas[layer as usize];
         let palette = self.palettes[0].as_slice();
@@ -120,7 +125,7 @@ impl DrawState {
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
         outline_colour: u8,
     ) {
         let canvas = &mut self.rgba_canvas[layer as usize];
@@ -138,7 +143,7 @@ impl DrawState {
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
         outline_colour: u8,
     ) {
         let canvas = &mut self.rgba_canvas[layer as usize];
@@ -234,7 +239,7 @@ mod tests {
             0,
             10,
             20,
-            StaticSpriteOptions::default(),
+            SpriteOptions::default(),
         );
         assert_eq!(s.rgba_canvas[0].get_pixel(10, 20), Rgba::new(255, 0, 0, 255));
     }
@@ -252,9 +257,9 @@ mod tests {
             0,
             5,
             5,
-            StaticSpriteOptions {
+            SpriteOptions {
                 flip: Flip::None,
-                ..StaticSpriteOptions::default()
+                ..SpriteOptions::default()
             },
         );
         assert_eq!(s.rgba_canvas[0].get_pixel(5, 5), Rgba::new(255, 0, 0, 255));

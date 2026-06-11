@@ -36,6 +36,7 @@ use crate::gamestate::GameMode;
 use crate::gamestate::inventory::InventoryUi;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::map::MapStore;
+use crate::rand::Lcg64Xsh32;
 use crate::system::ConsoleApi;
 
 /// The shared world every game state steps and draws against — the layer
@@ -49,6 +50,9 @@ pub struct Ctx<'a, S: ConsoleApi> {
     pub draw: &'a mut DrawState,
     pub system: &'a mut S,
     pub maps: &'a mut MapStore,
+    /// The game's pseudo-random generator. Lives on [`EggState`] (not the
+    /// console) so randomness is a piece of game state, not a hardware service.
+    pub rng: &'a mut Lcg64Xsh32,
 }
 
 pub struct EggState {
@@ -61,6 +65,8 @@ pub struct EggState {
     /// Every loaded Tiled map by name — the tile data the game draws,
     /// collides against and edits. The host fills it at asset-load time.
     pub maps: MapStore,
+    /// The game's RNG, threaded into every state through [`Ctx::rng`].
+    pub rng: Lcg64Xsh32,
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
@@ -69,6 +75,7 @@ impl EggState {
             draw: &mut self.draw_state,
             system,
             maps: &mut self.maps,
+            rng: &mut self.rng,
         };
         self.gamestate.run(
             &mut ctx,
@@ -89,6 +96,7 @@ impl Default for EggState {
             time: 0,
             debug_info: DebugInfo::default(),
             maps: MapStore::default(),
+            rng: Lcg64Xsh32::default(),
         }
     }
 }

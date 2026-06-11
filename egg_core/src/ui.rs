@@ -27,7 +27,7 @@ use taffy::prelude::{
 use crate::drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY};
 use crate::position::Vec2;
 use crate::system::drawing::Canvas;
-use crate::system::{ConsoleApi, ConsoleHelper, PrintOptions, StaticSpriteOptions};
+use crate::system::{ConsoleApi, ConsoleHelper, PrintOptions, SpriteOptions};
 
 /// Re-exported so consumers can write `Style { .. }` literals (with the
 /// [`row`]/[`column`]/[`size`]/[`pad`] helpers) and node-building helpers
@@ -498,8 +498,8 @@ impl<K: Copy + PartialEq> Ui<K> {
                     h,
                     outline,
                 } => {
-                    let opts = StaticSpriteOptions {
-                        transparent: &[0],
+                    let opts = SpriteOptions {
+                        transparent: Some(0),
                         scale: *scale,
                         w: *w,
                         h: *h,

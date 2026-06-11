@@ -209,9 +209,14 @@ fn load_assets(
                 let sheet = images.get(&game_assets.sheet);
                 if let (Some(font), Some(sheet)) = (font, sheet) {
                     state.system.set_font(font);
-                    state.system.set_sprites(sheet);
+                    // The sprite sheets live on DrawState (their single owner);
+                    // the host converts the Bevy image into the engine's formats
+                    // and fills DrawState directly. Sprite flags initialise
+                    // themselves from the built-in blob in DrawState::default.
                     let palette = state.state.draw_state.palettes[0].clone();
-                    state.system.set_indexed_sprites(sheet, &palette);
+                    state.state.draw_state.rgba_sprites = FantasyConsole::sprites_from_image(sheet);
+                    state.state.draw_state.indexed_sprites =
+                        FantasyConsole::indexed_sprites_from_image(sheet, &palette);
                     // Maps live on the engine's MapStore, keyed by file stem —
                     // the single copy that drawing, collision and the editor
                     // all read.
@@ -222,13 +227,6 @@ fn load_assets(
                     if let Some(script) = scripts.get(&game_assets.script) {
                         state.system.script_mut().set_base(script.0.clone());
                     }
-                    // Mirror sprites + flags into DrawState (the authoritative
-                    // copies for the new draw paths). The console also keeps
-                    // copies for asset-side queries (e.g. Collider::from_sprite
-                    // reads via get_bitmap_indexed).
-                    state.state.draw_state.rgba_sprites = state.system.sprites.clone();
-                    state.state.draw_state.indexed_sprites = state.system.indexed_sprites.clone();
-                    state.state.draw_state.sprite_flags = state.system.sprite_flags.clone();
                     state.loaded = true;
                     info!("Finished loading assets.");
                     commands.remove_resource::<GameAssets>();
@@ -666,7 +664,7 @@ fn step_state(
     // simulation step, so their rate is frame-rate independent.
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
         let pos = game.state.walkaround.player().pos;
-        let rand = game.system.rng().rand_u8();
+        let rand = game.state.rng.rand_u8();
         let mut new = if rand < 64 {
             egg_core::player::Shell::ellie()
         } else if rand < 128 {

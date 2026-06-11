@@ -1,6 +1,6 @@
 use crate::drawstate::{DrawState, LayerId, palette_map_rotate};
 use crate::position::Vec2;
-use crate::system::StaticSpriteOptions;
+use crate::system::SpriteOptions;
 
 #[derive(Debug, Clone)]
 pub struct Portrait {
@@ -31,7 +31,7 @@ impl Portrait {
                 *id,
                 x,
                 y,
-                StaticSpriteOptions::transparent_zero(),
+                SpriteOptions::transparent_zero(),
                 1,
             );
         }
@@ -43,7 +43,7 @@ impl Portrait {
                 *id,
                 x,
                 y,
-                StaticSpriteOptions::transparent_zero(),
+                SpriteOptions::transparent_zero(),
             );
         }
     }

@@ -7,7 +7,7 @@
 use super::image::{IndexedImage, Rgba, RgbaImage};
 use super::{Canvas, EdgePolicy, Rotate, Transform};
 use crate::data::tmj::TileLayer;
-use crate::system::{MapOptions, StaticSpriteOptions};
+use crate::system::{MapOptions, SpriteOptions};
 
 /// Number of 8-pixel tiles in one row of a sprite sheet.
 #[inline]
@@ -39,7 +39,7 @@ fn palette_colour(palette: &[[u8; 3]], palette_map: &[usize], idx: u8) -> Option
 }
 
 #[inline]
-fn xform_from_opts(opts: &StaticSpriteOptions<'_>) -> Transform {
+fn xform_from_opts(opts: &SpriteOptions) -> Transform {
     Transform {
         flip_x: opts.flip.x(),
         flip_y: opts.flip.y(),
@@ -114,7 +114,7 @@ fn for_each_tile<F: FnMut(i32, i32, i32)>(
     x: i32,
     y: i32,
     tiles_per_row: i32,
-    opts: &StaticSpriteOptions<'_>,
+    opts: &SpriteOptions,
     mut draw_one: F,
 ) {
     let flip_x = opts.flip.x();
@@ -141,7 +141,7 @@ fn draw_sprite<D, F>(
     id: i32,
     x: i32,
     y: i32,
-    opts: &StaticSpriteOptions<'_>,
+    opts: &SpriteOptions,
     convert: F,
 ) where
     D: Canvas,
@@ -218,7 +218,7 @@ fn draw_map<D, F>(
 impl RgbaImage {
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
     /// `palette_map` is applied to each source pixel index before `palette`
-    /// lookup. Indices listed in `opts.transparent` are skipped.
+    /// lookup. The `opts.transparent` colour key (if any) is skipped.
     #[allow(clippy::too_many_arguments)]
     pub fn spr_indexed(
         &mut self,
@@ -228,11 +228,11 @@ impl RgbaImage {
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
     ) {
         let transparent = opts.transparent;
         draw_sprite(self, source, id, x, y, &opts, |idx| {
-            if transparent.contains(&idx) {
+            if transparent == Some(idx) {
                 None
             } else {
                 palette_colour(palette, palette_map, idx)
@@ -250,7 +250,7 @@ impl RgbaImage {
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
         outline_colour: u8,
     ) {
         let outline_map = [outline_colour as usize; 16];
@@ -314,20 +314,20 @@ impl IndexedImage {
     }
 
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
-    /// Indices listed in `opts.transparent` are skipped; all other indices are
-    /// copied through unchanged (no palette lookup — that's a compositing-time
-    /// concern).
+    /// The `opts.transparent` colour key (if any) is skipped; all other indices
+    /// are copied through unchanged (no palette lookup — that's a
+    /// compositing-time concern).
     pub fn spr(
         &mut self,
         source: &IndexedImage,
         id: i32,
         x: i32,
         y: i32,
-        opts: StaticSpriteOptions<'_>,
+        opts: SpriteOptions,
     ) {
         let transparent = opts.transparent;
         draw_sprite(self, source, id, x, y, &opts, |idx| {
-            if transparent.contains(&idx) {
+            if transparent == Some(idx) {
                 None
             } else {
                 Some(idx)

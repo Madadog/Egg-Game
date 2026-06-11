@@ -1,5 +1,5 @@
 use crate::system::PrintOptions;
-use crate::system::StaticSpriteOptions;
+use crate::system::SpriteOptions;
 
 use crate::Ctx;
 use crate::camera::CameraBounds;
@@ -228,7 +228,7 @@ impl MenuState {
             Walk => return Some(GameMode::Walkaround),
             MapTest => return Some(GameMode::MainMenu(MenuState::map_select(ctx.maps))),
             MapSelect(name) => {
-                walkaround_state.load_map_by_name(ctx.system, ctx.maps, name);
+                walkaround_state.load_map_by_name(ctx.system, &ctx.draw.indexed_sprites, ctx.maps, name);
             }
         };
         None
@@ -391,8 +391,8 @@ pub fn draw_title_indexed(
         534,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
-        StaticSpriteOptions {
-            transparent: &[0],
+        SpriteOptions {
+            transparent: Some(0),
             scale: 1,
             w: 2,
             h: 2,
@@ -420,8 +420,8 @@ pub fn draw_title_rgba(
         534,
         120 - 8,
         y + ((elapsed_frames / 30) % 2),
-        StaticSpriteOptions {
-            transparent: &[0],
+        SpriteOptions {
+            transparent: Some(0),
             scale: 1,
             w: 2,
             h: 2,

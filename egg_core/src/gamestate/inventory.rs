@@ -352,7 +352,7 @@ impl InventoryUi {
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::{Rgba, RgbaImage};
-        use crate::system::{PrintOptions, StaticSpriteOptions};
+        use crate::system::{PrintOptions, SpriteOptions};
 
         let small = ctx.system.memory().small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
@@ -388,7 +388,7 @@ impl InventoryUi {
                             item.sprite,
                             i32::from(slot.x) + 2,
                             i32::from(slot.y) + 2 - 4,
-                            StaticSpriteOptions { scale: 2, transparent: &[0], ..Default::default() },
+                            SpriteOptions { scale: 2, transparent: Some(0), ..Default::default() },
                             12,
                         );
                     }
