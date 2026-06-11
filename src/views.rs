@@ -19,7 +19,8 @@
 //!   the main window's framebuffer or the player.
 //! - `egg_core` exposes `WalkaroundState::draw_world` /
 //!   `composite_into` (engine-agnostic) to render the world from an arbitrary
-//!   camera into a given `DrawState` + output — that's what each view calls.
+//!   camera into a `Ctx` built around the view's own `DrawState`, then out to
+//!   the view's framebuffer — that's what each view calls.
 
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
@@ -360,14 +361,14 @@ pub fn update_views(
     for view in views.views.iter_mut() {
         // Draw the world from this view's free camera + editor into its own
         // DrawState/output — never the main framebuffer.
-        g.state.walkaround.draw_world(
-            &mut view.draw_state,
-            &mut g.system,
-            &g.state.maps,
-            view.free_cam,
-            &view.editor,
-            &g.state.debug_info,
-        );
+        let mut ctx = egg_core::Ctx {
+            draw: &mut view.draw_state,
+            system: &mut g.system,
+            maps: &mut g.state.maps,
+        };
+        g.state
+            .walkaround
+            .draw_world(&mut ctx, view.free_cam, &view.editor, &g.state.debug_info);
         egg_core::gamestate::walkaround::WalkaroundState::composite_into(
             &mut view.draw_state,
             &mut view.output,

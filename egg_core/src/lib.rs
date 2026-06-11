@@ -36,6 +36,20 @@ use crate::gamestate::GameMode;
 use crate::gamestate::inventory::InventoryUi;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::map::MapStore;
+use crate::system::ConsoleApi;
+
+/// The shared world every game state steps and draws against — the layer
+/// canvases, the console, and the loaded maps — passed as one parameter so
+/// gamestate signatures stop growing element-by-element. Game-data helpers
+/// (labels, dialogue lookups) are expected to accumulate here as the console
+/// shrinks to a hardware-only surface. Deliberately lean: per-state things
+/// (`InventoryUi`, `DebugInfo`, `elapsed_frames`) stay explicit parameters of
+/// the few methods that need them.
+pub struct Ctx<'a, S: ConsoleApi> {
+    pub draw: &'a mut DrawState,
+    pub system: &'a mut S,
+    pub maps: &'a mut MapStore,
+}
 
 pub struct EggState {
     pub draw_state: DrawState,
@@ -51,14 +65,17 @@ pub struct EggState {
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
         self.time += 1;
+        let mut ctx = Ctx {
+            draw: &mut self.draw_state,
+            system,
+            maps: &mut self.maps,
+        };
         self.gamestate.run(
+            &mut ctx,
             &mut self.walkaround,
+            &mut self.inventory_ui,
             &mut self.debug_info,
             self.time,
-            &mut self.inventory_ui,
-            &mut self.draw_state,
-            &mut self.maps,
-            system,
         );
     }
 }

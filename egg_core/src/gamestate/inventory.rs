@@ -1,4 +1,5 @@
 use crate::{
+    Ctx,
     data::sound,
     dialogue::Dialogue,
     system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
@@ -347,41 +348,41 @@ impl InventoryUi {
         let root = b.centered(panel).size(screen.0, screen.1).id();
         b.finish(root, screen)
     }
-    pub fn draw(&self, draw_state: &mut crate::drawstate::DrawState, system: &mut impl ConsoleApi) {
+    pub fn draw(&self, ctx: &mut Ctx<impl ConsoleApi>) {
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::{Rgba, RgbaImage};
         use crate::system::{PrintOptions, StaticSpriteOptions};
 
-        let small = system.memory().small_text_on;
+        let small = ctx.system.memory().small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
-        let black = draw_state.colour(0);
-        let white = draw_state.colour(12);
-        let c2 = draw_state.colour(2);
-        let c3 = draw_state.colour(3);
+        let black = ctx.draw.colour(0);
+        let white = ctx.draw.colour(12);
+        let c2 = ctx.draw.colour(2);
+        let c3 = ctx.draw.colour(3);
 
         // Foreground starts clear each frame; everything here draws onto it.
-        draw_state.rgba(FG).fill(Rgba::TRANSPARENT);
+        ctx.draw.rgba(FG).fill(Rgba::TRANSPARENT);
 
         // Title, white with a 1px black shadow.
-        let inventory_title = system.label("inventory_title");
-        system.print_to_centered(draw_state.rgba(FG), &inventory_title, 121, 38, black, body_opts.clone());
-        system.print_to_centered(draw_state.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
+        let inventory_title = ctx.system.label("inventory_title");
+        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 121, 38, black, body_opts.clone());
+        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
 
         // Lay out and draw the whole panel in one pass...
-        let ui = self.build_ui(system);
-        ui.draw(draw_state, system, FG);
+        let ui = self.build_ui(ctx.system);
+        ui.draw(ctx.draw, ctx.system, FG);
 
         // ...then overlay the state-specific bits using the laid-out rects.
         match &self.state {
             InventoryUiState::Items(current, selected) => {
                 if let Some(slot) = ui.rect(InvKey::Slot(*current)) {
-                    draw_state
+                    ctx.draw
                         .rgba(FG)
                         .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
                     if let Some((_, item)) = selected {
                         // Picked-up item floats 4px above its cursor slot, outlined.
-                        draw_state.spr_with_outline(
+                        ctx.draw.spr_with_outline(
                             FG,
                             &PALETTE_MAP_IDENTITY,
                             item.sprite,
@@ -397,13 +398,13 @@ impl InventoryUi {
                     None => self.inventory.items[*current].map(|item| item.name),
                 };
                 if let Some(name) = name {
-                    draw_state.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
-                    system.print_to(draw_state.rgba(FG), &system.label(name), 9, 100, white, body_opts.clone());
+                    ctx.draw.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
+                    ctx.system.print_to(ctx.draw.rgba(FG), &ctx.system.label(name), 9, 100, white, body_opts.clone());
                 }
             }
             InventoryUiState::Eggs(current) => {
                 if let Some(slot) = ui.rect(InvKey::Egg(*current)) {
-                    draw_state
+                    ctx.draw
                         .rgba(FG)
                         .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
                 }
@@ -418,19 +419,19 @@ impl InventoryUi {
                 None => self.inventory.items[*current],
             };
             if let Some(item) = item {
-                let desc = system.label(item.desc);
-                let string = self.dialogue.fit_text(system, &desc);
+                let desc = ctx.system.label(item.desc);
+                let string = self.dialogue.fit_text(ctx.system, &desc);
                 self.dialogue
-                    .draw_dialogue_portrait(draw_state, FG, system, &string, false, item.sprite, 3, 1, 1);
+                    .draw_dialogue_portrait(ctx.draw, FG, ctx.system, &string, false, item.sprite, 3, 1, 1);
             }
         }
 
         // Composite background then foreground into the output image.
-        let output = system.output_image();
+        let output = ctx.system.output_image();
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[BG as usize],
+            &ctx.draw.rgba_canvas[BG as usize],
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,
@@ -438,16 +439,16 @@ impl InventoryUi {
         output.blit::<RgbaImage>(
             0,
             0,
-            &draw_state.rgba_canvas[FG as usize],
+            &ctx.draw.rgba_canvas[FG as usize],
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,
         );
     }
-    pub fn step(&mut self, system: &mut impl ConsoleApi) {
+    pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
-        let ui = self.build_ui(system);
-        let mouse = system.mouse();
+        let ui = self.build_ui(ctx.system);
+        let mouse = ctx.system.mouse();
         let mut mouse_clicked = false;
         if let Some(key) = ui.hit(mouse.pos()) {
             match key {
@@ -457,7 +458,7 @@ impl InventoryUi {
                     }
                     if just_pressed(mouse.left) {
                         self.state = InventoryUiState::PageSelect(i as i32);
-                        self.state.change(system);
+                        self.state.change(ctx.system);
                         mouse_clicked = true;
                     }
                 }
@@ -471,7 +472,7 @@ impl InventoryUi {
                     }
                     if just_pressed(mouse.left) {
                         self.state = InventoryUiState::Items(i, drag);
-                        self.click(system);
+                        self.click(ctx.system);
                         mouse_clicked = true;
                     }
                 }
@@ -481,25 +482,25 @@ impl InventoryUi {
                     }
                     if just_pressed(mouse.left) {
                         self.state = InventoryUiState::Eggs(i);
-                        self.click(system);
+                        self.click(ctx.system);
                         mouse_clicked = true;
                     }
                 }
             }
         }
         if just_pressed(mouse.right) {
-            self.state.back(system);
+            self.state.back(ctx.system);
         }
 
         // Keyboard / gamepad navigation
-        let pad = system.controller();
+        let pad = ctx.system.controller();
         let (dx, dy) = dpad_delta(&pad, just_pressed);
-        self.state.arrows(system, dx.into(), dy.into());
+        self.state.arrows(ctx.system, dx.into(), dy.into());
         if just_pressed(pad.a) && !mouse_clicked {
-            self.click(system)
+            self.click(ctx.system)
         };
         if just_pressed(pad.b) {
-            self.state.back(system)
+            self.state.back(ctx.system)
         };
     }
 }

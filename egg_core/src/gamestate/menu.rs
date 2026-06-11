@@ -1,6 +1,7 @@
 use crate::system::PrintOptions;
 use crate::system::StaticSpriteOptions;
 
+use crate::Ctx;
 use crate::camera::CameraBounds;
 use crate::data::sound;
 use crate::dialogue::print_options;
@@ -74,17 +75,15 @@ impl MenuState {
     }
     pub fn step_main_menu(
         &mut self,
-        draw_state: &mut crate::drawstate::DrawState,
-        system: &mut impl ConsoleApi,
+        ctx: &mut Ctx<impl ConsoleApi>,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
-        maps: &MapStore,
     ) -> Option<GameMode> {
         let old_index = self.index;
         let entries = self.entries.len();
-        let ui = self.build_ui(system);
-        let mouse = system.mouse();
-        let pad = system.controller();
+        let ui = self.build_ui(ctx.system);
+        let mouse = ctx.system.mouse();
+        let pad = ctx.system.controller();
         let mut clicked = false;
         if let Some(i) = ui.hit(mouse.pos()) {
             if mouse.moved() {
@@ -104,7 +103,7 @@ impl MenuState {
         let menu_index = self.index;
         if old_index != menu_index {
             self.exit_hover(old_index);
-            system.play_sound(sound::CLICK);
+            ctx.system.play_sound(sound::CLICK);
         }
         let (index, action) = if just_pressed(pad.a) || clicked {
             (Some(menu_index), true)
@@ -114,8 +113,8 @@ impl MenuState {
             (None, false)
         };
         if action {
-            system.play_sound(sound::INTERACT);
-            self.click(index, draw_state, walkaround_state, inventory_ui, system, maps)
+            ctx.system.play_sound(sound::INTERACT);
+            self.click(index, ctx, walkaround_state, inventory_ui)
         } else {
             None
         }
@@ -158,11 +157,9 @@ impl MenuState {
     pub fn click(
         &mut self,
         index: Option<usize>,
-        draw_state: &mut crate::drawstate::DrawState,
+        ctx: &mut Ctx<impl ConsoleApi>,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
-        system: &mut impl ConsoleApi,
-        maps: &MapStore,
     ) -> Option<GameMode> {
         use MenuEntry::*;
         let x = if let Some(index) = index {
@@ -184,14 +181,14 @@ impl MenuState {
                 *self = MenuState::new();
             }
             FontSize => {
-                let save = system.memory();
+                let save = ctx.system.memory();
                 save.small_text_on = !save.small_text_on;
             }
             Reset(x) => {
                 if *x == 0 {
                     *x += 1;
                 } else {
-                    system.reset_save_data();
+                    ctx.system.reset_save_data();
                     return Some(GameMode::Animation(0));
                 }
             }
@@ -204,34 +201,34 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        draw_state.set_palette(&crate::system::SWEETIE_16);
+                        ctx.draw.set_palette(&crate::system::SWEETIE_16);
                     }
                     1 => {
-                        draw_state.set_palette(&crate::system::NIGHT_16);
+                        ctx.draw.set_palette(&crate::system::NIGHT_16);
                     }
                     2 => {
-                        draw_state.set_palette(&crate::system::B_W);
+                        ctx.draw.set_palette(&crate::system::B_W);
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();
                     }
                     4 => {
-                        walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog, system);
+                        walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog, ctx.system);
                     }
                     5 => {
                         walk.execute_interact_fn(
                             &crate::interact::InteractFn::AddCreatures(1),
-                            system,
+                            ctx.system,
                         );
                     }
-                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(system))),
+                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.system))),
                     _ => {}
                 }
             }
             Walk => return Some(GameMode::Walkaround),
-            MapTest => return Some(GameMode::MainMenu(MenuState::map_select(maps))),
+            MapTest => return Some(GameMode::MainMenu(MenuState::map_select(ctx.maps))),
             MapSelect(name) => {
-                walkaround_state.load_map_by_name(system, maps, name);
+                walkaround_state.load_map_by_name(ctx.system, ctx.maps, name);
             }
         };
         None
@@ -269,31 +266,26 @@ impl MenuState {
             );
         }
     }
-    pub fn draw_main_menu(
-        &self,
-        draw_state: &mut crate::drawstate::DrawState,
-        system: &mut impl ConsoleApi,
-        elapsed_frames: i32,
-    ) {
+    pub fn draw_main_menu(&self, ctx: &mut Ctx<impl ConsoleApi>, elapsed_frames: i32) {
         use crate::drawstate::LayerId::*;
         use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::RgbaImage;
 
-        let c0 = draw_state.colour(0);
-        draw_state.rgba(BG).fill(c0);
+        let c0 = ctx.draw.colour(0);
+        ctx.draw.rgba(BG).fill(c0);
 
         if let Some(key) = self.draw_title {
-            draw_title_rgba(draw_state, system, 120, 53, &system.label(key), elapsed_frames);
+            draw_title_rgba(ctx.draw, ctx.system, 120, 53, &ctx.system.label(key), elapsed_frames);
         }
 
-        self.build_ui(system).draw(draw_state, system, BG);
-        self.hover(draw_state, system, self.index);
+        self.build_ui(ctx.system).draw(ctx.draw, ctx.system, BG);
+        self.hover(ctx.draw, ctx.system, self.index);
 
-        let output = system.output_image();
+        let output = ctx.system.output_image();
         output.blit::<RgbaImage>(
             0,
             0,
-            draw_state.rgba(BG),
+            ctx.draw.rgba(BG),
             EdgePolicy::Transparent,
             Transform::IDENTITY,
             |p| p.a() == 0,

@@ -19,8 +19,8 @@ use log::trace;
 
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
+use crate::Ctx;
 use crate::debug::DebugInfo;
-use crate::map::MapStore;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
 use self::menu::MenuState;
@@ -95,122 +95,108 @@ pub enum GameMode {
     SpriteTest(u32),
 }
 impl GameMode {
-    #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
+        ctx: &mut Ctx<impl ConsoleApi>,
         walkaround_state: &mut WalkaroundState,
+        inventory_ui: &mut InventoryUi,
         debug_info: &mut DebugInfo,
         elapsed_frames: i32,
-        inventory_ui: &mut InventoryUi,
-        draw_state: &mut crate::drawstate::DrawState,
-        maps: &mut MapStore,
-        system: &mut impl ConsoleApi,
     ) {
         trace!("Game state: {self:?}");
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || system.memory().instructions_read) && system.any_btnp() {
-                    if system.memory().instructions_read {
-                        walkaround_state.load_pmem(system, maps);
+                if (*i > 60 || ctx.system.memory().instructions_read) && ctx.system.any_btnp() {
+                    if ctx.system.memory().instructions_read {
+                        walkaround_state.load_pmem(ctx.system, ctx.maps);
                     } else {
-                        walkaround_state.new_game(system, maps);
+                        walkaround_state.new_game(ctx.system, ctx.maps);
                     }
-                    system.memory().instructions_read = true;
+                    ctx.system.memory().instructions_read = true;
                     *self = Self::Walkaround;
                 }
-                draw_instructions(draw_state, system);
+                draw_instructions(ctx);
             }
             Self::Walkaround => {
-                let next = walkaround_state.step((draw_state, system, inventory_ui, &mut *maps));
-                walkaround_state.draw((draw_state, system, debug_info, &*maps));
+                let next = walkaround_state.step(ctx, inventory_ui);
+                walkaround_state.draw(ctx, debug_info);
                 if let Some(state) = next {
                     *self = state;
                 }
             }
             Self::Animation(x) => {
-                if system.memory().intro_anim_seen {
+                if ctx.system.memory().intro_anim_seen {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
                 // Press X to skip cutscene
-                if pressed(system.controller().b) {
+                if pressed(ctx.system.controller().b) {
                     *x += 1000;
                 }
-                if intro::draw_animation(*x, draw_state, system) {
+                if intro::draw_animation(*x, ctx) {
                     *x += 1;
                 } else {
                     *self = Self::MainMenu(MenuState::new());
                 }
             }
             Self::MainMenu(state) => {
-                let next = state
-                    .step_main_menu(draw_state, system, walkaround_state, inventory_ui, maps);
-                state.draw_main_menu(draw_state, system, elapsed_frames);
+                let next = state.step_main_menu(ctx, walkaround_state, inventory_ui);
+                state.draw_main_menu(ctx, elapsed_frames);
                 if let Some(x) = next {
                     *self = x;
                 }
             }
             Self::Inventory => {
-                inventory_ui.step(system);
+                inventory_ui.step(ctx);
                 match inventory_ui.state {
                     InventoryUiState::Close => *self = Self::Walkaround,
                     InventoryUiState::Options => {
                         *self = Self::MainMenu(MenuState::inventory_options())
                     }
-                    _ => inventory_ui.draw(draw_state, system),
+                    _ => inventory_ui.draw(ctx),
                 }
             }
             Self::SpriteTest(x) => {
-                debug::step_sprite_test(system, x);
-                debug::draw_sprite_test(draw_state, system, *x);
+                debug::step_sprite_test(ctx, x);
+                debug::draw_sprite_test(ctx, *x);
             }
         }
     }
 }
 
-pub trait Game<T, U> {
-    fn step(&mut self, _state: T) -> Option<GameMode> {
-        None
-    }
-    fn draw(&self, state: U);
-}
-
-pub fn draw_instructions(
-    draw_state: &mut crate::drawstate::DrawState,
-    system: &mut impl ConsoleApi,
-) {
+pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
     use crate::drawstate::LayerId;
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::drawing::image::RgbaImage;
-    let small_text = system.memory().small_text_on;
-    let title = system.label("instructions_title");
-    let instructions = system.label("instructions");
-    let colour_12 = draw_state.colour(12);
-    let colour_1 = draw_state.colour(1);
-    let colour_0 = draw_state.colour(0);
+    let small_text = ctx.system.memory().small_text_on;
+    let title = ctx.system.label("instructions_title");
+    let instructions = ctx.system.label("instructions");
+    let colour_12 = ctx.draw.colour(12);
+    let colour_1 = ctx.draw.colour(1);
+    let colour_0 = ctx.draw.colour(0);
     let opts = PrintOptions {
         color: 12,
         small_text,
         ..Default::default()
     };
     {
-        let canvas = draw_state.rgba(LayerId::BG);
+        let canvas = ctx.draw.rgba(LayerId::BG);
         canvas.fill(colour_0);
         canvas.outlined_rect(6, 15, 228, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17, 224, 96, colour_1);
-        system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
-        system.print_to_shadow(canvas, &instructions, 11, 36, colour_12, colour_0, opts.clone());
-        let width = system.print_to(canvas, &title, 999, 999, colour_12, opts) - 1;
+        ctx.system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
+        ctx.system.print_to_shadow(canvas, &instructions, 11, 36, colour_12, colour_0, opts.clone());
+        let width = ctx.system.print_to(canvas, &title, 999, 999, colour_12, opts) - 1;
         let origin = 11;
         canvas.line(origin, 27, origin + width, 27, colour_12);
         canvas.line(origin + 1, 28, origin + width + 1, 28, colour_0);
     }
-    let output = system.output_image();
+    let output = ctx.system.output_image();
     output.blit::<RgbaImage>(
         0,
         0,
-        &draw_state.rgba_canvas[LayerId::BG as usize],
+        &ctx.draw.rgba_canvas[LayerId::BG as usize],
         EdgePolicy::Transparent,
         Transform::IDENTITY,
         |p| p.a() == 0,

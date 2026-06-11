@@ -1,8 +1,8 @@
+use crate::Ctx;
 use crate::animation::Animation;
 use crate::data::map_data::{MapIndex, legacy_index};
 use crate::data::sound;
 use crate::debug::DebugInfo;
-use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, MapInfo, MapStore, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
@@ -274,29 +274,20 @@ impl WalkaroundState {
     }
 }
 
-impl<T: ConsoleApi>
-    Game<
-        (&mut crate::drawstate::DrawState, &mut T, &mut InventoryUi, &mut MapStore),
-        (&mut crate::drawstate::DrawState, &mut T, &DebugInfo, &MapStore),
-    > for WalkaroundState
-{
-    fn step(
+impl WalkaroundState {
+    pub fn step<S: ConsoleApi>(
         &mut self,
-        (draw_state, system, inventory_ui, maps): (
-            &mut crate::drawstate::DrawState,
-            &mut T,
-            &mut InventoryUi,
-            &mut MapStore,
-        ),
+        ctx: &mut Ctx<S>,
+        inventory_ui: &mut InventoryUi,
     ) -> Option<GameMode> {
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
 
         self.particles.step();
-        self.creatures.iter_mut().for_each(|x| x.step(system));
+        self.creatures.iter_mut().for_each(|x| x.step(ctx.system));
 
-        if self.play_cutscene(system) {
+        if self.play_cutscene(ctx.system) {
             return None;
         }
 
@@ -304,49 +295,49 @@ impl<T: ConsoleApi>
         // sim, so painting/typing can't move the player or trip warps/reloads.
         if self.map_viewer.focused {
             self.map_viewer
-                .step_map_viewer(system, &mut self.current_map, maps, self.camera.pos);
+                .step_map_viewer(ctx.system, &mut self.current_map, ctx.maps, self.camera.pos);
             return None;
         }
 
-        if system.keyp(ScanCode::Digit5) {
-            self.load_pmem(system, maps);
+        if ctx.system.keyp(ScanCode::Digit5) {
+            self.load_pmem(ctx.system, ctx.maps);
         }
-        if system.keyp(ScanCode::Digit6) {
-            draw_state.set_palette(&crate::system::SWEETIE_16);
+        if ctx.system.keyp(ScanCode::Digit6) {
+            ctx.draw.set_palette(&crate::system::SWEETIE_16);
         }
-        if system.keyp(ScanCode::Digit7) {
-            draw_state.set_palette(&crate::system::NIGHT_16);
+        if ctx.system.keyp(ScanCode::Digit7) {
+            ctx.draw.set_palette(&crate::system::NIGHT_16);
         }
-        if system.keyp(ScanCode::Digit8) {
-            draw_state.set_palette(&crate::system::B_W);
+        if ctx.system.keyp(ScanCode::Digit8) {
+            ctx.draw.set_palette(&crate::system::B_W);
         }
 
         // Get keyboard inputs
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
 
-        let pad = system.controller();
+        let pad = ctx.system.controller();
         if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
-                inventory_ui.open(system);
+                inventory_ui.open(ctx.system);
                 return Some(GameMode::Inventory);
             }
         } else {
             if self.dialogue.characters == 0 {
-                system.play_sound(sound::INTERACT);
+                ctx.system.play_sound(sound::INTERACT);
             }
-            self.dialogue.tick(system, 1);
+            self.dialogue.tick(ctx.system, 1);
             if pressed(pad.a) {
-                self.dialogue.tick(system, 2);
+                self.dialogue.tick(ctx.system, 2);
             }
             if just_pressed(pad.b) {
-                self.dialogue.skip(system);
+                self.dialogue.skip(ctx.system);
             }
         }
         if just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text(system, false) {
+            if self.dialogue.next_text(ctx.system, false) {
                 interact = false;
             } else if self.dialogue.current_text.is_some() {
                 interact = false;
@@ -355,12 +346,12 @@ impl<T: ConsoleApi>
             info!("Attempting interact...");
         }
         if just_pressed(pad.x) {
-            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(system)));
+            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(ctx.system)));
         }
-        if system.any_btnpr() {
+        if ctx.system.any_btnpr() {
             self.player().flip_controls = Axis::None
         }
-        let noclip = if system.key(ScanCode::Ctrl) && system.key(ScanCode::Shift) {
+        let noclip = if ctx.system.key(ScanCode::Ctrl) && ctx.system.key(ScanCode::Shift) {
             dy *= 3;
             dx *= 4;
             true
@@ -368,23 +359,23 @@ impl<T: ConsoleApi>
             false
         };
 
-        let tiles = maps.get(&self.current_map.source);
+        let tiles = ctx.maps.get(&self.current_map.source);
         for shell in self.entities.iter_mut() {
             match shell.move_mode {
                 MoveMode::Player => {
-                    let (dx, dy) = shell.walk(system, dx, dy, noclip, &self.current_map, tiles);
+                    let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
                     shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
                 }
                 MoveMode::Wander => {
-                    let (dx, dy) = if system.rng().rand_u8() < 25 {
+                    let (dx, dy) = if ctx.system.rng().rand_u8() < 25 {
                         (
-                            (system.rng().rand_u8() % 3) as i16 - 1,
-                            (system.rng().rand_u8() % 3) as i16 - 1,
+                            (ctx.system.rng().rand_u8() % 3) as i16 - 1,
+                            (ctx.system.rng().rand_u8() % 3) as i16 - 1,
                         )
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map, tiles);
+                    let (dx, dy) = shell.walk(ctx.system, dx, dy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
                 }
             }
@@ -402,7 +393,7 @@ impl<T: ConsoleApi>
                 || (interact && interact_hitbox.touches(warp.hitbox()))
             {
                 if let Some(sound) = &warp.sound {
-                    system.play_sound(sound.clone());
+                    ctx.system.play_sound(sound.clone());
                 }
                 warp_target = Some(warp.clone());
                 break;
@@ -414,8 +405,8 @@ impl<T: ConsoleApi>
             self.companion_trail
                 .fill(self.player_ref().pos, self.player_ref().dir);
             if let Some(new_map) = target.map {
-                self.save(&new_map, system);
-                self.load_map_by_name(system, maps, &new_map);
+                self.save(&new_map, ctx.system);
+                self.load_map_by_name(ctx.system, ctx.maps, &new_map);
             }
         } else if interact {
             for item in self.current_map.interactables.iter().cloned().chain(
@@ -427,13 +418,13 @@ impl<T: ConsoleApi>
                 if interact_hitbox.touches(item.hitbox) {
                     match &item.interaction {
                         Interaction::Dialogue(key) => {
-                            let convo = system.get_dialogue(key);
-                            self.dialogue.set_messages(system, &convo);
+                            let convo = ctx.system.get_dialogue(key);
+                            self.dialogue.set_messages(ctx.system, &convo);
                         }
                         Interaction::Func(x) => {
-                            if let Some(key) = self.execute_interact_fn(x, system) {
-                                let convo = system.get_dialogue(key);
-                                self.dialogue.set_messages(system, &convo);
+                            if let Some(key) = self.execute_interact_fn(x, ctx.system) {
+                                let convo = ctx.system.get_dialogue(key);
+                                self.dialogue.set_messages(ctx.system, &convo);
                             };
                         }
                         Interaction::None => {}
@@ -446,53 +437,34 @@ impl<T: ConsoleApi>
         self.camera.center_on(
             self.player_ref().pos.x + 4,
             self.player_ref().pos.y + 8,
-            system.width() as i16,
-            system.height() as i16,
+            ctx.system.width() as i16,
+            ctx.system.height() as i16,
         );
         None
     }
-    fn draw(
-        &self,
-        (draw_state, system, debug_info, maps): (
-            &mut crate::drawstate::DrawState,
-            &mut T,
-            &DebugInfo,
-            &MapStore,
-        ),
-    ) {
+    pub fn draw<S: ConsoleApi>(&self, ctx: &mut Ctx<S>, debug_info: &DebugInfo) {
         // Draw the live world from the player-following camera, with this
         // walkaround's own map editor overlay, then composite into the console's
         // canonical output surface. The world build leaves its result in
-        // `draw_state`, so the final composite is a separate step that takes the
-        // output (avoiding a borrow conflict with `system`).
-        self.draw_world(
-            draw_state,
-            system,
-            maps,
-            self.camera.pos,
-            &self.map_viewer,
-            debug_info,
-        );
-        WalkaroundState::composite_into(draw_state, system.output_image());
+        // `ctx.draw`, so the final composite is a separate step that takes the
+        // output (avoiding a borrow conflict with the console).
+        self.draw_world(ctx, self.camera.pos, &self.map_viewer, debug_info);
+        WalkaroundState::composite_into(ctx.draw, ctx.system.output_image());
     }
-}
 
-impl WalkaroundState {
     /// Render the walkaround world from an arbitrary `camera_pos` into
-    /// `draw_state`, using `editor` for the map-editor overlay (so an extra view
+    /// `ctx.draw`, using `editor` for the map-editor overlay (so an extra view
     /// can drive its own free camera + editor without touching the live
-    /// `self.camera`/`self.map_viewer`). Tile data comes from `maps`; the
-    /// shared `system` is read for assets only. The finished frame is left in
-    /// `draw_state.rgba(BG)` — call [`composite_into`](Self::composite_into)
+    /// `self.camera`/`self.map_viewer`). Tile data comes from `ctx.maps`; the
+    /// shared console is read for assets only. The finished frame is left in
+    /// `ctx.draw.rgba(BG)` — call [`composite_into`](Self::composite_into)
     /// to blit it onto a surface.
     ///
-    /// Engine-agnostic: it only touches `draw_state` (the layer canvases) and
-    /// reads `system` for assets, with no knowledge of windows or the host.
-    pub fn draw_world<T: ConsoleApi>(
+    /// Engine-agnostic: it only touches `ctx.draw` (the layer canvases) and
+    /// reads `ctx.system` for assets, with no knowledge of windows or the host.
+    pub fn draw_world<S: ConsoleApi>(
         &self,
-        draw_state: &mut crate::drawstate::DrawState,
-        system: &mut T,
-        maps: &MapStore,
+        ctx: &mut Ctx<S>,
         camera_pos: Vec2,
         editor: &MapViewer,
         debug_info: &DebugInfo,
@@ -502,17 +474,17 @@ impl WalkaroundState {
         let cam_x = i32::from(camera_pos.x);
         let cam_y = i32::from(camera_pos.y);
 
-        let bg_colour = draw_state.colour(self.bg_colour);
-        draw_state.rgba(BG).fill(bg_colour);
+        let bg_colour = ctx.draw.colour(self.bg_colour);
+        ctx.draw.rgba(BG).fill(bg_colour);
 
         // BG map layers
-        if let Some(map) = maps.get(&self.current_map.source) {
+        if let Some(map) = ctx.maps.get(&self.current_map.source) {
             self.current_map
-                .draw_bg_indexed(draw_state, BG, map, camera_pos, false);
+                .draw_bg_indexed(ctx.draw, BG, map, camera_pos, false);
         }
 
         // Particles
-        self.particles.draw_indexed(draw_state, BG, -cam_x, -cam_y);
+        self.particles.draw_indexed(ctx.draw, BG, -cam_x, -cam_y);
 
         // Collect sprites for drawing
         let mut sprites: Vec<DrawParams> = Vec::new();
@@ -562,52 +534,52 @@ impl WalkaroundState {
 
         // Draw sprites
         for options in sprites {
-            options.draw_to(draw_state, BG);
+            options.draw_to(ctx.draw, BG);
         }
 
         // FG map layers (drawn on top of sprites)
-        if let Some(map) = maps.get(&self.current_map.source) {
+        if let Some(map) = ctx.maps.get(&self.current_map.source) {
             self.current_map
-                .draw_fg_indexed(draw_state, BG, map, camera_pos, false);
+                .draw_fg_indexed(ctx.draw, BG, map, camera_pos, false);
         }
 
         if let Some(string) = self.dialogue.current_text.clone() {
             self.dialogue
-                .draw_dialogue_box(draw_state, BG, system, &string, true);
+                .draw_dialogue_box(ctx.draw, BG, ctx.system, &string, true);
         }
         if debug_info.map_info {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-camera_pos.x, -camera_pos.y)
-                    .draw(draw_state, BG, 12);
+                    .draw(ctx.draw, BG, 12);
             }
             self.player_ref()
                 .hitbox()
                 .offset_xy(-camera_pos.x, -camera_pos.y)
-                .draw(draw_state, BG, 12);
+                .draw(ctx.draw, BG, 12);
             for item in self.current_map.interactables.iter() {
                 item.hitbox
                     .offset_xy(-camera_pos.x, -camera_pos.y)
-                    .draw(draw_state, BG, 14);
+                    .draw(ctx.draw, BG, 14);
             }
         }
         if debug_info.player_info {
-            let c11 = draw_state.colour(11);
+            let c11 = ctx.draw.colour(11);
             let opts = PrintOptions {
                 small_text: true,
                 color: 11,
                 ..Default::default()
             };
-            system.print_to(
-                draw_state.rgba(BG),
+            ctx.system.print_to(
+                ctx.draw.rgba(BG),
                 &format!("Player: {:#?}", self.player_ref()),
                 0,
                 0,
                 c11,
                 opts.clone(),
             );
-            system.print_to(
-                draw_state.rgba(BG),
+            ctx.system.print_to(
+                ctx.draw.rgba(BG),
                 &format!("Camera: {camera_pos:#?}"),
                 74,
                 0,
@@ -615,7 +587,7 @@ impl WalkaroundState {
                 opts,
             );
         }
-        editor.draw_at(draw_state, system, &self.current_map, camera_pos);
+        editor.draw_at(ctx.draw, ctx.system, &self.current_map, camera_pos);
     }
 
     /// Composite the finished walkaround frame (left in `draw_state.rgba(BG)` by
