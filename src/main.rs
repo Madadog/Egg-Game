@@ -15,7 +15,6 @@ use tiled::{TiledMapAsset, TiledMapPlugin};
 
 mod fantasy_console;
 mod hotkeys;
-mod save;
 mod script_asset;
 mod tiled;
 mod views;
@@ -105,7 +104,7 @@ fn main() {
         .add_plugins(ScriptPlugin)
         .init_resource::<PendingLanguage>()
         .init_resource::<views::ViewWindows>()
-        .add_systems(Startup, (setup, setup_assets, load_save_game))
+        .add_systems(Startup, (setup, setup_assets))
         .add_systems(
             Update,
             (
@@ -116,6 +115,7 @@ fn main() {
                 resize_screen,
                 views::resize_views,
                 views::handle_closed_views,
+                handle_exit_request,
             ),
         )
         .add_systems(
@@ -123,14 +123,12 @@ fn main() {
             (
                 step_state,
                 views::update_views,
-                autosave,
                 play_sounds,
                 play_music,
                 update_texture,
             )
                 .chain(),
         )
-        .add_systems(Last, save_on_exit)
         // 64 FPS
         .insert_resource(Time::<Fixed>::default())
         .run();
@@ -697,44 +695,13 @@ fn step_state(
     }
 }
 
-/// Load `save.json` into the console at startup, and seed the autosave tracker
-/// so the first frame doesn't rewrite an unchanged save. A missing or unreadable
-/// save falls back to a fresh `SaveData::default()`.
-fn load_save_game(mut game: ResMut<EggGame>, mut commands: Commands) {
-    let loaded = save::load().unwrap_or_default();
-    *game.system.memory() = loaded.clone();
-    commands.insert_resource(save::SaveTracker { last: loaded });
-}
-
-/// Flush save data to disk whenever it differs from the last value written.
-/// Runs after `step_state`, so it captures the frame's changes.
-fn autosave(game: Res<EggGame>, mut tracker: ResMut<save::SaveTracker>) {
-    if !game.loaded {
-        return;
-    }
-    let current = game.system.save_data();
-    if current != tracker.last {
-        save::write(&current);
-        tracker.last = current;
-    }
-}
-
-/// Flush the latest save data when the app is closing, in case it changed on
-/// the same frame as the exit (before the next `autosave` could run).
-fn save_on_exit(
-    mut exit: MessageReader<AppExit>,
-    game: Res<EggGame>,
-    tracker: Option<ResMut<save::SaveTracker>>,
-) {
-    if exit.is_empty() {
-        return;
-    }
-    exit.clear();
-    let Some(mut tracker) = tracker else { return };
-    let current = game.system.save_data();
-    if current != tracker.last {
-        save::write(&current);
-        tracker.last = current;
+/// Translate an engine-requested quit ([`ConsoleApi::exit`], surfaced as
+/// `FantasyConsole::exit_requested`) into a Bevy `AppExit`. Save persistence is
+/// handled inside the engine's frame (`EggState::flush_save`), so a clean exit
+/// needs no extra save hook here. No engine code requests a quit yet.
+fn handle_exit_request(game: Res<EggGame>, mut exit: MessageWriter<AppExit>) {
+    if game.system.exit_requested() {
+        exit.write(AppExit::Success);
     }
 }
 

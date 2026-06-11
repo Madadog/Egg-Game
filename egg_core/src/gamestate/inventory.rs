@@ -1,6 +1,5 @@
 use crate::{
     Ctx,
-    data::script::Script,
     data::sound,
     dialogue::Dialogue,
     system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
@@ -230,8 +229,11 @@ impl InventoryUi {
     /// Lay out the inventory panel — a centred row of the side page-column and
     /// a page-specific main area — with Taffy. Rebuilt each frame and used for
     /// both hit-testing (`step`) and drawing (`draw`). Every label/slot carries
-    /// an [`InvKey`] so a mouse hit resolves straight to the thing under it.
-    pub fn build_ui(&self, system: &mut impl ConsoleApi, script: &Script) -> Ui<InvKey> {
+    /// an [`InvKey`] so a mouse hit resolves straight to the thing under it. A
+    /// pure read-only builder: it only reads `ctx` (the save's small-text flag,
+    /// the screen size, font metrics, the script), so it takes `&Ctx` rather
+    /// than the old `&mut ConsoleApi` (which it needed only for `memory()`).
+    pub fn build_ui<S: ConsoleApi>(&self, ctx: &Ctx<S>) -> Ui<InvKey> {
         use crate::system::PrintOptions;
 
         // Original fixed dimensions, kept so the panel centres exactly as before
@@ -239,9 +241,9 @@ impl InventoryUi {
         const MAIN_W: f32 = 89.0;
         const PANEL_H: f32 = 47.0;
 
-        let small = system.memory().small_text_on;
+        let small = ctx.save.small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
-        let screen = (system.width() as f32, system.height() as f32);
+        let screen = (ctx.system.width() as f32, ctx.system.height() as f32);
         let page = self.state.page();
         let page_select = matches!(self.state, InventoryUiState::PageSelect(_));
         // While choosing a page the side column is highlighted (palette +2); once
@@ -257,14 +259,14 @@ impl InventoryUi {
 
         // --- Side column: the four page labels. ---
         let labels = [
-            script.label("inventory_items"),
-            script.label("inventory_shell"),
-            script.label("inventory_options"),
-            script.label("inventory_back"),
+            ctx.script.label("inventory_items"),
+            ctx.script.label("inventory_shell"),
+            ctx.script.label("inventory_options"),
+            ctx.script.label("inventory_back"),
         ];
         let label_w = labels
             .iter()
-            .map(|s| system.text_width(s, body_opts.clone()))
+            .map(|s| ctx.system.text_width(s, body_opts.clone()))
             .max()
             .unwrap_or(0);
         let label_nodes: Vec<NodeId> = labels
@@ -327,7 +329,7 @@ impl InventoryUi {
             }
             n => {
                 let hint = if n == 2 { "Open options menu" } else { "Back to world" };
-                let hint_w = system.text_width(hint, body_opts.clone());
+                let hint_w = ctx.system.text_width(hint, body_opts.clone());
                 let text_node = b.text(hint).small(small).size(hint_w as f32, 8.0).id();
                 let hint_box = b
                     .boxed([text_node])
@@ -355,7 +357,7 @@ impl InventoryUi {
         use crate::system::drawing::image::{Rgba, RgbaImage};
         use crate::system::{PrintOptions, SpriteOptions};
 
-        let small = ctx.system.memory().small_text_on;
+        let small = ctx.save.small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
         let black = ctx.draw.colour(0);
         let white = ctx.draw.colour(12);
@@ -371,7 +373,7 @@ impl InventoryUi {
         ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
 
         // Lay out and draw the whole panel in one pass...
-        let ui = self.build_ui(ctx.system, ctx.script);
+        let ui = self.build_ui(&*ctx);
         ui.draw(ctx.draw, ctx.system, FG);
 
         // ...then overlay the state-specific bits using the laid-out rects.
@@ -422,9 +424,9 @@ impl InventoryUi {
             };
             if let Some(item) = item {
                 let desc = ctx.label(item.desc);
-                let string = self.dialogue.fit_text(ctx.system, &desc);
+                let string = self.dialogue.fit_text(ctx.system, small, &desc);
                 self.dialogue
-                    .draw_dialogue_portrait(ctx.draw, FG, ctx.system, &string, false, item.sprite, 3, 1, 1);
+                    .draw_dialogue_portrait(ctx.draw, FG, ctx.system, small, &string, false, item.sprite, 3, 1, 1);
             }
         }
 
@@ -449,7 +451,7 @@ impl InventoryUi {
     }
     pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
-        let ui = self.build_ui(ctx.system, ctx.script);
+        let ui = self.build_ui(&*ctx);
         let mouse = ctx.system.mouse();
         let mut mouse_clicked = false;
         if let Some(key) = ui.hit(mouse.pos()) {

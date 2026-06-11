@@ -1,8 +1,5 @@
 use crate::{
-    data::{
-        save::SaveData,
-        sound::{SfxData, music::MusicTrack},
-    },
+    data::sound::{SfxData, music::MusicTrack},
     system::drawing::{image::RgbaImage, Canvas},
 };
 
@@ -16,22 +13,21 @@ pub mod consts;
 pub mod drawing;
 pub mod input;
 pub mod scancode;
-#[cfg(test)]
-pub mod test_console;
 pub mod types;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
 /// this trait — see `DrawState`, the `Canvas` trait, and `print_to_with_font`.
-/// What stays here is input, audio, persistent memory, asset access, and
-/// the final `output_image()` surface that consoles composite into.
+/// What stays here is input, audio, asset access, and the final
+/// `output_image()` surface that consoles composite into. Persistent progress
+/// is no longer a hardware concern: `SaveData` is game state (on `EggState`),
+/// flushed through the string-named file store below.
 pub trait ConsoleApi {
-    // Input + memory
+    // Input
     /// The four gamepads, mirroring [`ConsoleApi::mouse`]. Each [`Controller`]
     /// holds `[current, previous]` per button; read edges with the shared
     /// [`pressed`]/[`just_pressed`] helpers. See [`ConsoleHelper::controller`]
     /// for the single-player shorthand.
     fn controllers(&self) -> &[Controller; 4];
-    fn memory(&mut self) -> &mut SaveData;
 
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
@@ -50,6 +46,11 @@ pub trait ConsoleApi {
     /// names files, the host decides where they really live (under its data
     /// root). Hosts without writable storage may log and drop the write.
     fn write_file(&mut self, path: &str, bytes: &[u8]);
+
+    /// Read back a file from the host's string-named file store (same namespace
+    /// as [`write_file`](Self::write_file)). `None` when the file doesn't exist
+    /// or the host has no readable storage for that path.
+    fn read_file(&mut self, path: &str) -> Option<Vec<u8>>;
 
     /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;
@@ -93,10 +94,6 @@ pub trait ConsoleHelper: ConsoleApi {
     /// Returns true if any button on any controller was pressed or released.
     fn any_btnpr(&self) -> bool {
         self.controllers().iter().any(Controller::changed)
-    }
-    /// Reset all persisted save data to its default (fresh-game) state.
-    fn reset_save_data(&mut self) {
-        *self.memory() = SaveData::default();
     }
 
     /// Render `text` onto `target` using the console's default font
@@ -145,5 +142,92 @@ pub trait ConsoleHelper: ConsoleApi {
 
     fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
         text_width(self.font(), text, opts)
+    }
+}
+
+#[cfg(test)]
+pub mod test_console {
+    //! A minimal in-memory [`ConsoleApi`] for unit tests. Every method returns
+    //! an inert default (no input, no audio), which is all the engine's
+    //! pure-logic tests need from the hardware surface, plus an in-memory
+    //! `files` store so the save-flush/load methods are testable. Shared across
+    //! the crate's `#[cfg(test)]` modules so they don't each re-stub the trait.
+
+    use std::collections::HashMap;
+
+    use crate::data::sound::music::MusicTrack;
+    use crate::system::drawing::image::{IndexedImage, RgbaImage};
+    use crate::system::{Controller, Font, MouseInput, ScanCode, SfxOptions};
+
+    use super::ConsoleApi;
+
+    /// Inert console used by tests. Holds just enough state to satisfy the
+    /// trait (output/font) plus an `indexed_sprites` sheet some tests hand to
+    /// sheet-reading helpers like [`crate::map::map_by_name`] — those read the
+    /// sheet directly now (it lives on `DrawState`), not through the console.
+    pub struct TestConsole {
+        pub controllers: [Controller; 4],
+        /// In-memory stand-in for the host's string-named file store, so tests
+        /// can drive [`ConsoleApi::write_file`]/[`read_file`](ConsoleApi::read_file)
+        /// (e.g. the engine's autosave round trip).
+        pub files: HashMap<String, Vec<u8>>,
+        /// A blank sprite sheet fixture: enough for collider-deriving helpers
+        /// to read any low tile id.
+        pub indexed_sprites: IndexedImage,
+        pub output: RgbaImage,
+        pub font: Font,
+    }
+
+    impl TestConsole {
+        pub fn new() -> Self {
+            Self {
+                controllers: [Controller::default(); 4],
+                files: HashMap::new(),
+                // One blank 256px-wide sheet row block: enough for the
+                // modern-map collider derivation to read any low tile id.
+                indexed_sprites: IndexedImage::new(256, 64),
+                output: RgbaImage::new(1, 1),
+                font: Font::blank(),
+            }
+        }
+    }
+
+    impl Default for TestConsole {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ConsoleApi for TestConsole {
+        fn controllers(&self) -> &[Controller; 4] {
+            &self.controllers
+        }
+        fn exit(&mut self) {}
+        fn key(&self, _scancode: ScanCode) -> bool {
+            false
+        }
+        fn keyp(&self, _scancode: ScanCode) -> bool {
+            false
+        }
+        fn key_chars(&self) -> &[char] {
+            &[]
+        }
+        fn mouse(&self) -> MouseInput {
+            MouseInput::default()
+        }
+        fn music(&mut self, _track: Option<&MusicTrack>) {}
+        fn sfx(&mut self, _sfx_id: &str, _opts: SfxOptions) {}
+        fn write_file(&mut self, path: &str, bytes: &[u8]) {
+            self.files.insert(path.to_string(), bytes.to_vec());
+        }
+        fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
+            self.files.get(path).cloned()
+        }
+        fn output_image(&mut self) -> &mut RgbaImage {
+            &mut self.output
+        }
+        fn font(&self) -> &Font {
+            &self.font
+        }
     }
 }

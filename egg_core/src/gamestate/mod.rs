@@ -107,13 +107,13 @@ impl GameMode {
         match self {
             Self::Instructions(i) => {
                 *i += 1;
-                if (*i > 60 || ctx.system.memory().instructions_read) && ctx.system.any_btnp() {
-                    if ctx.system.memory().instructions_read {
-                        walkaround_state.load_pmem(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
+                if (*i > 60 || ctx.save.instructions_read) && ctx.system.any_btnp() {
+                    if ctx.save.instructions_read {
+                        walkaround_state.load_pmem(ctx);
                     } else {
-                        walkaround_state.new_game(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
+                        walkaround_state.new_game(ctx);
                     }
-                    ctx.system.memory().instructions_read = true;
+                    ctx.save.instructions_read = true;
                     *self = Self::Walkaround;
                 }
                 draw_instructions(ctx);
@@ -126,7 +126,7 @@ impl GameMode {
                 }
             }
             Self::Animation(x) => {
-                if ctx.system.memory().intro_anim_seen {
+                if ctx.save.intro_anim_seen {
                     *self = Self::MainMenu(MenuState::new());
                     return;
                 };
@@ -169,7 +169,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
     use crate::drawstate::LayerId;
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::drawing::image::RgbaImage;
-    let small_text = ctx.system.memory().small_text_on;
+    let small_text = ctx.save.small_text_on;
     let title = ctx.label("instructions_title");
     let instructions = ctx.label("instructions");
     let colour_12 = ctx.draw.colour(12);

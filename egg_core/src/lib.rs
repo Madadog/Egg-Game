@@ -30,6 +30,7 @@ pub mod rand;
 pub mod system;
 pub mod ui;
 
+use crate::data::save::{SAVE_PATH, SaveData};
 use crate::data::script::Script;
 use crate::debug::DebugInfo;
 use crate::dialogue::Message;
@@ -59,6 +60,11 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// text, while the host installs the base script and swaps languages by
     /// mutating [`EggState::script`] directly (see [`EggState::set_language`]).
     pub script: &'a Script,
+    /// Persistent progress. Gameplay reads and writes it freely; the engine
+    /// flushes it to the host's file store at the end of each frame (see
+    /// [`EggState::flush_save`]), so save persistence is a piece of game state,
+    /// not a hardware service.
+    pub save: &'a mut SaveData,
 }
 
 impl<S: ConsoleApi> Ctx<'_, S> {
@@ -98,9 +104,25 @@ pub struct EggState {
     /// A language requested at runtime via [`EggState::set_language`], awaiting
     /// load by the host's asset loop (see [`EggState::take_pending_language`]).
     pending_language: Option<String>,
+    /// Persistent progress, threaded into every state through [`Ctx::save`].
+    /// Loaded once from the host's file store (see [`load_save`](Self::load_save))
+    /// and autosaved at the end of each frame (see [`flush_save`](Self::flush_save)).
+    pub save: SaveData,
+    /// False until [`load_save`](Self::load_save) has read the persisted save
+    /// once; it guards that read so a frame's edits aren't clobbered by a
+    /// reload on the next frame.
+    save_loaded: bool,
+    /// The last [`SaveData`] flushed to storage. [`flush_save`](Self::flush_save)
+    /// diffs the live save against this so it only writes when something changed.
+    last_flushed_save: SaveData,
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
+        // Pull the persisted save in before any state reads it, and flush it out
+        // after every state has had a chance to mutate it — so the same frame
+        // that changes progress also writes it, and exit-time saving needs no
+        // special host hook.
+        self.load_save(system);
         self.time += 1;
         let mut ctx = Ctx {
             draw: &mut self.draw_state,
@@ -108,6 +130,7 @@ impl EggState {
             maps: &mut self.maps,
             rng: &mut self.rng,
             script: &self.script,
+            save: &mut self.save,
         };
         self.gamestate.run(
             &mut ctx,
@@ -116,6 +139,42 @@ impl EggState {
             &mut self.debug_info,
             self.time,
         );
+        self.flush_save(system);
+    }
+
+    /// Load the persisted save from the host's file store, once. Mirrors the
+    /// old host loader's tone: a missing/unreadable/garbage save logs and falls
+    /// back to the existing (default) `save`. Either way the last-flushed copy
+    /// is seeded so the first [`flush_save`](Self::flush_save) doesn't rewrite
+    /// an unchanged file.
+    pub fn load_save(&mut self, system: &mut impl system::ConsoleApi) {
+        if self.save_loaded {
+            return;
+        }
+        self.save_loaded = true;
+        if let Some(bytes) = system.read_file(SAVE_PATH) {
+            match serde_json::from_slice(&bytes) {
+                Ok(data) => self.save = data,
+                Err(e) => log::error!("Failed to parse save ({SAVE_PATH}): {e}"),
+            }
+        }
+        self.last_flushed_save = self.save.clone();
+    }
+
+    /// Flush the save to the host's file store when it differs from the last
+    /// value written. A serialisation failure logs and skips — a failed save
+    /// never crashes the game.
+    pub fn flush_save(&mut self, system: &mut impl system::ConsoleApi) {
+        if self.save == self.last_flushed_save {
+            return;
+        }
+        match serde_json::to_string_pretty(&self.save) {
+            Ok(json) => {
+                system.write_file(SAVE_PATH, json.as_bytes());
+                self.last_flushed_save = self.save.clone();
+            }
+            Err(e) => log::error!("Failed to serialise save data: {e}"),
+        }
     }
     /// Request switching the active language at runtime. The host's asset loop
     /// drains the request via [`take_pending_language`](Self::take_pending_language),
@@ -143,6 +202,73 @@ impl Default for EggState {
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
             pending_language: None,
+            save: SaveData::default(),
+            save_loaded: false,
+            last_flushed_save: SaveData::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::save::SAVE_PATH;
+    use crate::system::test_console::TestConsole;
+
+    /// `flush_save` writes the save (as pretty JSON, under [`SAVE_PATH`]) only
+    /// when it differs from the last flush — an unchanged save is a no-op so the
+    /// per-frame flush doesn't rewrite the file constantly.
+    #[test]
+    fn flush_save_writes_on_change_skips_when_unchanged() {
+        let mut console = TestConsole::new();
+        let mut state = EggState::default();
+
+        // A fresh, unchanged save (matching last_flushed) writes nothing.
+        state.flush_save(&mut console);
+        assert!(!console.files.contains_key(SAVE_PATH));
+
+        // After a change, the next flush writes parseable JSON.
+        state.save.egg_count = 7;
+        state.flush_save(&mut console);
+        let bytes = console.files.get(SAVE_PATH).expect("flush wrote the save");
+        let written: SaveData = serde_json::from_slice(bytes).expect("valid json");
+        assert_eq!(written.egg_count, 7);
+
+        // No further change -> no rewrite (clear the file, flush, stays absent).
+        console.files.remove(SAVE_PATH);
+        state.flush_save(&mut console);
+        assert!(!console.files.contains_key(SAVE_PATH));
+    }
+
+    /// `load_save` installs a valid pre-existing file and runs once; garbage in
+    /// the store logs and leaves the default save in place.
+    #[test]
+    fn load_save_installs_valid_file_and_falls_back_on_garbage() {
+        // Valid file -> installed into `save`.
+        let mut console = TestConsole::new();
+        let stored = SaveData { egg_count: 42, ..SaveData::default() };
+        console.files.insert(
+            SAVE_PATH.to_string(),
+            serde_json::to_vec(&stored).unwrap(),
+        );
+        let mut state = EggState::default();
+        state.load_save(&mut console);
+        assert_eq!(state.save.egg_count, 42);
+
+        // The guard makes it run once: a later store change isn't re-read.
+        console
+            .files
+            .insert(SAVE_PATH.to_string(), serde_json::to_vec(&SaveData::default()).unwrap());
+        state.load_save(&mut console);
+        assert_eq!(state.save.egg_count, 42);
+
+        // Garbage bytes -> fall back to the existing default save.
+        let mut console = TestConsole::new();
+        console
+            .files
+            .insert(SAVE_PATH.to_string(), b"not json".to_vec());
+        let mut state = EggState::default();
+        state.load_save(&mut console);
+        assert_eq!(state.save, SaveData::default());
     }
 }

@@ -1,15 +1,15 @@
 use crate::Ctx;
 use crate::animation::Animation;
 use crate::data::map_data::{MapIndex, legacy_index};
+use crate::data::save::SaveData;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::interact::{InteractFn, Interaction};
-use crate::map::{Axis, MapInfo, MapStore, map_by_name};
+use crate::map::{Axis, MapInfo, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
-use crate::system::drawing::image::IndexedImage;
 use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
@@ -118,21 +118,15 @@ impl WalkaroundState {
     /// Load a map by name through [`map_by_name`] (legacy table, numeric
     /// fallback, then modern maps from `maps`). Unknown names log and leave
     /// the current map in place — the old bank-indexed loader panicked on a
-    /// bad index, which a typo'd warp or stale save shouldn't do.
-    /// `indexed_sprites` is the sheet `map_by_name` derives modern colliders
-    /// from (it lives on `DrawState`); `system` covers the camera/audio setup.
-    pub fn load_map_by_name(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        indexed_sprites: &IndexedImage,
-        maps: &MapStore,
-        name: &str,
-    ) {
-        let Some(map_info) = map_by_name(indexed_sprites, name, maps) else {
+    /// bad index, which a typo'd warp or stale save shouldn't do. Reads the
+    /// sprite sheet (`ctx.draw`, for modern colliders), the loaded maps, and
+    /// the console (camera/audio setup) straight off `ctx`.
+    pub fn load_map_by_name<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, name: &str) {
+        let Some(map_info) = map_by_name(&ctx.draw.indexed_sprites, name, ctx.maps) else {
             info!("load_map_by_name: unknown map {name:?}");
             return;
         };
-        self.load_map(system, map_info);
+        self.load_map(ctx.system, map_info);
     }
     pub fn cam_x(&self) -> i32 {
         self.camera.pos.x.into()
@@ -144,11 +138,14 @@ impl WalkaroundState {
         &mut self.camera.bounds
     }
     /// Function that does everything. No anti-pattern here. Returns an optional
-    /// dialogue-registry key for the caller to resolve and display.
+    /// dialogue-registry key for the caller to resolve and display. Takes
+    /// `save` narrowly (only the stairwell flag needs it) alongside the console
+    /// it plays sounds through.
     pub fn execute_interact_fn(
         &mut self,
         interact: &InteractFn,
         system: &mut impl ConsoleApi,
+        save: &mut SaveData,
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
@@ -165,11 +162,11 @@ impl WalkaroundState {
                 }
             }
             InteractFn::StairwellWindow => {
-                system.memory().house_stairwell_window_interacted = true;
+                save.house_stairwell_window_interacted = true;
                 Some("house_stairwell_window")
             }
             InteractFn::StairwellPainting => {
-                if system.memory().house_stairwell_window_interacted {
+                if save.house_stairwell_window_interacted {
                     Some("house_stairwell_painting_after")
                 } else {
                     Some("house_stairwell_painting_init")
@@ -242,9 +239,11 @@ impl WalkaroundState {
         self.entities.len() - 1
     }
 
-    fn save(&self, new_map: &str, system: &mut impl ConsoleApi) {
+    /// Record the player's position and the map they're on into `save` (the
+    /// persistent progress on [`EggState`]). The engine flushes it to storage
+    /// at the end of the frame — this just updates the in-memory copy.
+    fn save(&self, new_map: &str, save: &mut SaveData) {
         let pos = self.player_ref().pos;
-        let save = system.memory();
         save.save_count += 1;
         save.current_map_name = Some(new_map.to_string());
         // Legacy maps also refresh the numeric id, so a save written here
@@ -257,39 +256,29 @@ impl WalkaroundState {
         save.player_y = pos.y;
     }
 
-    pub fn load_pmem(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        indexed_sprites: &IndexedImage,
-        maps: &MapStore,
-    ) {
-        let save = system.memory().clone();
+    pub fn load_pmem<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) {
+        let save = ctx.save.clone();
         // Pre-rename saves only carry the numeric id; translate it to a name
         // and resolve everything through the one name-based loader.
         let name = save
             .current_map_name
             .unwrap_or_else(|| MapIndex(save.current_map.into()).name().to_string());
-        self.load_map_by_name(system, indexed_sprites, maps, &name);
+        self.load_map_by_name(ctx, &name);
         self.player().pos.x = save.player_x;
         self.player().pos.y = save.player_y;
     }
 
     /// Starts a fresh game and saves over the default zeroed
     /// player position and map name.
-    pub fn new_game(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        indexed_sprites: &IndexedImage,
-        maps: &MapStore,
-    ) {
+    pub fn new_game<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) {
         // Rebuild the live walkaround to its fresh construction state. "Erase
         // data" only zeroes `SaveData`; the existing `WalkaroundState` (player
         // entity, companions, dialogue…) is never rebuilt, so without this the
         // player keeps the position/shell they had before the reset and the
         // seed `save()` below would persist that stale position.
         *self = Self::new();
-        self.load_map_by_name(system, indexed_sprites, maps, "bedroom");
-        self.save("bedroom", system);
+        self.load_map_by_name(ctx, "bedroom");
+        self.save("bedroom", ctx.save);
     }
 }
 
@@ -319,7 +308,7 @@ impl WalkaroundState {
         }
 
         if ctx.system.keyp(ScanCode::Digit5) {
-            self.load_pmem(ctx.system, &ctx.draw.indexed_sprites, ctx.maps);
+            self.load_pmem(ctx);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
             ctx.draw.set_palette(&crate::system::SWEETIE_16);
@@ -346,17 +335,18 @@ impl WalkaroundState {
             if self.dialogue.characters == 0 {
                 ctx.system.play_sound(sound::INTERACT);
             }
-            self.dialogue.tick(ctx.system, 1);
+            let small_text = ctx.save.small_text_on;
+            self.dialogue.tick(ctx.system, small_text, 1);
             if pressed(pad.a) {
-                self.dialogue.tick(ctx.system, 2);
+                self.dialogue.tick(ctx.system, small_text, 2);
             }
             if just_pressed(pad.b) {
-                self.dialogue.skip(ctx.system);
+                self.dialogue.skip(ctx.system, small_text);
             }
         }
         if just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text(ctx.system, false) {
+            if self.dialogue.next_text(ctx.system, ctx.save.small_text_on, false) {
                 interact = false;
             } else if self.dialogue.current_text.is_some() {
                 interact = false;
@@ -440,8 +430,8 @@ impl WalkaroundState {
             self.companion_trail
                 .fill(self.player_ref().pos, self.player_ref().dir);
             if let Some(new_map) = target.map {
-                self.save(&new_map, ctx.system);
-                self.load_map_by_name(ctx.system, &ctx.draw.indexed_sprites, ctx.maps, &new_map);
+                self.save(&new_map, ctx.save);
+                self.load_map_by_name(ctx, &new_map);
             }
         } else if interact {
             for item in self.current_map.interactables.iter().cloned().chain(
@@ -454,12 +444,12 @@ impl WalkaroundState {
                     match &item.interaction {
                         Interaction::Dialogue(key) => {
                             let convo = ctx.get_dialogue(key);
-                            self.dialogue.set_messages(ctx.system, &convo);
+                            self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
                         }
                         Interaction::Func(x) => {
-                            if let Some(key) = self.execute_interact_fn(x, ctx.system) {
+                            if let Some(key) = self.execute_interact_fn(x, ctx.system, ctx.save) {
                                 let convo = ctx.get_dialogue(key);
-                                self.dialogue.set_messages(ctx.system, &convo);
+                                self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
                             };
                         }
                         Interaction::None => {}
@@ -580,7 +570,7 @@ impl WalkaroundState {
 
         if let Some(string) = self.dialogue.current_text.clone() {
             self.dialogue
-                .draw_dialogue_box(ctx.draw, BG, ctx.system, &string, true);
+                .draw_dialogue_box(ctx.draw, BG, ctx.system, ctx.save.small_text_on, &string, true);
         }
         if debug_info.map_info {
             for warp in self.current_map.warps.iter() {

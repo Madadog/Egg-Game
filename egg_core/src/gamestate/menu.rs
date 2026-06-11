@@ -3,6 +3,7 @@ use crate::system::SpriteOptions;
 
 use crate::Ctx;
 use crate::camera::CameraBounds;
+use crate::data::save::SaveData;
 use crate::data::script::Script;
 use crate::data::sound;
 use crate::dialogue::print_options;
@@ -82,7 +83,7 @@ impl MenuState {
     ) -> Option<GameMode> {
         let old_index = self.index;
         let entries = self.entries.len();
-        let ui = self.build_ui(ctx.system, ctx.script);
+        let ui = self.build_ui(&*ctx);
         let mouse = ctx.system.mouse();
         let pad = ctx.system.controller();
         let mut clicked = false;
@@ -125,11 +126,14 @@ impl MenuState {
     }
     /// Lay the menu out as a full-screen vertical column of selectable rows,
     /// one per entry and keyed by its index. Rebuilt each frame for both
-    /// hit-testing (`step`) and drawing.
-    pub fn build_ui(&self, system: &mut impl ConsoleApi, script: &Script) -> Ui<usize> {
-        let small = system.memory().small_text_on;
-        let texts: Vec<String> = self.entries.iter().map(|e| e.text(script)).collect();
-        let screen = (system.width() as f32, system.height() as f32);
+    /// hit-testing (`step`) and drawing. A pure read-only builder: it only reads
+    /// `ctx` (the save's small-text flag, the screen size, the script), so it
+    /// takes `&Ctx` rather than the old `&mut ConsoleApi` (which it needed only
+    /// for the now-removed `memory()`).
+    pub fn build_ui<S: ConsoleApi>(&self, ctx: &Ctx<S>) -> Ui<usize> {
+        let small = ctx.save.small_text_on;
+        let texts: Vec<String> = self.entries.iter().map(|e| e.text(ctx.script)).collect();
+        let screen = (ctx.system.width() as f32, ctx.system.height() as f32);
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
             .entries
@@ -182,14 +186,13 @@ impl MenuState {
                 *self = MenuState::new();
             }
             FontSize => {
-                let save = ctx.system.memory();
-                save.small_text_on = !save.small_text_on;
+                ctx.save.small_text_on = !ctx.save.small_text_on;
             }
             Reset(x) => {
                 if *x == 0 {
                     *x += 1;
                 } else {
-                    ctx.system.reset_save_data();
+                    *ctx.save = SaveData::default();
                     return Some(GameMode::Animation(0));
                 }
             }
@@ -214,12 +217,17 @@ impl MenuState {
                         *walk.cam_state() = CameraBounds::free();
                     }
                     4 => {
-                        walk.execute_interact_fn(&crate::interact::InteractFn::ToggleDog, ctx.system);
+                        walk.execute_interact_fn(
+                            &crate::interact::InteractFn::ToggleDog,
+                            ctx.system,
+                            ctx.save,
+                        );
                     }
                     5 => {
                         walk.execute_interact_fn(
                             &crate::interact::InteractFn::AddCreatures(1),
                             ctx.system,
+                            ctx.save,
                         );
                     }
                     6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.script))),
@@ -229,7 +237,7 @@ impl MenuState {
             Walk => return Some(GameMode::Walkaround),
             MapTest => return Some(GameMode::MainMenu(MenuState::map_select(ctx.maps))),
             MapSelect(name) => {
-                walkaround_state.load_map_by_name(ctx.system, &ctx.draw.indexed_sprites, ctx.maps, name);
+                walkaround_state.load_map_by_name(ctx, name);
             }
         };
         None
@@ -245,6 +253,7 @@ impl MenuState {
         draw_state: &mut crate::drawstate::DrawState,
         system: &mut impl ConsoleApi,
         script: &Script,
+        small_text: bool,
         index: usize,
     ) {
         use crate::drawstate::LayerId::*;
@@ -253,7 +262,7 @@ impl MenuState {
         if let Reset(_) = self.entries[index] {
             let c2 = draw_state.colour(2);
             let c12 = draw_state.colour(12);
-            let options = print_options(system);
+            let options = print_options(small_text);
             let lose_data = script.label("options_lose_data");
             draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
             system.print_to_centered(
@@ -282,8 +291,8 @@ impl MenuState {
             draw_title_rgba(ctx.draw, ctx.system, ctx.script, 120, 53, &title, elapsed_frames);
         }
 
-        self.build_ui(ctx.system, ctx.script).draw(ctx.draw, ctx.system, BG);
-        self.hover(ctx.draw, ctx.system, ctx.script, self.index);
+        self.build_ui(&*ctx).draw(ctx.draw, ctx.system, BG);
+        self.hover(ctx.draw, ctx.system, ctx.script, ctx.save.small_text_on, self.index);
 
         let output = ctx.system.output_image();
         output.blit::<RgbaImage>(

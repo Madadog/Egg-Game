@@ -99,7 +99,7 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
     } else {
         // Intro complete: set save flag, reset palette, show title.
         ctx.system.music(None);
-        ctx.system.memory().intro_anim_seen = true;
+        ctx.save.intro_anim_seen = true;
         ctx.draw.set_palette(&SWEETIE_16);
         ctx.draw.indexed(BG).fill(0);
         ctx.draw.indexed(FG).fill(0);

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::{Image, info};
 use egg_core::{
-    data::{save::SaveData, sound::music::MusicTrack},
+    data::sound::music::MusicTrack,
     gamestate::EggInput,
     system::{
         ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode,
@@ -33,9 +33,12 @@ pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
     music: Option<(MusicTrack, bool)>,
-    memory: SaveData,
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
+    /// Set by [`ConsoleApi::exit`]; a host system polls
+    /// [`exit_requested`](Self::exit_requested) and sends `AppExit`. (No engine
+    /// caller exercises this yet — it replaces the old shutdown `panic!`.)
+    exit_requested: bool,
 }
 
 impl FantasyConsole {
@@ -45,8 +48,8 @@ impl FantasyConsole {
             font: Font::blank(),
             music: None,
             sounds: HashMap::new(),
-            memory: SaveData::default(),
             input: EggInput::new(),
+            exit_requested: false,
         }
     }
     pub fn input(&mut self) -> &mut EggInput {
@@ -58,10 +61,10 @@ impl FantasyConsole {
     pub fn music_track(&mut self) -> &mut Option<(MusicTrack, bool)> {
         &mut self.music
     }
-    /// A snapshot of the current persistent save data, for the autosave system
-    /// to diff against the last value written to disk.
-    pub fn save_data(&self) -> SaveData {
-        self.memory.clone()
+    /// Whether the engine has asked to quit (via [`ConsoleApi::exit`]). The host
+    /// translates this into a Bevy `AppExit`.
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested
     }
     pub fn blit_to_image(&self, image: &mut [u8]) {
         // Gamestate draw fns composite directly into output_screen each frame.
@@ -138,12 +141,8 @@ impl ConsoleApi for FantasyConsole {
         &self.input.controllers
     }
 
-    fn memory(&mut self) -> &mut SaveData {
-        &mut self.memory
-    }
-
     fn exit(&mut self) {
-        panic!("Perfectly normal shutdown.")
+        self.exit_requested = true;
     }
 
     fn key(&self, scancode: ScanCode) -> bool {
@@ -175,22 +174,27 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    /// Write `path` under `assets/`, backing up any existing file to
-    /// `<path>.bak` first. The engine only hands over relative forward-slash
-    /// paths; anything absolute or escaping the data root is refused.
+    /// Route a write by namespace (see [`is_user_data`]): user-data (the save)
+    /// goes to the host's user-data backend, everything else to the authoring
+    /// `assets/` tree.
+    ///
+    /// * **user data, native** — the file `save.json` in the working directory,
+    ///   rewritten in place (no `.bak`: it changes constantly).
+    /// * **assets, native** — `assets/<path>`, backing up any existing file to
+    ///   `<path>.bak` first. The engine only hands over relative forward-slash
+    ///   paths; anything absolute or escaping the data root is refused.
     #[cfg(not(target_arch = "wasm32"))]
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
-        use std::path::{Component, Path};
-        let relative = Path::new(path);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|c| matches!(c, Component::ParentDir))
-        {
-            info!("write_file: refusing non-relative path {path:?}");
+        if is_user_data(path) {
+            if let Err(e) = std::fs::write(path, bytes) {
+                info!("Failed to write save file {path}: {e}");
+            }
             return;
         }
-        let dest = Path::new("assets").join(relative);
+        let Some(dest) = asset_path(path) else {
+            info!("write_file: refusing non-relative path {path:?}");
+            return;
+        };
         if dest.exists() {
             let backup = format!("{}.bak", dest.display());
             if let Err(e) = std::fs::copy(&dest, &backup) {
@@ -202,10 +206,58 @@ impl ConsoleApi for FantasyConsole {
             Err(e) => info!("write_file: failed to write {}: {e}", dest.display()),
         }
     }
-    /// Web build: no filesystem, so file writes are logged and dropped.
+    /// Web build: user data is a `localStorage` entry keyed by the path string
+    /// (so the historical `"save.json"` key keeps working byte-for-byte); other
+    /// writes have no filesystem to land in, so they're logged and dropped.
     #[cfg(target_arch = "wasm32")]
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
+        if is_user_data(path) {
+            let json = String::from_utf8_lossy(bytes);
+            if let Some(storage) = local_storage()
+                && let Err(e) = storage.set_item(path, &json)
+            {
+                info!("Failed to write save to localStorage: {e:?}");
+            }
+            return;
+        }
         info!("File write not persisted on web ({path}, {} bytes)", bytes.len());
+    }
+
+    /// Read a file back from the same namespaces [`write_file`](Self::write_file)
+    /// writes to. User data (the save) comes from the host's user-data backend;
+    /// other paths from `assets/<path>`. `None` on a missing file or an
+    /// unreadable/refused path.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
+        if is_user_data(path) {
+            if !std::path::Path::new(path).exists() {
+                return None;
+            }
+            return match std::fs::read(path) {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    info!("Failed to read save file {path}: {e}");
+                    None
+                }
+            };
+        }
+        let dest = asset_path(path)?;
+        std::fs::read(&dest).ok()
+    }
+    /// Web build: user data is read from `localStorage`; nothing else is
+    /// readable (no filesystem), so other paths return `None`.
+    #[cfg(target_arch = "wasm32")]
+    fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
+        if is_user_data(path) {
+            return match local_storage()?.get_item(path) {
+                Ok(json) => json.map(String::into_bytes),
+                Err(e) => {
+                    info!("Failed to read save from localStorage: {e:?}");
+                    None
+                }
+            };
+        }
+        None
     }
 
     fn output_image(&mut self) -> &mut RgbaImage {
@@ -223,5 +275,43 @@ impl ConsoleApi for FantasyConsole {
 
     fn font(&self) -> &Font {
         &self.font
+    }
+}
+
+/// Routing rule for the string-named file store: the engine names files, the
+/// host decides where they live. The save (and anything under `save/`) is the
+/// player's *user data*, persisted to a per-user backend; everything else is
+/// authoring/asset data under the `assets/` tree.
+fn is_user_data(path: &str) -> bool {
+    path == egg_core::data::save::SAVE_PATH || path.starts_with("save/")
+}
+
+/// Validate an asset-namespace `path` and resolve it under `assets/`. The
+/// engine only hands over relative forward-slash paths; anything absolute or
+/// escaping the data root is refused (`None`).
+#[cfg(not(target_arch = "wasm32"))]
+fn asset_path(path: &str) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path};
+    let relative = Path::new(path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+    {
+        return None;
+    }
+    Some(Path::new("assets").join(relative))
+}
+
+/// The browser's `localStorage`, or `None` if it's unavailable (e.g. disabled
+/// by the user or accessed from a non-browser context).
+#[cfg(target_arch = "wasm32")]
+fn local_storage() -> Option<web_sys::Storage> {
+    match web_sys::window()?.local_storage() {
+        Ok(storage) => storage,
+        Err(e) => {
+            info!("localStorage unavailable: {e:?}");
+            None
+        }
     }
 }

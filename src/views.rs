@@ -367,6 +367,7 @@ pub fn update_views(
             maps: &mut g.state.maps,
             rng: &mut g.state.rng,
             script: &g.state.script,
+            save: &mut g.state.save,
         };
         g.state
             .walkaround

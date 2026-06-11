@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+/// The path the engine persists progress under. The engine names the file; a
+/// host routes it to whatever user-data backend it has (a file on native, a
+/// `localStorage` entry on web) — see `ConsoleApi::write_file`/`read_file`.
+pub const SAVE_PATH: &str = "save.json";
+
 /// Misc. progression flags and numbers. Persisted to the player's storage
 /// device and restored across runs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,5 +88,24 @@ mod tests {
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert_eq!(save.current_map_name, None);
         assert_eq!(MapIndex(save.current_map.into()).name(), "bedroom");
+    }
+
+    /// A populated save survives a pretty-print/parse round trip unchanged —
+    /// the format the engine autosaves through (see [`SAVE_PATH`]).
+    #[test]
+    fn json_round_trips_save_data() {
+        let data = SaveData {
+            intro_anim_seen: true,
+            instructions_read: true,
+            egg_count: 1234,
+            inventory: [1, 2, 3, 4, 5, 6, 7, 8],
+            current_map: 9,
+            player_x: -42,
+            player_y: 300,
+            ..SaveData::default()
+        };
+        let json = serde_json::to_string_pretty(&data).expect("serialise");
+        let parsed: SaveData = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(data, parsed);
     }
 }
