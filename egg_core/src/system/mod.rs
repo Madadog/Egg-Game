@@ -46,10 +46,9 @@ pub trait ConsoleApi {
     fn key_chars(&self) -> &[char];
     fn mouse(&self) -> MouseInput;
 
-    // Audio + IO
+    // Audio
     fn music(&mut self, track: Option<&MusicTrack>);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
-    fn trace_alloc(text: impl AsRef<str>, color: u8);
 
     // Per-frame state helpers
     fn bank(&mut self) -> &mut u8;
@@ -76,8 +75,6 @@ pub trait ConsoleApi {
     /// Persist an edited "modern" map (host resolves its name/location from the
     /// map's `bank`). Default no-op — only hosts that load modern maps save them.
     fn write_map(&mut self, _map: &MapInfo) {}
-    fn write_file(&mut self, filename: String, data: &[u8]);
-    fn read_file(&mut self, filename: String) -> Option<&[u8]>;
     /// Grab a whole bitmap. By convention:
     ///
     /// 0. Screen
@@ -163,6 +160,7 @@ pub trait ConsoleHelper: ConsoleApi {
         self.print_to(target, text, x - width / 2, y, colour, opts)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_to_shadow<C: Canvas>(
         &self,
         target: &mut C,

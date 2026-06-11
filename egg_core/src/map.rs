@@ -224,9 +224,6 @@ impl Warp {
             ..self
         }
     }
-    pub fn map(&'static self) -> Option<MapIndex> {
-        self.map
-    }
     pub fn hitbox(&self) -> Hitbox {
         Hitbox::new(self.from.0.x, self.from.0.y, self.from.1.x, self.from.1.y)
     }
@@ -259,7 +256,7 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
             (point.y - layer_hitbox.y) / 8 + layer.origin.y,
         );
         let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
-        let bank = system.bank().clone().into();
+        let bank = (*system.bank()).into();
         let id = system.map_get(bank, 0, map_point.x.into(), map_point.y.into()) + spr_flag_offset;
         let mget_collision = touches_tile(
             *system.get_sprite_flags().get(id).unwrap_or(&0),

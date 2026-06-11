@@ -55,7 +55,6 @@ pub struct FantasyConsole {
     /// A language requested at runtime via `set_language`, awaiting load by the
     /// host's asset loop (see `take_pending_language`).
     pending_language: Option<String>,
-    files: HashMap<String, Vec<u8>>,
     music: Option<(MusicTrack, bool)>,
     memory: SaveData,
     sounds: HashMap<String, SfxOptions>,
@@ -75,7 +74,6 @@ impl FantasyConsole {
             modern_tiled: HashMap::new(),
             script: Script::new(),
             pending_language: None,
-            files: HashMap::new(),
             sprite_flags: vec![0; 2048],
             music: None,
             sounds: HashMap::new(),
@@ -268,10 +266,6 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    fn trace_alloc(text: impl AsRef<str>, _color: u8) {
-        println!("{}", text.as_ref());
-    }
-
     fn bank(&mut self) -> &mut u8 {
         &mut self.bank
     }
@@ -328,13 +322,6 @@ impl ConsoleApi for FantasyConsole {
             *tile = value
         }
     }
-    fn write_file(&mut self, filename: String, data: &[u8]) {
-        self.files.insert(filename, data.into());
-    }
-    fn read_file(&mut self, filename: String) -> Option<&[u8]> {
-        self.files.get(&filename).map(|vec| (*vec).as_slice())
-    }
-
     fn get_bitmap_indexed(&self, id: usize) -> &[u8] {
         match id {
             2 => &self.indexed_sprites.data,

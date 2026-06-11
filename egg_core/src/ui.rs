@@ -1,10 +1,11 @@
 //! A small, immediate-mode UI layer over the [Taffy](https://docs.rs/taffy)
 //! flexbox engine.
 //!
-//! The console draws to a fixed 240×136 indexed/RGBA canvas with hand-written
-//! pixel coordinates. This module replaces that manual arithmetic for menu-like
+//! The console draws to indexed/RGBA canvases with hand-written pixel
+//! coordinates. This module replaces that manual arithmetic for menu-like
 //! UIs: you describe a tree of styled boxes (text, sprites, containers), Taffy
-//! computes an absolute pixel [`Rect`] for each, and then you get two passes for
+//! computes an absolute pixel [`Rect`] for each against the live framebuffer
+//! size (240×136 is just the base resolution), and then you get two passes for
 //! free — [`Ui::draw`] (render decoration + content) and [`Ui::hit`] (mouse
 //! pick). Every interactive box carries a caller-chosen key `K`, so hit-testing
 //! returns exactly the element the mouse is over.
@@ -87,7 +88,8 @@ struct NodeData<K> {
     deco: Decoration,
 }
 
-/// An absolute, integer pixel rectangle in the 240×136 screen space. (Not
+/// An absolute, integer pixel rectangle in screen space — the live framebuffer
+/// the layout was computed against, not the fixed 240×136 base resolution. (Not
 /// [`crate::position::Hitbox`], whose `new` panics on zero-size boxes — layout
 /// containers are routinely empty.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

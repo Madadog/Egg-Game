@@ -139,16 +139,16 @@ pub fn primary_hotkeys(
     }
 
     if keys.just_pressed(KeyCode::KeyD) && keys.pressed(KeyCode::ShiftLeft) {
-        let d = &game.state.debug_info;
-        d.set_player_info(!d.player_info());
+        let d = &mut game.state.debug_info;
+        d.player_info = !d.player_info;
     }
     if keys.just_pressed(KeyCode::KeyM) {
-        let d = &game.state.debug_info;
-        d.set_map_info(!d.map_info());
+        let d = &mut game.state.debug_info;
+        d.map_info = !d.map_info;
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        let d = &game.state.debug_info;
-        d.set_memory_info(!d.memory_info());
+        let d = &mut game.state.debug_info;
+        d.memory_info = !d.memory_info;
     }
     // Shift+digit: swap player one for a preset shell.
     if keys.pressed(KeyCode::ShiftLeft) {

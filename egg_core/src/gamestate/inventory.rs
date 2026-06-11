@@ -1,6 +1,6 @@
 use crate::{
     data::sound,
-    dialogue::{DIALOGUE_OPTIONS, Dialogue},
+    dialogue::Dialogue,
     system::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
     ui::{NodeId, Ui, UiBuilder},
 };
@@ -237,7 +237,7 @@ impl InventoryUi {
         const MAIN_W: f32 = 89.0;
         const PANEL_H: f32 = 47.0;
 
-        let small = DIALOGUE_OPTIONS.small_text(system);
+        let small = system.memory().small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
         let screen = (system.width() as f32, system.height() as f32);
         let page = self.state.page();
@@ -353,7 +353,7 @@ impl InventoryUi {
         use crate::system::drawing::image::{Rgba, RgbaImage};
         use crate::system::{PrintOptions, StaticSpriteOptions};
 
-        let small = DIALOGUE_OPTIONS.small_text(system);
+        let small = system.memory().small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
         let black = draw_state.colour(0);
         let white = draw_state.colour(12);

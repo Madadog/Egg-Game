@@ -375,10 +375,10 @@ impl Shell {
                 [points_dy, points_dy_left, points_dy_right],
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
-            if let Some(point_diag) = point_diag {
-                if layer_collides_flags(system, point_diag, layer) {
-                    diagonal_collision = true;
-                }
+            if let Some(point_diag) = point_diag
+                && layer_collides_flags(system, point_diag, layer)
+            {
+                diagonal_collision = true;
             }
         }
         slide_ramp(
@@ -677,22 +677,36 @@ impl CompanionList {
             .count()
     }
     pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<Interactable> {
-        match self.companions {
-            [Some(x), Some(y)] => vec![
-                x.interact(positions.mid().0, positions.mid().1, positions.latest().0),
-                y.interact(
-                    positions.oldest().0,
-                    positions.oldest().1,
-                    positions.latest().0,
-                ),
-            ],
-            [Some(x), None] => vec![x.interact(
-                positions.oldest().0,
-                positions.oldest().1,
-                positions.latest().0,
-            )],
-            [None, None] => vec![],
-            [None, Some(_)] => todo!(),
-        }
+        // Trail points go to companions by presence, not slot: with two, the
+        // first walks at the trail's midpoint and the second at its tail; a
+        // lone companion (whichever slot it occupies) takes the tail.
+        let present: Vec<Companion> = self.companions.iter().flatten().copied().collect();
+        let count = present.len();
+        present
+            .into_iter()
+            .enumerate()
+            .map(|(i, companion)| {
+                let (position, direction) = if count == 2 && i == 0 {
+                    positions.mid()
+                } else {
+                    positions.oldest()
+                };
+                companion.interact(position, direction, positions.latest().0)
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn companion_in_second_slot_interacts_without_panic() {
+        let list = CompanionList {
+            companions: [None, Some(Companion::Dog)],
+        };
+        let trail: CompanionTrail<16> = CompanionTrail::new();
+        assert_eq!(list.interact(&trail).len(), 1);
     }
 }

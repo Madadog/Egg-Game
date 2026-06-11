@@ -104,7 +104,7 @@ pub fn draw_sprite_test(draw_state: &mut DrawState, system: &mut impl ConsoleApi
     output.blit::<RgbaImage>(
         0,
         0,
-        &draw_state.rgba(LayerId::BG),
+        draw_state.rgba(LayerId::BG),
         EdgePolicy::Transparent,
         Transform::IDENTITY,
         |p| p.a() == 0,

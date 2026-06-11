@@ -325,6 +325,7 @@ impl TiledMap {
         interactables: &[Interactable],
         warps: &[Warp],
     ) -> String {
+        // Single-tileset assumption: `flatten_gids` subtracted per-tile firstgids, but only the first is re-added.
         let firstgid = self.tilesets.first().map(|t| t.firstgid).unwrap_or(1);
         let mut layers = Vec::new();
         for (i, layer) in self.layers.iter().enumerate() {
@@ -405,11 +406,18 @@ impl AssetLoader for TiledMapLoader {
         &self,
         reader: &mut dyn Reader,
         _settings: &(),
-        _load_context: &mut LoadContext<'_>,
+        load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
         let mut map: TiledMap = serde_json::from_slice(&bytes)?;
+        if map.tilesets.len() > 1 {
+            bevy::log::warn!(
+                "{} has {} tilesets: `to_tmj` re-adds only the first firstgid, so tile edits saved through the in-game editor will corrupt gids for multi-tileset maps",
+                load_context.path(),
+                map.tilesets.len()
+            );
+        }
         map.flatten_gids();
         Ok(map)
     }

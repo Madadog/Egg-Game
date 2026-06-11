@@ -20,7 +20,6 @@ use log::trace;
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
 use crate::debug::DebugInfo;
-use crate::dialogue::DIALOGUE_OPTIONS;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
 use self::menu::MenuState;
@@ -144,10 +143,9 @@ impl GameMode {
             Self::MainMenu(state) => {
                 let next = state.step_main_menu(draw_state, system, walkaround_state, inventory_ui);
                 state.draw_main_menu(draw_state, system, elapsed_frames);
-                match next {
-                    Some(x) => *self = x,
-                    None => (),
-                };
+                if let Some(x) = next {
+                    *self = x;
+                }
             }
             Self::Inventory => {
                 inventory_ui.step(system);
@@ -181,7 +179,7 @@ pub fn draw_instructions(
     use crate::drawstate::LayerId;
     use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::drawing::image::RgbaImage;
-    let small_text = DIALOGUE_OPTIONS.small_text(system);
+    let small_text = system.memory().small_text_on;
     let title = system.label("instructions_title");
     let instructions = system.label("instructions");
     let colour_12 = draw_state.colour(12);

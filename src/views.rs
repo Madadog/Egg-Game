@@ -153,10 +153,12 @@ pub fn spawn_view(
 
     // Give the view its own draw state, but share the loaded sprite assets —
     // the default state's sheets are empty (0×0) and would render nothing.
-    let mut draw_state = DrawState::default();
-    draw_state.rgba_sprites = main_draw.rgba_sprites.clone();
-    draw_state.indexed_sprites = main_draw.indexed_sprites.clone();
-    draw_state.sprite_flags = main_draw.sprite_flags.clone();
+    let draw_state = DrawState {
+        rgba_sprites: main_draw.rgba_sprites.clone(),
+        indexed_sprites: main_draw.indexed_sprites.clone(),
+        sprite_flags: main_draw.sprite_flags.clone(),
+        ..DrawState::default()
+    };
 
     views.views.push(ViewWindow {
         window,

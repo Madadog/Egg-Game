@@ -79,6 +79,7 @@ pub struct MapOptions {
 }
 
 impl<'a> MapOptions {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         x: i32,
         y: i32,

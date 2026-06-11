@@ -227,14 +227,12 @@ fn parse_dialogue(body: &[(usize, &str)]) -> Result<Entry, ParseError> {
                 side = explicit;
                 last_portrait = def.portrait.clone();
             }
-        } else if autoflip {
-            if let Some(portrait) = &def.portrait {
-                if last_portrait.as_ref().is_some_and(|last| last != portrait) {
-                    side = !side;
-                }
-                def.flip = side;
-                last_portrait = Some(portrait.clone());
+        } else if autoflip && let Some(portrait) = &def.portrait {
+            if last_portrait.as_ref().is_some_and(|last| last != portrait) {
+                side = !side;
             }
+            def.flip = side;
+            last_portrait = Some(portrait.clone());
         }
 
         drop_redundant_flips(&mut def);
@@ -449,10 +447,10 @@ fn peel_trailing_delay(s: &str) -> (&str, Option<u8>) {
     let trimmed = s.trim_end();
     if let Some(hash) = trimmed.rfind('#') {
         let (keyword, arg) = split_first_word(&trimmed[hash + 1..]);
-        if keyword == "delay" {
-            if let Ok(delay) = arg.parse::<u8>() {
-                return (trimmed[..hash].trim_end(), Some(delay));
-            }
+        if keyword == "delay"
+            && let Ok(delay) = arg.parse::<u8>()
+        {
+            return (trimmed[..hash].trim_end(), Some(delay));
         }
     }
     (trimmed, None)

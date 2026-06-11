@@ -120,9 +120,11 @@ mod mouse_tests {
 
     #[test]
     fn edges_and_movement() {
-        let mut m = MouseInput::default();
-        m.x = [5, 5];
-        m.y = [9, 7];
+        let mut m = MouseInput {
+            x: [5, 5],
+            y: [9, 7],
+            ..Default::default()
+        };
         assert_eq!(m.pos(), Vec2::new(5, 9));
         assert!(m.moved()); // y differs from last frame
 
@@ -144,9 +146,11 @@ mod mouse_tests {
 
     #[test]
     fn shift_rolls_current_into_previous() {
-        let mut m = MouseInput::default();
-        m.x = [3, 0];
-        m.left = [true, false];
+        let mut m = MouseInput {
+            x: [3, 0],
+            left: [true, false],
+            ..Default::default()
+        };
         m.step();
         assert_eq!(m.x, [3, 3]);
         assert_eq!(m.left, [true, true]);
@@ -159,8 +163,10 @@ mod controller_tests {
 
     #[test]
     fn edges_and_aggregates() {
-        let mut c = Controller::default();
-        c.a = [true, false];
+        let mut c = Controller {
+            a: [true, false],
+            ..Default::default()
+        };
         assert!(pressed(c.a));
         assert!(just_pressed(c.a));
         assert!(c.any_pressed());
@@ -175,8 +181,10 @@ mod controller_tests {
 
     #[test]
     fn shift_rolls_current_and_clears() {
-        let mut c = Controller::default();
-        c.up = [true, false];
+        let mut c = Controller {
+            up: [true, false],
+            ..Default::default()
+        };
         c.step();
         // Previous holds last frame's press; current resets to released.
         assert_eq!(c.up, [false, true]);

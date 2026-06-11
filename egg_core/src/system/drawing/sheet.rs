@@ -50,6 +50,7 @@ fn xform_from_opts(opts: &StaticSpriteOptions<'_>) -> Transform {
 /// Blit one 8×8 tile from a sprite sheet at the given destination position,
 /// with the transform from `opts`. `convert` maps a source pixel to either a
 /// destination pixel or `None` (transparent).
+#[allow(clippy::too_many_arguments)]
 fn blit_tile<D, S, F>(
     dest: &mut D,
     source: &S,
@@ -217,6 +218,7 @@ impl RgbaImage {
     /// Draw an indexed sprite from `source` onto this canvas at (`x`, `y`).
     /// `palette_map` is applied to each source pixel index before `palette`
     /// lookup. Indices listed in `opts.transparent` are skipped.
+    #[allow(clippy::too_many_arguments)]
     pub fn spr_indexed(
         &mut self,
         source: &IndexedImage,
@@ -239,6 +241,7 @@ impl RgbaImage {
 
     /// Draw a 1-pixel outline of `id` by stamping it four times in cardinal
     /// directions with every palette entry mapped to `outline_colour`.
+    #[allow(clippy::too_many_arguments)]
     pub fn spr_outline(
         &mut self,
         source: &IndexedImage,

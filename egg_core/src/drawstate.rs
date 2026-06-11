@@ -1,5 +1,5 @@
 use crate::system::{
-    MapLayer, MapOptions, SWEETIE_16, StaticSpriteOptions,
+    HEIGHT, MapLayer, MapOptions, SWEETIE_16, StaticSpriteOptions, WIDTH,
     drawing::image::{IndexedImage, Rgba, RgbaImage},
 };
 
@@ -18,9 +18,9 @@ pub struct DrawState {
 impl Default for DrawState {
     fn default() -> Self {
         Self {
-            rgba_canvas: vec![RgbaImage::new(240, 136); 2],
+            rgba_canvas: vec![RgbaImage::new(WIDTH as u32, HEIGHT as u32); 2],
             rgba_sprites: RgbaImage::new(0, 0),
-            indexed_canvas: vec![IndexedImage::new(240, 136); 2],
+            indexed_canvas: vec![IndexedImage::new(WIDTH as usize, HEIGHT as usize); 2],
             indexed_sprites: IndexedImage::new(0, 0),
             palettes: vec![default_palette()],
             sprite_flags: vec![0; 2048],
@@ -129,6 +129,7 @@ impl DrawState {
 
     /// Draw a sprite with a 1-pixel outline around it. Equivalent to
     /// `spr_outline` followed by `spr`.
+    #[allow(clippy::too_many_arguments)]
     pub fn spr_with_outline(
         &mut self,
         layer: LayerId,

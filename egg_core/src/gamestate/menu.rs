@@ -3,7 +3,7 @@ use crate::system::StaticSpriteOptions;
 
 use crate::camera::CameraBounds;
 use crate::data::sound;
-use crate::dialogue::DIALOGUE_OPTIONS;
+use crate::dialogue::print_options;
 use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
 use crate::ui::{Ui, UiBuilder};
 
@@ -44,7 +44,7 @@ impl MenuState {
         entries.extend(
             (0..system.list("menu_debug_controls").len())
                 .map(|x| MenuEntry::Debug(x as u8))
-                .chain([MenuEntry::MapTest, MenuEntry::MusicTest]),
+                .chain([MenuEntry::MapTest]),
         );
         Self {
             entries,
@@ -119,7 +119,7 @@ impl MenuState {
     /// one per entry and keyed by its index. Rebuilt each frame for both
     /// hit-testing (`step`) and drawing.
     pub fn build_ui(&self, system: &mut impl ConsoleApi) -> Ui<usize> {
-        let small = DIALOGUE_OPTIONS.small_text(system);
+        let small = system.memory().small_text_on;
         let texts: Vec<String> = self.entries.iter().map(|e| e.text(system)).collect();
         let screen = (system.width() as f32, system.height() as f32);
         let mut builder = UiBuilder::new();
@@ -174,7 +174,10 @@ impl MenuState {
             MainMenu | ExitToMenu => {
                 *self = MenuState::new();
             }
-            FontSize => DIALOGUE_OPTIONS.toggle_small_text(system),
+            FontSize => {
+                let save = system.memory();
+                save.small_text_on = !save.small_text_on;
+            }
             Reset(x) => {
                 if *x == 0 {
                     *x += 1;
@@ -221,8 +224,6 @@ impl MenuState {
             MapBankSelect(_x, _) => {
                 walkaround_state.load_map_bank(system, 2);
             }
-            MusicTest => todo!(),
-            _MusicSelect(_x, _) => todo!(),
         };
         None
     }
@@ -244,7 +245,7 @@ impl MenuState {
         if let Reset(_) = self.entries[index] {
             let c2 = draw_state.colour(2);
             let c12 = draw_state.colour(12);
-            let options = DIALOGUE_OPTIONS.get_options(system);
+            let options = print_options(system);
             draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
             system.print_to_centered(
                 draw_state.rgba(BG),
@@ -304,8 +305,6 @@ pub enum MenuEntry {
     Debug(u8),
     MapTest,
     MapBankSelect(u8, String),
-    MusicTest,
-    _MusicSelect(u8, String),
     Walk,
 }
 impl MenuEntry {
@@ -327,12 +326,13 @@ impl MenuEntry {
             Inventory => system.label("menu_back"),
             ExitToMenu => system.label("menu_exit"),
             _Space => String::new(),
-            Debug(x) => (|list_key: &str, i: usize| system.list(list_key).into_iter().nth(i).unwrap_or_default())("menu_debug_controls", usize::from(*x)),
+            Debug(x) => system
+                .script()
+                .list_get("menu_debug_controls", usize::from(*x))
+                .unwrap_or_default(),
             MapTest => system.label("menu_map_test"),
-            MusicTest => system.label("menu_music_test"),
             Walk => system.label("menu_play"),
             MapBankSelect(_, string) => string.clone(),
-            _MusicSelect(_, string) => string.clone(),
         }
     }
 }

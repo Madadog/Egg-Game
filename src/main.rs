@@ -258,18 +258,18 @@ fn poll_language_change(
     mut pending: ResMut<PendingLanguage>,
     mut state: ResMut<EggGame>,
 ) {
-    if pending.0.is_none() {
-        if let Some(language) = state.system.take_pending_language() {
-            info!("Loading language {language:?}");
-            pending.0 = Some(assets.load(format!("script/{language}.eggtext")));
-        }
+    if pending.0.is_none()
+        && let Some(language) = state.system.take_pending_language()
+    {
+        info!("Loading language {language:?}");
+        pending.0 = Some(assets.load(format!("script/{language}.eggtext")));
     }
-    if let Some(handle) = pending.0.clone() {
-        if let Some(script) = scripts.get(&handle) {
-            state.system.script_mut().set_language(script.0.clone());
-            pending.0 = None;
-            info!("Switched active language.");
-        }
+    if let Some(handle) = pending.0.clone()
+        && let Some(script) = scripts.get(&handle)
+    {
+        state.system.script_mut().set_language(script.0.clone());
+        pending.0 = None;
+        info!("Switched active language.");
     }
 }
 
@@ -413,7 +413,9 @@ fn new_screen_image(width: u32, height: u32) -> Image {
 fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
     let fit = (window.width() / WIDTH as f32).min(window.height() / HEIGHT as f32);
     match mode {
-        ScaleMode::Integer => fit.floor(),
+        // Never floor to 0 — a window smaller than the base resolution would
+        // otherwise scale the screen out of existence.
+        ScaleMode::Integer => fit.floor().max(1.0),
         ScaleMode::Linear => fit,
     }
 }

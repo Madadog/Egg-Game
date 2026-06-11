@@ -45,12 +45,12 @@ impl Cutscene {
         let hashmap = HashMap::new();
         Self::new(vec, hashmap)
     }
+    /// An out-of-range stage counts as done; [`next_stage`](Self::next_stage)
+    /// checks [`is_cutscene_done`](Self::is_cutscene_done) before this.
     pub fn is_stage_done(&self, walkaround: &WalkaroundState) -> bool {
         self.stages
             .get(self.index)
-            .unwrap_or_else(|| std::process::abort())
-            .iter()
-            .all(|x| x.is_done(walkaround))
+            .is_none_or(|stage| stage.iter().all(|x| x.is_done(walkaround)))
     }
     pub fn is_cutscene_done(&self, _walkaround: &WalkaroundState) -> bool {
         self.stages.get(self.index).is_none()

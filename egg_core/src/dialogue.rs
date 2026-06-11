@@ -14,10 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    fmt::Debug,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-};
+use std::fmt::Debug;
 
 use crate::{
     drawstate::{DrawState, LayerId},
@@ -118,9 +115,8 @@ impl Message {
     pub fn to_plain_string(&self) -> String {
         let mut out = String::new();
         for item in &self.content {
-            match item {
-                TextContent::Text { text, .. } => out.push_str(text),
-                _ => {}
+            if let TextContent::Text { text, .. } = item {
+                out.push_str(text);
             }
         }
         out
@@ -144,53 +140,13 @@ impl From<String> for Message {
     }
 }
 
-pub struct DialogueOptions {
-    pub fixed: AtomicBool,
-    pub box_width: AtomicUsize,
-}
-impl Default for DialogueOptions {
-    fn default() -> Self {
-        Self::new()
+/// The dialogue [`PrintOptions`]: defaults plus the save's small-text setting.
+pub fn print_options(system: &mut impl ConsoleApi) -> PrintOptions {
+    PrintOptions {
+        small_text: system.memory().small_text_on,
+        ..Default::default()
     }
 }
-
-impl DialogueOptions {
-    pub const fn new() -> Self {
-        Self {
-            fixed: AtomicBool::new(false),
-            box_width: AtomicUsize::new(200),
-        }
-    }
-    pub fn fixed(&self) -> bool {
-        self.fixed.load(Ordering::SeqCst)
-    }
-    pub fn small_text(&self, system: &mut impl ConsoleApi) -> bool {
-        system.memory().small_text_on
-    }
-    pub fn box_width(&self) -> usize {
-        self.box_width.load(Ordering::SeqCst)
-    }
-    pub fn set_options(&self, system: &mut impl ConsoleApi, fixed: bool, small_text: bool) {
-        self.fixed.store(fixed, Ordering::SeqCst);
-        system.memory().small_text_on = small_text;
-    }
-    pub fn get_options(&self, system: &mut impl ConsoleApi) -> PrintOptions {
-        PrintOptions {
-            fixed: self.fixed(),
-            small_text: self.small_text(system),
-            ..Default::default()
-        }
-    }
-    pub fn toggle_small_text(&self, system: &mut impl ConsoleApi) {
-        let save = system.memory();
-        save.small_text_on = !save.small_text_on;
-    }
-    pub fn toggle_fixed(&self) {
-        self.fixed
-            .store(self.fixed.load(Ordering::SeqCst), Ordering::SeqCst);
-    }
-}
-pub static DIALOGUE_OPTIONS: DialogueOptions = DialogueOptions::new();
 
 #[derive(Clone)]
 pub struct Dialogue {
@@ -223,7 +179,7 @@ impl Dialogue {
     }
     pub fn is_line_done(&self) -> bool {
         match &self.current_text {
-            Some(text) => text.is_empty() || self.characters == text.len() - 1,
+            Some(_) => self.characters >= self.char_count().saturating_sub(1),
             None => true,
         }
     }
@@ -340,8 +296,10 @@ impl Dialogue {
         };
         self.next_text.shrink_to_fit();
     }
-    pub fn text_len(&self) -> usize {
-        self.current_text.as_ref().map_or(0, |x| x.len())
+    /// Characters (not bytes) in the current text. [`characters`](Self::characters)
+    /// is a char index, so all typewriter bookkeeping uses this count.
+    pub fn char_count(&self) -> usize {
+        self.current_text.as_ref().map_or(0, |x| x.chars().count())
     }
     pub fn tick(&mut self, system: &mut impl ConsoleApi, amount: usize) {
         if let Some(text) = &mut self.current_text {
@@ -372,7 +330,7 @@ impl Dialogue {
         }
     }
     pub fn step_text(&mut self, amount: usize) {
-        self.characters = (self.characters + amount).min(self.text_len() - 1);
+        self.characters = (self.characters + amount).min(self.char_count().saturating_sub(1));
     }
     pub fn can_autoadvance(&self) -> bool {
         if let Some(content) = self.next_text.last() {
@@ -388,17 +346,16 @@ impl Dialogue {
         while self.can_autoadvance() {
             self.next_text(system, true);
         }
-        if let Some(text) = &mut self.current_text {
-            self.characters = text.len() - 1;
+        self.finish_line();
+    }
+    /// Jump the typewriter to the last character of the current line, revealing
+    /// it all at once.
+    pub fn finish_line(&mut self) {
+        if self.current_text.is_some() {
+            self.characters = self.char_count().saturating_sub(1);
         }
     }
-    pub fn set_options(&mut self, system: &mut impl ConsoleApi, fixed: bool, small_text: bool) {
-        DIALOGUE_OPTIONS.set_options(system, fixed, small_text);
-        let width = self.wrap_width();
-        if let Some(text) = &mut self.current_text {
-            *text = fit_default_paragraph(system, text, width);
-        }
-    }
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_dialogue_portrait(
         &self,
         draw_state: &mut DrawState,
@@ -445,6 +402,7 @@ impl Dialogue {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_dialogue_box_with_offset(
         &self,
         draw_state: &mut DrawState,
@@ -520,9 +478,9 @@ impl Dialogue {
             bg_colour,
             outline_colour,
         );
-        let options = DIALOGUE_OPTIONS.get_options(system);
+        let options = print_options(system);
         let text: &str = if timer {
-            &string[..=(print_timer)]
+            revealed(string, print_timer)
         } else {
             string
         };
@@ -581,6 +539,15 @@ pub fn take_words(string: &str, count: usize, skip: usize) -> String {
     string.split_inclusive(' ').skip(skip).take(count).collect()
 }
 
+/// The prefix of `text` containing characters `0..=chars` (the whole string if
+/// `chars` runs past the end). The typewriter reveal indexes *characters*, so
+/// slicing bytes would split — and panic on — multibyte text.
+pub fn revealed(text: &str, chars: usize) -> &str {
+    text.char_indices()
+        .nth(chars.saturating_add(1))
+        .map_or(text, |(i, _)| &text[..i])
+}
+
 /// Clamps a string to the specified width (with the TIC-80 font). Returns a string,
 /// the number of fitting words, and a bool for if the whole string fit.
 pub fn fit_string(
@@ -635,12 +602,64 @@ pub fn fit_default_paragraph(
     string: &str,
     wrap_width: usize,
 ) -> String {
-    let small_text = DIALOGUE_OPTIONS.small_text(system);
-    fit_paragraph(
-        system,
-        string,
-        wrap_width,
-        DIALOGUE_OPTIONS.fixed(),
-        small_text,
-    )
+    let small_text = system.memory().small_text_on;
+    fit_paragraph(system, string, wrap_width, false, small_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dialogue whose live line is `text`, bypassing the wrap/fit path
+    /// (which needs a console to measure glyphs).
+    fn with_text(text: &str) -> Dialogue {
+        Dialogue {
+            current_text: Some(text.to_string()),
+            ..Dialogue::default()
+        }
+    }
+
+    #[test]
+    fn revealed_is_char_indexed() {
+        let text = "café né?"; // 8 chars, 10 bytes
+        assert_eq!(revealed(text, 0), "c");
+        assert_eq!(revealed(text, 3), "café");
+        assert_eq!(revealed(text, 6), "café né");
+        assert_eq!(revealed(text, 7), text);
+        assert_eq!(revealed(text, 100), text);
+        assert_eq!(revealed("", 0), "");
+    }
+
+    #[test]
+    fn is_line_done_counts_chars_not_bytes() {
+        let mut dialogue = with_text("café né?");
+        dialogue.characters = 6;
+        assert!(!dialogue.is_line_done());
+        dialogue.characters = 7;
+        assert!(dialogue.is_line_done());
+        assert!(with_text("").is_line_done());
+        assert!(Dialogue::default().is_line_done());
+    }
+
+    #[test]
+    fn step_text_clamps_to_last_char() {
+        let mut dialogue = with_text("né");
+        dialogue.step_text(10);
+        assert_eq!(dialogue.characters, 1);
+        // An empty line must not underflow the clamp.
+        let mut empty = with_text("");
+        empty.step_text(1);
+        assert_eq!(empty.characters, 0);
+    }
+
+    #[test]
+    fn finish_line_lands_on_last_char() {
+        let mut dialogue = with_text("café né?");
+        dialogue.finish_line();
+        assert_eq!(dialogue.characters, 7);
+        assert!(dialogue.is_line_done());
+        let mut empty = with_text("");
+        empty.finish_line();
+        assert_eq!(empty.characters, 0);
+    }
 }

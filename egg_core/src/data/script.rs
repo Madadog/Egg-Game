@@ -238,6 +238,14 @@ impl Script {
             .unwrap_or_default()
     }
 
+    /// One entry of an ordered string list, or `None` if the key or index is
+    /// undefined. Cheaper than [`Script::list`] when only one entry is wanted.
+    pub fn list_get(&self, key: &str, index: usize) -> Option<String> {
+        self.entry(key)
+            .and_then(|msgs| msgs.get(index))
+            .map(Message::to_plain_string)
+    }
+
     /// A dialogue conversation, falling back to the `default` entry then an
     /// empty conversation for unknown keys.
     pub fn get_dialogue(&self, key: &str) -> Vec<Message> {

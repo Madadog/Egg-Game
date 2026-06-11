@@ -120,26 +120,20 @@ impl WalkaroundState {
     /// Load a map from a tic80 bank. Legacy code.
     pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
         let mut game_map = system.maps()[bank].clone();
-        for layer in game_map.layers.iter() {
-            info!("{}", layer.name);
-        }
         let mut collision_layer = game_map
             .layers
             .first()
-            .map(|layer| {
-                info!("collision layer: {}", layer.name);
-                LayerInfo {
-                    origin: Vec2::new(0, 0),
-                    size: Vec2::new(
-                        layer.width().try_into().unwrap(),
-                        layer.height().try_into().unwrap(),
-                    ),
-                    offset: Vec2::new(0, 0),
-                    source_layer: 0,
-                    transparent: Some(0),
-                    visible: false,
-                    ..LayerInfo::DEFAULT_LAYER
-                }
+            .map(|layer| LayerInfo {
+                origin: Vec2::new(0, 0),
+                size: Vec2::new(
+                    layer.width().try_into().unwrap(),
+                    layer.height().try_into().unwrap(),
+                ),
+                offset: Vec2::new(0, 0),
+                source_layer: 0,
+                transparent: Some(0),
+                visible: false,
+                ..LayerInfo::DEFAULT_LAYER
             })
             .unwrap();
         game_map.layers.remove(0);
@@ -150,18 +144,11 @@ impl WalkaroundState {
                 colliders.push(Collider::from_sprite(system, tile));
             }
         }
-        for layer in game_map.layers.iter() {
-            info!("{}", layer.name);
-        }
         let fg: Vec<LayerInfo> = game_map
             .layers
             .iter_mut()
             .enumerate()
-            .filter(|(_, layer)| {
-                let condition = layer.name.to_lowercase().starts_with("fg");
-                info!("{} starts with \"FG\"? {}", layer.name, condition);
-                condition
-            })
+            .filter(|(_, layer)| layer.name.to_lowercase().starts_with("fg"))
             .map(|(i, layer)| LayerInfo {
                 origin: Vec2::new(0, 0),
                 size: Vec2::new(
@@ -297,21 +284,16 @@ impl WalkaroundState {
 
     /// Plays a cued cutscene until finished, then removes it from the cue.
     fn play_cutscene(&mut self, system: &mut impl ConsoleApi) -> bool {
-        if self.cutscene.is_some() {
-            let mut intermediate = self
-                .cutscene
-                .clone()
-                .unwrap_or_else(|| std::process::abort());
-            match intermediate.next_stage(self) {
+        // Taken out of `self` while it runs so it can borrow the walkaround
+        // mutably; put back only while it's still playing.
+        if let Some(mut cutscene) = self.cutscene.take() {
+            match cutscene.next_stage(self) {
                 cutscene::CutsceneState::Playing => {
-                    intermediate.advance(system, self);
-                    self.cutscene = Some(intermediate);
+                    cutscene.advance(system, self);
+                    self.cutscene = Some(cutscene);
                     true
                 }
-                cutscene::CutsceneState::Finished => {
-                    self.cutscene = None;
-                    false
-                }
+                cutscene::CutsceneState::Finished => false,
             }
         } else {
             false
@@ -467,8 +449,6 @@ impl<T: ConsoleApi>
                 }
             }
         }
-
-        {};
 
         // Set after player.dir has updated
         let interact_hitbox = self
@@ -630,11 +610,7 @@ impl WalkaroundState {
         }
 
         // Sort sprites in order of Y index
-        sprites.sort_by(|a, b| {
-            a.bottom()
-                .partial_cmp(&b.bottom())
-                .unwrap_or_else(|| std::process::abort())
-        });
+        sprites.sort_by_key(|sprite| sprite.bottom());
 
         // Draw sprites
         for options in sprites {
@@ -651,7 +627,7 @@ impl WalkaroundState {
             self.dialogue
                 .draw_dialogue_box(draw_state, BG, system, &string, true);
         }
-        if debug_info.map_info() {
+        if debug_info.map_info {
             for warp in self.current_map.warps.iter() {
                 warp.hitbox()
                     .offset_xy(-camera_pos.x, -camera_pos.y)
@@ -667,7 +643,7 @@ impl WalkaroundState {
                     .draw(draw_state, BG, 14);
             }
         }
-        if debug_info.player_info() {
+        if debug_info.player_info {
             let c11 = draw_state.colour(11);
             let opts = PrintOptions {
                 small_text: true,
