@@ -6,7 +6,8 @@
 
 use super::image::{IndexedImage, Rgba, RgbaImage};
 use super::{Canvas, EdgePolicy, Rotate, Transform};
-use crate::system::{MapLayer, MapOptions, StaticSpriteOptions};
+use crate::data::tmj::TileLayer;
+use crate::system::{MapOptions, StaticSpriteOptions};
 
 /// Number of 8-pixel tiles in one row of a sprite sheet.
 #[inline]
@@ -163,7 +164,7 @@ fn draw_sprite<D, F>(
 /// `Canvas`, mapping each source index through `convert` (`None` = transparent).
 fn draw_map<D, F>(
     dest: &mut D,
-    layer: &MapLayer,
+    layer: &TileLayer,
     source: &IndexedImage,
     mut opts: MapOptions,
     convert: F,
@@ -203,7 +204,7 @@ fn draw_map<D, F>(
             else {
                 continue;
             };
-            let Some(tile_id) = MapLayer::get(layer, mx, my) else {
+            let Some(tile_id) = layer.get(mx, my) else {
                 continue;
             };
             let (tx, ty) = tile_origin(tile_id as i32, tpr);
@@ -270,7 +271,7 @@ impl RgbaImage {
     /// tile and looking colours up through `palette_map` + `palette`.
     pub fn map_draw_indexed(
         &mut self,
-        layer: &MapLayer,
+        layer: &TileLayer,
         source: &IndexedImage,
         palette: &[[u8; 3]],
         palette_map: &[usize],
@@ -335,7 +336,7 @@ impl IndexedImage {
     }
 
     /// Draw a region of `layer` onto this canvas using `source` for tile pixels.
-    pub fn map_draw(&mut self, layer: &MapLayer, source: &IndexedImage, opts: MapOptions) {
+    pub fn map_draw(&mut self, layer: &TileLayer, source: &IndexedImage, opts: MapOptions) {
         let transparent = opts.transparent;
         draw_map(self, layer, source, opts, |idx| {
             if transparent == Some(idx) {

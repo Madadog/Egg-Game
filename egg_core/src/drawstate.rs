@@ -1,5 +1,6 @@
+use crate::data::tmj::TileLayer;
 use crate::system::{
-    HEIGHT, MapLayer, MapOptions, SWEETIE_16, StaticSpriteOptions, WIDTH,
+    HEIGHT, MapOptions, SWEETIE_16, StaticSpriteOptions, WIDTH,
     drawing::image::{IndexedImage, Rgba, RgbaImage},
 };
 
@@ -159,7 +160,7 @@ impl DrawState {
     pub fn map_draw(
         &mut self,
         canvas_layer: LayerId,
-        map_layer: &MapLayer,
+        map_layer: &TileLayer,
         palette_map: &[usize],
         opts: MapOptions,
     ) {

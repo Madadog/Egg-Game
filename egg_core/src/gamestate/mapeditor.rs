@@ -3,13 +3,10 @@
 //! sim while focused and writes edits back to the map's `.tmj`.
 
 use crate::{
-    data::{
-        map_data::MapIndex,
-        sound::{self, SfxData},
-    },
+    data::sound::{self, SfxData},
     drawstate::{DrawState, LayerId},
     interact::{Interactable, Interaction},
-    map::{Axis, LayerInfo, MapInfo, Warp, WarpMode},
+    map::{Axis, LayerInfo, MapInfo, MapStore, Warp, WarpMode},
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
@@ -84,9 +81,9 @@ enum ObjSnapshot {
 #[derive(Debug, Clone)]
 enum EditAction {
     /// Tiles changed by one paint stroke: `(x, y, old, new)` per cell, in the
-    /// `(bank, layer)` the stroke painted into.
+    /// `(source, layer)` the stroke painted into.
     Tiles {
-        bank: usize,
+        source: String,
         layer: usize,
         cells: Vec<(i32, i32, usize, usize)>,
     },
@@ -423,8 +420,8 @@ impl MapViewer {
         };
         for i in 0..count {
             let label = if warps {
-                let dest = map.warps[i].map.map(|m| m.0 as i32).unwrap_or(-1);
-                format!("{i}: ->m{dest}")
+                let dest = map.warps[i].map.as_deref().unwrap_or("-");
+                format!("{i}: ->{dest}")
             } else {
                 match &map.interactables[i].interaction {
                     Interaction::Dialogue(k) => format!("{i}: {k}"),
@@ -446,11 +443,8 @@ impl MapViewer {
             rows.push(b.spacer(2.0).id());
             if warps {
                 if let Some(w) = map.warps.get(i) {
-                    let dest = w
-                        .map
-                        .map(|m| m.0.to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    self.field_row(b, rows, EditField::ToMap, "map", &dest);
+                    let dest = w.map.as_deref().unwrap_or("-");
+                    self.field_row(b, rows, EditField::ToMap, "map", dest);
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
@@ -610,27 +604,29 @@ impl MapViewer {
 
     /// Undo the most recent edit (Ctrl+Z). Object indices may shift on
     /// add/remove, so undo restores list shape as well as contents.
-    fn undo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+    fn undo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
         if let Some(action) = self.history.take_undo() {
-            self.revert(system, map, &action);
+            self.revert(map, maps, &action);
             self.dirty = true;
         }
     }
 
     /// Redo the most recently undone edit (Ctrl+Y / Ctrl+Shift+Z).
-    fn redo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+    fn redo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
         if let Some(action) = self.history.take_redo() {
-            self.reapply(system, map, &action);
+            self.reapply(map, maps, &action);
             self.dirty = true;
         }
     }
 
     /// Reverse an action's effect (the undo direction).
-    fn revert(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, action: &EditAction) {
+    fn revert(&mut self, map: &mut MapInfo, maps: &mut MapStore, action: &EditAction) {
         match action {
-            EditAction::Tiles { bank, layer, cells } => {
-                for &(x, y, old, _new) in cells {
-                    system.map_set(*bank, *layer, x, y, old);
+            EditAction::Tiles { source, layer, cells } => {
+                if let Some(tiles) = maps.get_mut(source) {
+                    for &(x, y, old, _new) in cells {
+                        tiles.set(*layer, x as usize, y as usize, old);
+                    }
                 }
             }
             // Undo an add by removing the (last) object it appended.
@@ -659,11 +655,13 @@ impl MapViewer {
     }
 
     /// Re-perform an action's effect (the redo direction).
-    fn reapply(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, action: &EditAction) {
+    fn reapply(&mut self, map: &mut MapInfo, maps: &mut MapStore, action: &EditAction) {
         match action {
-            EditAction::Tiles { bank, layer, cells } => {
-                for &(x, y, _old, new) in cells {
-                    system.map_set(*bank, *layer, x, y, new);
+            EditAction::Tiles { source, layer, cells } => {
+                if let Some(tiles) = maps.get_mut(source) {
+                    for &(x, y, _old, new) in cells {
+                        tiles.set(*layer, x as usize, y as usize, new);
+                    }
                 }
             }
             EditAction::Add { kind, index, after } => {
@@ -687,10 +685,11 @@ impl MapViewer {
         &mut self,
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
+        maps: &mut MapStore,
         camera_pos: Vec2,
     ) {
         let screen = (system.width() as f32, system.height() as f32);
-        self.step_map_viewer_at(system, map, camera_pos, screen);
+        self.step_map_viewer_at(system, map, maps, camera_pos, screen);
     }
 
     /// Like [`step_map_viewer`](Self::step_map_viewer) but with an explicit
@@ -701,6 +700,7 @@ impl MapViewer {
         &mut self,
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
+        maps: &mut MapStore,
         camera_pos: Vec2,
         screen: (f32, f32),
     ) {
@@ -713,14 +713,14 @@ impl MapViewer {
             // editor shortcuts (incl. a typed "z") fire.
             self.step_text_entry(system, map);
         } else {
-            self.handle_shortcuts(system, map);
+            self.handle_shortcuts(system, map, maps);
         }
 
         let panel_hit = self.build_ui(map, screen).hit(system.mouse().pos());
         let mouse = system.mouse();
         match panel_hit {
-            Some(key) => self.handle_panel(system, map, key, &mouse, camera_pos),
-            None => self.handle_canvas(system, map, camera_pos, &mouse),
+            Some(key) => self.handle_panel(system, map, maps, key, &mouse, camera_pos),
+            None => self.handle_canvas(system, map, maps, camera_pos, &mouse),
         }
 
         // Controller fallback for the Layers tool (matches the old viewer).
@@ -746,22 +746,27 @@ impl MapViewer {
     /// Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo, Ctrl+S save, Delete removes the
     /// selected object, and `1`–`4` switch tools. These keys are forwarded to the
     /// console by the host's editor-key gate (see `main.rs`).
-    fn handle_shortcuts(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+    fn handle_shortcuts(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+    ) {
         let ctrl = system.key(ScanCode::Ctrl);
         let shift = system.key(ScanCode::Shift);
         if ctrl {
             if system.keyp(ScanCode::Z) {
                 if shift {
-                    self.redo(system, map);
+                    self.redo(map, maps);
                 } else {
-                    self.undo(system, map);
+                    self.undo(map, maps);
                 }
             }
             if system.keyp(ScanCode::Y) {
-                self.redo(system, map);
+                self.redo(map, maps);
             }
             if system.keyp(ScanCode::S) {
-                self.save(system, map);
+                self.save(system, map, maps);
             }
             // Ctrl-chorded: don't also treat the digit as a tool switch.
             return;
@@ -807,6 +812,7 @@ impl MapViewer {
         &mut self,
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
+        maps: &mut MapStore,
         key: EditorKey,
         mouse: &MouseInput,
         camera_pos: Vec2,
@@ -889,17 +895,17 @@ impl MapViewer {
             }
             EditorKey::Undo => {
                 if click {
-                    self.undo(system, map);
+                    self.undo(map, maps);
                 }
             }
             EditorKey::Redo => {
                 if click {
-                    self.redo(system, map);
+                    self.redo(map, maps);
                 }
             }
             EditorKey::Save => {
                 if click {
-                    self.save(system, map);
+                    self.save(system, map, maps);
                 }
             }
         }
@@ -909,11 +915,12 @@ impl MapViewer {
         &mut self,
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
+        maps: &mut MapStore,
         camera_pos: Vec2,
         mouse: &MouseInput,
     ) {
         match self.tool {
-            EditorTool::Paint => self.handle_paint(system, map, camera_pos, mouse),
+            EditorTool::Paint => self.handle_paint(system, map, maps, camera_pos, mouse),
             EditorTool::Interactables | EditorTool::Warps => {
                 let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
                 if just_pressed(mouse.left) {
@@ -959,17 +966,24 @@ impl MapViewer {
         &mut self,
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
+        maps: &mut MapStore,
         camera_pos: Vec2,
         mouse: &MouseInput,
     ) {
-        let Some((bank, layer)) = self.active_layer(map).map(|l| (map.bank, l.source_layer)) else {
+        let Some((source, layer)) = self
+            .active_layer(map)
+            .map(|l| (map.source.clone(), l.source_layer))
+        else {
             return;
         };
         let (tx, ty) = world_tile(mouse, camera_pos);
 
         // Middle-click eyedropper: lift the existing tile into the brush.
         if just_pressed(mouse.middle) && tx >= 0 && ty >= 0 {
-            self.selected_tile = system.map_get(bank, layer, tx, ty);
+            self.selected_tile = maps
+                .get(&source)
+                .and_then(|m| m.get(layer, tx as usize, ty as usize))
+                .unwrap_or(0);
             return;
         }
 
@@ -983,7 +997,7 @@ impl MapViewer {
             if released(mouse.left)
                 && let Some(start) = self.drag.take()
             {
-                self.fill_rect(system, bank, layer, start, world);
+                self.fill_rect(maps, &source, layer, start, world);
             }
             return;
         }
@@ -999,7 +1013,7 @@ impl MapViewer {
         if pressed(mouse.left) || pressed(mouse.right) {
             if self.stroke.is_none() {
                 self.stroke = Some(EditAction::Tiles {
-                    bank,
+                    source: source.clone(),
                     layer,
                     cells: Vec::new(),
                 });
@@ -1010,7 +1024,7 @@ impl MapViewer {
                 } else {
                     self.selected_tile
                 };
-                self.paint_cell(system, bank, layer, tx, ty, value);
+                self.paint_cell(maps, &source, layer, tx, ty, value);
             }
         }
         if released(mouse.left) || released(mouse.right) {
@@ -1022,18 +1036,21 @@ impl MapViewer {
     /// Skips no-op writes so an undo step only holds cells that actually changed.
     fn paint_cell(
         &mut self,
-        system: &mut impl ConsoleApi,
-        bank: usize,
+        maps: &mut MapStore,
+        source: &str,
         layer: usize,
         tx: i32,
         ty: i32,
         value: usize,
     ) {
-        let old = system.map_get(bank, layer, tx, ty);
+        let Some(tiles) = maps.get_mut(source) else {
+            return;
+        };
+        let old = tiles.get(layer, tx as usize, ty as usize).unwrap_or(0);
         if old == value {
             return;
         }
-        system.map_set(bank, layer, tx, ty, value);
+        tiles.set(layer, tx as usize, ty as usize, value);
         if let Some(EditAction::Tiles { cells, .. }) = &mut self.stroke {
             cells.push((tx, ty, old, value));
         }
@@ -1054,24 +1071,17 @@ impl MapViewer {
 
     /// Fill the tile rectangle between two world points with the current brush,
     /// as a single undo step.
-    fn fill_rect(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        bank: usize,
-        layer: usize,
-        a: Vec2,
-        b: Vec2,
-    ) {
+    fn fill_rect(&mut self, maps: &mut MapStore, source: &str, layer: usize, a: Vec2, b: Vec2) {
         let (x0, y0, x1, y1) = tile_bounds(a, b);
         self.stroke = Some(EditAction::Tiles {
-            bank,
+            source: source.to_string(),
             layer,
             cells: Vec::new(),
         });
         for ty in y0..=y1 {
             for tx in x0..=x1 {
                 if tx >= 0 && ty >= 0 {
-                    self.paint_cell(system, bank, layer, tx, ty, self.selected_tile);
+                    self.paint_cell(maps, source, layer, tx, ty, self.selected_tile);
                 }
             }
         }
@@ -1152,8 +1162,7 @@ impl MapViewer {
             (Some(i), EditField::ToMap) => map
                 .warps
                 .get(i)
-                .and_then(|w| w.map)
-                .map(|m| m.0.to_string())
+                .and_then(|w| w.map.clone())
                 .unwrap_or_default(),
             (Some(i), EditField::ToX) => map
                 .warps
@@ -1232,7 +1241,9 @@ impl MapViewer {
             }
             EditField::ToMap => {
                 if let Some(w) = map.warps.get_mut(i) {
-                    w.map = buffer.parse::<usize>().ok().map(MapIndex);
+                    // The name is stored verbatim (empty = same-map warp);
+                    // numeric strings keep working via `map_by_name`'s fallback.
+                    w.map = (!buffer.is_empty()).then(|| buffer.clone());
                 }
             }
             EditField::ToX => {
@@ -1261,9 +1272,18 @@ impl MapViewer {
         });
     }
 
-    /// Persist the map and start the save-confirmation toast.
-    fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo) {
-        system.write_map(map);
+    /// Persist the map and start the save-confirmation toast. Only modern maps
+    /// have a `.tmj` to write back to; legacy windows just log.
+    fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo, maps: &MapStore) {
+        if maps.is_modern(&map.source) {
+            let json = maps
+                .get(&map.source)
+                .unwrap()
+                .to_tmj(&map.interactables, &map.warps);
+            system.write_file(&format!("maps/{}.tmj", map.source), json.as_bytes());
+        } else {
+            log::info!("save: {:?} is not a modern map; not saving", map.source);
+        }
         self.dirty = false;
         self.save_toast = SAVE_TOAST_FRAMES;
     }
@@ -1467,7 +1487,7 @@ fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
         }
         (ObjSnapshot::Warp(x), ObjSnapshot::Warp(y)) => {
             x.from == y.from
-                && x.map.map(|m| m.0) == y.map.map(|m| m.0)
+                && x.map == y.map
                 && x.to == y.to
                 && axis_label(&x.flip) == axis_label(&y.flip)
                 && mode_label(&x.mode) == mode_label(&y.mode)
@@ -1591,7 +1611,7 @@ mod tests {
 
     fn tiles(cells: Vec<(i32, i32, usize, usize)>) -> EditAction {
         EditAction::Tiles {
-            bank: 0,
+            source: String::new(),
             layer: 0,
             cells,
         }

@@ -20,6 +20,7 @@ use log::trace;
 use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
 use crate::debug::DebugInfo;
+use crate::map::MapStore;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
 use self::menu::MenuState;
@@ -94,6 +95,7 @@ pub enum GameMode {
     SpriteTest(u32),
 }
 impl GameMode {
+    #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
         walkaround_state: &mut WalkaroundState,
@@ -101,6 +103,7 @@ impl GameMode {
         elapsed_frames: i32,
         inventory_ui: &mut InventoryUi,
         draw_state: &mut crate::drawstate::DrawState,
+        maps: &mut MapStore,
         system: &mut impl ConsoleApi,
     ) {
         trace!("Game state: {self:?}");
@@ -109,9 +112,9 @@ impl GameMode {
                 *i += 1;
                 if (*i > 60 || system.memory().instructions_read) && system.any_btnp() {
                     if system.memory().instructions_read {
-                        walkaround_state.load_pmem(system);
+                        walkaround_state.load_pmem(system, maps);
                     } else {
-                        walkaround_state.new_game(system);
+                        walkaround_state.new_game(system, maps);
                     }
                     system.memory().instructions_read = true;
                     *self = Self::Walkaround;
@@ -119,8 +122,8 @@ impl GameMode {
                 draw_instructions(draw_state, system);
             }
             Self::Walkaround => {
-                let next = walkaround_state.step((draw_state, system, inventory_ui));
-                walkaround_state.draw((draw_state, system, debug_info));
+                let next = walkaround_state.step((draw_state, system, inventory_ui, &mut *maps));
+                walkaround_state.draw((draw_state, system, debug_info, &*maps));
                 if let Some(state) = next {
                     *self = state;
                 }
@@ -141,7 +144,8 @@ impl GameMode {
                 }
             }
             Self::MainMenu(state) => {
-                let next = state.step_main_menu(draw_state, system, walkaround_state, inventory_ui);
+                let next = state
+                    .step_main_menu(draw_state, system, walkaround_state, inventory_ui, maps);
                 state.draw_main_menu(draw_state, system, elapsed_frames);
                 if let Some(x) = next {
                     *self = x;

@@ -5,8 +5,6 @@ use crate::{
         sound::{SfxData, music::MusicTrack},
     },
     dialogue::Message,
-    interact::Interactable,
-    map::{MapInfo, Warp},
     rand::Lcg64Xsh32,
     system::drawing::{image::RgbaImage, Canvas},
 };
@@ -15,14 +13,12 @@ pub use consts::*;
 pub use drawing::font::*;
 pub use input::*;
 pub use scancode::*;
-pub use tilemap::*;
 pub use types::*;
 
 pub mod consts;
 pub mod drawing;
 pub mod input;
 pub mod scancode;
-pub mod tilemap;
 pub mod types;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
@@ -51,7 +47,6 @@ pub trait ConsoleApi {
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
 
     // Per-frame state helpers
-    fn bank(&mut self) -> &mut u8;
     fn rng(&mut self) -> &mut Lcg64Xsh32;
 
     // Text registry (UI labels + dialogue, swappable per language).
@@ -63,18 +58,11 @@ pub trait ConsoleApi {
     fn set_language(&mut self, _language: &str) {}
 
     // Asset access.
-    fn maps(&self) -> &[GameMap];
-    fn maps_mut(&mut self) -> &mut Vec<GameMap>;
-    /// Parsed interactables + warps for a "modern" (Tiled) map bank, if the
-    /// host has them. Default none — legacy maps embed their objects in code.
-    fn map_objects(&self, _bank: usize) -> Option<(Vec<Interactable>, Vec<Warp>)> {
-        None
-    }
-    fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize;
-    fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize);
-    /// Persist an edited "modern" map (host resolves its name/location from the
-    /// map's `bank`). Default no-op — only hosts that load modern maps save them.
-    fn write_map(&mut self, _map: &MapInfo) {}
+    /// Persist `bytes` to the host's string-named file store. `path` is a
+    /// relative, forward-slash path (e.g. `maps/office.tmj`) — the engine
+    /// names files, the host decides where they really live (under its data
+    /// root). Hosts without writable storage may log and drop the write.
+    fn write_file(&mut self, path: &str, bytes: &[u8]);
     /// Grab a whole bitmap. By convention:
     ///
     /// 0. Screen

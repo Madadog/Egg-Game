@@ -18,7 +18,7 @@ use std::mem;
 
 use crate::{
     camera::Camera,
-    data::sound,
+    data::{sound, tmj::TiledMap},
     interact::{Interactable, Interaction},
     map::{Axis, LayerInfo, MapInfo},
     position::{Hitbox, Vec2},
@@ -324,6 +324,7 @@ impl Shell {
         mut dy: i16,
         noclip: bool,
         current_map: &MapInfo,
+        tiles: Option<&TiledMap>,
     ) -> (i16, i16) {
         use crate::map::layer_collides_flags;
 
@@ -340,6 +341,12 @@ impl Shell {
         if (self.walktime + 15).is_multiple_of(20) {
             system.play_sound(sound::FOOTSTEP_PLAIN.with_note(17));
         }
+
+        // No tile source loaded for this map (e.g. the empty default map):
+        // nothing to collide with, so walk freely.
+        let Some(tiles) = tiles else {
+            return (dx, dy);
+        };
 
         // Player position + intended movement
         let player_hitbox = self.hitbox();
@@ -366,17 +373,19 @@ impl Shell {
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
                 system,
                 layer,
+                tiles,
                 [points_dx, points_dx_up, points_dx_down],
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
                 system,
                 layer,
+                tiles,
                 [points_dy, points_dy_left, points_dy_right],
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag
-                && layer_collides_flags(system, point_diag, layer)
+                && layer_collides_flags(system, point_diag, layer, tiles)
             {
                 diagonal_collision = true;
             }
@@ -466,6 +475,7 @@ impl Shell {
 fn test_many_points(
     system: &mut impl ConsoleApi,
     layer: &LayerInfo,
+    tiles: &TiledMap,
     points: [Option<[Vec2; 2]>; 3],
     mut side_flags: [bool; 3],
 ) -> [bool; 3] {
@@ -473,7 +483,7 @@ fn test_many_points(
     for (i, points) in points.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides_flags(system, *point, layer) {
+                if layer_collides_flags(system, *point, layer, tiles) {
                     side_flags[i] = true;
                 }
             });

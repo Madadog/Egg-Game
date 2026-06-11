@@ -11,7 +11,7 @@ use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::FantasyConsole;
 use script_asset::{ScriptAsset, ScriptPlugin};
-use tiled::{TiledMap, TiledMapPlugin};
+use tiled::{TiledMapAsset, TiledMapPlugin};
 
 mod fantasy_console;
 mod hotkeys;
@@ -153,9 +153,10 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 pub struct GameAssets {
     pub font: Handle<Image>,
     pub sheet: Handle<Image>,
-    pub maps: Vec<Handle<TiledMap>>,
-    /// Base file names for `maps` (same order). Threaded to the console so an
-    /// edited "modern" map can be saved back to `maps/<name>.tmj`.
+    pub maps: Vec<Handle<TiledMapAsset>>,
+    /// Base file names for `maps` (same order) — the names they're stored
+    /// under in the game's `MapStore`, and where an edited "modern" map is
+    /// saved back to (`maps/<name>.tmj`).
     pub map_names: Vec<String>,
     pub script: Handle<ScriptAsset>,
 }
@@ -197,7 +198,7 @@ fn load_assets(
     game_assets: Option<Res<GameAssets>>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
-    maps: Res<Assets<TiledMap>>,
+    maps: Res<Assets<TiledMapAsset>>,
     scripts: Res<Assets<ScriptAsset>>,
     mut state: ResMut<EggGame>,
 ) {
@@ -207,30 +208,24 @@ fn load_assets(
                 let font = images.get(&game_assets.font);
                 let sheet = images.get(&game_assets.sheet);
                 if let (Some(font), Some(sheet)) = (font, sheet) {
-                    let maps: Vec<(String, TiledMap)> = game_assets
-                        .map_names
-                        .iter()
-                        .cloned()
-                        .zip(
-                            game_assets
-                                .maps
-                                .iter()
-                                .map(|x| maps.get(x).cloned().expect("Map missing!")),
-                        )
-                        .collect();
                     state.system.set_font(font);
                     state.system.set_sprites(sheet);
                     let palette = state.state.draw_state.palettes[0].clone();
                     state.system.set_indexed_sprites(sheet, &palette);
-                    state.system.set_maps(maps);
+                    // Maps live on the engine's MapStore, keyed by file stem —
+                    // the single copy that drawing, collision and the editor
+                    // all read.
+                    for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
+                        let map = maps.get(handle).expect("Map missing!").0.clone();
+                        state.state.maps.insert(name.clone(), map);
+                    }
                     if let Some(script) = scripts.get(&game_assets.script) {
                         state.system.script_mut().set_base(script.0.clone());
                     }
                     // Mirror sprites + flags into DrawState (the authoritative
-                    // copies for the new draw paths). Maps stay on the console
-                    // and are read during drawing via `maps()`. The console also
-                    // keeps copies for asset-side queries (e.g.
-                    // Collider::from_sprite reads via get_bitmap_indexed).
+                    // copies for the new draw paths). The console also keeps
+                    // copies for asset-side queries (e.g. Collider::from_sprite
+                    // reads via get_bitmap_indexed).
                     state.state.draw_state.rgba_sprites = state.system.sprites.clone();
                     state.state.draw_state.indexed_sprites = state.system.indexed_sprites.clone();
                     state.state.draw_state.sprite_flags = state.system.sprite_flags.clone();
@@ -709,7 +704,7 @@ fn step_state(
 /// save falls back to a fresh `SaveData::default()`.
 fn load_save_game(mut game: ResMut<EggGame>, mut commands: Commands) {
     let loaded = save::load().unwrap_or_default();
-    *game.system.memory() = loaded;
+    *game.system.memory() = loaded.clone();
     commands.insert_resource(save::SaveTracker { last: loaded });
 }
 

@@ -4,23 +4,18 @@ use bevy::prelude::{Image, info};
 use egg_core::{
     data::{save::SaveData, script::Script, sound::music::MusicTrack},
     gamestate::EggInput,
-    interact::Interactable,
-    map::{MapInfo, Warp},
     rand::Lcg64Xsh32,
     system::{
-        ConsoleApi, Controller, Font, GameMap, HEIGHT, MapLayer, MouseInput, ScanCode,
+        ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode,
         SfxOptions,
         WIDTH,
         drawing::image::{IndexedImage, RgbaImage},
     },
 };
 
-use crate::tiled;
-
 // TODO:
 // Load interactables from tiled maps
 // Separate BG & FG palettes, upgrade BGs.
-// Move tiled map parsing/loading into core
 // Serialize save/load state, use structs, remove bits.
 // Dialogue hashmap
 // Make UI actually work: Hierarchical layout, compositional widgets.
@@ -38,17 +33,11 @@ use crate::tiled;
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
-    // sprites + indexed_sprites + maps + sprite_flags also live on
+    // sprites + indexed_sprites + sprite_flags also live on
     // EggState::draw_state. These copies are kept around for the asset
     // loaders and Collider::from_sprite reads via get_bitmap_indexed.
     pub sprites: RgbaImage,
     pub indexed_sprites: IndexedImage,
-    pub maps: Vec<GameMap>,
-    /// Original Tiled maps (with their base file name) for editable "modern"
-    /// banks (those with an object layer). Kept so object layers can be parsed
-    /// into interactables/warps and serialised back on save; `maps` above is
-    /// the lossy tiles-only view.
-    pub modern_tiled: HashMap<usize, (String, tiled::TiledMap)>,
     pub sprite_flags: Vec<u8>,
     /// UI labels + dialogue, loaded from `script/<lang>.eggtext`.
     script: Script,
@@ -60,7 +49,6 @@ pub struct FantasyConsole {
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
     rng: Lcg64Xsh32,
-    bank: u8,
 }
 
 impl FantasyConsole {
@@ -70,8 +58,6 @@ impl FantasyConsole {
             font: Font::blank(),
             sprites: RgbaImage::new(1, 1),
             indexed_sprites: IndexedImage::new(1, 1),
-            maps: Vec::new(),
-            modern_tiled: HashMap::new(),
             script: Script::new(),
             pending_language: None,
             sprite_flags: vec![0; 2048],
@@ -80,7 +66,6 @@ impl FantasyConsole {
             memory: SaveData::default(),
             input: EggInput::new(),
             rng: Lcg64Xsh32::default(),
-            bank: 0,
         };
         let mut spr_flags = String::from(
             "00100000000000000000000000000000000000801000000000000000002020000010101010500000001000000000000000101030101000000000001010000000101010002000000000301010400000001000100000400010500000000000000010101010108020100000000000101010203000301080302000000000001010101010100000100010001010100000000010001000001000100010100000000000000000000010101030303010000010100000000000000000000000002030203000000000000000000000101010400000000000000010000000203010102000100000000000000000000000000010101000000000000000100010a060b0101020",
@@ -118,7 +103,7 @@ impl FantasyConsole {
     /// A snapshot of the current persistent save data, for the autosave system
     /// to diff against the last value written to disk.
     pub fn save_data(&self) -> SaveData {
-        self.memory
+        self.memory.clone()
     }
     /// Take any language requested at runtime via [`ConsoleApi::set_language`],
     /// for the host's asset loop to load and apply.
@@ -188,36 +173,6 @@ impl FantasyConsole {
         }
         self.indexed_sprites = IndexedImage::from_vec(data, width, height);
     }
-    pub fn set_maps(&mut self, maps: Vec<(String, tiled::TiledMap)>) {
-        self.modern_tiled.clear();
-        self.maps = maps
-            .into_iter()
-            .enumerate()
-            .map(|(bank, (name, map))| {
-                // Keep the original Tiled map for any bank carrying an object
-                // layer — these are the editable "modern" maps. The `GameMap`
-                // built below is a tiles-only view that drops the objects.
-                if map
-                    .layers
-                    .iter()
-                    .any(|l| matches!(l, tiled::TiledMapLayer::ObjectLayer(_)))
-                {
-                    self.modern_tiled.insert(bank, (name, map.clone()));
-                }
-                let layers = map
-                    .layers
-                    .into_iter()
-                    .map(|layer| match layer {
-                        tiled::TiledMapLayer::TileLayer(layer) => {
-                            MapLayer::new(layer.name, layer.width, layer.height, layer.data)
-                        }
-                        tiled::TiledMapLayer::ObjectLayer(_) => MapLayer::new_empty(1, 1),
-                    })
-                    .collect();
-                GameMap::new(map.width, map.height, layers)
-            })
-            .collect();
-    }
 }
 
 impl ConsoleApi for FantasyConsole {
@@ -266,10 +221,6 @@ impl ConsoleApi for FantasyConsole {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 
-    fn bank(&mut self) -> &mut u8 {
-        &mut self.bank
-    }
-
     fn rng(&mut self) -> &mut egg_core::rand::Lcg64Xsh32 {
         &mut self.rng
     }
@@ -283,44 +234,37 @@ impl ConsoleApi for FantasyConsole {
     fn set_language(&mut self, language: &str) {
         self.pending_language = Some(language.to_string());
     }
-    fn maps(&self) -> &[GameMap] {
-        &self.maps
-    }
-    fn maps_mut(&mut self) -> &mut Vec<GameMap> {
-        &mut self.maps
-    }
-    fn map_objects(&self, bank: usize) -> Option<(Vec<Interactable>, Vec<Warp>)> {
-        self.modern_tiled
-            .get(&bank)
-            .map(|(_, map)| map.parse_objects())
-    }
-    fn write_map(&mut self, map: &MapInfo) {
-        let Some((name, template)) = self.modern_tiled.get(&map.bank) else {
-            info!("write_map: bank {} is not a modern map; not saving", map.bank);
-            return;
-        };
-        let Some(game_map) = self.maps.get(map.bank) else {
-            return;
-        };
-        let layer_data: Vec<Vec<usize>> = game_map.layers.iter().map(|l| l.data.clone()).collect();
-        let json = template.to_tmj(&layer_data, &map.interactables, &map.warps);
-        write_tmj(name, &json);
-    }
-    fn map_get(&self, bank: usize, layer: usize, x: i32, y: i32) -> usize {
-        self.maps[bank]
-            .layers
-            .get(layer)
-            .and_then(|layer| layer.get(x as usize, y as usize))
-            .unwrap_or(0)
-    }
-    fn map_set(&mut self, bank: usize, layer: usize, x: i32, y: i32, value: usize) {
-        if let Some(tile) = self.maps[bank]
-            .layers
-            .get_mut(layer)
-            .and_then(|layer| layer.get_mut(x as usize, y as usize))
+    /// Write `path` under `assets/`, backing up any existing file to
+    /// `<path>.bak` first. The engine only hands over relative forward-slash
+    /// paths; anything absolute or escaping the data root is refused.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_file(&mut self, path: &str, bytes: &[u8]) {
+        use std::path::{Component, Path};
+        let relative = Path::new(path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
         {
-            *tile = value
+            info!("write_file: refusing non-relative path {path:?}");
+            return;
         }
+        let dest = Path::new("assets").join(relative);
+        if dest.exists() {
+            let backup = format!("{}.bak", dest.display());
+            if let Err(e) = std::fs::copy(&dest, &backup) {
+                info!("write_file: backup of {} failed: {e}", dest.display());
+            }
+        }
+        match std::fs::write(&dest, bytes) {
+            Ok(()) => info!("Saved {} ({} bytes)", dest.display(), bytes.len()),
+            Err(e) => info!("write_file: failed to write {}: {e}", dest.display()),
+        }
+    }
+    /// Web build: no filesystem, so file writes are logged and dropped.
+    #[cfg(target_arch = "wasm32")]
+    fn write_file(&mut self, path: &str, bytes: &[u8]) {
+        info!("File write not persisted on web ({path}, {} bytes)", bytes.len());
     }
     fn get_bitmap_indexed(&self, id: usize) -> &[u8] {
         match id {
@@ -345,26 +289,4 @@ impl ConsoleApi for FantasyConsole {
     fn font(&self) -> &Font {
         &self.font
     }
-}
-
-/// Persist a serialised Tiled map. Native: write `assets/maps/<name>.tmj`,
-/// backing up any existing file to `<name>.bak.tmj` first. Web: log only (no
-/// filesystem).
-#[cfg(not(target_arch = "wasm32"))]
-fn write_tmj(name: &str, json: &str) {
-    let path = format!("assets/maps/{name}.tmj");
-    if std::path::Path::new(&path).exists() {
-        let backup = format!("assets/maps/{name}.bak.tmj");
-        if let Err(e) = std::fs::copy(&path, &backup) {
-            info!("write_tmj: backup of {path} failed: {e}");
-        }
-    }
-    match std::fs::write(&path, json) {
-        Ok(()) => info!("Saved map to {path} ({} bytes)", json.len()),
-        Err(e) => info!("write_tmj: failed to write {path}: {e}"),
-    }
-}
-#[cfg(target_arch = "wasm32")]
-fn write_tmj(name: &str, json: &str) {
-    info!("Map save not persisted on web ({name}, {} bytes)", json.len());
 }

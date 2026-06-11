@@ -4,6 +4,7 @@ use crate::system::StaticSpriteOptions;
 use crate::camera::CameraBounds;
 use crate::data::sound;
 use crate::dialogue::print_options;
+use crate::map::MapStore;
 use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
 use crate::ui::{Ui, UiBuilder};
 
@@ -53,11 +54,17 @@ impl MenuState {
             ..Self::new()
         }
     }
-    pub fn map_select() -> Self {
-        let entries = vec![
-            MenuEntry::Debug(6),
-            MenuEntry::MapBankSelect(2, "Map Bank: 0".into()),
-        ];
+    /// The debug map-test menu: one entry per loaded modern map (legacy maps
+    /// are reachable through their warps; modern maps need an entry point).
+    pub fn map_select(maps: &MapStore) -> Self {
+        let entries = std::iter::once(MenuEntry::Debug(6))
+            .chain(
+                maps.names()
+                    .into_iter()
+                    .filter(|name| maps.is_modern(name))
+                    .map(|name| MenuEntry::MapSelect(name.to_string())),
+            )
+            .collect();
         Self {
             entries,
             draw_title: None,
@@ -71,6 +78,7 @@ impl MenuState {
         system: &mut impl ConsoleApi,
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
+        maps: &MapStore,
     ) -> Option<GameMode> {
         let old_index = self.index;
         let entries = self.entries.len();
@@ -107,7 +115,7 @@ impl MenuState {
         };
         if action {
             system.play_sound(sound::INTERACT);
-            self.click(index, draw_state, walkaround_state, inventory_ui, system)
+            self.click(index, draw_state, walkaround_state, inventory_ui, system, maps)
         } else {
             None
         }
@@ -154,6 +162,7 @@ impl MenuState {
         walkaround_state: &mut WalkaroundState,
         inventory_ui: &mut InventoryUi,
         system: &mut impl ConsoleApi,
+        maps: &MapStore,
     ) -> Option<GameMode> {
         use MenuEntry::*;
         let x = if let Some(index) = index {
@@ -220,9 +229,9 @@ impl MenuState {
                 }
             }
             Walk => return Some(GameMode::Walkaround),
-            MapTest => return Some(GameMode::MainMenu(MenuState::map_select())),
-            MapBankSelect(_x, _) => {
-                walkaround_state.load_map_bank(system, 2);
+            MapTest => return Some(GameMode::MainMenu(MenuState::map_select(maps))),
+            MapSelect(name) => {
+                walkaround_state.load_map_by_name(system, maps, name);
             }
         };
         None
@@ -304,7 +313,7 @@ pub enum MenuEntry {
     _Space,
     Debug(u8),
     MapTest,
-    MapBankSelect(u8, String),
+    MapSelect(String),
     Walk,
 }
 impl MenuEntry {
@@ -332,7 +341,7 @@ impl MenuEntry {
                 .unwrap_or_default(),
             MapTest => system.label("menu_map_test"),
             Walk => system.label("menu_play"),
-            MapBankSelect(_, string) => string.clone(),
+            MapSelect(name) => name.clone(),
         }
     }
 }

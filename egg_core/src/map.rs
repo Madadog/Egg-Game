@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use crate::system::MapOptions;
 use crate::{
     camera::CameraBounds,
     data::{
-        map_data::MapIndex,
+        map_data::{MapIndex, legacy_map},
         sound::{SfxData, music::MusicTrack},
+        tmj::{TiledMap, TiledMapLayer},
     },
     interact::Interactable,
     position::{Collider, Hitbox, Vec2, touches_tile},
@@ -26,6 +29,131 @@ pub trait TileMap {
     fn draw(&self, console: &mut impl ConsoleApi);
     fn step(&mut self, console: &impl ConsoleApi);
 }*/
+
+/// Every loaded Tiled map, keyed by file stem (`"bank1"`, `"office"`, …).
+/// This is the single owner of live tile data — legacy maps are windows into
+/// the big `bank1`/`bank2` surfaces, "modern" maps (those with an object
+/// layer) are self-contained — replacing the lossy tile copies the console
+/// used to keep. Draw, collision and the editor all read (and the editor
+/// writes) through here.
+#[derive(Debug, Default)]
+pub struct MapStore {
+    maps: HashMap<String, TiledMap>,
+}
+impl MapStore {
+    pub fn insert(&mut self, name: impl Into<String>, map: TiledMap) {
+        self.maps.insert(name.into(), map);
+    }
+    pub fn get(&self, name: &str) -> Option<&TiledMap> {
+        self.maps.get(name)
+    }
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut TiledMap> {
+        self.maps.get_mut(name)
+    }
+    /// All loaded map names, sorted for stable menu/UI listings.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.maps.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
+    }
+    /// Whether `name` is a "modern" map — one that carries an object layer
+    /// (interactables/warps live in the map file, not in code).
+    pub fn is_modern(&self, name: &str) -> bool {
+        self.get(name).is_some_and(|map| {
+            map.layers
+                .iter()
+                .any(|layer| matches!(layer, TiledMapLayer::ObjectLayer(_)))
+        })
+    }
+}
+
+/// Resolve a map name to its load metadata. Tries the hardcoded legacy table
+/// first; a name that parses as a number is re-resolved through the legacy
+/// name table (the one place old numeric saves and numeric `to_map`
+/// properties in existing `.tmj` files are translated); otherwise a "modern"
+/// map's [`MapInfo`] is built straight from its own layers. `None` when the
+/// name matches nothing. `system` is only read for the sprite art the modern
+/// collision layer derives its colliders from.
+pub fn map_by_name(system: &impl ConsoleApi, name: &str, maps: &MapStore) -> Option<MapInfo> {
+    if let Some(map) = legacy_map(name) {
+        return Some(map);
+    }
+    if let Ok(index) = name.parse::<usize>() {
+        return legacy_map(MapIndex(index).name());
+    }
+    if maps.is_modern(name) {
+        return Some(modern_map_info(system, name, maps.get(name)?));
+    }
+    None
+}
+
+/// Build the runtime [`MapInfo`] for a modern (Tiled) map: tile layer 0 is
+/// the collision layer (drawn invisible, its colliders derived per-tile from
+/// the sprite art), the remaining tile layers split into bg/fg by the Tiled
+/// layer-name `fg` prefix, and interactables/warps come from the object
+/// layer. `source_layer` is each layer's index in `TiledMap::layers` — object
+/// layers occupy indices too ([`TiledMap::get`] returns `None` for them), so
+/// the numbering stays aligned with the file.
+fn modern_map_info(system: &impl ConsoleApi, name: &str, map: &TiledMap) -> MapInfo {
+    let (width, height) = match map.layers.first() {
+        Some(TiledMapLayer::TileLayer(layer)) => (
+            layer.width.try_into().unwrap(),
+            layer.height.try_into().unwrap(),
+        ),
+        _ => (0, 0),
+    };
+    let mut collision_layer = LayerInfo {
+        origin: Vec2::new(0, 0),
+        size: Vec2::new(width, height),
+        offset: Vec2::new(0, 0),
+        source_layer: 0,
+        transparent: Some(0),
+        visible: false,
+        ..LayerInfo::DEFAULT_LAYER
+    };
+    let mut colliders = Vec::new();
+    for j in 0..collision_layer.size.y {
+        for i in 0..collision_layer.size.x {
+            let tile = map.get(0, i as usize, j as usize).unwrap_or(0);
+            colliders.push(Collider::from_sprite(system, tile));
+        }
+    }
+    collision_layer.colliders = colliders;
+
+    let mut layers = vec![collision_layer];
+    let mut fg_layers = Vec::new();
+    for (i, layer) in map.layers.iter().enumerate().skip(1) {
+        let TiledMapLayer::TileLayer(layer) = layer else {
+            continue;
+        };
+        let info = LayerInfo {
+            origin: Vec2::new(0, 0),
+            size: Vec2::new(
+                layer.width.try_into().unwrap(),
+                layer.height.try_into().unwrap(),
+            ),
+            offset: Vec2::new(0, 0),
+            source_layer: i,
+            transparent: Some(0),
+            ..LayerInfo::DEFAULT_LAYER
+        };
+        if layer.name.to_lowercase().starts_with("fg") {
+            fg_layers.push(info);
+        } else {
+            layers.push(info);
+        }
+    }
+    let (interactables, warps) = map.parse_objects();
+    MapInfo {
+        layers,
+        fg_layers,
+        interactables,
+        warps,
+        source: name.to_string(),
+        ..Default::default()
+    }
+}
+
 /// Metadata necessary to load a map into Walkaround.
 #[derive(Clone, Debug, Default)]
 pub struct MapInfo {
@@ -35,7 +163,11 @@ pub struct MapInfo {
     pub interactables: Vec<Interactable>,
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
-    pub bank: usize,
+    /// Name of the [`MapStore`] map the layers window into: `"bank1"`/`"bank2"`
+    /// for the legacy windowed maps, the map's own name for modern maps.
+    /// Empty (the default) means no tile source — draw and collision guard on
+    /// the lookup miss.
+    pub source: String,
     pub camera_bounds: Option<CameraBounds>,
 }
 impl MapInfo {
@@ -43,7 +175,7 @@ impl MapInfo {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        map: &crate::system::GameMap,
+        map: &TiledMap,
         offset: Vec2,
         debug: bool,
     ) {
@@ -55,7 +187,7 @@ impl MapInfo {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        map: &crate::system::GameMap,
+        map: &TiledMap,
         offset: Vec2,
         debug: bool,
     ) {
@@ -65,7 +197,8 @@ impl MapInfo {
     }
 }
 
-/// Layers defined by map metadata. References external data stored by the console.
+/// Layers defined by map metadata. References external data stored in the
+/// [`MapStore`].
 #[derive(Clone, Debug)]
 pub struct LayerInfo {
     pub origin: Vec2,
@@ -75,7 +208,6 @@ pub struct LayerInfo {
     /// (rotate_palette, shift_sprite_flags)
     pub rotate_and_shift_flags: (u8, u8),
     pub visible: bool,
-    // pub source_bank: usize,
     pub source_layer: usize,
     pub colliders: Vec<Collider>,
     // pub display_mode: BG, FG, Object
@@ -119,7 +251,7 @@ impl LayerInfo {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         layer: crate::drawstate::LayerId,
-        map: &crate::system::GameMap,
+        map: &TiledMap,
         offset: Vec2,
         debug: bool,
     ) {
@@ -128,7 +260,7 @@ impl LayerInfo {
         if !self.visible {
             return;
         }
-        let Some(map_layer) = map.layers.get(self.source_layer) else {
+        let Some(TiledMapLayer::TileLayer(map_layer)) = map.layers.get(self.source_layer) else {
             return;
         };
         let palette_map = palette_map_rotate(self.palette_rotate().into());
@@ -184,7 +316,9 @@ pub enum WarpMode {
 #[derive(Clone, Debug)]
 pub struct Warp {
     pub from: (Vec2, Vec2),
-    pub map: Option<MapIndex>,
+    /// Destination map name (`None` = same map). Resolved via [`map_by_name`],
+    /// so numeric strings from old `.tmj` files keep working.
+    pub map: Option<String>,
     pub to: Vec2,
     pub flip: Axis,
     pub mode: WarpMode,
@@ -192,12 +326,12 @@ pub struct Warp {
 }
 
 impl Warp {
-    pub const fn new(from: Hitbox, map: Option<MapIndex>, to: Vec2) -> Self {
+    pub fn new(from: Hitbox, map: Option<&str>, to: Vec2) -> Self {
         let from = (Vec2::new(from.x, from.y), Vec2::new(from.w, from.h));
         let to = Vec2::new(to.x, to.y);
         Self {
             from,
-            map,
+            map: map.map(str::to_string),
             to,
             flip: Axis::None,
             mode: WarpMode::Interact,
@@ -205,20 +339,20 @@ impl Warp {
         }
     }
     /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
-    pub const fn new_tile(tx1: i16, ty1: i16, map: Option<MapIndex>, tx2: i16, ty2: i16) -> Self {
+    pub fn new_tile(tx1: i16, ty1: i16, map: Option<&str>, tx2: i16, ty2: i16) -> Self {
         Self::new(
             Hitbox::new(tx1 * 8, ty1 * 8, 8, 8),
             map,
             Vec2::new(tx2 * 8, ty2 * 8),
         )
     }
-    pub const fn with_flip(self, flip: Axis) -> Self {
+    pub fn with_flip(self, flip: Axis) -> Self {
         Self { flip, ..self }
     }
-    pub const fn with_mode(self, mode: WarpMode) -> Self {
+    pub fn with_mode(self, mode: WarpMode) -> Self {
         Self { mode, ..self }
     }
-    pub const fn with_sound(self, sound: SfxData) -> Self {
+    pub fn with_sound(self, sound: SfxData) -> Self {
         Self {
             sound: Some(sound),
             ..self
@@ -248,7 +382,12 @@ impl Axis {
     }
 }
 
-pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &LayerInfo) -> bool {
+pub fn layer_collides_flags(
+    system: &mut impl ConsoleApi,
+    point: Vec2,
+    layer: &LayerInfo,
+    tiles: &TiledMap,
+) -> bool {
     let layer_hitbox = layer.hitbox();
     if layer_hitbox.touches_point(point) {
         let map_point = Vec2::new(
@@ -256,8 +395,10 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
             (point.y - layer_hitbox.y) / 8 + layer.origin.y,
         );
         let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
-        let bank = (*system.bank()).into();
-        let id = system.map_get(bank, 0, map_point.x.into(), map_point.y.into()) + spr_flag_offset;
+        let id = tiles
+            .get(0, map_point.x as usize, map_point.y as usize)
+            .unwrap_or(0)
+            + spr_flag_offset;
         let mget_collision = touches_tile(
             *system.get_sprite_flags().get(id).unwrap_or(&0),
             Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
@@ -273,26 +414,155 @@ pub fn layer_collides_flags(system: &mut impl ConsoleApi, point: Vec2, layer: &L
     }
 }
 
-pub fn layer_collides(
-    system: &mut impl ConsoleApi,
-    point: Vec2,
-    layer_hitbox: Hitbox,
-    layer_x: i32,
-    layer_y: i32,
-    bank: usize,
-    layer: usize,
-) -> bool {
-    if layer_hitbox.touches_point(point) {
-        let map_point = Vec2::new(
-            (point.x - layer_hitbox.x) / 8 + layer_x as i16,
-            (point.y - layer_hitbox.y) / 8 + layer_y as i16,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::save::SaveData;
+    use crate::data::script::Script;
+    use crate::data::sound::music::MusicTrack;
+    use crate::data::tmj::{ObjectLayer, TileLayer};
+    use crate::rand::Lcg64Xsh32;
+    use crate::system::drawing::image::RgbaImage;
+    use crate::system::{Controller, Font, MouseInput, ScanCode, SfxOptions};
+
+    /// Minimal in-memory console, just enough surface for `map_by_name` (which
+    /// reads the indexed sprite sheet to derive colliders).
+    struct TestConsole {
+        controllers: [Controller; 4],
+        memory: SaveData,
+        sprite_flags: Vec<u8>,
+        indexed_sprites: Vec<u8>,
+        script: Script,
+        rng: Lcg64Xsh32,
+        output: RgbaImage,
+        font: Font,
+    }
+    impl TestConsole {
+        fn new() -> Self {
+            Self {
+                controllers: [Controller::default(); 4],
+                memory: SaveData::default(),
+                sprite_flags: vec![0; 2048],
+                // One blank 256px-wide sheet row block: enough for
+                // `Collider::from_sprite` to read any low tile id.
+                indexed_sprites: vec![0; 256 * 64],
+                script: Script::new(),
+                rng: Lcg64Xsh32::default(),
+                output: RgbaImage::new(1, 1),
+                font: Font::blank(),
+            }
+        }
+    }
+    impl ConsoleApi for TestConsole {
+        fn controllers(&self) -> &[Controller; 4] {
+            &self.controllers
+        }
+        fn memory(&mut self) -> &mut SaveData {
+            &mut self.memory
+        }
+        fn get_sprite_flags(&mut self) -> &mut [u8] {
+            &mut self.sprite_flags
+        }
+        fn exit(&mut self) {}
+        fn key(&self, _scancode: ScanCode) -> bool {
+            false
+        }
+        fn keyp(&self, _scancode: ScanCode) -> bool {
+            false
+        }
+        fn key_chars(&self) -> &[char] {
+            &[]
+        }
+        fn mouse(&self) -> MouseInput {
+            MouseInput::default()
+        }
+        fn music(&mut self, _track: Option<&MusicTrack>) {}
+        fn sfx(&mut self, _sfx_id: &str, _opts: SfxOptions) {}
+        fn rng(&mut self) -> &mut Lcg64Xsh32 {
+            &mut self.rng
+        }
+        fn script(&self) -> &Script {
+            &self.script
+        }
+        fn script_mut(&mut self) -> &mut Script {
+            &mut self.script
+        }
+        fn write_file(&mut self, _path: &str, _bytes: &[u8]) {}
+        fn get_bitmap_indexed(&self, _id: usize) -> &[u8] {
+            &self.indexed_sprites
+        }
+        fn output_image(&mut self) -> &mut RgbaImage {
+            &mut self.output
+        }
+        fn font(&self) -> &Font {
+            &self.font
+        }
+    }
+
+    /// A tiny self-contained modern map: one 4×4 tile layer (the collision
+    /// layer) plus an empty object layer (which is what marks it as modern).
+    fn synthetic_modern_map() -> TiledMap {
+        TiledMap {
+            width: 4,
+            height: 4,
+            layers: vec![
+                TiledMapLayer::TileLayer(TileLayer {
+                    width: 4,
+                    height: 4,
+                    data: vec![0; 16],
+                    name: "Collision".to_string(),
+                }),
+                TiledMapLayer::ObjectLayer(ObjectLayer {
+                    name: "Object Layer 1".to_string(),
+                    objects: Vec::new(),
+                }),
+            ],
+            tilesets: Vec::new(),
+        }
+    }
+
+    /// Legacy names resolve through the hardcoded table, with their tile
+    /// source pointing at the right bank surface.
+    #[test]
+    fn map_by_name_resolves_legacy_name() {
+        let console = TestConsole::new();
+        let store = MapStore::default();
+        let town = map_by_name(&console, "town", &store).expect("town is a legacy map");
+        assert_eq!(town.source, "bank2");
+        assert_eq!(town.fg_layers.len(), 1);
+        assert!(map_by_name(&console, "no_such_map", &store).is_none());
+    }
+
+    /// Numeric strings (old saves / numeric `to_map` properties) fall back to
+    /// the legacy index → name mapping: "4" is the bedroom.
+    #[test]
+    fn map_by_name_resolves_numeric_fallback() {
+        let console = TestConsole::new();
+        let store = MapStore::default();
+        let bedroom = map_by_name(&console, "4", &store).expect("4 is a legacy index");
+        assert_eq!(bedroom.source, "bank1");
+        // The bedroom's room layer windows into bank1 at (30, 0).
+        assert_eq!(bedroom.layers[0].origin, Vec2::new(30, 0));
+        assert_eq!(
+            bedroom.warps[0].map.as_deref(),
+            Some("house_stairwell"),
+            "resolved the same map the bedroom() builder describes"
         );
-        let id = system.map_get(bank, layer, map_point.x.into(), map_point.y.into());
-        touches_tile(
-            id.try_into().unwrap(),
-            Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y),
-        )
-    } else {
-        false
+    }
+
+    /// Modern names build their MapInfo from the map's own layers: layer 0
+    /// becomes the invisible collision layer with one collider per tile.
+    #[test]
+    fn map_by_name_builds_modern_map() {
+        let console = TestConsole::new();
+        let mut store = MapStore::default();
+        store.insert("lab", synthetic_modern_map());
+        assert!(store.is_modern("lab"));
+        let lab = map_by_name(&console, "lab", &store).expect("lab is in the store");
+        assert_eq!(lab.source, "lab");
+        assert_eq!(lab.layers.len(), 1, "collision layer only");
+        assert!(!lab.layers[0].visible);
+        assert_eq!(lab.layers[0].colliders.len(), 16);
+        assert!(lab.fg_layers.is_empty());
     }
 }

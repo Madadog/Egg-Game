@@ -1,10 +1,10 @@
 use crate::animation::Animation;
-use crate::data::map_data::MapIndex;
+use crate::data::map_data::{MapIndex, legacy_index};
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::gamestate::Game;
 use crate::interact::{InteractFn, Interaction};
-use crate::map::{Axis, LayerInfo, MapInfo};
+use crate::map::{Axis, MapInfo, MapStore, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
@@ -96,9 +96,6 @@ impl WalkaroundState {
         }
         self.bg_colour = map_set.bg_colour;
         system.music(map_set.music_track.as_ref());
-        if map_set.bank != usize::from(*system.bank()) {
-            *system.bank() = map_set.bank.try_into().unwrap();
-        }
 
         self.map_animations = map_set
             .interactables
@@ -117,85 +114,15 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    /// Load a map from a tic80 bank. Legacy code.
-    pub fn load_map_bank(&mut self, system: &mut impl ConsoleApi, bank: usize) {
-        let mut game_map = system.maps()[bank].clone();
-        let mut collision_layer = game_map
-            .layers
-            .first()
-            .map(|layer| LayerInfo {
-                origin: Vec2::new(0, 0),
-                size: Vec2::new(
-                    layer.width().try_into().unwrap(),
-                    layer.height().try_into().unwrap(),
-                ),
-                offset: Vec2::new(0, 0),
-                source_layer: 0,
-                transparent: Some(0),
-                visible: false,
-                ..LayerInfo::DEFAULT_LAYER
-            })
-            .unwrap();
-        game_map.layers.remove(0);
-        let mut colliders = Vec::new();
-        for j in 0..collision_layer.size.y {
-            for i in 0..collision_layer.size.x {
-                let tile = system.map_get(bank, 0, i.into(), j.into());
-                colliders.push(Collider::from_sprite(system, tile));
-            }
-        }
-        let fg: Vec<LayerInfo> = game_map
-            .layers
-            .iter_mut()
-            .enumerate()
-            .filter(|(_, layer)| layer.name.to_lowercase().starts_with("fg"))
-            .map(|(i, layer)| LayerInfo {
-                origin: Vec2::new(0, 0),
-                size: Vec2::new(
-                    layer.width().try_into().unwrap(),
-                    layer.height().try_into().unwrap(),
-                ),
-                offset: Vec2::new(0, 0),
-                source_layer: i + 1,
-                transparent: Some(0),
-                ..LayerInfo::DEFAULT_LAYER
-            })
-            .collect();
-        collision_layer.colliders = colliders;
-        let layers: Vec<LayerInfo> = [collision_layer]
-            .into_iter()
-            .chain(
-                game_map
-                    .layers
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(_, layer)| !layer.name.to_lowercase().starts_with("fg"))
-                    .map(|(i, layer)| LayerInfo {
-                        origin: Vec2::new(0, 0),
-                        size: Vec2::new(
-                            layer.width().try_into().unwrap(),
-                            layer.height().try_into().unwrap(),
-                        ),
-                        offset: Vec2::new(0, 0),
-                        source_layer: i + 1,
-                        transparent: Some(0),
-                        ..LayerInfo::DEFAULT_LAYER
-                    }),
-            )
-            .collect();
-        let mut map_info = MapInfo {
-            layers,
-            fg_layers: fg,
-            bank,
-            ..Default::default()
+    /// Load a map by name through [`map_by_name`] (legacy table, numeric
+    /// fallback, then modern maps from `maps`). Unknown names log and leave
+    /// the current map in place — the old bank-indexed loader panicked on a
+    /// bad index, which a typo'd warp or stale save shouldn't do.
+    pub fn load_map_by_name(&mut self, system: &mut impl ConsoleApi, maps: &MapStore, name: &str) {
+        let Some(map_info) = map_by_name(system, name, maps) else {
+            info!("load_map_by_name: unknown map {name:?}");
+            return;
         };
-        // Modern (Tiled) maps carry their interactables + warps in an object
-        // layer; attach them if the host parsed any for this bank.
-        if let Some((interactables, warps)) = system.map_objects(bank) {
-            map_info.interactables = interactables;
-            map_info.warps = warps;
-        }
-
         self.load_map(system, map_info);
     }
     pub fn cam_x(&self) -> i32 {
@@ -306,48 +233,60 @@ impl WalkaroundState {
         self.entities.len() - 1
     }
 
-    fn save(&self, new_map: &MapIndex, system: &mut impl ConsoleApi) {
+    fn save(&self, new_map: &str, system: &mut impl ConsoleApi) {
         let pos = self.player_ref().pos;
         let save = system.memory();
         save.save_count += 1;
-        save.current_map = new_map.0 as u8;
+        save.current_map_name = Some(new_map.to_string());
+        // Legacy maps also refresh the numeric id, so a save written here
+        // still loads in old binaries. Modern (named-only) maps leave it
+        // untouched — there's no number that means them.
+        if let Some(index) = legacy_index(new_map) {
+            save.current_map = index.0 as u8;
+        }
         save.player_x = pos.x;
         save.player_y = pos.y;
     }
 
-    pub fn load_pmem(&mut self, system: &mut impl ConsoleApi) {
-        let save = *system.memory();
-        self.load_map(system, MapIndex(save.current_map.into()).map());
+    pub fn load_pmem(&mut self, system: &mut impl ConsoleApi, maps: &MapStore) {
+        let save = system.memory().clone();
+        // Pre-rename saves only carry the numeric id; translate it to a name
+        // and resolve everything through the one name-based loader.
+        let name = save
+            .current_map_name
+            .unwrap_or_else(|| MapIndex(save.current_map.into()).name().to_string());
+        self.load_map_by_name(system, maps, &name);
         self.player().pos.x = save.player_x;
         self.player().pos.y = save.player_y;
     }
 
     /// Starts a fresh game and saves over the default zeroed
-    /// player position and map_index.
-    pub fn new_game(&mut self, system: &mut impl ConsoleApi) {
+    /// player position and map name.
+    pub fn new_game(&mut self, system: &mut impl ConsoleApi, maps: &MapStore) {
         // Rebuild the live walkaround to its fresh construction state. "Erase
         // data" only zeroes `SaveData`; the existing `WalkaroundState` (player
         // entity, companions, dialogue…) is never rebuilt, so without this the
         // player keeps the position/shell they had before the reset and the
         // seed `save()` below would persist that stale position.
         *self = Self::new();
-        self.load_map(system, MapIndex::BEDROOM.map());
-        self.save(&MapIndex::BEDROOM, system);
+        self.load_map_by_name(system, maps, "bedroom");
+        self.save("bedroom", system);
     }
 }
 
 impl<T: ConsoleApi>
     Game<
-        (&mut crate::drawstate::DrawState, &mut T, &mut InventoryUi),
-        (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
+        (&mut crate::drawstate::DrawState, &mut T, &mut InventoryUi, &mut MapStore),
+        (&mut crate::drawstate::DrawState, &mut T, &DebugInfo, &MapStore),
     > for WalkaroundState
 {
     fn step(
         &mut self,
-        (draw_state, system, inventory_ui): (
+        (draw_state, system, inventory_ui, maps): (
             &mut crate::drawstate::DrawState,
             &mut T,
             &mut InventoryUi,
+            &mut MapStore,
         ),
     ) -> Option<GameMode> {
         self.map_animations
@@ -365,12 +304,12 @@ impl<T: ConsoleApi>
         // sim, so painting/typing can't move the player or trip warps/reloads.
         if self.map_viewer.focused {
             self.map_viewer
-                .step_map_viewer(system, &mut self.current_map, self.camera.pos);
+                .step_map_viewer(system, &mut self.current_map, maps, self.camera.pos);
             return None;
         }
 
         if system.keyp(ScanCode::Digit5) {
-            self.load_pmem(system);
+            self.load_pmem(system, maps);
         }
         if system.keyp(ScanCode::Digit6) {
             draw_state.set_palette(&crate::system::SWEETIE_16);
@@ -429,10 +368,11 @@ impl<T: ConsoleApi>
             false
         };
 
+        let tiles = maps.get(&self.current_map.source);
         for shell in self.entities.iter_mut() {
             match shell.move_mode {
                 MoveMode::Player => {
-                    let (dx, dy) = shell.walk(system, dx, dy, noclip, &self.current_map);
+                    let (dx, dy) = shell.walk(system, dx, dy, noclip, &self.current_map, tiles);
                     shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
                 }
                 MoveMode::Wander => {
@@ -444,7 +384,7 @@ impl<T: ConsoleApi>
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map);
+                    let (dx, dy) = shell.walk(system, dx, dy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
                 }
             }
@@ -475,7 +415,7 @@ impl<T: ConsoleApi>
                 .fill(self.player_ref().pos, self.player_ref().dir);
             if let Some(new_map) = target.map {
                 self.save(&new_map, system);
-                self.load_map(system, new_map.map());
+                self.load_map_by_name(system, maps, &new_map);
             }
         } else if interact {
             for item in self.current_map.interactables.iter().cloned().chain(
@@ -513,7 +453,12 @@ impl<T: ConsoleApi>
     }
     fn draw(
         &self,
-        (draw_state, system, debug_info): (&mut crate::drawstate::DrawState, &mut T, &DebugInfo),
+        (draw_state, system, debug_info, maps): (
+            &mut crate::drawstate::DrawState,
+            &mut T,
+            &DebugInfo,
+            &MapStore,
+        ),
     ) {
         // Draw the live world from the player-following camera, with this
         // walkaround's own map editor overlay, then composite into the console's
@@ -523,6 +468,7 @@ impl<T: ConsoleApi>
         self.draw_world(
             draw_state,
             system,
+            maps,
             self.camera.pos,
             &self.map_viewer,
             debug_info,
@@ -535,9 +481,10 @@ impl WalkaroundState {
     /// Render the walkaround world from an arbitrary `camera_pos` into
     /// `draw_state`, using `editor` for the map-editor overlay (so an extra view
     /// can drive its own free camera + editor without touching the live
-    /// `self.camera`/`self.map_viewer`). The shared `system` is read for
-    /// assets/maps only; the finished frame is left in `draw_state.rgba(BG)` —
-    /// call [`composite_into`](Self::composite_into) to blit it onto a surface.
+    /// `self.camera`/`self.map_viewer`). Tile data comes from `maps`; the
+    /// shared `system` is read for assets only. The finished frame is left in
+    /// `draw_state.rgba(BG)` — call [`composite_into`](Self::composite_into)
+    /// to blit it onto a surface.
     ///
     /// Engine-agnostic: it only touches `draw_state` (the layer canvases) and
     /// reads `system` for assets, with no knowledge of windows or the host.
@@ -545,6 +492,7 @@ impl WalkaroundState {
         &self,
         draw_state: &mut crate::drawstate::DrawState,
         system: &mut T,
+        maps: &MapStore,
         camera_pos: Vec2,
         editor: &MapViewer,
         debug_info: &DebugInfo,
@@ -558,7 +506,7 @@ impl WalkaroundState {
         draw_state.rgba(BG).fill(bg_colour);
 
         // BG map layers
-        if let Some(map) = system.maps().get(self.current_map.bank) {
+        if let Some(map) = maps.get(&self.current_map.source) {
             self.current_map
                 .draw_bg_indexed(draw_state, BG, map, camera_pos, false);
         }
@@ -618,7 +566,7 @@ impl WalkaroundState {
         }
 
         // FG map layers (drawn on top of sprites)
-        if let Some(map) = system.maps().get(self.current_map.bank) {
+        if let Some(map) = maps.get(&self.current_map.source) {
             self.current_map
                 .draw_fg_indexed(draw_state, BG, map, camera_pos, false);
         }

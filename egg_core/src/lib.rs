@@ -35,6 +35,7 @@ use crate::drawstate::DrawState;
 use crate::gamestate::GameMode;
 use crate::gamestate::inventory::InventoryUi;
 use crate::gamestate::walkaround::WalkaroundState;
+use crate::map::MapStore;
 
 pub struct EggState {
     pub draw_state: DrawState,
@@ -43,6 +44,9 @@ pub struct EggState {
     pub debug_info: DebugInfo,
     pub time: i32,
     pub inventory_ui: InventoryUi,
+    /// Every loaded Tiled map by name — the tile data the game draws,
+    /// collides against and edits. The host fills it at asset-load time.
+    pub maps: MapStore,
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
@@ -53,6 +57,7 @@ impl EggState {
             self.time,
             &mut self.inventory_ui,
             &mut self.draw_state,
+            &mut self.maps,
             system,
         );
     }
@@ -66,6 +71,7 @@ impl Default for EggState {
             gamestate: GameMode::Animation(0),
             time: 0,
             debug_info: DebugInfo::default(),
+            maps: MapStore::default(),
         }
     }
 }

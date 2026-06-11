@@ -331,6 +331,7 @@ pub fn update_views(
             views.views[i].editor.step_map_viewer_at(
                 &mut g.system,
                 &mut g.state.walkaround.current_map,
+                &mut g.state.maps,
                 cam,
                 screen,
             );
@@ -362,6 +363,7 @@ pub fn update_views(
         g.state.walkaround.draw_world(
             &mut view.draw_state,
             &mut g.system,
+            &g.state.maps,
             view.free_cam,
             &view.editor,
             &g.state.debug_info,

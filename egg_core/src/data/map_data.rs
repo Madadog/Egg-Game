@@ -23,38 +23,68 @@ use crate::system::SpriteOptions;
 
 use super::sound;
 
+/// The 12 legacy maps' names, indexed by their historical [`MapIndex`].
+/// Snake_case, matching the builder fns below — these are the canonical map
+/// identities now; the numbers survive only for migration.
+const LEGACY_NAMES: [&str; 12] = [
+    "supermarket",
+    "supermarket_hall",
+    "supermarket_storeroom",
+    "test_pen",
+    "bedroom",
+    "house_stairwell",
+    "house_living_room",
+    "house_kitchen",
+    "backyard",
+    "wilderness",
+    "town",
+    "piano_room",
+];
+
+/// Migration shim: the numeric id maps used to be addressed by. Kept only so
+/// old numeric saves and numeric `to_map` properties in existing `.tmj` files
+/// can be translated to names (see `map_by_name`); new code addresses maps by
+/// name.
 #[derive(Debug, Clone, Copy)]
 pub struct MapIndex(pub usize);
 impl MapIndex {
+    /// Migration shim alongside [`MapIndex`] itself; prefer [`legacy_map`].
     pub fn map(&self) -> MapInfo {
-        match self.0 {
-            0 => supermarket(),
-            1 => supermarket_hall(),
-            2 => supermarket_storeroom(),
-            3 => test_pen(),
-            4 => bedroom(),
-            5 => house_stairwell(),
-            6 => house_living_room(),
-            7 => house_kitchen(),
-            8 => backyard(),
-            9 => wilderness(),
-            10 => town(),
-            11 => piano_room(),
-            _ => supermarket(),
-        }
+        legacy_map(self.name()).unwrap_or_else(supermarket)
     }
-    pub const SUPERMARKET: Self = MapIndex(0);
-    pub const SUPERMARKET_HALL: Self = MapIndex(1);
-    pub const SUPERMARKET_STOREROOM: Self = MapIndex(2);
-    pub const TEST_PEN: Self = MapIndex(3);
-    pub const BEDROOM: Self = MapIndex(4);
-    pub const HOUSE_STAIRWELL: Self = MapIndex(5);
-    pub const HOUSE_LIVING_ROOM: Self = MapIndex(6);
-    pub const HOUSE_KITCHEN: Self = MapIndex(7);
-    pub const BACKYARD: Self = MapIndex(8);
-    pub const WILDERNESS: Self = MapIndex(9);
-    pub const TOWN: Self = MapIndex(10);
-    pub const PIANO_ROOM: Self = MapIndex(11);
+    /// The legacy map's name. Out-of-range indices fall back to the
+    /// supermarket, mirroring what [`map`](Self::map) always loaded for them.
+    pub fn name(self) -> &'static str {
+        LEGACY_NAMES.get(self.0).copied().unwrap_or(LEGACY_NAMES[0])
+    }
+}
+
+/// Migration shim alongside [`MapIndex::name`]: the numeric id for a legacy
+/// map name, so saves keep populating the numeric `current_map` field old
+/// binaries read. `None` for modern (named-only) maps.
+pub fn legacy_index(name: &str) -> Option<MapIndex> {
+    LEGACY_NAMES.iter().position(|n| *n == name).map(MapIndex)
+}
+
+/// Load metadata for one of the 12 hardcoded legacy maps, or `None` if `name`
+/// isn't one of them.
+pub fn legacy_map(name: &str) -> Option<MapInfo> {
+    let builder = match name {
+        "supermarket" => supermarket,
+        "supermarket_hall" => supermarket_hall,
+        "supermarket_storeroom" => supermarket_storeroom,
+        "test_pen" => test_pen,
+        "bedroom" => bedroom,
+        "house_stairwell" => house_stairwell,
+        "house_living_room" => house_living_room,
+        "house_kitchen" => house_kitchen,
+        "backyard" => backyard,
+        "wilderness" => wilderness,
+        "town" => town,
+        "piano_room" => piano_room,
+        _ => return None,
+    };
+    Some(builder())
 }
 
 /// A two-frame bobbing sprite (`spr_id` at `y` and `y + 1`), as used by several
@@ -91,11 +121,11 @@ fn supermarket() -> MapInfo {
                 .with_offset(13 * 8, 5 * 4),
         ],
         warps: vec![
-            Warp::new_tile(17, 4, Some(MapIndex::SUPERMARKET_HALL), 9, 4).with_sound(sound::DOOR),
-            Warp::new_tile(8, 4, Some(MapIndex::SUPERMARKET_HALL), 3, 4).with_sound(sound::DOOR),
+            Warp::new_tile(17, 4, Some("supermarket_hall"), 9, 4).with_sound(sound::DOOR),
+            Warp::new_tile(8, 4, Some("supermarket_hall"), 3, 4).with_sound(sound::DOOR),
             Warp::new(
                 Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
-                Some(MapIndex::TOWN),
+                Some("town"),
                 Vec2::new(51 * 4, 15 * 8),
             )
             .with_sound(sound::DOOR)
@@ -135,6 +165,7 @@ fn supermarket() -> MapInfo {
             ]),
         ],
         bg_colour: 1,
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -156,13 +187,13 @@ fn supermarket_hall() -> MapInfo {
                 .with_offset(11 * 8, 2 * 8),
         ],
         warps: vec![
-            Warp::new_tile(9, 6, Some(MapIndex::SUPERMARKET), 17, 4)
+            Warp::new_tile(9, 6, Some("supermarket"), 17, 4)
                 .with_mode(WarpMode::Auto)
                 .with_sound(sound::DOOR),
-            Warp::new_tile(3, 6, Some(MapIndex::SUPERMARKET), 8, 4)
+            Warp::new_tile(3, 6, Some("supermarket"), 8, 4)
                 .with_mode(WarpMode::Auto)
                 .with_sound(sound::DOOR),
-            Warp::new_tile(4, 2, Some(MapIndex::SUPERMARKET_STOREROOM), 2, 3).with_sound(sound::DOOR),
+            Warp::new_tile(4, 2, Some("supermarket_storeroom"), 2, 3).with_sound(sound::DOOR),
         ],
         interactables: vec![
             Interactable::dialogue(Hitbox::new(11 * 8, 4 * 8, 8, 8), "emergency_exit"),
@@ -171,6 +202,7 @@ fn supermarket_hall() -> MapInfo {
             Interactable::dialogue(Hitbox::new(8, 3 * 8, 12, 16), "sm_hall_window"),
         ],
         bg_colour: 1,
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -185,7 +217,7 @@ fn supermarket_storeroom() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(2 * 8, 0),
         ],
-        warps: vec![Warp::new_tile(2, 5, Some(MapIndex::SUPERMARKET_HALL), 4, 2)
+        warps: vec![Warp::new_tile(2, 5, Some("supermarket_hall"), 4, 2)
             .with_mode(WarpMode::Auto)
             .with_sound(sound::DOOR)],
         interactables: vec![
@@ -193,6 +225,7 @@ fn supermarket_storeroom() -> MapInfo {
             Interactable::dialogue(Hitbox::new(16, 0, 5 * 8, 4 * 7), "sm_storeroom_shelf"),
         ],
         bg_colour: 1,
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -200,11 +233,12 @@ fn supermarket_storeroom() -> MapInfo {
 fn test_pen() -> MapInfo {
     MapInfo {
         layers: vec![LayerInfo::new(53, 17, 7, 9).with_rot_and_shift_flags(1, 0)],
-        warps: vec![Warp::new_tile(3, 8, Some(MapIndex::SUPERMARKET), 10, 4)],
+        warps: vec![Warp::new_tile(3, 8, Some("supermarket"), 10, 4)],
         interactables: vec![
             Interactable::dialogue(Hitbox::new(5 * 8, 8, 8, 10), "egg_1").with_sprite(bob(524)),
         ],
         bg_colour: 1,
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -225,7 +259,7 @@ fn bedroom() -> MapInfo {
         ],
         warps: vec![Warp::new(
             Hitbox::new(15 * 8, 6 * 8, 8, 8),
-            Some(MapIndex::HOUSE_STAIRWELL),
+            Some("house_stairwell"),
             Vec2::new(8 + 1, 2 * 8),
         )
         .with_sound(sound::DOOR)],
@@ -235,6 +269,7 @@ fn bedroom() -> MapInfo {
             Interactable::dialogue(Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8), "bedroom_trolley"),
             Interactable::dialogue(Hitbox::new(9 * 8, 3 * 8, 8, 8), "bedroom_window"),
         ],
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -256,13 +291,13 @@ fn house_stairwell() -> MapInfo {
         warps: vec![
             Warp::new(
                 Hitbox::new(1, 3 * 8, 8, 8),
-                Some(MapIndex::BEDROOM),
+                Some("bedroom"),
                 Vec2::new(14 * 8, 5 * 8),
             )
             .with_sound(sound::DOOR),
             Warp::new(
                 Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
-                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Some("house_living_room"),
                 Vec2::new(21 * 4, 4 * 8),
             )
             .with_sound(sound::STAIRS_DOWN)
@@ -274,6 +309,7 @@ fn house_stairwell() -> MapInfo {
             Interactable::dialogue(Hitbox::new(13 * 8, 2 * 8, 8, 8), "house_stairwell_window2"),
             Interactable::dialogue(Hitbox::new(15 * 8, 3 * 8, 8, 8), "house_stairwell_door"),
         ],
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -301,27 +337,27 @@ fn house_living_room() -> MapInfo {
         warps: vec![
             Warp::new(
                 Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
-                Some(MapIndex::HOUSE_STAIRWELL),
+                Some("house_stairwell"),
                 Vec2::new(15 * 4, 7 * 8),
             )
             .with_sound(sound::STAIRS_UP)
             .with_mode(WarpMode::Auto),
             Warp::new(
                 Hitbox::new(3 * 8, 9 * 8, 8, 8),
-                Some(MapIndex::TOWN),
+                Some("town"),
                 Vec2::new(17 * 8, 13 * 8),
             )
             .with_sound(sound::DOOR)
             .with_flip(Axis::Y),
             Warp::new(
                 Hitbox::new(14 * 8, 5 * 8, 8, 8),
-                Some(MapIndex::HOUSE_KITCHEN),
+                Some("house_kitchen"),
                 Vec2::new(7 * 4, 7 * 8),
             )
             .with_sound(sound::DOOR),
             Warp::new(
                 Hitbox::new(8 * 8, 5 * 8, 8, 8),
-                Some(MapIndex::PIANO_ROOM),
+                Some("piano_room"),
                 Vec2::new(19 * 4, 6 * 8),
             )
             .with_sound(sound::DOOR),
@@ -381,6 +417,7 @@ fn house_living_room() -> MapInfo {
                 ]),
             ),
         ],
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -398,14 +435,14 @@ fn house_kitchen() -> MapInfo {
         warps: vec![
             Warp::new(
                 Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
-                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Some("house_living_room"),
                 Vec2::new(14 * 8, 5 * 8),
             )
             .with_sound(sound::DOOR)
             .with_mode(WarpMode::Auto),
             Warp::new(
                 Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
-                Some(MapIndex::BACKYARD),
+                Some("backyard"),
                 Vec2::new(15 * 8, 5 * 8),
             )
             .with_sound(sound::DOOR),
@@ -419,6 +456,7 @@ fn house_kitchen() -> MapInfo {
             ),
             Interactable::dialogue(Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8), "house_kitchen_window"),
         ],
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -432,14 +470,14 @@ fn backyard() -> MapInfo {
         warps: vec![
             Warp::new(
                 Hitbox::new(15 * 8, 5 * 8, 8, 8),
-                Some(MapIndex::HOUSE_KITCHEN),
+                Some("house_kitchen"),
                 Vec2::new(10 * 8 - 3, 5 * 8 + 3),
             )
             .with_sound(sound::DOOR)
             .with_flip(Axis::Y),
             Warp::new(
                 Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
-                Some(MapIndex::WILDERNESS),
+                Some("wilderness"),
                 Vec2::new(8 * 8, 61 * 8),
             )
             .with_mode(WarpMode::Auto)
@@ -463,6 +501,7 @@ fn backyard() -> MapInfo {
                 AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
             ]),
         ],
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
@@ -514,13 +553,13 @@ fn wilderness() -> MapInfo {
         bg_colour: 3,
         warps: vec![Warp::new(
             Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
-            Some(MapIndex::BACKYARD),
+            Some("backyard"),
             Vec2::new(14 * 8 - 4, 15 * 8),
         )
         .with_mode(WarpMode::Auto)
         .with_flip(Axis::Y)],
         interactables: vec![],
-        bank: 1,
+        source: "bank2".to_string(),
         ..MapInfo::default()
     }
 }
@@ -543,13 +582,13 @@ fn town() -> MapInfo {
         warps: vec![
             Warp::new(
                 Hitbox::new(17 * 8, 13 * 8, 8, 8),
-                Some(MapIndex::HOUSE_LIVING_ROOM),
+                Some("house_living_room"),
                 Vec2::new(4 * 9, 8 * 8),
             )
             .with_sound(sound::DOOR),
             Warp::new(
                 Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
-                Some(MapIndex::SUPERMARKET),
+                Some("supermarket"),
                 Vec2::new(97, 73),
             )
             .with_sound(sound::DOOR),
@@ -560,7 +599,7 @@ fn town() -> MapInfo {
             Interactable::dialogue(Hitbox::new(14 * 8, 13 * 8, 8, 8), "town_home_window"),
             Interactable::dialogue(Hitbox::new(224, 142, 8 * 2, 8), "town_wide"),
         ],
-        bank: 1,
+        source: "bank2".to_string(),
         ..MapInfo::default()
     }
 }
@@ -571,7 +610,7 @@ fn piano_room() -> MapInfo {
         bg_colour: 0,
         warps: vec![Warp::new(
             Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
-            Some(MapIndex::HOUSE_LIVING_ROOM),
+            Some("house_living_room"),
             Vec2::new(8 * 8, 5 * 8),
         )
         .with_sound(sound::DOOR)
@@ -584,6 +623,7 @@ fn piano_room() -> MapInfo {
             Interactable::dialogue(Hitbox::new(0, 6 * 8, 8 * 2, 8), "unknown_3"),
         ],
         camera_bounds: Some(CameraBounds::stick(21 * 8 / 2 - 120, -64)),
+        source: "bank1".to_string(),
         ..MapInfo::default()
     }
 }
