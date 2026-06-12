@@ -94,6 +94,15 @@ impl Hitbox {
         assert!(w.is_positive() && h.is_positive());
         Hitbox { x, y, w, h }
     }
+    /// A degenerate, zero-size hitbox at `(x, y)`. Unlike [`new`](Self::new) this
+    /// doesn't assert a positive size, so callers with a genuinely empty region
+    /// (e.g. an image layer whose pixels never loaded, so its tile size is 0×0)
+    /// can produce one that simply touches nothing — `ex()`/`ey()` fall one below
+    /// the origin, so [`touches_point`](Self::touches_point) and
+    /// [`touches`](Self::touches) both return `false`.
+    pub const fn empty_at(x: i16, y: i16) -> Self {
+        Hitbox { x, y, w: 0, h: 0 }
+    }
     pub fn ex(&self) -> i16 {
         self.x + self.w - 1
     }
@@ -268,10 +277,15 @@ impl Collider {
     /// through the console.
     pub fn from_sprite(indexed_sprites: &IndexedImage, index: usize) -> Collider {
         let bitmap = &indexed_sprites.data;
+        let sprite_offset = (index % 32) * 8 + (index / 32) * 2048;
         let mut collider = Collider::default();
+        // A tile id past the end of the sheet (a stale or mistyped GID in map
+        // data) contributes no collision rather than panicking the map load.
+        if sprite_offset + 7 + 7 * 256 >= bitmap.len() {
+            return collider;
+        }
         for i in 0..8 {
             for j in 0..8 {
-                let sprite_offset = (index % 32) * 8 + (index / 32) * 2048;
                 let pixel = bitmap[sprite_offset + i + j * 256];
                 if pixel != 0 && pixel != 255 {
                     collider.set(i, j, true);

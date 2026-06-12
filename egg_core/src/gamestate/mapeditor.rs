@@ -11,7 +11,10 @@ use crate::{
     data::sound::{self, SfxData},
     drawstate::{DrawState, LayerId},
     interact::Interaction,
-    map::{Axis, LayerInfo, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp, WarpMode},
+    map::{
+        Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp,
+        WarpMode,
+    },
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
@@ -546,8 +549,14 @@ impl MapViewer {
         );
         for (i, layer) in layers.iter().enumerate() {
             let hidden = if layer.visible { "" } else { "(H)" };
+            // Image layers are flagged `img` so the painter knows they're not a
+            // paint target (paint silently refuses them; see `handle_paint`).
+            let label = match layer.kind {
+                LayerKind::Image => format!("img {i} {hidden}"),
+                LayerKind::Tiles => format!("Layer {i} {hidden}"),
+            };
             rows.push(
-                b.text(format!("Layer {i} {hidden}"))
+                b.text(label)
                     .small(true)
                     .full_width(7.0)
                     .fill_if(i == self.layer_index, 15)
@@ -1215,8 +1224,12 @@ impl MapViewer {
         camera_pos: Vec2,
         mouse: &MouseInput,
     ) {
+        // Paint only targets tile layers — an image layer carries a bitmap, not
+        // editable tile cells, so it's never a paint target (and `TiledMap::set`
+        // would no-op on it anyway). The Layers list flags those as `img`.
         let Some((source, layer)) = self
             .active_layer(map)
+            .filter(|l| l.kind == LayerKind::Tiles)
             .map(|l| (map.source.clone(), l.source_layer))
         else {
             return;

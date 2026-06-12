@@ -15,6 +15,7 @@ use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Trigger, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
+use crate::system::drawing::image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -192,6 +193,101 @@ pub struct ObjectLayer {
     pub objects: Vec<TiledObject>,
 }
 
+/// A Tiled **image layer**: a single bitmap (a PNG path relative to the map
+/// file) placed at a pixel offset, the engine's gateway to *painted maps*.
+///
+/// Where tile layers paint from the shared sheet, an image layer carries one
+/// flat picture — so a complete modern map can be just a painted background
+/// image + a painted collision mask + an object layer, with **no tile art at
+/// all** (see [`crate::map::modern_map_info`] for that story end-to-end). Two
+/// roles, chosen by the layer's name/properties (see
+/// [`is_collision`](Self::is_collision)):
+/// - a **visible** image layer draws into the world like a tile layer, obeying
+///   the same conventions — file layer order for stacking, the `fg` name prefix
+///   to sit above sprites, `visible: false` to never draw;
+/// - a **collision** image layer is data, never drawn, its alpha sliced into the
+///   per-tile bitmap [`Collider`](crate::position::Collider)s the walk loop
+///   already consults (solid where alpha ≥
+///   [`PAINTED_SOLID_ALPHA`](crate::map::PAINTED_SOLID_ALPHA)).
+///
+/// Rendering is deliberately minimal and matches the engine's tile blit:
+/// **binary transparency** (a source pixel with `alpha == 0` is skipped, every
+/// other pixel is opaque — `opacity` is parsed for round-trip fidelity but *not*
+/// honoured while drawing), and **no scaling, no repeat, no alpha blending**
+/// (all out of scope). The picture is blit 1:1 at its offset minus the camera.
+///
+/// The bitmap itself is **runtime-only** ([`pixels`](Self::pixels)): the codec
+/// parses the path, and the host decodes the PNG and attaches the pixels after
+/// load (see [`TiledMap::attach_image`]). A layer whose pixels never arrived
+/// (missing/failed PNG) simply doesn't draw and contributes no collision.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ImageLayer {
+    pub name: String,
+    /// PNG path as authored in Tiled, **relative to the map file** (e.g.
+    /// `images/bedroom1_mask.png`). The host resolves it under `maps/` to load
+    /// the image; round-tripped verbatim so a save never rewrites it.
+    pub image: String,
+    /// Horizontal placement in pixels (Tiled stores it as a JSON number, hence
+    /// `f64`; can be negative). Absent in Tiled ⇒ 0.
+    #[serde(default)]
+    pub offsetx: f64,
+    /// Vertical placement in pixels. Absent in Tiled ⇒ 0.
+    #[serde(default)]
+    pub offsety: f64,
+    /// Drawn unless explicitly hidden in Tiled. Absent ⇒ visible (Tiled's own
+    /// default). A collision layer ignores this — it's never drawn regardless.
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    /// Tiled layer opacity (0.0–1.0). Parsed only so a save round-trips it
+    /// faithfully; the renderer uses binary transparency and ignores it.
+    #[serde(default = "default_one")]
+    pub opacity: f64,
+    /// Custom properties — read only for the `collision` bool that (with the
+    /// name prefix) marks a mask layer. Round-tripped verbatim.
+    #[serde(default)]
+    pub properties: Vec<ImageLayerProperty>,
+    /// The decoded image, attached by the host after it reads the PNG; the codec
+    /// never fills this (`#[serde(skip)]` ⇒ always `None` on parse, never
+    /// serialised). `None` until attached, or if the PNG was missing/failed.
+    #[serde(skip)]
+    pub pixels: Option<RgbaImage>,
+}
+impl ImageLayer {
+    /// Whether this image layer is a **collision mask** rather than a drawn
+    /// picture: true when it carries a `collision: true` bool property, OR its
+    /// name starts with `collision` (case-insensitive). The name rule matches
+    /// the user's existing Tiled layer-naming; the property is the explicit
+    /// opt-in for layers named anything else.
+    pub fn is_collision(&self) -> bool {
+        self.name.to_ascii_lowercase().starts_with("collision")
+            || self
+                .properties
+                .iter()
+                .any(|p| p.name == "collision" && p.value)
+    }
+}
+
+/// A Tiled boolean custom property (`{ name, type: "bool", value }`) as carried
+/// on an image layer. Distinct from the object layer's string
+/// [`ObjectProperties`] and the tileset's int [`TileProperty`]: a `bool`
+/// property's `value` is a JSON boolean, and the only one the engine reads is
+/// the collision-mask marker.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ImageLayerProperty {
+    pub name: String,
+    pub value: bool,
+}
+
+/// Serde default for an absent `visible` field (Tiled omits it when true).
+fn default_true() -> bool {
+    true
+}
+
+/// Serde default for an absent `opacity` field (Tiled omits it when 1.0).
+fn default_one() -> f64 {
+    1.0
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum TiledMapLayer {
@@ -199,6 +295,8 @@ pub enum TiledMapLayer {
     TileLayer(TileLayer),
     #[serde(rename = "objectgroup")]
     ObjectLayer(ObjectLayer),
+    #[serde(rename = "imagelayer")]
+    ImageLayer(ImageLayer),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -281,7 +379,12 @@ impl TiledObject {
     /// in [`interaction_to_object`].
     fn to_func(&self) -> Option<InteractFn> {
         let name = self.prop("func").filter(|s| !s.is_empty())?;
-        InteractFn::from_name(name, self.prop_int("pitch"), self.prop_int("count"), self.hitbox()?)
+        InteractFn::from_name(
+            name,
+            self.prop_int("pitch"),
+            self.prop_int("count"),
+            self.hitbox()?,
+        )
     }
     /// A pure sprite object: a `sprite` tile id with no warp/func/`description`,
     /// kept as an [`Interaction::None`] so legacy animation-only objects (the
@@ -321,14 +424,21 @@ impl TiledObject {
         let from = self.hitbox()?;
         let map = self.prop("to_map");
         let to = Vec2::new(
-            self.prop("to_x").and_then(|s| s.parse().ok()).unwrap_or(from.x),
-            self.prop("to_y").and_then(|s| s.parse().ok()).unwrap_or(from.y),
+            self.prop("to_x")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(from.x),
+            self.prop("to_y")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(from.y),
         );
         let mut warp = Warp::new(map, to);
         if let Some(flip) = self.prop("flip") {
             warp = warp.with_flip(parse_axis(flip));
         }
-        if self.prop("mode").is_some_and(|m| m.eq_ignore_ascii_case("auto")) {
+        if self
+            .prop("mode")
+            .is_some_and(|m| m.eq_ignore_ascii_case("auto"))
+        {
             warp = warp.with_mode(WarpMode::Auto);
         }
         if let Some(sound) = self.prop("sound").and_then(parse_sound) {
@@ -569,6 +679,34 @@ impl TiledMap {
             }
         }
     }
+    /// The `image` paths of every image layer, in file order — the list the
+    /// host walks to know which PNGs to load for this map. Each path is as
+    /// authored (relative to the map file); the host resolves it under `maps/`.
+    pub fn image_layer_paths(&self) -> Vec<&str> {
+        self.layers
+            .iter()
+            .filter_map(|layer| match layer {
+                TiledMapLayer::ImageLayer(image) => Some(image.image.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Attach a decoded image to every image layer whose `image` path matches
+    /// `path`, after the host reads the PNG. Keyed by path (not layer index) so
+    /// the host loads each distinct image once and fans it out; a map referencing
+    /// the same PNG from two layers gets it on both. The codec never fills
+    /// [`ImageLayer::pixels`] itself — this is the one way runtime pixels arrive.
+    pub fn attach_image(&mut self, path: &str, pixels: RgbaImage) {
+        for layer in self.layers.iter_mut() {
+            if let TiledMapLayer::ImageLayer(image) = layer
+                && image.image == path
+            {
+                image.pixels = Some(pixels.clone());
+            }
+        }
+    }
+
     /// Parse this map's object layers into one ordered list of runtime
     /// [`MapObject`]s, in file order. Warps are objects with `type == "warp"` or
     /// warp properties; interactions are objects carrying a `description`
@@ -637,6 +775,31 @@ impl TiledMap {
                         "draworder": "topdown", "objects": json_objects,
                     }));
                 }
+                // Image layers echo back faithfully (path/offsets/visible/
+                // opacity/name/properties), in layer order with the correct id,
+                // so an in-game save never destroys a painted background or a
+                // collision mask. The runtime `pixels` are deliberately not
+                // serialised — they're decoded from `image` on load.
+                TiledMapLayer::ImageLayer(image_layer) => {
+                    let properties: Vec<Value> = image_layer
+                        .properties
+                        .iter()
+                        .map(|p| json!({ "name": p.name, "type": "bool", "value": p.value }))
+                        .collect();
+                    let mut layer = json!({
+                        "type": "imagelayer", "id": id, "name": image_layer.name,
+                        "image": image_layer.image,
+                        "offsetx": image_layer.offsetx, "offsety": image_layer.offsety,
+                        "x": 0, "y": 0, "opacity": image_layer.opacity,
+                        "visible": image_layer.visible,
+                    });
+                    // Tiled only emits `properties` when non-empty; match that so
+                    // a propertyless layer round-trips byte-stable.
+                    if !properties.is_empty() {
+                        layer["properties"] = Value::Array(properties);
+                    }
+                    layers.push(layer);
+                }
             }
         }
         if dropped > 0 {
@@ -671,6 +834,19 @@ mod tests {
     };
     use crate::interact::{InteractFn, Interaction};
     use crate::map::{MapObject, ObjectEffect, Trigger, WarpMode};
+    use crate::system::drawing::image::RgbaImage;
+
+    /// The single image layer of a parsed map (panics if it has none) — the
+    /// fixture the image-layer tests pull `name`/`image`/`offsets` from.
+    fn only_image_layer(map: &TiledMap) -> &super::ImageLayer {
+        map.layers
+            .iter()
+            .find_map(|l| match l {
+                TiledMapLayer::ImageLayer(i) => Some(i),
+                _ => None,
+            })
+            .expect("map has an image layer")
+    }
 
     /// A small inline `.tsj` snippet parses and its `flag_table` indexes by
     /// plain sheet id: tile 1 → flags 1, tile 35 → flags 8, every absent tile
@@ -778,7 +954,11 @@ mod tests {
         let objects = map.parse_objects();
         // office.tmj's object layer is 7 dialogue interactions, no warps.
         assert_eq!(objects.len(), 7);
-        assert!(objects.iter().all(|o| matches!(o.effect, ObjectEffect::Interact(_))));
+        assert!(
+            objects
+                .iter()
+                .all(|o| matches!(o.effect, ObjectEffect::Interact(_)))
+        );
         // The first object is the desk front; its hitbox matches the Tiled object.
         let desk = &objects[0];
         assert_eq!((desk.hitbox.x, desk.hitbox.y), (89, 65));
@@ -1077,19 +1257,22 @@ mod tests {
         let map = from_json(json.as_bytes()).unwrap();
         let objects = map.parse_objects();
         assert_eq!(objects.len(), 1);
-        assert!(matches!(objects[0].effect, ObjectEffect::Interact(Interaction::None)));
+        assert!(matches!(
+            objects[0].effect,
+            ObjectEffect::Interact(Interaction::None)
+        ));
         assert_eq!(objects[0].sprite.as_ref().unwrap()[0].spr_id, 524);
 
         let out = map.to_tmj(&objects);
         let reloaded = from_json(out.as_bytes()).unwrap();
         let objects2 = reloaded.parse_objects();
         assert_eq!(objects2.len(), 1);
-        assert!(matches!(objects2[0].effect, ObjectEffect::Interact(Interaction::None)));
+        assert!(matches!(
+            objects2[0].effect,
+            ObjectEffect::Interact(Interaction::None)
+        ));
         assert_eq!(objects2[0].sprite.as_ref().unwrap()[0].spr_id, 524);
-        assert_eq!(
-            (objects2[0].hitbox.x, objects2[0].hitbox.y),
-            (8, 16),
-        );
+        assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (8, 16),);
     }
 
     /// The pre-warp narration key of an object's warp effect, if it has one.
@@ -1168,7 +1351,10 @@ mod tests {
         let objects = map.parse_objects();
         assert_eq!(objects[0].trigger, Trigger::Press);
         let out = map.to_tmj(&objects);
-        assert!(out.contains("\"trigger\""), "non-default trigger is serialised");
+        assert!(
+            out.contains("\"trigger\""),
+            "non-default trigger is serialised"
+        );
         let reloaded = from_json(out.as_bytes()).unwrap();
         assert_eq!(reloaded.parse_objects()[0].trigger, Trigger::Press);
 
@@ -1200,7 +1386,10 @@ mod tests {
         assert_eq!(warp_narration(&objects[0]), Some("door_creaks"));
         let out = map.to_tmj(&objects);
         let reloaded = from_json(out.as_bytes()).unwrap();
-        assert_eq!(warp_narration(&reloaded.parse_objects()[0]), Some("door_creaks"));
+        assert_eq!(
+            warp_narration(&reloaded.parse_objects()[0]),
+            Some("door_creaks")
+        );
 
         // Absent narration → None, and nothing serialised.
         let plain = one_object_map("warp", r#"{"name":"to_map","type":"string","value":"a"}"#);
@@ -1215,5 +1404,181 @@ mod tests {
                {"name":"narration","type":"string","value":""}"#,
         );
         assert_eq!(warp_narration(&empty.parse_objects()[0]), None);
+    }
+
+    /// The real `assets/maps/bedroom1.tmj` now parses (it has an image layer,
+    /// which used to fail the whole parse) — and it's the first painted-art
+    /// map: an office-style tile collision layer plus its wall art as an image
+    /// layer, with a modern `warp`-typed object out to house_stairwell.
+    #[test]
+    fn parses_bedroom1_image_layer() {
+        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let map = from_json(&bytes).unwrap();
+        // 4 tile layers, 1 image layer, 1 object layer = 6 layers.
+        assert_eq!(map.layers.len(), 6);
+        let image = only_image_layer(&map);
+        assert_eq!(image.name, "walls");
+        assert_eq!(image.image, "images/bedroom1_walls.png");
+        assert_eq!((image.offsetx, image.offsety), (14.0, 15.0));
+        assert!(image.visible);
+        // Pixels are runtime-only: never filled by the parser.
+        assert!(image.pixels.is_none());
+        // "walls" is painted *art*, not a collision mask — collision stays on
+        // the tile layer.
+        assert!(!image.is_collision());
+        // The image layer is enumerated for the host to load.
+        assert_eq!(map.image_layer_paths(), vec!["images/bedroom1_walls.png"]);
+        // The room's one object is a touch warp to house_stairwell.
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].trigger, Trigger::Touch);
+        match &objects[0].effect {
+            ObjectEffect::Warp(warp) => {
+                assert_eq!(warp.map.as_deref(), Some("house_stairwell"));
+            }
+            other => panic!("expected a warp, got {other:?}"),
+        }
+    }
+
+    /// The real `assets/maps/house_stairwell.tmj` parses too: two tile layers
+    /// and one image layer at its (positive) offset.
+    #[test]
+    fn parses_house_stairwell_image_layer() {
+        let bytes = std::fs::read("../assets/maps/house_stairwell.tmj").unwrap();
+        let map = from_json(&bytes).unwrap();
+        assert_eq!(map.layers.len(), 3);
+        let image = only_image_layer(&map);
+        assert_eq!(image.name, "Image Layer 1");
+        assert_eq!(image.image, "images/house_stairwell_mask.png");
+        assert_eq!((image.offsetx, image.offsety), (74.0, 33.0));
+        assert!(!image.is_collision());
+    }
+
+    /// An image layer survives serialise → reparse with its path, offsets,
+    /// visibility, opacity and name intact — so an in-game save never destroys a
+    /// painted background or a collision mask. Checked on the real bedroom1 map
+    /// (a tile + object + image layer mix) so layer *order* round-trips too.
+    #[test]
+    fn tmj_round_trips_image_layer() {
+        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let map = from_json(&bytes).unwrap();
+        let out = map.to_tmj(&map.parse_objects());
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        // Same layer count and the image layer still second (order preserved —
+        // it sits *between* tile layers, not appended at the end).
+        assert_eq!(reloaded.layers.len(), map.layers.len());
+        assert!(matches!(reloaded.layers[1], TiledMapLayer::ImageLayer(_)));
+        let before = only_image_layer(&map);
+        let after = only_image_layer(&reloaded);
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.image, before.image);
+        assert_eq!(
+            (after.offsetx, after.offsety),
+            (before.offsetx, before.offsety)
+        );
+        assert_eq!(after.visible, before.visible);
+        assert_eq!(after.opacity, before.opacity);
+    }
+
+    /// A small map with one image layer round-trips its `opacity`/`visible`
+    /// values faithfully even when they aren't the Tiled defaults — proving
+    /// they're carried, not assumed.
+    #[test]
+    fn tmj_round_trips_image_layer_nondefault_fields() {
+        let json = r#"{
+            "width": 4, "height": 4, "tilesets": [],
+            "layers": [{
+                "type": "imagelayer", "name": "bg", "id": 1,
+                "image": "images/room.png",
+                "offsetx": 12, "offsety": -8,
+                "visible": false, "opacity": 0.5
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let image = only_image_layer(&map);
+        assert!(!image.visible);
+        assert_eq!(image.opacity, 0.5);
+
+        let out = map.to_tmj(&[]);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let after = only_image_layer(&reloaded);
+        assert!(!after.visible);
+        assert_eq!(after.opacity, 0.5);
+        assert_eq!((after.offsetx, after.offsety), (12.0, -8.0));
+    }
+
+    /// Collision marking: an image layer is a mask when its name starts with
+    /// `collision` (case-insensitive) OR it carries a `collision: true` bool
+    /// property; anything else is a drawn layer.
+    #[test]
+    fn image_layer_collision_marking() {
+        // By name prefix (case-insensitive), no property needed.
+        let by_name = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "Collision Mask", "id": 1,
+                         "image": "m.png", "offsetx": 0, "offsety": 0 }]
+        }"#;
+        assert!(only_image_layer(&from_json(by_name.as_bytes()).unwrap()).is_collision());
+
+        // By explicit `collision: true` property on a layer named anything.
+        let by_prop = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "blockers", "id": 1,
+                         "image": "m.png", "offsetx": 0, "offsety": 0,
+                         "properties": [{ "name": "collision", "type": "bool", "value": true }] }]
+        }"#;
+        assert!(only_image_layer(&from_json(by_prop.as_bytes()).unwrap()).is_collision());
+
+        // A `collision: false` property does not mark it.
+        let prop_false = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "art", "id": 1,
+                         "image": "m.png", "offsetx": 0, "offsety": 0,
+                         "properties": [{ "name": "collision", "type": "bool", "value": false }] }]
+        }"#;
+        assert!(!only_image_layer(&from_json(prop_false.as_bytes()).unwrap()).is_collision());
+
+        // A plainly-named, propertyless layer is drawn, not collision.
+        let plain = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "background", "id": 1,
+                         "image": "m.png", "offsetx": 0, "offsety": 0 }]
+        }"#;
+        assert!(!only_image_layer(&from_json(plain.as_bytes()).unwrap()).is_collision());
+    }
+
+    /// The collision `properties` round-trip through serialise → reparse, so a
+    /// `collision: true` marker authored in-engine survives a save.
+    #[test]
+    fn tmj_round_trips_image_layer_collision_property() {
+        let json = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "blockers", "id": 1,
+                         "image": "m.png", "offsetx": 0, "offsety": 0,
+                         "properties": [{ "name": "collision", "type": "bool", "value": true }] }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        assert!(only_image_layer(&map).is_collision());
+        let out = map.to_tmj(&[]);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert!(only_image_layer(&reloaded).is_collision());
+    }
+
+    /// `attach_image` fills the runtime pixels of every layer matching the path,
+    /// keyed by the authored relative path (the codec never fills them itself).
+    #[test]
+    fn attach_image_by_path() {
+        let json = r#"{
+            "width": 2, "height": 2, "tilesets": [],
+            "layers": [{ "type": "imagelayer", "name": "bg", "id": 1,
+                         "image": "images/room.png", "offsetx": 0, "offsety": 0 }]
+        }"#;
+        let mut map = from_json(json.as_bytes()).unwrap();
+        assert!(only_image_layer(&map).pixels.is_none());
+        map.attach_image("images/room.png", RgbaImage::new(8, 8));
+        assert!(only_image_layer(&map).pixels.is_some());
+        // A path that matches nothing is a harmless no-op.
+        map.attach_image("images/other.png", RgbaImage::new(8, 8));
+        assert!(only_image_layer(&map).pixels.is_some());
     }
 }

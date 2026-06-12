@@ -3,6 +3,7 @@ use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use egg_core::EggState;
 
+use egg_core::data::tmj::TiledMap;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture};
@@ -149,9 +150,20 @@ impl Plugin for CorePlugin {
 /// Asset loading plugin. Spans both data domains (Tiled maps/tilesets via
 /// [`crate::tiled`] and language scripts via [`crate::script_asset`]) plus the
 /// manifest that names them, so it lives in the host root rather than inside
-/// either loader's module. The two-phase loader is manifest-driven: phase 1
-/// waits for the manifest and expands it into [`GameAssets`]; phase 2 installs
-/// everything once the essentials are loaded and every map has settled.
+/// either loader's module. The loader is manifest-driven and runs in **three
+/// phases** (all in [`load_assets`], gated on resource presence/load state):
+///
+/// 1. **expand** — wait for the manifest, then build [`GameAssets`] from the
+///    maps/tilesets it names (so the set of maps is data, not code).
+/// 2. **discover images** — once the essentials are loaded and every map has
+///    settled, walk the *loaded* maps for their image-layer PNG paths, resolve
+///    each under `maps/`, and start loading it (recorded in
+///    [`GameAssets::map_images`]). This phase can only run after the maps parse,
+///    since only then are their image-layer paths known.
+/// 3. **install** — once those image handles have also settled, decode each into
+///    the engine's `RgbaImage`, attach it to its map, and insert the maps (plus
+///    sheets/flags/script) into the engine. Essentials failure is fatal; a
+///    failed map *or* image is logged and skipped, so neither can wedge boot.
 ///
 /// Registers:
 /// * resources: [`Manifest`] + [`GameAssets`] + [`SfxAssets`] (inserted by
@@ -175,6 +187,21 @@ impl Plugin for AssetsPlugin {
 #[derive(Resource)]
 pub struct Manifest(pub Handle<ManifestAsset>);
 
+/// One image-layer PNG a loaded map references: which map it belongs to, the
+/// path as authored (relative to the map, the key the engine attaches it under),
+/// and the Bevy handle the host is loading it through. Collected in phase 2 once
+/// the maps are parsed (only then are their image-layer paths known), then
+/// awaited in phase 3 like maps are — same never-wedge rule.
+#[derive(Debug)]
+pub struct MapImage {
+    /// `MapStore` key of the map this image belongs to.
+    pub map_name: String,
+    /// Path as authored in the `.tmj` (relative to the map file) — the key
+    /// [`egg_core::data::tmj::TiledMap::attach_image`] matches on.
+    pub rel_path: String,
+    pub handle: Handle<Image>,
+}
+
 /// Every handle the game needs to boot, expanded from the [`Manifest`]. Built
 /// once the manifest finishes loading (see [`GameAssets::from_manifest`]); the
 /// font/sheet/script are fixed, while the maps and tilesets come from the
@@ -194,6 +221,10 @@ pub struct GameAssets {
     /// per-tile collision-flag tables.
     pub tilesets: Vec<Handle<TilesetAsset>>,
     pub script: Handle<ScriptAsset>,
+    /// The image-layer PNGs the loaded maps reference, collected in phase 2 once
+    /// the maps have parsed. `None` until that phase runs (so its presence is the
+    /// phase-2-done signal); empty `Some` when no map has an image layer.
+    pub map_images: Option<Vec<MapImage>>,
 }
 impl GameAssets {
     /// Expand a loaded [`GameManifest`] into concrete asset handles: each map
@@ -215,6 +246,7 @@ impl GameAssets {
                 .map(|name| assets.load(format!("maps/{name}.tsj")))
                 .collect(),
             script: assets.load("script/en.eggtext"),
+            map_images: None,
         }
     }
     /// The essential assets (font, sheet, script, every tileset) by name —
@@ -261,6 +293,17 @@ impl GameAssets {
                 .is_some_and(|s| s.is_loaded() || s.is_failed())
         })
     }
+    /// Whether every image-layer PNG handle has *settled* (loaded or failed).
+    /// `true` before phase 2 has collected them (nothing to wait on yet); after,
+    /// the same never-wedge rule as maps — a missing/failed PNG settles as failed
+    /// and its layer just gets no pixels (not drawn, empty collision).
+    fn images_settled(&self, assets: &AssetServer) -> bool {
+        self.map_images.iter().flatten().all(|img| {
+            assets
+                .get_load_state(img.handle.id())
+                .is_some_and(|s| s.is_loaded() || s.is_failed())
+        })
+    }
 }
 
 fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
@@ -277,7 +320,7 @@ fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
 fn load_assets(
     mut commands: Commands,
     manifest: Option<Res<Manifest>>,
-    game_assets: Option<Res<GameAssets>>,
+    game_assets: Option<ResMut<GameAssets>>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMapAsset>>,
@@ -306,16 +349,47 @@ fn load_assets(
         }
         return;
     }
-    let game_assets = game_assets.unwrap();
+    let mut game_assets = game_assets.unwrap();
 
-    // Phase 2: install once the essentials are loaded and every map has settled
-    // (loaded or failed) — never blocking boot on an individual map. A *failed*
-    // essential, by contrast, can never resolve: fail loudly like the old
-    // loader did rather than waiting on the loading screen forever.
+    // A *failed* essential can never resolve: fail loudly (as the old loader did)
+    // rather than waiting on the loading screen forever. This guard holds across
+    // all later phases.
     if let Some(which) = game_assets.essential_failure(&assets) {
         panic!("Essential asset failed to load: {which}");
     }
-    if !(game_assets.essentials_loaded(&assets) && game_assets.maps_settled(&assets)) {
+
+    // Phase 2: once the essentials are loaded and every map has settled (loaded
+    // or failed — never blocking boot on an individual map), discover the
+    // image-layer PNGs the loaded maps reference and start loading them. We only
+    // know a map's image paths after it parses, so this can't be folded into
+    // phase 1. `map_images` going from `None` to `Some` is the phase-2-done flag.
+    if game_assets.map_images.is_none() {
+        if !(game_assets.essentials_loaded(&assets) && game_assets.maps_settled(&assets)) {
+            return;
+        }
+        let mut map_images = Vec::new();
+        for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
+            let Some(map) = maps.get(handle) else { continue };
+            for rel_path in map.0.image_layer_paths() {
+                // Image paths are authored relative to the map file, which lives
+                // in `maps/`; resolve under it (e.g. `images/bedroom1_mask.png`
+                // → `maps/images/bedroom1_mask.png`).
+                let handle = assets.load(format!("maps/{rel_path}"));
+                map_images.push(MapImage {
+                    map_name: name.clone(),
+                    rel_path: rel_path.to_string(),
+                    handle,
+                });
+            }
+        }
+        info!("Discovered {} image-layer PNG(s) across maps.", map_images.len());
+        game_assets.map_images = Some(map_images);
+        return;
+    }
+
+    // Phase 3: install once those image handles have also settled (same
+    // never-wedge rule — a missing/failed PNG just leaves its layer pixel-less).
+    if !game_assets.images_settled(&assets) {
         return;
     }
     let (Some(font), Some(sheet)) = (images.get(&game_assets.font), images.get(&game_assets.sheet))
@@ -342,12 +416,17 @@ fn load_assets(
     // that drawing, collision and the editor all read. RESILIENCE: each map is
     // installed independently; one that failed to load/parse (these five were
     // authored in Tiled 1.8–1.10 and never been through our parser) is logged
-    // and skipped, so it can't block boot or panic this system.
+    // and skipped, so it can't block boot or panic this system. Each loaded map
+    // also gets its image-layer pixels attached (decoded from the phase-2 PNGs)
+    // BEFORE it lands in the store, so the runtime sees its painted bg/mask.
+    let map_images = game_assets.map_images.as_deref().unwrap_or_default();
     let mut loaded = Vec::new();
     for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
         match maps.get(handle) {
             Some(map) => {
-                state.state.maps.insert(name.clone(), map.0.clone());
+                let mut map = map.0.clone();
+                attach_map_images(&mut map, name, map_images, &images);
+                state.state.maps.insert(name.clone(), map);
                 loaded.push(name.clone());
             }
             None => warn!("Skipping map `{name}` (failed to load or parse)."),
@@ -361,6 +440,32 @@ fn load_assets(
     info!("Finished loading assets.");
     commands.remove_resource::<GameAssets>();
     commands.remove_resource::<Manifest>();
+}
+
+/// Attach the decoded image-layer pixels to `map` (keyed `name`) before it's
+/// inserted into the store: for each [`MapImage`] of this map that loaded, the
+/// Bevy `Image` is converted to the engine's `RgbaImage` and handed to
+/// [`egg_core::data::tmj::TiledMap::attach_image`]. An image that failed to load
+/// (no entry in `images`) is logged and skipped — its layer keeps no pixels, so
+/// it simply doesn't draw and contributes empty collision.
+fn attach_map_images(
+    map: &mut TiledMap,
+    name: &str,
+    map_images: &[MapImage],
+    images: &Assets<Image>,
+) {
+    for img in map_images.iter().filter(|m| m.map_name == name) {
+        match images.get(&img.handle) {
+            Some(image) => {
+                let pixels = FantasyConsole::sprites_from_image(image);
+                map.attach_image(&img.rel_path, pixels);
+            }
+            None => warn!(
+                "Image layer PNG `{}` for map `{name}` failed to load; layer has no pixels.",
+                img.rel_path
+            ),
+        }
+    }
 }
 
 /// The script handle for a language requested at runtime, while it loads.

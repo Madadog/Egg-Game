@@ -96,13 +96,19 @@ impl WalkaroundState {
     /// Loads a map from given data
     pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
         let map_set = map_set.into();
-        let map1 = &map_set
-            .layers
-            .first()
-            .expect("Tried to load an empty map...");
+        // The camera frames the first bg layer's area. Tile-first maps keep their
+        // historical sizing (layer 0 is the collision tile layer at offset 0); a
+        // pure-painted map sizes from its first image layer instead. A layer with
+        // no positive size (e.g. a collision mask whose pixels never loaded) is
+        // skipped so `from_map_size`'s positive-size assert can't trip; if nothing
+        // sizable remains we keep the existing camera rather than panicking.
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
-        } else {
+        } else if let Some(map1) = map_set
+            .layers
+            .iter()
+            .find(|l| l.size.x.is_positive() && l.size.y.is_positive())
+        {
             self.camera = Camera::from_map_size(
                 map1.size,
                 map1.offset,
