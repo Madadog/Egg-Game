@@ -31,7 +31,33 @@ use egg_core::drawstate::DrawState;
 use egg_core::gamestate::mapeditor::MapViewer;
 use egg_core::position::Vec2 as EggVec2;
 
-use crate::{EggGame, new_screen_image};
+use crate::EggGame;
+use crate::fantasy_console::{MIN_FB_H, MIN_FB_W, new_screen_image};
+
+/// Extra-view windows plugin. Owns the [`ViewWindows`] resource and the
+/// view-management systems.
+///
+/// Registers:
+/// * `Update`: [`view_hotkeys`] (edge-triggered per-view `L`/`F3`),
+///   [`resize_views`] (scale each view's sprite to its window), and
+///   [`handle_closed_views`] (reap a view closed via its OS button) — registered
+///   unordered, exactly as in the original `main.rs` Update tuple.
+///
+/// The per-fixed-step [`update_views`] is *not* added here: it is a member of
+/// the single ordered `FixedUpdate` chain assembled by `CorePlugin` in
+/// `main.rs` (its position after `step_state` is load-bearing — `step_state`
+/// maps the focused window's cursor before this renders each view), so it must
+/// be registered there to keep that ordering.
+pub struct ViewsPlugin;
+
+impl Plugin for ViewsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ViewWindows>().add_systems(
+            Update,
+            (view_hotkeys, resize_views, handle_closed_views),
+        );
+    }
+}
 
 /// Marker for an extra view's screen sprite. Deliberately distinct from the main
 /// window's `GameScreenSprite` so the main `update_texture`/`resize_screen`
@@ -398,7 +424,7 @@ pub fn update_views(
             view.draw_state.resize(target.0, target.1);
             view.output = egg_core::system::drawing::image::RgbaImage::new(target.0, target.1);
             if let Some(image) = images.get_mut(&view.image) {
-                *image = crate::new_screen_image(target.0, target.1);
+                *image = new_screen_image(target.0, target.1);
             }
         }
     }
@@ -442,8 +468,8 @@ pub fn update_views(
 pub fn view_fb_size(window_w: f32, window_h: f32, scale: u32) -> (u32, u32) {
     let n = scale.max(1);
     (
-        (window_w as u32 / n).max(crate::MIN_FB_W),
-        (window_h as u32 / n).max(crate::MIN_FB_H),
+        (window_w as u32 / n).max(MIN_FB_W),
+        (window_h as u32 / n).max(MIN_FB_H),
     )
 }
 
@@ -505,10 +531,7 @@ mod tests {
         // Ratio 1 mirrors the window exactly.
         assert_eq!(view_fb_size(640.0, 480.0, 1), (640, 480));
         // Tiny window / large ratio is floored at the Mirror-mode minimum.
-        assert_eq!(
-            view_fb_size(100.0, 100.0, 8),
-            (crate::MIN_FB_W, crate::MIN_FB_H)
-        );
+        assert_eq!(view_fb_size(100.0, 100.0, 8), (MIN_FB_W, MIN_FB_H));
         // A zero ratio is treated as 1, not a divide-by-zero.
         assert_eq!(view_fb_size(320.0, 240.0, 0), (320, 240));
     }

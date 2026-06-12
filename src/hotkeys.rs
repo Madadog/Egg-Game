@@ -17,6 +17,21 @@ use egg_core::gamestate::GameMode;
 
 use crate::{EggGame, ScaleMode, ScreenMode, views};
 
+/// Primary-window debug/control hotkeys plugin.
+///
+/// Registers:
+/// * `Update`: [`primary_hotkeys`] (window/screen modes, `F8` view spawning,
+///   pause/single-step, and the debug/cheat toggles). The `Update` schedule is
+///   required for correctness — see the module docs on why edge-triggered keys
+///   must not live in `FixedUpdate`.
+pub struct HotkeysPlugin;
+
+impl Plugin for HotkeysPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, primary_hotkeys);
+    }
+}
+
 /// Primary-window hotkeys: window/screen modes, F8 view spawning, pause, and
 /// the debug/cheat toggles. The same suppression rules `step_state` applies to
 /// its held keys (editor typing, window focus, editor-owns-keyboard) come from

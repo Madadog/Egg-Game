@@ -1,6 +1,19 @@
+//! The console host: the engine's [`ConsoleApi`] implementation
+//! ([`FantasyConsole`]) plus the Bevy systems that present its output — the
+//! screen framebuffer (camera + screen sprite, blit, Fit/Mirror resizing) and
+//! the audio (sfx/music playback). The console produces a pixel buffer and a
+//! sound/music queue each frame; everything here turns that into what the player
+//! sees and hears, so the visual-present and audio-present systems live together
+//! as [`ConsolePlugin`]. The cross-Bevy→engine input conversion
+//! ([`crate::keycode_to_scancode`]) is the one console-I/O helper that stays in
+//! `main.rs`, next to its sole caller (`step_state`).
+
 use std::collections::HashMap;
 
-use bevy::prelude::{Image, info};
+use bevy::asset::RenderAssetUsages;
+use bevy::platform::collections::HashMap as BevyHashMap;
+use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::{
     data::sound::music::MusicTrack,
     gamestate::EggInput,
@@ -11,6 +24,8 @@ use egg_core::{
         drawing::image::{IndexedImage, RgbaImage},
     },
 };
+
+use crate::{EggGame, ScaleMode, ScreenMode};
 
 // TODO:
 // Load interactables from tiled maps
@@ -314,4 +329,237 @@ fn local_storage() -> Option<web_sys::Storage> {
             None
         }
     }
+}
+
+/// Console output presentation: turns the console's per-frame framebuffer and
+/// sound queue into what the player sees and hears.
+///
+/// Registers:
+/// * `Startup`: [`setup`] (spawns the 2D camera and the main screen sprite).
+/// * `Update`: [`resize_screen`] (reconcile the framebuffer/sprite with the
+///   window + screen mode).
+///
+/// The per-fixed-step presentation systems ([`play_sounds`], [`play_music`],
+/// [`update_texture`]) are deliberately *not* added here: they are tail members
+/// of the single ordered `FixedUpdate` chain (`step_state → update_views →
+/// play_sounds → play_music → update_texture`), which spans domains and is
+/// assembled as one `.chain()` by `CorePlugin` in `main.rs` to keep that strict
+/// ordering. The [`SfxAssets`] resource they read is inserted by the asset
+/// loader (`setup_assets`).
+pub struct ConsolePlugin;
+
+impl Plugin for ConsolePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup)
+            .add_systems(Update, resize_screen);
+    }
+}
+
+fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    commands.spawn(Camera2d);
+    let screen_handle = images.add(new_screen_image(WIDTH as u32, HEIGHT as u32));
+    commands.spawn((
+        Sprite {
+            image: screen_handle.clone(),
+            ..default()
+        },
+        Transform::from_xyz(0., 0., 0.),
+        GameScreenSprite,
+    ));
+}
+
+#[derive(Debug, Resource)]
+pub struct SfxAssets {
+    pub sounds: BevyHashMap<String, Handle<AudioSource>>,
+}
+impl SfxAssets {
+    pub fn new(assets: &AssetServer) -> Self {
+        let sfx = |name: &str| -> (String, Handle<AudioSource>) {
+            (name.to_string(), assets.load(format!("sfx/{}.ogg", name)))
+        };
+        let sounds = BevyHashMap::from_iter([
+            sfx("1_piano"),
+            sfx("2_obtained"),
+            sfx("3_deny"),
+            sfx("4_alert_up"),
+            sfx("5_alert_down"),
+            sfx("6_save"),
+            sfx("7_reject"),
+            sfx("8_item_up"),
+            sfx("9_item_swap"),
+            sfx("10_item_down"),
+            sfx("11_interact"),
+            sfx("12_bip"),
+            sfx("13_door"),
+            sfx("14_pop"),
+            sfx("15_click_pop"),
+            sfx("16_fanfare"),
+            sfx("17_gain"),
+            sfx("18_loss"),
+            sfx("19_stairs_down"),
+            sfx("20_stairs_up"),
+            sfx("21_footstep_plain"),
+        ]);
+        Self { sounds }
+    }
+}
+
+/// Standard audio playback at the game's mixing volume.
+fn playback_settings(mode: bevy::audio::PlaybackMode, speed: f32) -> PlaybackSettings {
+    PlaybackSettings {
+        mode,
+        volume: bevy::audio::Volume::Decibels(-6.0),
+        speed,
+        paused: false,
+        ..Default::default()
+    }
+}
+
+pub fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggGame>) {
+    for (name, options) in state.system.sounds() {
+        if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
+            let speed =
+                2.0_f32.powf((options.note as f32 + (options.octave as f32 - 5.0) * 12.0) / 12.0);
+            commands.spawn((
+                AudioPlayer(sound.clone()),
+                playback_settings(bevy::audio::PlaybackMode::Despawn, speed),
+            ));
+        } else {
+            panic!("Unknown sound \"{name:?}\" with {options:?}")
+        }
+    }
+    state.system.sounds().clear();
+}
+
+pub fn play_music(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut AudioSink), With<MusicPlayer>>,
+    mut state: ResMut<EggGame>,
+    assets: Res<AssetServer>,
+) {
+    if let Some((x, playing)) = state.system.music_track() {
+        if query.is_empty() && !*playing {
+            let music: Handle<AudioSource> = assets.load(format!("music/{}.ogg", x.id));
+            commands.spawn((
+                AudioPlayer(music.clone()),
+                playback_settings(bevy::audio::PlaybackMode::Loop, 1.0),
+                MusicPlayer,
+            ));
+            *playing = true;
+        }
+    } else {
+        for (entity, sink) in query.iter_mut() {
+            commands.entity(entity).despawn();
+            sink.stop();
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct MusicPlayer;
+
+#[derive(Component)]
+pub struct GameScreenSprite;
+
+pub fn update_texture(
+    state: ResMut<EggGame>,
+    mut images: ResMut<Assets<Image>>,
+    mut border_colour: ResMut<ClearColor>,
+    sprite: Query<&Sprite, With<GameScreenSprite>>,
+) {
+    for sprite in sprite.iter() {
+        state.system.blit_to_image(
+            images
+                .get_mut(&sprite.image)
+                .unwrap()
+                .data
+                .as_mut()
+                .expect("Main screen texture uninitialized, can't draw game."),
+        );
+    }
+    // Use the current default palette's first colour for the border surround.
+    if let Some(colour) = state.state.draw_state.palettes[0].first() {
+        border_colour.0 = Color::srgb_u8(colour[0], colour[1], colour[2]);
+    }
+}
+
+/// Smallest framebuffer Mirror mode will allocate, so a tiny window or a large
+/// scale factor can't produce a degenerate (or zero-sized) screen.
+pub const MIN_FB_W: u32 = 64;
+pub const MIN_FB_H: u32 = 48;
+
+/// A fresh black RGBA screen texture of `width`×`height`. Shared by [`setup`] and
+/// the resize path so the format/usages always match.
+pub fn new_screen_image(width: u32, height: u32) -> Image {
+    Image::new_fill(
+        Extent3d {
+            width,
+            height,
+            ..default()
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
+    )
+}
+
+/// Integer/linear scale factor that fits the framebuffer into `window` (Fit mode).
+pub fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
+    let fit = (window.width() / WIDTH as f32).min(window.height() / HEIGHT as f32);
+    match mode {
+        // Never floor to 0 — a window smaller than the base resolution would
+        // otherwise scale the screen out of existence.
+        ScaleMode::Integer => fit.floor().max(1.0),
+        ScaleMode::Linear => fit,
+    }
+}
+
+/// Reconcile the framebuffer with the active screen mode + window size, then
+/// scale the screen sprite so it fills the window. In `Fit` the framebuffer
+/// stays at the base resolution and the sprite scales to fit; in `Mirror` the
+/// framebuffer follows the window (÷ `mirror_scale`) and the sprite scales by
+/// exactly that integer factor (crisp N×N pixels).
+fn resize_screen(
+    mut sprite: Query<(&Sprite, &mut Transform), With<GameScreenSprite>>,
+    mut window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    mut images: ResMut<Assets<Image>>,
+    mut game: ResMut<EggGame>,
+) {
+    // The main framebuffer follows the PRIMARY window only; extra view windows
+    // are sized independently by `views::resize_views`.
+    let Ok(mut window) = window.single_mut() else {
+        return;
+    };
+    window.resolution.set_scale_factor_override(Some(1.0));
+    let Ok((sprite, mut transform)) = sprite.single_mut() else {
+        return;
+    };
+
+    let (target, scale) = match game.screen_mode {
+        ScreenMode::Fit => (
+            (WIDTH as u32, HEIGHT as u32),
+            screen_scale(&window, &game.scale_mode),
+        ),
+        ScreenMode::Mirror => {
+            let n = game.mirror_scale.max(1);
+            let w = (window.width() as u32 / n).max(MIN_FB_W);
+            let h = (window.height() as u32 / n).max(MIN_FB_H);
+            ((w, h), n as f32)
+        }
+    };
+
+    // Resize the three lock-step buffers (console screen, draw layers, GPU
+    // texture) together, only when the size actually changes — `blit_to_image`
+    // copies the screen verbatim, so all three must match.
+    if (game.system.width() as u32, game.system.height() as u32) != target {
+        let g = &mut *game;
+        g.system.resize_screen(target.0, target.1);
+        g.state.draw_state.resize(target.0, target.1);
+        if let Some(image) = images.get_mut(&sprite.image) {
+            *image = new_screen_image(target.0, target.1);
+        }
+    }
+
+    transform.scale = Vec3::new(scale, scale, 1.0);
 }
