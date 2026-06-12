@@ -12,7 +12,7 @@
 use crate::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
 use crate::interact::{InteractFn, Interaction};
-use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Warp, WarpMode};
+use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Trigger, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
 use serde::{Deserialize, Serialize};
@@ -139,15 +139,27 @@ impl TiledObject {
     ///    [`hitbox`](Self::hitbox)) — the object is skipped.
     fn to_object(&self) -> Option<MapObject> {
         let hitbox = self.hitbox()?;
-        if let Some(warp) = self.to_warp() {
-            Some(MapObject::warp(hitbox, warp))
+        let object = if let Some(warp) = self.to_warp() {
+            MapObject::warp(hitbox, warp)
         } else if let Some(func) = self.to_func() {
-            let object = MapObject::func(hitbox, func);
-            Some(self.attach_sprite(object))
+            self.attach_sprite(MapObject::func(hitbox, func))
         } else if let Some(object) = self.to_interactable() {
-            Some(object)
+            object
         } else {
-            self.to_sprite_only(hitbox)
+            self.to_sprite_only(hitbox)?
+        };
+        Some(self.apply_trigger(object))
+    }
+    /// Override the object's trigger from an optional `trigger` property
+    /// (`"touch"`/`"press"`/`"any"`, case-insensitive), parsed for any object
+    /// kind. An absent or unrecognised value leaves the effect-kind default the
+    /// constructor picked (so an unknown value is silently ignored — the door
+    /// still works on its default trigger rather than breaking the map). Inverse
+    /// of the trigger half of [`object_to_tmj`].
+    fn apply_trigger(&self, object: MapObject) -> MapObject {
+        match self.prop("trigger").map(parse_trigger) {
+            Some(Some(trigger)) => object.with_trigger(trigger),
+            _ => object,
         }
     }
     /// Build a function interaction if this object carries a `func` property
@@ -183,8 +195,10 @@ impl TiledObject {
     /// warp properties): `to_map` (a map name, taken verbatim — numeric values
     /// from old files resolve through `map_by_name`'s fallback; absent = same
     /// map), `to_x`/`to_y` (destination pixels, default = the object's own
-    /// position), `flip`, `mode` (`auto`/`interact`), `sound`. The trigger
-    /// hitbox lives on the owning [`MapObject`], so it isn't built here.
+    /// position), `flip`, `mode` (`auto`/`interact`), `sound`, and `narration`
+    /// (a pre-warp dialogue key; absent/empty = none). The trigger hitbox lives
+    /// on the owning [`MapObject`], and the `trigger` axis is applied there too
+    /// (see [`apply_trigger`](Self::apply_trigger)), so neither is built here.
     fn to_warp(&self) -> Option<Warp> {
         let is_warp = self.class.eq_ignore_ascii_case("warp")
             || self.prop("to_map").is_some()
@@ -207,6 +221,9 @@ impl TiledObject {
         }
         if let Some(sound) = self.prop("sound").and_then(parse_sound) {
             warp = warp.with_sound(sound);
+        }
+        if let Some(key) = self.prop("narration").filter(|s| !s.is_empty()) {
+            warp = warp.with_narration(key);
         }
         Some(warp)
     }
@@ -232,6 +249,30 @@ fn parse_axis(s: &str) -> Axis {
         "y" => Axis::Y,
         "both" => Axis::Both,
         _ => Axis::None,
+    }
+}
+
+/// Parse a `trigger` property into a [`Trigger`]. `None` for an unrecognised
+/// value, so the caller can fall back to the effect-kind default rather than
+/// guess. Inverse of [`trigger_name`].
+fn parse_trigger(s: &str) -> Option<Trigger> {
+    Some(match s.to_ascii_lowercase().as_str() {
+        "touch" => Trigger::Touch,
+        "press" => Trigger::Press,
+        "any" => Trigger::Any,
+        _ => return None,
+    })
+}
+
+/// The `trigger` property name for a [`Trigger`]. Always `Some` (every variant
+/// has a spelling); the *caller* decides whether to emit it, serialising the
+/// property only when the trigger differs from the effect-kind default so files
+/// with no authored trigger round-trip byte-stable. Inverse of [`parse_trigger`].
+fn trigger_name(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::Touch => "touch",
+        Trigger::Press => "press",
+        Trigger::Any => "any",
     }
 }
 
@@ -279,17 +320,28 @@ fn sound_name(sfx: &SfxData) -> Option<&'static str> {
 /// `type: "warp"` + warp properties; a named `func` interaction with `func` +
 /// its scalar props; a dialogue interaction with `description`; a bare
 /// [`Interaction::None`] that carries a sprite as a `sprite`-only object — all
-/// with the object's optional `sprite` tile id. The cases that have no Tiled
-/// spelling — an unnamed func ([`InteractFn::Pet`](crate::interact::InteractFn::Pet)),
+/// with the object's optional `sprite` tile id, plus a `trigger` property when
+/// the object's trigger differs from its effect-kind default (so an unauthored
+/// trigger emits nothing and the file stays byte-stable). The cases that have no
+/// Tiled spelling — an unnamed func ([`InteractFn::Pet`](crate::interact::InteractFn::Pet)),
 /// or a sprite-less [`Interaction::None`] — return `None` (the caller counts
 /// them dropped).
 fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
-    match &object.effect {
-        ObjectEffect::Warp(warp) => Some(warp_to_object(object.hitbox, warp, id)),
+    let mut value = match &object.effect {
+        ObjectEffect::Warp(warp) => warp_to_object(object.hitbox, warp, id),
         ObjectEffect::Interact(interaction) => {
-            interaction_to_object(object.hitbox, interaction, object.sprite.as_deref(), id)
+            interaction_to_object(object.hitbox, interaction, object.sprite.as_deref(), id)?
         }
+    };
+    // Trigger lives on the object (either kind) and is serialised only when it
+    // differs from the effect-kind default, so files with no authored trigger
+    // round-trip byte-stable. Appended after the effect's own properties.
+    if object.trigger != Trigger::default_for(&object.effect)
+        && let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut)
+    {
+        properties.push(prop_str("trigger", trigger_name(object.trigger)));
     }
+    Some(value)
 }
 
 /// Serialise a warp effect as a Tiled object (`type: "warp"` + warp properties),
@@ -309,6 +361,9 @@ fn warp_to_object(hitbox: Hitbox, warp: &Warp, id: usize) -> Value {
     }
     if let Some(name) = warp.sound.as_ref().and_then(sound_name) {
         properties.push(prop_str("sound", name));
+    }
+    if let Some(key) = &warp.narration {
+        properties.push(prop_str("narration", key));
     }
     json!({
         "id": id, "name": "", "type": "warp", "rotation": 0, "visible": true,
@@ -501,7 +556,7 @@ impl TiledMap {
 mod tests {
     use super::{TiledMap, TiledMapLayer, from_json};
     use crate::interact::{InteractFn, Interaction};
-    use crate::map::{MapObject, ObjectEffect, WarpMode};
+    use crate::map::{MapObject, ObjectEffect, Trigger, WarpMode};
 
     /// The destination-map name of an object's warp effect, or `None` if it
     /// isn't a warp.
@@ -853,5 +908,130 @@ mod tests {
             (objects2[0].hitbox.x, objects2[0].hitbox.y),
             (8, 16),
         );
+    }
+
+    /// The pre-warp narration key of an object's warp effect, if it has one.
+    fn warp_narration(object: &MapObject) -> Option<&str> {
+        match &object.effect {
+            ObjectEffect::Warp(w) => w.narration.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// One object-layer map from a single object's `(type, [properties])` —
+    /// scaffolding for the trigger/narration property tests.
+    fn one_object_map(class: &str, properties: &str) -> TiledMap {
+        let json = format!(
+            r#"{{
+                "width": 2, "height": 2,
+                "tilesets": [{{"firstgid": 1, "source": "tiles.tsj"}}],
+                "layers": [{{
+                    "type": "objectgroup", "name": "Object Layer 1",
+                    "objects": [{{
+                        "x": 8, "y": 8, "width": 8, "height": 8, "type": "{class}",
+                        "properties": [{properties}]
+                    }}]
+                }}]
+            }}"#
+        );
+        from_json(json.as_bytes()).unwrap()
+    }
+
+    /// A `trigger` property parses on *any* object kind and overrides the
+    /// effect-kind default; an absent or unrecognised value keeps the default.
+    #[test]
+    fn parses_trigger_property() {
+        // Explicit trigger on a warp (whose default is Any) and an interaction
+        // (whose default is Press).
+        let warp = one_object_map(
+            "warp",
+            r#"{"name":"to_map","type":"string","value":"a"},
+               {"name":"trigger","type":"string","value":"touch"}"#,
+        );
+        assert_eq!(warp.parse_objects()[0].trigger, Trigger::Touch);
+        let dialogue = one_object_map(
+            "",
+            r#"{"name":"description","type":"string","value":"k"},
+               {"name":"trigger","type":"string","value":"any"}"#,
+        );
+        assert_eq!(dialogue.parse_objects()[0].trigger, Trigger::Any);
+
+        // Absent → effect-kind default (warp = Any, interaction = Press).
+        let warp_def = one_object_map("warp", r#"{"name":"to_map","type":"string","value":"a"}"#);
+        assert_eq!(warp_def.parse_objects()[0].trigger, Trigger::Any);
+        let dialogue_def =
+            one_object_map("", r#"{"name":"description","type":"string","value":"k"}"#);
+        assert_eq!(dialogue_def.parse_objects()[0].trigger, Trigger::Press);
+
+        // Unknown value → effect-kind default (silently ignored, door still works).
+        let bogus = one_object_map(
+            "warp",
+            r#"{"name":"to_map","type":"string","value":"a"},
+               {"name":"trigger","type":"string","value":"sideways"}"#,
+        );
+        assert_eq!(bogus.parse_objects()[0].trigger, Trigger::Any);
+    }
+
+    /// A *non-default* trigger serialises and round-trips, while a *default*
+    /// trigger emits no `trigger` property at all — so existing files (which
+    /// have none) stay byte-stable.
+    #[test]
+    fn tmj_round_trips_non_default_trigger_only() {
+        // Non-default: a press-triggered warp (default is Any).
+        let map = one_object_map(
+            "warp",
+            r#"{"name":"to_map","type":"string","value":"a"},
+               {"name":"trigger","type":"string","value":"press"}"#,
+        );
+        let objects = map.parse_objects();
+        assert_eq!(objects[0].trigger, Trigger::Press);
+        let out = map.to_tmj(&objects);
+        assert!(out.contains("\"trigger\""), "non-default trigger is serialised");
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert_eq!(reloaded.parse_objects()[0].trigger, Trigger::Press);
+
+        // Default: a warp left at Any emits no `trigger` property.
+        let def = one_object_map("warp", r#"{"name":"to_map","type":"string","value":"a"}"#);
+        let def_objects = def.parse_objects();
+        assert_eq!(def_objects[0].trigger, Trigger::Any);
+        let def_out = def.to_tmj(&def_objects);
+        assert!(
+            !def_out.contains("\"trigger\""),
+            "a default trigger must not be serialised (byte-stable round-trip)"
+        );
+        // And a default-trigger interaction likewise emits nothing.
+        let di = one_object_map("", r#"{"name":"description","type":"string","value":"k"}"#);
+        let di_objects = di.parse_objects();
+        assert!(!di.to_tmj(&di_objects).contains("\"trigger\""));
+    }
+
+    /// A warp `narration` key round-trips (absent → `None`, present → the key),
+    /// and an empty narration value is treated as absent.
+    #[test]
+    fn tmj_round_trips_warp_narration() {
+        let map = one_object_map(
+            "warp",
+            r#"{"name":"to_map","type":"string","value":"a"},
+               {"name":"narration","type":"string","value":"door_creaks"}"#,
+        );
+        let objects = map.parse_objects();
+        assert_eq!(warp_narration(&objects[0]), Some("door_creaks"));
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert_eq!(warp_narration(&reloaded.parse_objects()[0]), Some("door_creaks"));
+
+        // Absent narration → None, and nothing serialised.
+        let plain = one_object_map("warp", r#"{"name":"to_map","type":"string","value":"a"}"#);
+        let plain_objects = plain.parse_objects();
+        assert_eq!(warp_narration(&plain_objects[0]), None);
+        assert!(!plain.to_tmj(&plain_objects).contains("narration"));
+
+        // An empty value is treated as no narration.
+        let empty = one_object_map(
+            "warp",
+            r#"{"name":"to_map","type":"string","value":"a"},
+               {"name":"narration","type":"string","value":""}"#,
+        );
+        assert_eq!(warp_narration(&empty.parse_objects()[0]), None);
     }
 }

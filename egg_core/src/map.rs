@@ -309,20 +309,108 @@ impl From<LayerInfo> for MapOptions {
     }
 }
 
-/// A triggerable object placed on a map: a hitbox, the effect it fires, and an
-/// optional animated sprite drawn at its location. Unifies the old separate
-/// "warp" and "interactable" object kinds into one list (see [`MapInfo::objects`]).
+/// How a [`MapObject`] is triggered — the *authored geometry* half of the firing
+/// decision (the map author's intent for this object), independent of the effect
+/// kind and of any player preference:
+/// - [`Touch`](Self::Touch) — fires only when the player's body overlaps the
+///   hitbox (a step-on trigger);
+/// - [`Press`](Self::Press) — fires only when the player presses the interact
+///   button while facing into the hitbox;
+/// - [`Any`](Self::Any) — fires on either path.
 ///
-/// Trigger semantics currently derive purely from the effect kind:
-/// - [`ObjectEffect::Warp`] fires on body-touch **or** a facing-direction press;
-/// - [`ObjectEffect::Interact`] fires only on a facing-direction press.
+/// Defaults preserve the historical effect-driven behaviour and are set by the
+/// constructors, not by `Default`: warps default to [`Any`](Self::Any) (a door
+/// you can walk into or press), interactions to [`Press`](Self::Press) (a sign
+/// you must face and read). See [`MapObject`] for how this composes with the
+/// effect kind, the warp [`WarpMode`], and warp narration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Trigger {
+    /// Fires on body-touch only.
+    Touch,
+    /// Fires on a facing-direction interact press only.
+    #[default]
+    Press,
+    /// Fires on either body-touch or a facing press.
+    Any,
+}
+impl Trigger {
+    /// Whether this trigger fires on body-touch.
+    pub fn allows_touch(self) -> bool {
+        matches!(self, Self::Touch | Self::Any)
+    }
+    /// Whether this trigger fires on a facing interact press.
+    pub fn allows_press(self) -> bool {
+        matches!(self, Self::Press | Self::Any)
+    }
+    /// The trigger an effect of `effect`'s kind defaults to when none is
+    /// authored: warps to [`Any`](Self::Any), interactions to
+    /// [`Press`](Self::Press). The single source of truth shared by
+    /// [`MapObject::new`] and the `.tmj` codec (which serialises a trigger only
+    /// when it differs from this default, keeping existing files byte-stable).
+    pub fn default_for(effect: &ObjectEffect) -> Self {
+        match effect {
+            ObjectEffect::Warp(_) => Self::Any,
+            ObjectEffect::Interact(_) => Self::Press,
+        }
+    }
+
+    /// Whether an **interaction** with this trigger fires, given whether the
+    /// player is touching the hitbox, whether they were already inside it last
+    /// frame (`was_inside`), and whether they pressed-and-faced it (`probed`).
+    ///
+    /// The touch path is **edge-triggered** (fires only on *entering* the
+    /// hitbox), so a step-on dialogue plays once rather than every frame the
+    /// player stands in it. The press path is level-triggered as usual. Warps
+    /// don't use this asymmetry — their teleport exits the hitbox immediately, so
+    /// they re-evaluate touch every frame (see [`Self::warp_fires`]).
+    pub fn interaction_fires(self, touched: bool, was_inside: bool, probed: bool) -> bool {
+        (self.allows_touch() && touched && !was_inside) || (self.allows_press() && probed)
+    }
+
+    /// Whether a **warp** with this trigger fires, composing the authored trigger
+    /// with the player's manual-doors preference and the warp's [`WarpMode`].
+    ///
+    /// The touch path is level-triggered (a warp re-evaluates touch every frame
+    /// because teleporting exits the hitbox) and is **suppressed** only when the
+    /// player opted into manual doors (`manual_doors`) *and* this is an
+    /// `Interact`-mode warp; `Auto`-mode warps always keep their touch path. The
+    /// press path is never suppressed.
+    pub fn warp_fires(self, touched: bool, probed: bool, mode: &WarpMode, manual_doors: bool) -> bool {
+        let touch_suppressed = manual_doors && matches!(mode, WarpMode::Interact);
+        (self.allows_touch() && touched && !touch_suppressed) || (self.allows_press() && probed)
+    }
+}
+
+/// A triggerable object placed on a map: a hitbox, the effect it fires, the
+/// trigger axis that decides *how* it fires, and an optional animated sprite
+/// drawn at its location. Unifies the old separate "warp" and "interactable"
+/// object kinds into one list (see [`MapInfo::objects`]).
 ///
-/// A future task adds a data-driven trigger axis (touch vs. press) on the object
-/// itself; until then the effect kind alone decides.
+/// Three orthogonal knobs compose into whether (and how) an object fires, in the
+/// walk loop's object pass:
+/// - **`trigger`** ([`Trigger`]) is *authored geometry* — the map author's
+///   intent for this object: touch-only, press-only, or either. It is the only
+///   knob that decides the body-touch vs. facing-press paths.
+/// - the warp **[`WarpMode`]** is *player preference*: it modulates **only a
+///   warp's touch path**, and only when the player has opted into manual doors
+///   (`SaveData::manual_doors`) — an `Interact`-mode door then stops opening on
+///   touch, but its press path and every `Auto`-mode door are unaffected. It
+///   never touches interactions.
+/// - warp **narration** ([`Warp::narration`]) is *orthogonal*: it doesn't change
+///   when a warp fires, only what happens at fire time (show dialogue first, warp
+///   once it closes).
+///
+/// Defaults preserve historical behaviour: the constructors set `trigger` from
+/// the effect kind ([`Trigger::default_for`]) — warps [`Trigger::Any`],
+/// interactions [`Trigger::Press`] — so with no authored triggers and default
+/// save settings every map behaves exactly as before this axis existed.
 #[derive(Clone, Debug)]
 pub struct MapObject {
     pub hitbox: Hitbox,
     pub effect: ObjectEffect,
+    /// How this object fires (touch / press / either). Set by the constructors
+    /// from the effect kind; override with [`with_trigger`](Self::with_trigger).
+    pub trigger: Trigger,
     pub sprite: Option<Vec<AnimFrame>>,
 }
 
@@ -335,15 +423,21 @@ pub enum ObjectEffect {
 }
 
 impl MapObject {
-    pub const fn new(hitbox: Hitbox, effect: ObjectEffect, sprite: Option<Vec<AnimFrame>>) -> Self {
+    /// A map object whose `trigger` is the default for `effect`'s kind
+    /// ([`Trigger::default_for`]): warps fire on touch-or-press, interactions on
+    /// press only. Override afterwards with [`with_trigger`](Self::with_trigger).
+    pub fn new(hitbox: Hitbox, effect: ObjectEffect, sprite: Option<Vec<AnimFrame>>) -> Self {
+        let trigger = Trigger::default_for(&effect);
         Self {
             hitbox,
             effect,
+            trigger,
             sprite,
         }
     }
     /// A warp object: its `hitbox` is the trigger region, `warp` the destination.
-    pub const fn warp(hitbox: Hitbox, warp: Warp) -> Self {
+    /// Defaults to [`Trigger::Any`] (walk into it or press), per [`MapObject::new`].
+    pub fn warp(hitbox: Hitbox, warp: Warp) -> Self {
         Self::new(hitbox, ObjectEffect::Warp(warp), None)
     }
     /// A tile-coordinate warp object (8px tiles), mirroring the old
@@ -366,6 +460,18 @@ impl MapObject {
     pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
         self.sprite = Some(frames);
         self
+    }
+    /// Override the trigger axis (touch / press / either), replacing the
+    /// effect-kind default the constructor picked.
+    pub fn with_trigger(mut self, trigger: Trigger) -> Self {
+        self.trigger = trigger;
+        self
+    }
+    /// Set the warp's pre-warp narration dialogue key (warp objects only): when
+    /// the warp fires it shows that dialogue first and only teleports once the
+    /// box closes. No-op on non-warp objects.
+    pub fn with_narration(self, key: &str) -> Self {
+        self.map_warp(|w| w.with_narration(key))
     }
     /// Run `f` over this object's inner [`Warp`] effect, if it is one — lets the
     /// legacy builders keep their old fluent `Warp` setters as a single chain off
@@ -390,12 +496,19 @@ impl MapObject {
     }
 }
 
-/// Defines how a warp is interacted with.
+/// The player-preference half of a warp's firing decision: whether the player
+/// must press to use the door, or it opens on touch. It modulates **only the
+/// warp's touch path**, and only when the player has opted into manual doors
+/// (`SaveData::manual_doors`):
+/// - [`Auto`](Self::Auto) — always opens on touch (and on press), regardless of
+///   the manual-doors setting;
+/// - [`Interact`](Self::Interact) — opens on touch *unless* `manual_doors` is
+///   set, in which case only the press path remains.
 ///
-/// Parsed from `.tmj`, edited in the map editor, and serialised back — but the
-/// walk loop does **not** consult it yet (warps fire on body-touch or a facing
-/// press regardless of mode). It's intentional future surface for an "automatic
-/// doors" setting, not dead code: keep parsing/editing/serialising it.
+/// The press path is never suppressed by the mode, and the mode never affects
+/// interactions — only warps. Orthogonal to the object's [`Trigger`] (authored
+/// geometry) and to warp narration. Parsed from `.tmj`, edited in the map
+/// editor, and serialised back.
 #[derive(Clone, Debug)]
 pub enum WarpMode {
     /// Automatically used when touched.
@@ -416,6 +529,12 @@ pub struct Warp {
     pub flip: Axis,
     pub mode: WarpMode,
     pub sound: Option<SfxData>,
+    /// Optional pre-warp narration: a dialogue-registry key. When set, firing the
+    /// warp shows that dialogue instead of teleporting immediately; the teleport
+    /// is deferred until the box closes (see the walk loop's `pending_warp`).
+    /// `None` (the default) warps land instantly, exactly as before. Orthogonal
+    /// to [`WarpMode`] and to the object's [`Trigger`].
+    pub narration: Option<String>,
 }
 
 impl Warp {
@@ -427,6 +546,7 @@ impl Warp {
             flip: Axis::None,
             mode: WarpMode::Interact,
             sound: None,
+            narration: None,
         }
     }
     pub fn with_flip(self, flip: Axis) -> Self {
@@ -438,6 +558,13 @@ impl Warp {
     pub fn with_sound(self, sound: SfxData) -> Self {
         Self {
             sound: Some(sound),
+            ..self
+        }
+    }
+    /// Set the pre-warp narration dialogue key (empty key clears it).
+    pub fn with_narration(self, key: &str) -> Self {
+        Self {
+            narration: (!key.is_empty()).then(|| key.to_string()),
             ..self
         }
     }
@@ -573,5 +700,98 @@ mod tests {
         assert!(!lab.layers[0].visible);
         assert_eq!(lab.layers[0].colliders.len(), 16);
         assert!(lab.fg_layers.is_empty());
+    }
+
+    /// The constructors set the trigger from the effect kind: warps default to
+    /// `Any` (walk-in or press), interactions (dialogue / func / sprite-only
+    /// None) to `Press`. This is what preserves pre-trigger behaviour.
+    #[test]
+    fn constructors_set_effect_kind_default_trigger() {
+        let hb = Hitbox::new(0, 0, 8, 8);
+        assert_eq!(
+            MapObject::warp(hb, Warp::new(None, Vec2::new(0, 0))).trigger,
+            Trigger::Any
+        );
+        assert_eq!(MapObject::warp_tile(0, 0, None, 1, 1).trigger, Trigger::Any);
+        assert_eq!(MapObject::dialogue(hb, "k").trigger, Trigger::Press);
+        assert_eq!(
+            MapObject::func(hb, InteractFn::ToggleDog).trigger,
+            Trigger::Press
+        );
+        // A bare Interact::None (sprite-only objects) is press-default too.
+        assert_eq!(
+            MapObject::new(hb, ObjectEffect::Interact(Interaction::None), None).trigger,
+            Trigger::Press
+        );
+        // `with_trigger` overrides it.
+        assert_eq!(
+            MapObject::dialogue(hb, "k").with_trigger(Trigger::Touch).trigger,
+            Trigger::Touch
+        );
+    }
+
+    /// `default_for` is the single source of truth both the constructors and the
+    /// `.tmj` "serialise only non-default" rule lean on.
+    #[test]
+    fn trigger_default_for_matches_constructors() {
+        assert_eq!(
+            Trigger::default_for(&ObjectEffect::Warp(Warp::new(None, Vec2::new(0, 0)))),
+            Trigger::Any
+        );
+        assert_eq!(
+            Trigger::default_for(&ObjectEffect::Interact(Interaction::None)),
+            Trigger::Press
+        );
+    }
+
+    /// The interaction firing rule is the truth table over `(trigger, touched,
+    /// was_inside, probed)`: touch is *edge-triggered* (fires only on entering),
+    /// press is level-triggered, and `Any` is their union.
+    #[test]
+    fn interaction_firing_truth_table() {
+        // Press-only: ignores touch entirely, fires iff probed.
+        assert!(!Trigger::Press.interaction_fires(true, false, false));
+        assert!(Trigger::Press.interaction_fires(false, false, true));
+        assert!(Trigger::Press.interaction_fires(true, true, true));
+
+        // Touch-only edge: fires on *entering* (touched && !was_inside), not while
+        // standing in it (touched && was_inside), and never on a press alone.
+        assert!(Trigger::Touch.interaction_fires(true, false, false));
+        assert!(!Trigger::Touch.interaction_fires(true, true, false));
+        assert!(!Trigger::Touch.interaction_fires(false, false, true));
+
+        // Any: union — entering fires, a press fires, but standing still (no
+        // press) does not re-fire.
+        assert!(Trigger::Any.interaction_fires(true, false, false));
+        assert!(Trigger::Any.interaction_fires(false, false, true));
+        assert!(!Trigger::Any.interaction_fires(true, true, false));
+    }
+
+    /// The warp firing rule truth table over `(trigger, touched, probed, mode,
+    /// manual_doors)`: touch is level-triggered and suppressed only when the
+    /// player opted into manual doors *and* the mode is `Interact`; the press
+    /// path is never suppressed; `Auto` warps always keep their touch path.
+    #[test]
+    fn warp_firing_truth_table() {
+        use WarpMode::{Auto, Interact};
+        // manual_doors == false (the default): behaves as before — touch or press
+        // fires regardless of mode.
+        assert!(Trigger::Any.warp_fires(true, false, &Interact, false));
+        assert!(Trigger::Any.warp_fires(true, false, &Auto, false));
+        assert!(Trigger::Any.warp_fires(false, true, &Interact, false));
+
+        // manual_doors == true: an Interact-mode warp's touch path is suppressed,
+        // but its press path still fires.
+        assert!(!Trigger::Any.warp_fires(true, false, &Interact, true));
+        assert!(Trigger::Any.warp_fires(false, true, &Interact, true));
+        // Auto-mode warps keep their touch path even with manual doors on.
+        assert!(Trigger::Any.warp_fires(true, false, &Auto, true));
+
+        // A Touch-only warp with manual doors + Interact mode can't fire at all
+        // (its only path is suppressed and it has no press path).
+        assert!(!Trigger::Touch.warp_fires(true, true, &Interact, true));
+        // A Press-only warp ignores touch entirely (mode/manual_doors irrelevant).
+        assert!(!Trigger::Press.warp_fires(true, false, &Auto, false));
+        assert!(Trigger::Press.warp_fires(false, true, &Interact, true));
     }
 }

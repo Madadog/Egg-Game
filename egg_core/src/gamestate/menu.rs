@@ -179,7 +179,7 @@ impl MenuState {
             Options => {
                 self.index = 0;
                 self.draw_title = Some("options_title");
-                self.entries = vec![MainMenu, FontSize, Reset(0)];
+                self.entries = vec![MainMenu, FontSize, AutoDoors, Reset(0)];
                 self.back_entry = Some(MainMenu);
             }
             MainMenu | ExitToMenu => {
@@ -187,6 +187,11 @@ impl MenuState {
             }
             FontSize => {
                 ctx.save.small_text_on = !ctx.save.small_text_on;
+            }
+            AutoDoors => {
+                // `manual_doors` is the stored preference; the menu phrases it
+                // positively ("automatic doors"), so the toggle inverts it.
+                ctx.save.manual_doors = !ctx.save.manual_doors;
             }
             Reset(x) => {
                 if *x == 0 {
@@ -310,6 +315,9 @@ pub enum MenuEntry {
     Options,
     MainMenu,
     FontSize,
+    /// Toggle `SaveData::manual_doors` — whether `Interact`-mode warps stop
+    /// opening on touch (see `Trigger::warp_fires`).
+    AutoDoors,
     Reset(u8),
     Inventory,
     ExitToMenu,
@@ -328,6 +336,7 @@ impl MenuEntry {
             Options => script.label("menu_options"),
             MainMenu => script.label("menu_back"),
             FontSize => script.label("options_font_size"),
+            AutoDoors => script.label("options_auto_doors"),
             Reset(x) => {
                 if *x == 0 {
                     script.label("options_reset")

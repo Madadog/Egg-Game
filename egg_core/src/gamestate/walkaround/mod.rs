@@ -38,6 +38,19 @@ pub struct WalkaroundState {
     pub cutscene: Option<Cutscene>,
     pub bg_colour: u8,
     pub default_map_colliders: Vec<Collider>,
+    /// Per-object "player was inside this hitbox last frame" latch, one slot per
+    /// [`MapInfo::objects`] entry (rebuilt each frame). Drives the *edge-trigger*
+    /// for touch-fired interactions: a step-on dialogue fires when the player
+    /// enters the hitbox, not every frame they stand in it. Rebuilt/cleared in
+    /// [`load_map`](Self::load_map). Warps don't consult it (teleport exits the
+    /// hitbox), so it tracks interaction objects' edges only.
+    inside_objects: Vec<bool>,
+    /// A warp whose narration is currently playing: it has fired and shown its
+    /// dialogue, but the teleport is deferred until the box closes. While this is
+    /// `Some` the whole object scan/apply is skipped, so the player standing in
+    /// the warp's hitbox with the box open can't re-fire it. Cleared on apply and
+    /// defensively in [`load_map`](Self::load_map).
+    pending_warp: Option<crate::map::Warp>,
 }
 impl Default for WalkaroundState {
     fn default() -> Self {
@@ -64,6 +77,8 @@ impl WalkaroundState {
             cutscene: None,
             bg_colour: 0,
             default_map_colliders: Vec::new(),
+            inside_objects: Vec::new(),
+            pending_warp: None,
         }
     }
 
@@ -109,6 +124,15 @@ impl WalkaroundState {
                 ..Animation::default()
             })
             .collect();
+
+        // Reset the per-object edge latch to the new map's object count, all
+        // "outside" — so a touch object the player happens to spawn inside still
+        // fires once on the first frame (entering counts from "was outside").
+        self.inside_objects.clear();
+        self.inside_objects.resize(map_set.objects.len(), false);
+        // Defensive: a debug map switch mid-narration must not carry a pending
+        // teleport onto the new map.
+        self.pending_warp = None;
 
         self.current_map = map_set;
 
@@ -296,6 +320,41 @@ impl WalkaroundState {
         }
     }
 
+    /// Apply a warp's teleport: move the player, set the destination control-flip,
+    /// refill the companion trail, and (for a cross-map warp) save + load the
+    /// destination. Does **not** play the warp sound — that fires once at trigger
+    /// time (see [`fire_warp`](Self::fire_warp)), so the narrated and un-narrated
+    /// paths play it at the same moment and the deferred apply stays silent.
+    fn apply_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::map::Warp) {
+        self.player().pos = warp.target();
+        self.player().flip_controls = warp.flip;
+        self.companion_trail
+            .fill(self.player_ref().pos, self.player_ref().dir);
+        if let Some(new_map) = warp.map {
+            self.save(&new_map, ctx.save);
+            self.load_map_by_name(ctx, &new_map);
+        }
+    }
+
+    /// Trigger a warp that the object scan picked as the winner: play its sound
+    /// (once, here, for both the immediate and narrated paths), then either show
+    /// its narration and stash the payload in
+    /// [`pending_warp`](Self::pending_warp) for the box-close apply, or teleport
+    /// straight away. The narrated branch resolves the dialogue exactly as the
+    /// interaction path does.
+    fn fire_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::map::Warp) {
+        if let Some(sound) = &warp.sound {
+            ctx.system.play_sound(sound.clone());
+        }
+        if let Some(key) = warp.narration.clone() {
+            let convo = ctx.get_dialogue(&key);
+            self.dialogue.set_messages(ctx.system, ctx.save, &convo);
+            self.pending_warp = Some(warp);
+        } else {
+            self.apply_warp(ctx, warp);
+        }
+    }
+
     pub fn step<S: ConsoleApi>(
         &mut self,
         ctx: &mut Ctx<S>,
@@ -424,25 +483,67 @@ impl WalkaroundState {
             .hitbox()
             .offset_xy(self.player().dir.0.into(), self.player().dir.1.into());
 
+        // A narrated warp has fired and is showing its dialogue: the player is
+        // standing in its hitbox with the box open, so the whole object pass is
+        // skipped until the box has *fully* closed (no current line and an empty
+        // queue) — otherwise the scan below would re-fire the same warp every
+        // frame. When it closes, take the stashed payload and teleport (the sound
+        // already played at fire time; this apply is silent). Skipping the dialogue
+        // with B empties the queue the same way, so it warps then too.
+        if self.pending_warp.is_some() {
+            let box_closed =
+                self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty();
+            if box_closed && let Some(warp) = self.pending_warp.take() {
+                self.apply_warp(ctx, warp);
+            }
+            self.camera.center_on(
+                self.player_ref().pos.x + 4,
+                self.player_ref().pos.y + 8,
+                ctx.system.width() as i16,
+                ctx.system.height() as i16,
+            );
+            return None;
+        }
+
         // Two-phase object trigger. Phase 1 only *reads*: it finds the winning
-        // warp and/or interaction by index, touching nothing. Phase 2 acts on the
-        // winner — and a warp's `load_map_by_name` replaces the very vec we scan,
-        // so the scan must finish (and not borrow the vec) before we apply.
+        // warp and/or interaction by index, touching nothing (beyond the
+        // per-object edge latch). Phase 2 acts on the winner — and a warp's
+        // `load_map_by_name` replaces the very vec we scan, so the scan must
+        // finish (and not borrow the vec) before we apply.
         //
-        // Trigger semantics by effect kind (a future task adds a data-driven
-        // axis): a warp fires on body-touch OR a facing-direction press; an
-        // interaction fires only on a facing press. Warp beats interaction.
+        // The firing rule composes three axes (see [`crate::map::MapObject`]):
+        // the object's authored [`Trigger`](crate::map::Trigger) decides the
+        // touch vs. press paths; a warp's [`WarpMode`](crate::map::WarpMode) plus
+        // the player's `manual_doors` preference can suppress a warp's touch path;
+        // narration is orthogonal. Interactions' touch path is *edge-triggered*
+        // (fires on entering the hitbox, via `inside_objects`) so a step-on
+        // dialogue plays once; warps re-evaluate touch every frame because the
+        // teleport exits the hitbox. Warp beats interaction.
         let player_hitbox = self.player_ref().hitbox();
+        let manual_doors = ctx.save.manual_doors;
+        // Keep the latch sized to the live object list (load_map syncs it, but an
+        // editor session can change the count) before reading last frame's edges.
+        self.inside_objects
+            .resize(self.current_map.objects.len(), false);
         let mut warp_hit = None;
         let mut interact_hit = None;
         for (i, object) in self.current_map.objects.iter().enumerate() {
             let touched = player_hitbox.touches(object.hitbox);
             let probed = interact && interact_hitbox.touches(object.hitbox);
+            let was_inside = self.inside_objects[i];
+            // Update the edge latch for next frame regardless of what fires.
+            self.inside_objects[i] = touched;
             match &object.effect {
-                ObjectEffect::Warp(_) if warp_hit.is_none() && (touched || probed) => {
+                ObjectEffect::Warp(warp)
+                    if warp_hit.is_none()
+                        && object.trigger.warp_fires(touched, probed, &warp.mode, manual_doors) =>
+                {
                     warp_hit = Some(i);
                 }
-                ObjectEffect::Interact(_) if interact_hit.is_none() && probed => {
+                ObjectEffect::Interact(_)
+                    if interact_hit.is_none()
+                        && object.trigger.interaction_fires(touched, was_inside, probed) =>
+                {
                     interact_hit = Some(i);
                 }
                 _ => {}
@@ -454,36 +555,27 @@ impl WalkaroundState {
                 unreachable!("warp_hit only records Warp effects");
             };
             let target = target.clone();
-            if let Some(sound) = &target.sound {
-                ctx.system.play_sound(sound.clone());
-            }
-            self.player().pos = target.target();
-            self.player().flip_controls = target.flip;
-            self.companion_trail
-                .fill(self.player_ref().pos, self.player_ref().dir);
-            if let Some(new_map) = target.map {
-                self.save(&new_map, ctx.save);
-                self.load_map_by_name(ctx, &new_map);
-            }
+            // Plays the sound, then either narrates-then-defers or teleports now.
+            self.fire_warp(ctx, target);
+        } else if let Some(i) = interact_hit {
+            // An interaction hit can now exist without a press (touch-triggered),
+            // so it's gated on the hit, not on `interact`. Clone only the winning
+            // interaction, then fire it exactly as before.
+            let ObjectEffect::Interact(interaction) = self.current_map.objects[i].effect.clone()
+            else {
+                unreachable!("interact_hit only records Interact effects");
+            };
+            self.fire_interaction(ctx, &interaction);
         } else if interact {
-            if let Some(i) = interact_hit {
-                // Clone only the winning interaction, then fire it exactly as before.
-                let ObjectEffect::Interact(interaction) = self.current_map.objects[i].effect.clone()
-                else {
-                    unreachable!("interact_hit only records Interact effects");
-                };
-                self.fire_interaction(ctx, &interaction);
-            } else {
-                // No map object matched: fall back to the companions, checked
-                // against the facing hitbox in order (today's chain ordering —
-                // companions fire only when nothing on the map did).
-                for companion in self.companion_list.interact(&self.companion_trail) {
-                    if interact_hitbox.touches(companion.hitbox) {
-                        if let ObjectEffect::Interact(interaction) = companion.effect {
-                            self.fire_interaction(ctx, &interaction);
-                        }
-                        break;
+            // No map object matched: fall back to the companions, checked against
+            // the facing hitbox in order (today's chain ordering — companions
+            // fire only when nothing on the map did, and stay press-only).
+            for companion in self.companion_list.interact(&self.companion_trail) {
+                if interact_hitbox.touches(companion.hitbox) {
+                    if let ObjectEffect::Interact(interaction) = companion.effect {
+                        self.fire_interaction(ctx, &interaction);
                     }
+                    break;
                 }
             }
         }
@@ -666,5 +758,74 @@ impl WalkaroundState {
             Transform::IDENTITY,
             |p| p.a() == 0,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::{LayerInfo, MapObject, Trigger, Warp};
+    use crate::position::Hitbox;
+    use crate::system::test_console::TestConsole;
+
+    /// A minimal loadable map: one default layer (so `load_map` doesn't panic on
+    /// an empty layer list) plus the given objects.
+    fn map_with_objects(objects: Vec<MapObject>) -> MapInfo {
+        MapInfo {
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            objects,
+            ..MapInfo::default()
+        }
+    }
+
+    /// The edge-trigger contract the walk loop relies on, exercised over a
+    /// frame-by-frame touch sequence with the *real* predicate the loop calls
+    /// ([`Trigger::interaction_fires`]) and the same latch update the loop does
+    /// (`was_inside = latch; latch = touched`). A touch interaction fires once on
+    /// entering, stays quiet while the player stands in it, and re-arms after the
+    /// player leaves — without this a step-on dialogue would re-fire every frame.
+    ///
+    /// (A full walk `step` needs a live `Ctx` and simulated `just_pressed` button
+    /// edges; the latch *computation* is the load-bearing part, so it's unit-
+    /// tested here in isolation, per the brief.)
+    #[test]
+    fn touch_interaction_edge_fires_once_per_entry() {
+        let trigger = Trigger::Touch;
+        // `touched` per frame: outside, enter, stay, stay, leave, re-enter.
+        let touches = [false, true, true, true, false, true];
+        let mut latch = false; // the loop seeds `inside_objects` to false.
+        let fired: Vec<bool> = touches
+            .iter()
+            .map(|&touched| {
+                let was_inside = latch;
+                latch = touched; // mirrors `self.inside_objects[i] = touched`.
+                // No press in this scenario, so `probed` is always false.
+                trigger.interaction_fires(touched, was_inside, false)
+            })
+            .collect();
+        // Fires only on the two *entering* frames (1 and 5), not while standing.
+        assert_eq!(fired, vec![false, true, false, false, false, true]);
+    }
+
+    /// `load_map` (re)sizes the edge latch to the new object count — all
+    /// "outside" — and clears any pending narrated warp, so a debug map switch
+    /// mid-narration can't teleport the player on the new map.
+    #[test]
+    fn load_map_resets_latch_and_pending_warp() {
+        let mut console = TestConsole::new();
+        let mut walk = WalkaroundState::new();
+
+        // Pretend a narrated warp is mid-flight and the latch is stale.
+        walk.pending_warp = Some(Warp::new(Some("somewhere"), Vec2::new(0, 0)));
+        walk.inside_objects = vec![true; 9];
+
+        let objects = vec![
+            MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k"),
+            MapObject::warp(Hitbox::new(8, 0, 8, 8), Warp::new(None, Vec2::new(0, 0))),
+        ];
+        walk.load_map(&mut console, map_with_objects(objects));
+
+        assert_eq!(walk.inside_objects, vec![false, false], "latch sized + cleared");
+        assert!(walk.pending_warp.is_none(), "pending warp dropped on map load");
     }
 }

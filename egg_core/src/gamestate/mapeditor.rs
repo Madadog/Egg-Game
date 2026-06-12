@@ -11,7 +11,7 @@ use crate::{
     data::sound::{self, SfxData},
     drawstate::{DrawState, LayerId},
     interact::Interaction,
-    map::{Axis, LayerInfo, MapInfo, MapObject, MapStore, ObjectEffect, Warp, WarpMode},
+    map::{Axis, LayerInfo, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp, WarpMode},
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
@@ -51,14 +51,20 @@ enum EditField {
     ToMap,
     ToX,
     ToY,
+    /// A warp's pre-warp narration dialogue key (empty buffer ⇒ no narration).
+    Narration,
 }
 
-/// A warp enum-field the editor advances with a click.
+/// An enum-field the editor advances with a click. [`Flip`](Self::Flip)/
+/// [`Mode`](Self::Mode)/[`Sound`](Self::Sound) live on the [`Warp`] effect;
+/// [`Trigger`](Self::Trigger) lives on the owning [`MapObject`] and so shows on
+/// both object tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CycleField {
     Flip,
     Mode,
     Sound,
+    Trigger,
 }
 
 /// Which kind of object a tool creates / filters its view to. The object lists
@@ -671,10 +677,10 @@ impl MapViewer {
             );
         }
 
-        if let Some(i) = self.selected {
+        if let Some(object) = self.selected.and_then(|i| map.objects.get(i)) {
             rows.push(b.spacer(2.0).id());
-            match map.objects.get(i).map(|o| &o.effect) {
-                Some(ObjectEffect::Warp(w)) => {
+            match &object.effect {
+                ObjectEffect::Warp(w) => {
                     let dest = w.map.as_deref().unwrap_or("-");
                     self.field_row(b, rows, EditField::ToMap, "map", dest);
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
@@ -682,15 +688,18 @@ impl MapViewer {
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
                     self.cycle_row(b, rows, CycleField::Mode, "mode", mode_label(&w.mode));
                     self.cycle_row(b, rows, CycleField::Sound, "snd", sound_label(&w.sound));
+                    self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
+                    let narr = w.narration.as_deref().unwrap_or("-");
+                    self.field_row(b, rows, EditField::Narration, "narr", narr);
                 }
-                Some(ObjectEffect::Interact(interaction)) => {
+                ObjectEffect::Interact(interaction) => {
                     let key = match interaction {
                         Interaction::Dialogue(k) => k.as_str(),
                         _ => "-",
                     };
                     self.field_row(b, rows, EditField::Key, "key", key);
+                    self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
                 }
-                None => {}
             }
         }
     }
@@ -1412,6 +1421,9 @@ impl MapViewer {
             (Some(ObjectEffect::Warp(w)), EditField::ToMap) => w.map.clone().unwrap_or_default(),
             (Some(ObjectEffect::Warp(w)), EditField::ToX) => w.to.x.to_string(),
             (Some(ObjectEffect::Warp(w)), EditField::ToY) => w.to.y.to_string(),
+            (Some(ObjectEffect::Warp(w)), EditField::Narration) => {
+                w.narration.clone().unwrap_or_default()
+            }
             _ => String::new(),
         };
         self.editing = Some(field);
@@ -1495,15 +1507,26 @@ impl MapViewer {
                     self.modify_warp(map, |w| w.to.y = y);
                 }
             }
+            EditField::Narration => self.modify_warp(map, |w| {
+                // Empty buffer clears narration; otherwise it's the dialogue key.
+                w.narration = (!buffer.is_empty()).then(|| buffer.clone());
+            }),
         }
     }
 
     fn cycle(&mut self, map: &mut MapInfo, field: CycleField) {
-        self.modify_warp(map, |w| match field {
-            CycleField::Flip => w.flip = cycle_flip(&w.flip),
-            CycleField::Mode => w.mode = cycle_mode(&w.mode),
-            CycleField::Sound => w.sound = cycle_sound(&w.sound),
-        });
+        // Trigger lives on the MapObject (both kinds), so it cycles through
+        // `modify_object`; the warp-only fields go through `modify_warp`.
+        match field {
+            CycleField::Trigger => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i) {
+                    object.trigger = cycle_trigger(object.trigger);
+                }
+            }),
+            CycleField::Flip => self.modify_warp(map, |w| w.flip = cycle_flip(&w.flip)),
+            CycleField::Mode => self.modify_warp(map, |w| w.mode = cycle_mode(&w.mode)),
+            CycleField::Sound => self.modify_warp(map, |w| w.sound = cycle_sound(&w.sound)),
+        }
     }
 
     /// Persist the map and start the save-confirmation toast. Only modern maps
@@ -1686,13 +1709,15 @@ fn move_snapshot(mut snapshot: ObjSnapshot, origin: Vec2) -> ObjSnapshot {
 
 /// Structural equality for object snapshots. [`MapObject`] doesn't derive
 /// `PartialEq` (its effect can hold a fn pointer), so compare the fields the
-/// editor can actually change — enough to skip recording no-op edits.
+/// editor can actually change — enough to skip recording no-op edits. The
+/// `trigger` axis lives on the object itself (editable on both tabs), so it's
+/// compared here alongside the hitbox and effect.
 fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
     let same_box = a.hitbox.x == b.hitbox.x
         && a.hitbox.y == b.hitbox.y
         && a.hitbox.w == b.hitbox.w
         && a.hitbox.h == b.hitbox.h;
-    same_box && effect_eq(&a.effect, &b.effect)
+    same_box && a.trigger == b.trigger && effect_eq(&a.effect, &b.effect)
 }
 
 /// Compare two object effects by their editable content (warp fields / dialogue
@@ -1705,6 +1730,7 @@ fn effect_eq(a: &ObjectEffect, b: &ObjectEffect) -> bool {
                 && axis_label(&x.flip) == axis_label(&y.flip)
                 && mode_label(&x.mode) == mode_label(&y.mode)
                 && sound_label(&x.sound) == sound_label(&y.sound)
+                && x.narration == y.narration
         }
         (ObjectEffect::Interact(x), ObjectEffect::Interact(y)) => interaction_eq(x, y),
         _ => false,
@@ -1759,6 +1785,15 @@ fn mode_label(mode: &WarpMode) -> &'static str {
     }
 }
 
+/// Short label for the trigger cycle row (kept terse for the 84px column).
+fn trigger_label(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::Touch => "touch",
+        Trigger::Press => "press",
+        Trigger::Any => "any",
+    }
+}
+
 fn sound_label(sound: &Option<SfxData>) -> &'static str {
     match sound {
         None => "none",
@@ -1782,6 +1817,15 @@ fn cycle_mode(mode: &WarpMode) -> WarpMode {
     match mode {
         WarpMode::Interact => WarpMode::Auto,
         WarpMode::Auto => WarpMode::Interact,
+    }
+}
+
+/// Advance the trigger cycle row: Touch → Press → Any → Touch.
+fn cycle_trigger(trigger: Trigger) -> Trigger {
+    match trigger {
+        Trigger::Touch => Trigger::Press,
+        Trigger::Press => Trigger::Any,
+        Trigger::Any => Trigger::Touch,
     }
 }
 
@@ -2015,6 +2059,28 @@ mod tests {
         // Cross-kind (interaction vs. warp) never compares equal.
         let warp = MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)));
         assert!(!snapshot_eq(&a, &warp));
+    }
+
+    /// `snapshot_eq` detects the two new editable fields: a trigger change (on the
+    /// MapObject, either tab) and a narration change (on the Warp) — so the editor
+    /// records those edits as undo steps via [`MapViewer::modify_object`].
+    #[test]
+    fn snapshot_eq_detects_trigger_and_narration_edits() {
+        // Trigger lives on the object, so a trigger-only change is detected on an
+        // interaction snapshot whose key/box are otherwise identical.
+        let base = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "x");
+        let retriggered = base.clone().with_trigger(Trigger::Touch);
+        assert!(!snapshot_eq(&base, &retriggered), "trigger edit detected");
+
+        // Narration lives on the Warp; a narration-only change is detected too.
+        let warp = MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)));
+        let narrated =
+            MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)).with_narration("creak"));
+        assert!(!snapshot_eq(&warp, &narrated), "narration edit detected");
+        // Same narration compares equal (no spurious undo entry).
+        let narrated2 =
+            MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)).with_narration("creak"));
+        assert!(snapshot_eq(&narrated, &narrated2));
     }
 
     /// Object add/remove undo replays into the one list at the right index:
