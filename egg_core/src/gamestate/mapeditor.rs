@@ -115,34 +115,96 @@ enum EditAction {
 /// bounding memory.
 const HISTORY_LIMIT: usize = 128;
 
-/// Bounded undo/redo history. Pushing a new action clears the redo stack (the
-/// usual linear-history model) and drops the oldest undo entry once full.
-#[derive(Debug, Clone, Default)]
-struct History {
-    undo: Vec<EditAction>,
-    redo: Vec<EditAction>,
+/// A bounded, linear undo/redo history of actions `A`.
+///
+/// This is the pure stack discipline behind the editor's Ctrl+Z/Ctrl+Y, factored
+/// out of [`MapViewer`] so it can be reasoned about and tested in isolation. It
+/// knows nothing about *what* an action does — applying an [`EditAction`] to a
+/// [`MapInfo`] stays on `MapViewer`, which owns the `&mut MapInfo`. The history
+/// only shuffles finished actions between two stacks:
+///
+/// - [`push`](Self::push) records a freshly performed action. It **clears the
+///   redo stack**: a new edit invalidates any redone future (the standard linear
+///   model — you can't fork history). Once the undo stack exceeds
+///   [`HISTORY_LIMIT`] it drops the oldest entry, bounding memory.
+/// - [`undo`](Self::undo) moves the newest undo entry onto the redo stack and
+///   hands it back by reference for the caller to revert.
+/// - [`redo`](Self::redo) is the inverse: it moves the newest redo entry back
+///   onto the undo stack and hands it back for the caller to re-apply.
+///
+/// Entries are kept (cloned onto the other stack) rather than handed out by
+/// value so an undone action can be redone, and a redone action undone again,
+/// any number of times.
+#[derive(Debug, Clone)]
+struct History<A> {
+    undo: Vec<A>,
+    redo: Vec<A>,
+    /// Maximum entries on each stack; the oldest undo entry is dropped past it.
+    limit: usize,
 }
 
-impl History {
-    /// Record a freshly performed action, invalidating any redo future.
-    fn push(&mut self, action: EditAction) {
+impl<A: Clone> History<A> {
+    /// An empty history bounded at `limit` actions per stack.
+    fn new(limit: usize) -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            limit,
+        }
+    }
+
+    /// Record a freshly performed action, invalidating any redo future and
+    /// evicting the oldest undo entry if the stack is now over its cap.
+    fn push(&mut self, action: A) {
         self.redo.clear();
         self.undo.push(action);
-        if self.undo.len() > HISTORY_LIMIT {
+        if self.undo.len() > self.limit {
             self.undo.remove(0);
         }
     }
-    /// Pop the most recent action to be undone, moving it onto the redo stack.
-    fn take_undo(&mut self) -> Option<EditAction> {
+
+    /// Take the most recent action to be undone, moving it onto the redo stack
+    /// and returning a reference for the caller to revert. `None` if nothing is
+    /// left to undo.
+    fn undo(&mut self) -> Option<&A> {
         let action = self.undo.pop()?;
-        self.redo.push(action.clone());
-        Some(action)
+        self.redo.push(action);
+        self.redo.last()
     }
-    /// Pop the most recently undone action to be redone, moving it back onto undo.
-    fn take_redo(&mut self) -> Option<EditAction> {
+
+    /// Take the most recently undone action to be redone, moving it back onto the
+    /// undo stack and returning a reference for the caller to re-apply. `None` if
+    /// nothing is left to redo.
+    fn redo(&mut self) -> Option<&A> {
         let action = self.redo.pop()?;
-        self.undo.push(action.clone());
-        Some(action)
+        self.undo.push(action);
+        self.undo.last()
+    }
+
+    /// Drop both stacks (e.g. on loading a different map).
+    #[allow(dead_code)]
+    fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
+    /// Whether there is an action available to [`undo`](Self::undo) — drives the
+    /// greyed-out state of the panel's `<undo` button.
+    fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether there is an action available to [`redo`](Self::redo) — drives the
+    /// greyed-out state of the panel's `redo>` button.
+    fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+}
+
+impl<A: Clone> Default for History<A> {
+    /// A history with the editor's default [`HISTORY_LIMIT`].
+    fn default() -> Self {
+        Self::new(HISTORY_LIMIT)
     }
 }
 
@@ -174,6 +236,167 @@ const SHEET_TILES: usize = 2048;
 /// Frames a save-confirmation toast stays on screen. At ~64 fps this is ~1.4s.
 const SAVE_TOAST_FRAMES: u32 = 90;
 
+/// What the save button should display, derived from [`SaveStatus`] once per
+/// frame and consumed by the footer's button rendering — so the button's three
+/// looks live in one place rather than being recomputed inline.
+enum SaveButton {
+    /// A transient "saved!" toast is showing (it takes priority over dirtiness).
+    Toast,
+    /// There are unsaved edits — the button wears a `*` and an amber outline.
+    Dirty,
+    /// Everything on disk is current — the plain green button.
+    Clean,
+}
+
+/// The editor's save/unsaved state: an unsaved-changes flag plus a cosmetic
+/// "saved!" toast countdown. Folded into one type so the two pieces of save UX
+/// transition together and the save button reads a single query.
+///
+/// Transitions are explicit:
+/// - [`edited`](Self::edited) marks the map dirty (every recorded edit calls it).
+/// - [`saved`](Self::saved) clears the dirty flag and starts the toast.
+/// - [`tick`](Self::tick) counts the toast down one frame, expiring it at zero.
+#[derive(Debug, Clone, Default)]
+struct SaveStatus {
+    /// Set on any edit, cleared on save — drives the unsaved-changes marker.
+    dirty: bool,
+    /// Frames left on the post-save "saved!" toast (purely cosmetic).
+    toast: u32,
+}
+
+impl SaveStatus {
+    /// Flag the map as having unsaved edits.
+    fn edited(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Record a successful write: no longer dirty, and start the confirm toast.
+    fn saved(&mut self) {
+        self.dirty = false;
+        self.toast = SAVE_TOAST_FRAMES;
+    }
+
+    /// Advance the toast one frame, expiring it at zero. No-op once expired.
+    fn tick(&mut self) {
+        self.toast = self.toast.saturating_sub(1);
+    }
+
+    /// Which of the save button's three looks to draw this frame. The toast wins
+    /// over dirtiness so a fresh save reads as confirmed even if (re)edited the
+    /// same frame would otherwise re-dirty it.
+    fn button(&self) -> SaveButton {
+        if self.toast > 0 {
+            SaveButton::Toast
+        } else if self.dirty {
+            SaveButton::Dirty
+        } else {
+            SaveButton::Clean
+        }
+    }
+}
+
+/// A single character-level edit to a [`TextField`], the pure unit its console
+/// input decodes into. Splitting the keyboard read (which needs a
+/// [`ConsoleApi`]) from the buffer mutation (which doesn't) is what lets the
+/// field's behaviour be unit-tested without a live console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextOp {
+    /// Append a character (a typed, non-control key).
+    Push(char),
+    /// Delete the last character (Backspace).
+    Pop,
+    /// Finish editing, keeping the buffer (Return).
+    Commit,
+    /// Finish editing, discarding the buffer (Escape).
+    Cancel,
+}
+
+/// How a [`TextField`] resolved this frame: still editing, or finished one way or
+/// the other. The caller maps [`Commit`](Self::Commit)/[`Cancel`](Self::Cancel)
+/// onto its own "apply the buffer" / "abandon" handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextEvent {
+    /// The field absorbed input but is still being edited.
+    Active,
+    /// Return was pressed — commit the (trimmed-by-the-caller) buffer.
+    Commit,
+    /// Escape was pressed — drop the edit.
+    Cancel,
+}
+
+/// A line-editing buffer: the string a focused field is accumulating plus the
+/// keystroke handling that grows and finishes it. Lifted out of [`MapViewer`]
+/// (which used to keep a bare `buffer: String` and hand-roll the per-frame key
+/// reads) so the editing logic is one reusable, testable widget-state type.
+///
+/// [`step`](Self::step) reads the shared console and decodes it into [`TextOp`]s;
+/// [`apply`](Self::apply) performs one op on the buffer. Tests drive `apply`
+/// directly to exercise push/backspace/commit/cancel without a console. The
+/// field tracks only the text — *which* field is being edited and what to do
+/// with a committed value stay with the caller.
+#[derive(Debug, Clone, Default)]
+struct TextField {
+    buffer: String,
+}
+
+impl TextField {
+    /// A field primed with `initial` as its starting contents (e.g. the existing
+    /// value of the property being edited).
+    fn new(initial: impl Into<String>) -> Self {
+        Self {
+            buffer: initial.into(),
+        }
+    }
+
+    /// The current buffer contents (for rendering the in-progress `value_`).
+    fn text(&self) -> &str {
+        &self.buffer
+    }
+
+    /// Apply one character-level op, returning how the field resolved. Push/pop
+    /// mutate the buffer and stay [`Active`](TextEvent::Active); commit/cancel
+    /// leave the buffer untouched and report the terminal event for the caller.
+    fn apply(&mut self, op: TextOp) -> TextEvent {
+        match op {
+            TextOp::Push(c) => {
+                self.buffer.push(c);
+                TextEvent::Active
+            }
+            TextOp::Pop => {
+                self.buffer.pop();
+                TextEvent::Active
+            }
+            TextOp::Commit => TextEvent::Commit,
+            TextOp::Cancel => TextEvent::Cancel,
+        }
+    }
+
+    /// Consume this frame's keyboard input from `system` and fold it into the
+    /// buffer, returning whether the field is still active or finished.
+    ///
+    /// Mirrors the editor's original inline handling exactly: typed non-control
+    /// characters append, Backspace deletes one, Escape cancels and Return
+    /// commits. Escape takes priority over Return when (improbably) both fire in
+    /// the same frame, matching the original `if Escape … else if Return` order.
+    fn step(&mut self, system: &impl ConsoleApi) -> TextEvent {
+        for c in system.key_chars() {
+            if !c.is_control() {
+                self.apply(TextOp::Push(*c));
+            }
+        }
+        if system.keyp(ScanCode::Backspace) {
+            self.apply(TextOp::Pop);
+        }
+        if system.keyp(ScanCode::Escape) {
+            self.apply(TextOp::Cancel)
+        } else if system.keyp(ScanCode::Return) {
+            self.apply(TextOp::Commit)
+        } else {
+            TextEvent::Active
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
     pub focused: bool,
@@ -189,17 +412,20 @@ pub struct MapViewer {
     /// Origin of the object being dragged, captured at grab time so a completed
     /// drag records a single [`EditAction::Modify`] from there to the drop point.
     move_from: Option<Vec2>,
+    /// Which object field, if any, currently has keyboard focus for text entry.
+    /// `Some` exactly when a [`TextField`] is open in `field`; the two are set
+    /// and cleared together (see [`begin_edit`](Self::begin_edit)).
     editing: Option<EditField>,
-    buffer: String,
+    /// The line-editing buffer for the focused `editing` field, or `None` when no
+    /// field is being typed into.
+    field: Option<TextField>,
     /// In-progress paint stroke: the cells touched since the mouse went down,
     /// flushed into one history entry on release so a stroke undoes atomically.
     stroke: Option<EditAction>,
     /// Bounded undo/redo stacks for tile and object edits.
-    history: History,
-    /// Set on any edit, cleared on save — drives the unsaved-changes marker.
-    dirty: bool,
-    /// Counts down a "saved" toast after a successful write (purely cosmetic).
-    save_toast: u32,
+    history: History<EditAction>,
+    /// Unsaved-changes flag + post-save toast countdown, driving the save button.
+    status: SaveStatus,
 }
 
 impl MapViewer {
@@ -254,7 +480,7 @@ impl MapViewer {
             .text("<undo")
             .small(true)
             .center()
-            .color(if self.history.undo.is_empty() { 13 } else { 12 })
+            .color(if self.history.can_undo() { 12 } else { 13 })
             .size(PANEL_W / 2.0 - 1.0, 7.0)
             .outlined(0, 13)
             .key(EditorKey::Undo)
@@ -263,7 +489,7 @@ impl MapViewer {
             .text("redo>")
             .small(true)
             .center()
-            .color(if self.history.redo.is_empty() { 13 } else { 12 })
+            .color(if self.history.can_redo() { 12 } else { 13 })
             .size(PANEL_W / 2.0 - 1.0, 7.0)
             .outlined(0, 13)
             .key(EditorKey::Redo)
@@ -272,12 +498,10 @@ impl MapViewer {
 
         // Save button: a `*` flags unsaved edits; a transient toast confirms a
         // write. Green outline normally, amber while dirty.
-        let (label, outline) = if self.save_toast > 0 {
-            ("[  SAVED!  ]", 11)
-        } else if self.dirty {
-            ("[ SAVE * ]", 9)
-        } else {
-            ("[ SAVE MAP ]", 6)
+        let (label, outline) = match self.status.button() {
+            SaveButton::Toast => ("[  SAVED!  ]", 11),
+            SaveButton::Dirty => ("[ SAVE * ]", 9),
+            SaveButton::Clean => ("[ SAVE MAP ]", 6),
         };
         rows.push(
             b.text(label)
@@ -478,10 +702,9 @@ impl MapViewer {
         value: &str,
     ) {
         let editing = self.editing == Some(field);
-        let text = if editing {
-            format!("{label}:{}_", self.buffer)
-        } else {
-            format!("{label}:{value}")
+        let text = match (editing, &self.field) {
+            (true, Some(f)) => format!("{label}:{}_", f.text()),
+            _ => format!("{label}:{value}"),
         };
         rows.push(
             b.text(text)
@@ -586,23 +809,25 @@ impl MapViewer {
     /// history stay in lock-step.
     fn record(&mut self, action: EditAction) {
         self.history.push(action);
-        self.dirty = true;
+        self.status.edited();
     }
 
     /// Undo the most recent edit (Ctrl+Z). Object indices may shift on
-    /// add/remove, so undo restores list shape as well as contents.
+    /// add/remove, so undo restores list shape as well as contents. The action is
+    /// cloned out of the history before reverting because `revert` needs `&mut
+    /// self`, which can't coexist with a borrow into `self.history`.
     fn undo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
-        if let Some(action) = self.history.take_undo() {
+        if let Some(action) = self.history.undo().cloned() {
             self.revert(map, maps, &action);
-            self.dirty = true;
+            self.status.edited();
         }
     }
 
     /// Redo the most recently undone edit (Ctrl+Y / Ctrl+Shift+Z).
     fn redo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
-        if let Some(action) = self.history.take_redo() {
+        if let Some(action) = self.history.redo().cloned() {
             self.reapply(map, maps, &action);
-            self.dirty = true;
+            self.status.edited();
         }
     }
 
@@ -705,9 +930,7 @@ impl MapViewer {
         camera_pos: Vec2,
         screen: (f32, f32),
     ) {
-        if self.save_toast > 0 {
-            self.save_toast -= 1;
-        }
+        self.status.tick();
 
         if self.editing.is_some() {
             // While a text field is focused all keys feed the buffer — don't let
@@ -802,7 +1025,7 @@ impl MapViewer {
     fn switch_tool(&mut self, tool: EditorTool) {
         self.tool = tool;
         self.selected = None;
-        self.editing = None;
+        self.stop_editing();
         self.drag = None;
         self.stroke = None;
         self.moving = None;
@@ -861,7 +1084,7 @@ impl MapViewer {
             EditorKey::Object(i) => {
                 if click {
                     self.selected = Some(i);
-                    self.editing = None;
+                    self.stop_editing();
                 }
             }
             EditorKey::NewObject => {
@@ -930,7 +1153,7 @@ impl MapViewer {
                         // the start origin so a completed drag records one undo
                         // step (start → drop), not a step per moved frame.
                         self.selected = Some(i);
-                        self.editing = None;
+                        self.stop_editing();
                         self.drag = None;
                         self.moving = Some(world - self.object_origin(map, i));
                         self.move_from = Some(self.object_origin(map, i));
@@ -1129,7 +1352,7 @@ impl MapViewer {
         map.objects.push(object);
         let index = map.objects.len() - 1;
         self.selected = Some(index);
-        self.editing = None;
+        self.stop_editing();
         if let Some(after) = Self::snapshot(map, index) {
             self.record(EditAction::Add { index, after });
         }
@@ -1140,10 +1363,18 @@ impl MapViewer {
         let before = Self::snapshot(map, i);
         remove_object(map, i);
         self.selected = None;
-        self.editing = None;
+        self.stop_editing();
         if let Some(before) = before {
             self.record(EditAction::Remove { index: i, before });
         }
+    }
+
+    /// Clear text-entry focus: forget which field was being edited and drop its
+    /// buffer. `editing` and `field` are always set/cleared together so
+    /// [`is_typing`](Self::is_typing) stays in step with the live buffer.
+    fn stop_editing(&mut self) {
+        self.editing = None;
+        self.field = None;
     }
 
     fn begin_edit(&mut self, field: EditField, map: &MapInfo) {
@@ -1156,23 +1387,20 @@ impl MapViewer {
             _ => String::new(),
         };
         self.editing = Some(field);
-        self.buffer = value;
+        self.field = Some(TextField::new(value));
     }
 
     fn step_text_entry(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
-        for c in system.key_chars() {
-            if !c.is_control() {
-                self.buffer.push(*c);
+        let Some(field) = self.field.as_mut() else {
+            return;
+        };
+        match field.step(system) {
+            TextEvent::Active => {}
+            TextEvent::Commit => {
+                self.commit_edit(map);
+                self.stop_editing();
             }
-        }
-        if system.keyp(ScanCode::Backspace) {
-            self.buffer.pop();
-        }
-        if system.keyp(ScanCode::Escape) {
-            self.editing = None;
-        } else if system.keyp(ScanCode::Return) {
-            self.commit_edit(map);
-            self.editing = None;
+            TextEvent::Cancel => self.stop_editing(),
         }
     }
 
@@ -1211,7 +1439,11 @@ impl MapViewer {
         let (Some(_), Some(field)) = (self.selected, self.editing) else {
             return;
         };
-        let buffer = self.buffer.trim().to_string();
+        let buffer = self
+            .field
+            .as_ref()
+            .map(|f| f.text().trim().to_string())
+            .unwrap_or_default();
         match field {
             EditField::Key => self.modify_object(map, |map, i| {
                 if let Some(ObjectEffect::Interact(interaction)) =
@@ -1255,8 +1487,7 @@ impl MapViewer {
         } else {
             log::info!("save: {:?} is not a modern map; not saving", map.source);
         }
-        self.dirty = false;
-        self.save_toast = SAVE_TOAST_FRAMES;
+        self.status.saved();
     }
 
     // --- Draw -----------------------------------------------------------------
@@ -1547,45 +1778,118 @@ mod tests {
         }
     }
 
-    /// Pushing onto the undo stack clears any redo future and bounds the stack at
-    /// [`HISTORY_LIMIT`], dropping the oldest entry — the standard linear model.
+    /// Pushing a new action clears any redo future: a fresh edit invalidates the
+    /// redone branch, the standard linear-history model.
     #[test]
-    fn history_push_clears_redo_and_bounds() {
-        let mut h = History::default();
+    fn history_push_clears_redo() {
+        let mut h: History<EditAction> = History::default();
         h.push(tiles(vec![(0, 0, 1, 2)]));
-        // An undo then push should discard the redo entry.
-        assert!(h.take_undo().is_some());
+        // An undo parks the action on the redo stack.
+        assert!(h.undo().is_some());
         assert_eq!(h.redo.len(), 1);
+        assert!(h.can_redo());
+        // A new push discards that redo entry — you can't fork history.
         h.push(tiles(vec![(1, 1, 0, 3)]));
         assert!(h.redo.is_empty(), "new push invalidates redo");
+        assert!(!h.can_redo());
+    }
 
-        // Overflow drops the oldest, keeping the cap.
-        let mut h = History::default();
+    /// Once the undo stack is full, the oldest entry is evicted so the stack stays
+    /// bounded at its `limit` — a small explicit cap keeps the test cheap.
+    #[test]
+    fn history_caps_and_evicts_oldest() {
+        let mut h: History<i32> = History::new(3);
+        for n in 0..5 {
+            h.push(n);
+        }
+        // Capped at 3, holding the three most recent pushes (2, 3, 4).
+        assert_eq!(h.undo.len(), 3);
+        assert_eq!(h.undo, vec![2, 3, 4]);
+
+        // The editor's real default uses [`HISTORY_LIMIT`].
+        let mut h: History<EditAction> = History::default();
         for n in 0..(HISTORY_LIMIT + 10) {
             h.push(tiles(vec![(n as i32, 0, 0, 1)]));
         }
         assert_eq!(h.undo.len(), HISTORY_LIMIT);
     }
 
-    /// `take_undo`/`take_redo` move entries between the two stacks so a sequence
-    /// of undo→redo→undo round-trips correctly.
+    /// `undo`/`redo` move entries between the two stacks (returning the moved
+    /// entry by reference) so a sequence of undo→redo→undo round-trips correctly.
     #[test]
     fn history_undo_redo_round_trip() {
-        let mut h = History::default();
-        h.push(tiles(vec![(0, 0, 1, 2)]));
-        h.push(tiles(vec![(1, 0, 3, 4)]));
+        let mut h: History<i32> = History::new(8);
+        assert!(!h.can_undo() && !h.can_redo()); // empty: nothing either way.
+        h.push(10);
+        h.push(20);
 
-        // Undo the latest, then redo it back.
-        assert!(
-            matches!(h.take_undo(), Some(EditAction::Tiles { cells, .. }) if cells == vec![(1, 0, 3, 4)])
-        );
+        // Undo the latest, then redo it back; the returned reference is the entry.
+        assert_eq!(h.undo().copied(), Some(20));
         assert_eq!((h.undo.len(), h.redo.len()), (1, 1));
-        assert!(
-            matches!(h.take_redo(), Some(EditAction::Tiles { cells, .. }) if cells == vec![(1, 0, 3, 4)])
-        );
+        assert_eq!(h.redo().copied(), Some(20));
         assert_eq!((h.undo.len(), h.redo.len()), (2, 0));
-        // Nothing left to redo.
-        assert!(h.take_redo().is_none());
+        // Nothing left to redo; undo still has both entries.
+        assert!(h.redo().is_none());
+        assert!(h.can_undo());
+
+        // `clear` empties both stacks.
+        h.clear();
+        assert!(!h.can_undo() && !h.can_redo());
+    }
+
+    /// A [`TextField`] grows with `Push`, shrinks with `Pop`, and reports the
+    /// terminal `Commit`/`Cancel` without otherwise touching its buffer — the pure
+    /// char-level operations the console `step` decodes into.
+    #[test]
+    fn text_field_pure_ops() {
+        let mut f = TextField::new("ab");
+        assert_eq!(f.text(), "ab");
+        // Push appends and stays active.
+        assert_eq!(f.apply(TextOp::Push('c')), TextEvent::Active);
+        assert_eq!(f.text(), "abc");
+        // Pop deletes the last char.
+        assert_eq!(f.apply(TextOp::Pop), TextEvent::Active);
+        assert_eq!(f.text(), "ab");
+        // Pop past empty is harmless.
+        let mut empty = TextField::default();
+        assert_eq!(empty.apply(TextOp::Pop), TextEvent::Active);
+        assert_eq!(empty.text(), "");
+        // Commit/Cancel are terminal and leave the buffer for the caller to read.
+        assert_eq!(f.apply(TextOp::Commit), TextEvent::Commit);
+        assert_eq!(f.text(), "ab", "commit doesn't alter the buffer");
+        assert_eq!(f.apply(TextOp::Cancel), TextEvent::Cancel);
+        assert_eq!(f.text(), "ab", "cancel doesn't alter the buffer");
+    }
+
+    /// The save status transitions dirty → saved (toast) → expired across ticks,
+    /// and the save button reflects each phase, with the toast taking priority.
+    #[test]
+    fn save_status_dirty_saved_toast_expiry() {
+        let mut s = SaveStatus::default();
+        assert!(matches!(s.button(), SaveButton::Clean));
+
+        // An edit marks it dirty.
+        s.edited();
+        assert!(s.dirty);
+        assert!(matches!(s.button(), SaveButton::Dirty));
+
+        // Saving clears dirty and starts the toast; the toast wins over dirtiness.
+        s.saved();
+        assert!(!s.dirty);
+        assert_eq!(s.toast, SAVE_TOAST_FRAMES);
+        assert!(matches!(s.button(), SaveButton::Toast));
+        s.edited(); // even re-dirtied this frame, the toast still shows.
+        assert!(matches!(s.button(), SaveButton::Toast));
+
+        // Ticking the toast down to zero expires it; dirtiness shows through again.
+        for _ in 0..SAVE_TOAST_FRAMES {
+            s.tick();
+        }
+        assert_eq!(s.toast, 0);
+        assert!(matches!(s.button(), SaveButton::Dirty));
+        // Ticking an expired toast is a harmless no-op (saturating).
+        s.tick();
+        assert_eq!(s.toast, 0);
     }
 
     /// `tile_bounds` returns an inclusive, normalised tile range regardless of
