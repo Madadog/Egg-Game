@@ -132,7 +132,7 @@ impl MenuState {
     /// for the now-removed `memory()`).
     pub fn build_ui<S: ConsoleApi>(&self, ctx: &Ctx<S>) -> Ui<usize> {
         let small = ctx.save.small_text_on;
-        let texts: Vec<String> = self.entries.iter().map(|e| e.text(ctx.script)).collect();
+        let texts: Vec<String> = self.entries.iter().map(|e| e.text(ctx.script, ctx.save)).collect();
         let screen = (ctx.system.width() as f32, ctx.system.height() as f32);
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
@@ -327,16 +327,27 @@ pub enum MenuEntry {
     MapSelect(String),
     Walk,
 }
+/// Render a toggle entry's label with its live on/off state — the menu's
+/// `[x]`/`[ ]` checkbox convention. The menu UI is rebuilt every frame, so the
+/// box updates the moment the entry is activated.
+fn checkbox(label: String, on: bool) -> String {
+    format!("{label} [{}]", if on { "x" } else { " " })
+}
+
 impl MenuEntry {
-    pub fn text(&self, script: &Script) -> String {
+    /// The entry's display text. Toggle entries read `save` to show their
+    /// current state as a `[x]`/`[ ]` checkbox.
+    pub fn text(&self, script: &Script, save: &SaveData) -> String {
         use MenuEntry::*;
 
         match self {
             Play => script.label("menu_play"),
             Options => script.label("menu_options"),
             MainMenu => script.label("menu_back"),
-            FontSize => script.label("options_font_size"),
-            AutoDoors => script.label("options_auto_doors"),
+            FontSize => checkbox(script.label("options_font_size"), save.small_text_on),
+            // Phrased positively ("automatic doors"), so the box shows the
+            // inverse of the stored `manual_doors` preference.
+            AutoDoors => checkbox(script.label("options_auto_doors"), !save.manual_doors),
             Reset(x) => {
                 if *x == 0 {
                     script.label("options_reset")
