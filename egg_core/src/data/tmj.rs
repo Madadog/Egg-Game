@@ -11,7 +11,7 @@
 
 use crate::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
-use crate::interact::Interaction;
+use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
@@ -121,17 +121,62 @@ impl TiledObject {
         let (w, h) = (self.width as i16, self.height as i16);
         (w > 0 && h > 0).then(|| Hitbox::new(self.x as i16, self.y as i16, w, h))
     }
-    /// Resolve this object into a runtime [`MapObject`], discriminating the same
-    /// way the two old paths did: try the warp interpretation first
-    /// ([`to_warp`](Self::to_warp)), then the dialogue interactable
-    /// ([`to_interactable`](Self::to_interactable)). `None` for an object that's
-    /// neither (and for degenerate zero-size objects, via [`hitbox`](Self::hitbox)).
+    /// An integer-valued custom property, if present and parseable.
+    fn prop_int<T: std::str::FromStr>(&self, name: &str) -> Option<T> {
+        self.prop(name).and_then(|s| s.parse().ok())
+    }
+    /// Resolve this object into a runtime [`MapObject`] by a fixed property
+    /// precedence, documented so the inverse [`object_to_tmj`] mirrors it:
+    ///
+    /// 1. **warp** — `type == "warp"` or any warp property ([`to_warp`](Self::to_warp));
+    /// 2. **func** — a `func` property names an [`InteractFn`](crate::interact::InteractFn)
+    ///    ([`to_func`](Self::to_func));
+    /// 3. **dialogue** — a non-empty `description` (the registry key)
+    ///    ([`to_interactable`](Self::to_interactable));
+    /// 4. **sprite-only** — just a `sprite` tile id: an [`Interaction::None`]
+    ///    object that only draws an animation (e.g. the living-room TV);
+    /// 5. otherwise `None` (also for degenerate zero-size objects, via
+    ///    [`hitbox`](Self::hitbox)) — the object is skipped.
     fn to_object(&self) -> Option<MapObject> {
         let hitbox = self.hitbox()?;
         if let Some(warp) = self.to_warp() {
             Some(MapObject::warp(hitbox, warp))
+        } else if let Some(func) = self.to_func() {
+            let object = MapObject::func(hitbox, func);
+            Some(self.attach_sprite(object))
+        } else if let Some(object) = self.to_interactable() {
+            Some(object)
         } else {
-            self.to_interactable()
+            self.to_sprite_only(hitbox)
+        }
+    }
+    /// Build a function interaction if this object carries a `func` property
+    /// naming a known [`InteractFn`](crate::interact::InteractFn), reading any
+    /// scalar properties that name needs (`pitch`, `count`) and taking
+    /// positional data from the hitbox. The inverse of the `func` serialisation
+    /// in [`interaction_to_object`].
+    fn to_func(&self) -> Option<InteractFn> {
+        let name = self.prop("func").filter(|s| !s.is_empty())?;
+        InteractFn::from_name(name, self.prop_int("pitch"), self.prop_int("count"), self.hitbox()?)
+    }
+    /// A pure sprite object: a `sprite` tile id with no warp/func/`description`,
+    /// kept as an [`Interaction::None`] so legacy animation-only objects (the
+    /// living-room TV) survive a map round-trip. No `sprite` ⇒ `None` (skip).
+    fn to_sprite_only(&self, hitbox: Hitbox) -> Option<MapObject> {
+        self.prop_int::<u16>("sprite")?;
+        let object = MapObject::new(hitbox, ObjectEffect::Interact(Interaction::None), None);
+        Some(self.attach_sprite(object))
+    }
+    /// Attach this object's `sprite` tile id (if any) as a one-frame animation.
+    fn attach_sprite(&self, object: MapObject) -> MapObject {
+        match self.prop_int::<u16>("sprite") {
+            Some(id) => object.with_sprite(vec![AnimFrame::new(
+                Vec2::splat(0),
+                id,
+                30,
+                SpriteOptions::transparent_zero(),
+            )]),
+            None => object,
         }
     }
     /// Build a warp effect if this object is one (`type == "warp"`, or it carries
@@ -170,16 +215,8 @@ impl TiledObject {
     /// at the object.
     fn to_interactable(&self) -> Option<MapObject> {
         let key = self.prop("description").filter(|s| !s.is_empty())?;
-        let mut object = MapObject::dialogue(self.hitbox()?, key);
-        if let Some(id) = self.prop("sprite").and_then(|s| s.parse::<u16>().ok()) {
-            object = object.with_sprite(vec![AnimFrame::new(
-                Vec2::splat(0),
-                id,
-                30,
-                SpriteOptions::transparent_zero(),
-            )]);
-        }
-        Some(object)
+        let object = MapObject::dialogue(self.hitbox()?, key);
+        Some(self.attach_sprite(object))
     }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,10 +274,15 @@ fn sound_name(sfx: &SfxData) -> Option<&'static str> {
 }
 
 /// Serialise one [`MapObject`] to a Tiled object by its effect, reusing the
-/// owning object's `hitbox` for the placed rectangle. A warp serialises with
-/// `type: "warp"` + warp properties; a dialogue interaction with `description` +
-/// optional `sprite`. Interactions that aren't a dialogue key (functions / none)
-/// can't be expressed as Tiled objects → `None` (the caller counts them dropped).
+/// owning object's `hitbox` for the placed rectangle. The inverse of the
+/// parse-precedence in [`TiledObject::to_object`]: a warp serialises with
+/// `type: "warp"` + warp properties; a named `func` interaction with `func` +
+/// its scalar props; a dialogue interaction with `description`; a bare
+/// [`Interaction::None`] that carries a sprite as a `sprite`-only object — all
+/// with the object's optional `sprite` tile id. The cases that have no Tiled
+/// spelling — an unnamed func ([`InteractFn::Pet`](crate::interact::InteractFn::Pet)),
+/// or a sprite-less [`Interaction::None`] — return `None` (the caller counts
+/// them dropped).
 fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
     match &object.effect {
         ObjectEffect::Warp(warp) => Some(warp_to_object(object.hitbox, warp, id)),
@@ -276,27 +318,52 @@ fn warp_to_object(hitbox: Hitbox, warp: &Warp, id: usize) -> Value {
     })
 }
 
-/// Serialise a dialogue interaction as a Tiled object (`description` + optional
-/// `sprite` tile id), placed at `hitbox`. Non-dialogue interactions don't
-/// round-trip → `None`.
+/// Serialise an [`Interaction`] as a (non-warp) Tiled object placed at `hitbox`,
+/// carrying the optional `sprite` tile id. Dialogue → `description`; a named
+/// `func` → `func` + its scalar props (`pitch`/`count`; piano/none need none);
+/// a sprite-carrying [`Interaction::None`] → just its `sprite`. The cases with
+/// no spelling (unnamed func, sprite-less `None`) → `None`.
 fn interaction_to_object(
     hitbox: Hitbox,
     interaction: &Interaction,
     sprite: Option<&[AnimFrame]>,
     id: usize,
 ) -> Option<Value> {
-    let Interaction::Dialogue(key) = interaction else {
-        return None;
+    let sprite_id = sprite.and_then(|f| f.first()).map(|frame| frame.spr_id);
+    let mut properties = match interaction {
+        Interaction::Dialogue(key) => vec![prop_str("description", key)],
+        Interaction::Func(func) => func_properties(func)?,
+        // A pure animation object only round-trips if it actually has a sprite;
+        // a sprite-less `None` is nothing Tiled can represent.
+        Interaction::None => {
+            sprite_id?;
+            Vec::new()
+        }
     };
-    let mut properties = vec![prop_str("description", key)];
-    if let Some(frame) = sprite.and_then(|f| f.first()) {
-        properties.push(prop_str("sprite", &frame.spr_id.to_string()));
+    if let Some(id) = sprite_id {
+        properties.push(prop_str("sprite", &id.to_string()));
     }
     Some(json!({
         "id": id, "name": "", "type": "", "rotation": 0, "visible": true,
         "x": hitbox.x, "y": hitbox.y, "width": hitbox.w, "height": hitbox.h,
         "properties": properties,
     }))
+}
+
+/// The Tiled properties an [`InteractFn`] serialises to: a `func` name plus the
+/// scalar properties that name carries on parse (`pitch`, `count`). Positional
+/// data (the piano origin) lives in the hitbox, so it needs no property.
+/// `None` for an `InteractFn` with no name ([`InteractFn::Pet`]), which is the
+/// signal to drop the object. Inverse of [`TiledObject::to_func`].
+fn func_properties(func: &InteractFn) -> Option<Vec<Value>> {
+    let name = func.name()?;
+    let mut properties = vec![prop_str("func", name)];
+    match func {
+        InteractFn::Note(pitch) => properties.push(prop_str("pitch", &pitch.to_string())),
+        InteractFn::AddCreatures(count) => properties.push(prop_str("count", &count.to_string())),
+        InteractFn::ToggleDog | InteractFn::Piano(_) | InteractFn::Pet(..) => {}
+    }
+    Some(properties)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -357,9 +424,11 @@ impl TiledMap {
     /// (its tile layers hold flattened/sheet-local ids, which are re-gid'd on
     /// the way out), while the object layer is rebuilt from `objects` in vector
     /// order (so a hand-mixed layer keeps its interleaving). Returns
-    /// pretty-printed JSON. Objects whose effect is an interaction that isn't a
-    /// dialogue key (function / none) can't be expressed as Tiled objects and
-    /// are dropped (with a warning).
+    /// pretty-printed JSON. Warps, named `func` interactions, dialogue keys and
+    /// sprite-only [`Interaction::None`] objects all round-trip (see
+    /// [`object_to_tmj`]); only the two cases with no Tiled spelling — an
+    /// unnamed func ([`InteractFn::Pet`]) and a sprite-less `Interaction::None`
+    /// — are dropped (with a warning).
     ///
     /// The flattened→gid inverse maps `0` to an empty cell, so a cell holding
     /// the tileset's very first tile (which flattened to `0` on load) is saved
@@ -405,7 +474,7 @@ impl TiledMap {
         }
         if dropped > 0 {
             log::warn!(
-                "{dropped} object(s) with non-dialogue interactions could not be serialised and were dropped"
+                "{dropped} object(s) had no Tiled spelling (unnamed func, or sprite-less Interaction::None) and were dropped"
             );
         }
         let map = json!({
@@ -431,7 +500,7 @@ impl TiledMap {
 #[cfg(test)]
 mod tests {
     use super::{TiledMap, TiledMapLayer, from_json};
-    use crate::interact::Interaction;
+    use crate::interact::{InteractFn, Interaction};
     use crate::map::{MapObject, ObjectEffect, WarpMode};
 
     /// The destination-map name of an object's warp effect, or `None` if it
@@ -674,5 +743,115 @@ mod tests {
             panic!("the round-tripped object is a warp");
         };
         assert_eq!((warp.to.x, warp.to.y), (72, 32));
+    }
+
+    /// The runtime `InteractFn` of an object's interaction effect, if it is one.
+    fn func(object: &MapObject) -> Option<&InteractFn> {
+        match &object.effect {
+            ObjectEffect::Interact(Interaction::Func(f)) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// A `func` object with no scalar properties (`toggle_dog`) and one with a
+    /// scalar property (`note`/`pitch`) both round-trip through serialise →
+    /// reparse, name and scalar intact.
+    #[test]
+    fn tmj_round_trips_func_objects() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {
+                        "x": 8, "y": 8, "width": 8, "height": 8, "type": "",
+                        "properties": [{"name": "func", "type": "string", "value": "toggle_dog"}]
+                    },
+                    {
+                        "x": 16, "y": 24, "width": 8, "height": 8, "type": "",
+                        "properties": [
+                            {"name": "func", "type": "string", "value": "note"},
+                            {"name": "pitch", "type": "string", "value": "7"}
+                        ]
+                    }
+                ]
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 2);
+        assert!(matches!(func(&objects[0]), Some(InteractFn::ToggleDog)));
+        assert!(matches!(func(&objects[1]), Some(InteractFn::Note(7))));
+
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 2);
+        assert!(matches!(func(&objects2[0]), Some(InteractFn::ToggleDog)));
+        assert!(matches!(func(&objects2[1]), Some(InteractFn::Note(7))));
+        // Positions are preserved (the piano's origin proves the hitbox is the
+        // source of truth; toggle_dog's hitbox is checked here as a stand-in).
+        assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (8, 8));
+        assert_eq!((objects2[1].hitbox.x, objects2[1].hitbox.y), (16, 24));
+    }
+
+    /// A `piano` func takes its origin from the hitbox (no property), so the
+    /// round-trip must reconstruct the origin from the placed rectangle.
+    #[test]
+    fn tmj_round_trips_piano_origin_from_hitbox() {
+        let json = r#"{
+            "width": 8, "height": 8,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [{
+                    "x": 32, "y": 8, "width": 40, "height": 24, "type": "",
+                    "properties": [{"name": "func", "type": "string", "value": "piano"}]
+                }]
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let objects = map.parse_objects();
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 1);
+        // The origin is the hitbox top-left, reconstructed identically.
+        assert!(matches!(func(&objects2[0]), Some(InteractFn::Piano(o)) if (o.x, o.y) == (32, 8)));
+    }
+
+    /// A sprite-only object (a `sprite` tile id, no description/func/warp) parses
+    /// to an `Interaction::None` carrying the sprite, and round-trips as such —
+    /// what legacy animation-only objects (the living-room TV) rely on.
+    #[test]
+    fn tmj_round_trips_sprite_only_object() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [{
+                    "x": 8, "y": 16, "width": 16, "height": 16, "type": "",
+                    "properties": [{"name": "sprite", "type": "string", "value": "524"}]
+                }]
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 1);
+        assert!(matches!(objects[0].effect, ObjectEffect::Interact(Interaction::None)));
+        assert_eq!(objects[0].sprite.as_ref().unwrap()[0].spr_id, 524);
+
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 1);
+        assert!(matches!(objects2[0].effect, ObjectEffect::Interact(Interaction::None)));
+        assert_eq!(objects2[0].sprite.as_ref().unwrap()[0].spr_id, 524);
+        assert_eq!(
+            (objects2[0].hitbox.x, objects2[0].hitbox.y),
+            (8, 16),
+        );
     }
 }

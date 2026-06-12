@@ -140,14 +140,16 @@ impl WalkaroundState {
         &mut self.camera.bounds
     }
     /// Function that does everything. No anti-pattern here. Returns an optional
-    /// dialogue-registry key for the caller to resolve and display. Takes
-    /// `save` narrowly (only the stairwell flag needs it) alongside the console
-    /// it plays sounds through.
+    /// dialogue-registry key for the caller to resolve and display, alongside
+    /// the console it plays sounds through. State-driven conditionals (the old
+    /// stairwell window/painting pair) no longer live here — they are dialogue
+    /// objects whose `#set`/`#if` directives drive the named save flags during
+    /// playback (see [`crate::data::eggtext`]), so this stays pure behaviour and
+    /// needs no `save`.
     pub fn execute_interact_fn(
         &mut self,
         interact: &InteractFn,
         system: &mut impl ConsoleApi,
-        save: &mut SaveData,
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
@@ -161,17 +163,6 @@ impl WalkaroundState {
                     self.companion_list.add(Companion::Dog);
                     system.play_sound(sound::EQUIP_OBTAINED);
                     Some("dog_obtained")
-                }
-            }
-            InteractFn::StairwellWindow => {
-                save.house_stairwell_window_interacted = true;
-                Some("house_stairwell_window")
-            }
-            InteractFn::StairwellPainting => {
-                if save.house_stairwell_window_interacted {
-                    Some("house_stairwell_painting_after")
-                } else {
-                    Some("house_stairwell_painting_init")
                 }
             }
             InteractFn::Note(note) => {
@@ -293,12 +284,12 @@ impl WalkaroundState {
         match interaction {
             Interaction::Dialogue(key) => {
                 let convo = ctx.get_dialogue(key);
-                self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
+                self.dialogue.set_messages(ctx.system, ctx.save, &convo);
             }
             Interaction::Func(x) => {
-                if let Some(key) = self.execute_interact_fn(x, ctx.system, ctx.save) {
+                if let Some(key) = self.execute_interact_fn(x, ctx.system) {
                     let convo = ctx.get_dialogue(key);
-                    self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
+                    self.dialogue.set_messages(ctx.system, ctx.save, &convo);
                 }
             }
             Interaction::None => {}
@@ -357,18 +348,17 @@ impl WalkaroundState {
             if self.dialogue.characters == 0 {
                 ctx.system.play_sound(sound::INTERACT);
             }
-            let small_text = ctx.save.small_text_on;
-            self.dialogue.tick(ctx.system, small_text, 1);
+            self.dialogue.tick(ctx.system, ctx.save, 1);
             if pressed(pad.a) {
-                self.dialogue.tick(ctx.system, small_text, 2);
+                self.dialogue.tick(ctx.system, ctx.save, 2);
             }
             if just_pressed(pad.b) {
-                self.dialogue.skip(ctx.system, small_text);
+                self.dialogue.skip(ctx.system, ctx.save);
             }
         }
         if just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text(ctx.system, ctx.save.small_text_on, false) {
+            if self.dialogue.next_text(ctx.system, ctx.save, false) {
                 interact = false;
             } else if self.dialogue.current_text.is_some() {
                 interact = false;

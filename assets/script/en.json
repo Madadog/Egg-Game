@@ -1,4 +1,5 @@
 {
+  "flags": ["house_stairwell_window_interacted"],
   "labels": {
     "game_title": "super unfinished EGG GAME",
     "game_title_blurb": "version 0.1.0",
@@ -52,10 +53,20 @@
       ]
     },
 
-    "house_stairwell_window": "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.",
+    "house_stairwell_window": { "messages": [
+      { "content": [
+        { "set_flag": ["house_stairwell_window_interacted", true] },
+        { "text": "The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful." }
+      ] }
+    ] },
     "house_stairwell_window2": "By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.",
-    "house_stairwell_painting_init": "It's not as good as the real thing.",
-    "house_stairwell_painting_after": "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.",
+    "house_stairwell_painting": { "segments": [
+      {
+        "if": "house_stairwell_window_interacted",
+        "then": "A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.",
+        "else": "It's not as good as the real thing."
+      }
+    ] },
     "house_stairwell_door": "You shouldn't go in there.",
 
     "house_living_room_couch": "He's busy.",

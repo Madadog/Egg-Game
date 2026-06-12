@@ -78,9 +78,10 @@ impl<S: ConsoleApi> Ctx<'_, S> {
         self.script.list(key)
     }
 
-    /// A dialogue conversation by key (see [`Script::get_dialogue`]).
+    /// A dialogue conversation by key, resolved against the live save so its
+    /// `#if` branches pick by the player's flags (see [`Script::get_dialogue`]).
     pub fn get_dialogue(&self, key: &str) -> Vec<Message> {
-        self.script.get_dialogue(key)
+        self.script.get_dialogue(key, self.save)
     }
 }
 

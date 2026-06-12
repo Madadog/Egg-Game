@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 /// The path the engine persists progress under. The engine names the file; a
@@ -16,26 +18,29 @@ pub struct SaveData {
     /// If true, you have to press the interact button to use doors.
     pub manual_doors: bool,
 
+    /// Named story flags, the open-ended replacement for the old packed
+    /// bitfields and one-off typed bools: dialogue toggles them with `#set` and
+    /// branches on them with `#if` (see [`crate::data::eggtext`]), and the
+    /// vocabulary the script declares (`#flag NAME`) is what an in-game editor
+    /// autocompletes against. Only set flags are stored, so an absent name reads
+    /// as `false` and old saves simply lack any flag they never set.
+    #[serde(default)]
+    pub flags: BTreeSet<String>,
+
     // House
-    pub house_stairwell_window_interacted: bool,
     pub dog_fed: bool,
     pub living_room_seen: bool,
 
     // Egg
     pub egg_count: u16,
-    pub egg_flags: u8,
-    pub town_flags: u8,
 
     // Supermarket
     pub supermarket_thief: bool,
     pub supermarket_key_access: bool,
     pub supermarket_backroom: bool,
 
-    pub hospital_flags: u8,
-
     pub wilderness_egg_found: bool,
 
-    pub factory_flags: u8,
     pub egg_pop_count: u8,
 
     pub is_night: bool,
@@ -66,6 +71,27 @@ pub struct SaveData {
     pub save_count: u32,
 }
 
+impl SaveData {
+    /// Set (or clear) a named story [`flag`](Self::flag). Setting inserts the
+    /// name; clearing removes it, so the stored set only ever holds the flags
+    /// that are currently true.
+    pub fn set_flag(&mut self, name: &str, value: bool) {
+        if value {
+            // Avoid allocating when the flag is already present.
+            if !self.flags.contains(name) {
+                self.flags.insert(name.to_string());
+            }
+        } else {
+            self.flags.remove(name);
+        }
+    }
+
+    /// Read a named story flag. An undeclared/unset name reads as `false`.
+    pub fn flag(&self, name: &str) -> bool {
+        self.flags.contains(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,7 +120,7 @@ mod tests {
     /// the format the engine autosaves through (see [`SAVE_PATH`]).
     #[test]
     fn json_round_trips_save_data() {
-        let data = SaveData {
+        let mut data = SaveData {
             intro_anim_seen: true,
             instructions_read: true,
             egg_count: 1234,
@@ -104,8 +130,39 @@ mod tests {
             player_y: 300,
             ..SaveData::default()
         };
+        data.set_flag("house_stairwell_window_interacted", true);
+        data.set_flag("met_the_dog", true);
         let json = serde_json::to_string_pretty(&data).expect("serialise");
         let parsed: SaveData = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(data, parsed);
+        assert!(parsed.flag("house_stairwell_window_interacted"));
+        assert!(parsed.flag("met_the_dog"));
+    }
+
+    /// `set_flag`/`flag` insert and remove names, and an unset name reads false.
+    #[test]
+    fn flag_helpers_set_and_clear() {
+        let mut save = SaveData::default();
+        assert!(!save.flag("seen_sunrise"));
+        save.set_flag("seen_sunrise", true);
+        assert!(save.flag("seen_sunrise"));
+        // Setting an already-set flag is idempotent.
+        save.set_flag("seen_sunrise", true);
+        assert!(save.flag("seen_sunrise"));
+        // Clearing removes it from the stored set entirely.
+        save.set_flag("seen_sunrise", false);
+        assert!(!save.flag("seen_sunrise"));
+        assert!(save.flags.is_empty());
+    }
+
+    /// A save written before `flags` existed has no `flags` key at all; it must
+    /// still load, with an empty flag set.
+    #[test]
+    fn old_save_without_flags_loads_empty() {
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        value.as_object_mut().unwrap().remove("flags");
+        let save: SaveData = serde_json::from_value(value).expect("old save still loads");
+        assert!(save.flags.is_empty());
+        assert!(!save.flag("anything"));
     }
 }

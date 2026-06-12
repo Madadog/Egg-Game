@@ -3,7 +3,16 @@
 // Top-level `key = "value"` lines are UI labels. `#list NAME` blocks are
 // ordered string lists. `#dialogue NAME` blocks are conversations: blank lines
 // split them into messages, `#pic`/`#sound`/`#flip` set the speaker, and a
-// trailing `#delay N` reveals text piece by piece.
+// trailing `#delay N` reveals text piece by piece. Within a dialogue body
+// `#set NAME true|false` toggles a save flag as it plays, and
+// `#if NAME` / `#else` / `#end` include whole messages only when a flag is set.
+//
+// `#flag NAME` lines (all at the top, before the first entry) declare the
+// vocabulary `#set`/`#if` may name.
+
+// --- Story flags ---
+
+#flag house_stairwell_window_interacted
 
 // --- UI labels ---
 
@@ -64,16 +73,20 @@ menu_music_test = "Music Test"
 // --- house: stairwell ---
 
 #dialogue house_stairwell_window
+    #set house_stairwell_window_interacted true
     The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.
 
 #dialogue house_stairwell_window2
     By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.
 
-#dialogue house_stairwell_painting_init
-    It's not as good as the real thing.
-
-#dialogue house_stairwell_painting_after
+// First viewing (before the window) shows the init line; after the window has
+// been seen, the after line. Folds the old _init/_after pair into one entry.
+#dialogue house_stairwell_painting
+    #if house_stairwell_window_interacted
     A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.
+    #else
+    It's not as good as the real thing.
+    #end
 
 #dialogue house_stairwell_door
     You shouldn't go in there.

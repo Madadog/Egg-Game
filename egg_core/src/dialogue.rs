@@ -17,6 +17,7 @@
 use std::fmt::Debug;
 
 use crate::{
+    data::save::SaveData,
     drawstate::{DrawState, LayerId},
     position::Vec2,
     system::{ConsoleApi, ConsoleHelper},
@@ -46,6 +47,11 @@ pub enum TextContent {
     Portrait(Option<Portrait>),
     Pause,
     Flip(bool),
+    /// Set (or clear) a named save flag when playback reaches this point — the
+    /// `#set NAME BOOL` directive. Fires exactly like a [`Sound`](Self::Sound)
+    /// (it is a `is_skip` item, consumed in place), so the flag flips at the
+    /// observable moment the dialogue plays past it. See [`crate::data::eggtext`].
+    SetFlag(String, bool),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
@@ -54,7 +60,7 @@ impl TextContent {
     }
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
-        matches!(self, Sound(_) | Portrait(_) | Flip(_))
+        matches!(self, Sound(_) | Portrait(_) | Flip(_) | SetFlag(..))
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).
     pub fn text(s: impl Into<String>) -> Self {
@@ -184,23 +190,23 @@ impl Dialogue {
             None => true,
         }
     }
-    fn set_current_text(&mut self, system: &mut impl ConsoleApi, small_text: bool, string: &str) {
-        self.current_text = Some(self.fit_text(system, small_text, string));
+    fn set_current_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: &str) {
+        self.current_text = Some(self.fit_text(system, save.small_text_on, string));
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn add_text(&mut self, system: &mut impl ConsoleApi, small_text: bool, string: String) -> bool {
+    pub fn add_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: String) -> bool {
         if self.current_text.is_none() || self.is_line_done() {
-            self.set_current_text(system, small_text, &string);
+            self.set_current_text(system, save, &string);
             true
         } else {
             self.next_text.push(TextContent::text(string));
             false
         }
     }
-    pub fn maybe_add_text(&mut self, system: &mut impl ConsoleApi, small_text: bool, string: &'static str) {
+    pub fn maybe_add_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: &'static str) {
         if self.current_text.is_none() {
-            self.set_current_text(system, small_text, string);
+            self.set_current_text(system, save, string);
         }
     }
     /// Queue a sequence of [`Message`]s. Each message sets its speaker
@@ -208,7 +214,12 @@ impl Dialogue {
     /// between messages whose `pause_when_done` is set, so the player must
     /// press to continue (otherwise it auto-advances). No pause is added after
     /// the final message — closing the box handles that.
-    pub fn set_messages(&mut self, system: &mut impl ConsoleApi, small_text: bool, messages: &[Message]) {
+    ///
+    /// `save` is threaded through playback (not just for the wrap setting
+    /// `small_text_on`): a [`TextContent::SetFlag`] item — authored as `#set` —
+    /// writes its named flag the moment it is consumed, so passing `&mut save`
+    /// is what lets dialogue mutate progress as it plays.
+    pub fn set_messages(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, messages: &[Message]) {
         let mut queue: Vec<TextContent> = Vec::new();
         let last = messages.len().saturating_sub(1);
         for (i, message) in messages.iter().enumerate() {
@@ -220,15 +231,15 @@ impl Dialogue {
             }
         }
         self.next_text = queue.into_iter().rev().collect();
-        self.next_text(system, small_text, false);
+        self.next_text(system, save, false);
     }
-    pub fn next_text(&mut self, system: &mut impl ConsoleApi, small_text: bool, manual_skip: bool) -> bool {
+    pub fn next_text(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, manual_skip: bool) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(system, small_text, text_content, manual_skip);
+            let val = self.consume_text_content(system, save, text_content, manual_skip);
             if skip {
-                self.next_text(system, small_text, manual_skip)
+                self.next_text(system, save, manual_skip)
             } else {
                 val
             }
@@ -239,7 +250,7 @@ impl Dialogue {
     pub fn consume_text_content(
         &mut self,
         system: &mut impl ConsoleApi,
-        small_text: bool,
+        save: &mut SaveData,
         text_content: TextContent,
         manual_skip: bool,
     ) -> bool {
@@ -250,16 +261,16 @@ impl Dialogue {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(&text);
-                    *string = fit_default_paragraph(system, string, wrap_width, small_text);
+                    *string = fit_default_paragraph(system, string, wrap_width, save.small_text_on);
                     if !manual_skip {
                         self.add_delay(delay.into());
                     }
                 } else {
-                    self.add_text(system, small_text, text);
+                    self.add_text(system, save, text);
                 }
                 true
             }
-            TextContent::Text { text, .. } => self.add_text(system, small_text, text),
+            TextContent::Text { text, .. } => self.add_text(system, save, text),
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());
@@ -283,6 +294,11 @@ impl Dialogue {
                 self.flip_portrait = x;
                 true
             }
+            // Fire the named flag in place — same timing as a Sound item.
+            TextContent::SetFlag(name, value) => {
+                save.set_flag(&name, value);
+                true
+            }
         }
     }
     pub fn fit_text(&self, system: &mut impl ConsoleApi, small_text: bool, string: &str) -> String {
@@ -303,7 +319,7 @@ impl Dialogue {
     pub fn char_count(&self) -> usize {
         self.current_text.as_ref().map_or(0, |x| x.chars().count())
     }
-    pub fn tick(&mut self, system: &mut impl ConsoleApi, small_text: bool, amount: usize) {
+    pub fn tick(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, amount: usize) {
         if let Some(text) = &mut self.current_text {
             if self.delay != 0 {
                 self.delay = self.delay.saturating_sub(amount);
@@ -328,7 +344,7 @@ impl Dialogue {
             self.delay += 1;
         }
         if self.is_line_done() && self.can_autoadvance() {
-            self.next_text(system, small_text, false);
+            self.next_text(system, save, false);
         }
     }
     pub fn step_text(&mut self, amount: usize) {
@@ -344,9 +360,9 @@ impl Dialogue {
     pub fn add_delay(&mut self, amount: usize) {
         self.delay = self.delay.saturating_add(amount);
     }
-    pub fn skip(&mut self, system: &mut impl ConsoleApi, small_text: bool) {
+    pub fn skip(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData) {
         while self.can_autoadvance() {
-            self.next_text(system, small_text, true);
+            self.next_text(system, save, true);
         }
         self.finish_line();
     }

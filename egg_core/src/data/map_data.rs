@@ -292,8 +292,11 @@ fn house_stairwell() -> MapInfo {
                     .with_sound(sound::STAIRS_DOWN)
                     .with_mode(WarpMode::Auto),
             ),
-            MapObject::func(Hitbox::new(2 * 8, 2 * 8, 8, 8), InteractFn::StairwellWindow),
-            MapObject::func(Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8), InteractFn::StairwellPainting),
+            // The window sets the `house_stairwell_window_interacted` flag via a
+            // `#set` in its dialogue; the painting branches on it with `#if`
+            // (see assets/script/en.eggtext) — no bespoke InteractFn needed.
+            MapObject::dialogue(Hitbox::new(2 * 8, 2 * 8, 8, 8), "house_stairwell_window"),
+            MapObject::dialogue(Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8), "house_stairwell_painting"),
             MapObject::dialogue(Hitbox::new(13 * 8, 2 * 8, 8, 8), "house_stairwell_window2"),
             MapObject::dialogue(Hitbox::new(15 * 8, 3 * 8, 8, 8), "house_stairwell_door"),
         ],
