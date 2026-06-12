@@ -182,7 +182,6 @@ impl<A: Clone> History<A> {
     }
 
     /// Drop both stacks (e.g. on loading a different map).
-    #[allow(dead_code)]
     fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
@@ -426,6 +425,9 @@ pub struct MapViewer {
     history: History<EditAction>,
     /// Unsaved-changes flag + post-save toast countdown, driving the save button.
     status: SaveStatus,
+    /// `source` of the map this viewer last stepped. When it changes the viewer
+    /// drops its per-map state (see [`reset_for_new_map`](Self::reset_for_new_map)).
+    last_map: String,
 }
 
 impl MapViewer {
@@ -930,6 +932,16 @@ impl MapViewer {
         camera_pos: Vec2,
         screen: (f32, f32),
     ) {
+        // A different map under the editor invalidates the per-map state: object
+        // undo entries and the selection index point into the *old* map's objects
+        // list, so replaying them here would edit the wrong things. Self-detected
+        // (rather than hooked into `load_map`) so every viewer instance heals,
+        // including the extra views' own editors stepping the same shared map.
+        if self.last_map != map.source {
+            self.reset_for_new_map();
+            self.last_map = map.source.clone();
+        }
+
         self.status.tick();
 
         if self.editing.is_some() {
@@ -1375,6 +1387,22 @@ impl MapViewer {
     fn stop_editing(&mut self) {
         self.editing = None;
         self.field = None;
+    }
+
+    /// Forget all per-map editor state: undo/redo history, text-entry focus,
+    /// object selection, and any in-progress drag/stroke. Deliberately keeps
+    /// [`SaveStatus`]: tile paints land in the shared [`MapStore`], so
+    /// unsaved-ness genuinely survives a map switch. (Tile undo entries are
+    /// source-tagged and would replay correctly across maps, but object entries
+    /// index into the replaced objects list — so the whole history goes.)
+    fn reset_for_new_map(&mut self) {
+        self.history.clear();
+        self.stop_editing();
+        self.selected = None;
+        self.drag = None;
+        self.stroke = None;
+        self.moving = None;
+        self.move_from = None;
     }
 
     fn begin_edit(&mut self, field: EditField, map: &MapInfo) {
@@ -1890,6 +1918,48 @@ mod tests {
         // Ticking an expired toast is a harmless no-op (saturating).
         s.tick();
         assert_eq!(s.toast, 0);
+    }
+
+    /// Stepping the viewer with a *different* map under it drops all per-map
+    /// state (history, selection, text focus) — object undo entries and the
+    /// selection index would otherwise replay against the new map's objects
+    /// list. Same-map steps keep everything.
+    #[test]
+    fn map_change_resets_per_map_editor_state() {
+        use crate::system::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut store = MapStore::default();
+        let screen = (240.0, 136.0);
+
+        let mut viewer = MapViewer::default();
+        let mut map_a = MapInfo {
+            source: "a".to_string(),
+            ..MapInfo::default()
+        };
+        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen);
+
+        // Seed per-map state on map "a".
+        viewer.record(tiles(vec![(0, 0, 1, 2)]));
+        viewer.selected = Some(0);
+        viewer.editing = Some(EditField::Key);
+        viewer.field = Some(TextField::new("x"));
+
+        // Stepping the same map keeps it all.
+        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen);
+        assert!(viewer.history.can_undo());
+        assert!(viewer.is_typing());
+        assert_eq!(viewer.selected, Some(0));
+
+        // Stepping a different map drops it.
+        let mut map_b = MapInfo {
+            source: "b".to_string(),
+            ..MapInfo::default()
+        };
+        viewer.step_map_viewer_at(&mut console, &mut map_b, &mut store, Vec2::new(0, 0), screen);
+        assert!(!viewer.history.can_undo(), "object undo entries went stale");
+        assert!(!viewer.is_typing(), "text focus dropped");
+        assert_eq!(viewer.selected, None, "selection index went stale");
     }
 
     /// `tile_bounds` returns an inclusive, normalised tile range regardless of
