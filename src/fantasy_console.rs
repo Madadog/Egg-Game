@@ -27,23 +27,6 @@ use egg_core::{
 
 use crate::{EggGame, ScaleMode, ScreenMode};
 
-// TODO:
-// Load interactables from tiled maps
-// Separate BG & FG palettes, upgrade BGs.
-// Serialize save/load state, use structs, remove bits.
-// Dialogue hashmap
-// Make UI actually work: Hierarchical layout, compositional widgets.
-// Unified walkaround collision space
-// Yolkomatic
-
-// TODO:
-// Turn `Creature` into normal entities
-// Remove Static{name} from everything, load data from files like a sane program.
-// Level editor that serialises to json
-// Dialogue dsl and previewer
-// Cutscene editor
-// Resizable screen
-
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
