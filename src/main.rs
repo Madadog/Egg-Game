@@ -1,4 +1,3 @@
-use bevy::asset::LoadState;
 use bevy::asset::RenderAssetUsages;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
@@ -11,7 +10,7 @@ use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::FantasyConsole;
 use script_asset::{ScriptAsset, ScriptPlugin};
-use tiled::{TiledMapAsset, TiledMapPlugin};
+use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin, TilesetAsset};
 
 mod fantasy_console;
 mod hotkeys;
@@ -147,6 +146,16 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
 }
 
+/// The asset manifest handle, loaded first (in `setup_assets`). `load_assets`
+/// waits for it, then builds the real [`GameAssets`] from the maps/tilesets it
+/// names — so the set of maps is data, not code.
+#[derive(Resource)]
+pub struct Manifest(pub Handle<ManifestAsset>);
+
+/// Every handle the game needs to boot, expanded from the [`Manifest`]. Built
+/// once the manifest finishes loading (see [`GameAssets::from_manifest`]); the
+/// font/sheet/script are fixed, while the maps and tilesets come from the
+/// manifest's name lists.
 #[derive(Debug, Resource)]
 pub struct GameAssets {
     pub font: Handle<Image>,
@@ -154,86 +163,181 @@ pub struct GameAssets {
     pub maps: Vec<Handle<TiledMapAsset>>,
     /// Base file names for `maps` (same order) — the names they're stored
     /// under in the game's `MapStore`, and where an edited "modern" map is
-    /// saved back to (`maps/<name>.tmj`).
+    /// saved back to (`maps/<name>.tmj`). A map that fails to parse is logged
+    /// and skipped at install time, so what actually lands in the store is the
+    /// subset of these that loaded cleanly.
     pub map_names: Vec<String>,
+    /// Tileset handles (`maps/<name>.tsj`) named by the manifest, for their
+    /// per-tile collision-flag tables.
+    pub tilesets: Vec<Handle<TilesetAsset>>,
     pub script: Handle<ScriptAsset>,
 }
 impl GameAssets {
-    pub fn new(assets: &AssetServer) -> Self {
+    /// Expand a loaded [`GameManifest`] into concrete asset handles: each map
+    /// stem → `maps/<name>.tmj`, each tileset stem → `maps/<name>.tsj`, plus the
+    /// fixed font/sheet/script. Kicks off loading all of them.
+    fn from_manifest(assets: &AssetServer, manifest: &egg_core::data::tmj::GameManifest) -> Self {
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
-            maps: vec![
-                assets.load("maps/bank1.tmj"),
-                assets.load("maps/bank2.tmj"),
-                assets.load("maps/office.tmj"),
-            ],
-            map_names: vec!["bank1".into(), "bank2".into(), "office".into()],
+            maps: manifest
+                .maps
+                .iter()
+                .map(|name| assets.load(format!("maps/{name}.tmj")))
+                .collect(),
+            map_names: manifest.maps.clone(),
+            tilesets: manifest
+                .tilesets
+                .iter()
+                .map(|name| assets.load(format!("maps/{name}.tsj")))
+                .collect(),
             script: assets.load("script/en.eggtext"),
         }
     }
-    pub fn load_state(&self, assets: &AssetServer) -> LoadState {
+    /// The essential assets (font, sheet, script, every tileset) by name —
+    /// the ones the game cannot boot without. Maps are deliberately excluded:
+    /// boot must not block on an individual map (see [`Self::maps_settled`]),
+    /// so they're handled resiliently at install time instead.
+    fn essentials(&self) -> impl Iterator<Item = (String, bevy::asset::UntypedAssetId)> + '_ {
         [
-            self.font.id().untyped(),
-            self.sheet.id().untyped(),
-            self.script.id().untyped(),
+            ("font", self.font.id().untyped()),
+            ("sprite sheet", self.sheet.id().untyped()),
+            ("script", self.script.id().untyped()),
         ]
         .into_iter()
-        .chain(self.maps.iter().map(|m| m.id().untyped()))
-        .map(|id| assets.get_load_state(id).unwrap())
-        .find(|state| !matches!(state, LoadState::Loaded))
-        .unwrap_or(LoadState::Loaded)
+        .map(|(name, id)| (name.to_string(), id))
+        .chain(
+            self.tilesets
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (format!("tileset #{i}"), t.id().untyped())),
+        )
+    }
+    /// Whether every essential asset is loaded.
+    fn essentials_loaded(&self, assets: &AssetServer) -> bool {
+        self.essentials()
+            .all(|(_, id)| assets.get_load_state(id).is_some_and(|s| s.is_loaded()))
+    }
+    /// The first essential asset that *failed* to load, by name. A failure here
+    /// is a fatal config error (bad path or corrupt file), distinct from "still
+    /// loading" — the caller fails loudly rather than sitting on the loading
+    /// screen forever.
+    fn essential_failure(&self, assets: &AssetServer) -> Option<String> {
+        self.essentials()
+            .find(|(_, id)| assets.get_load_state(*id).is_some_and(|s| s.is_failed()))
+            .map(|(name, _)| name)
+    }
+    /// Whether every map handle has *settled* — finished loading, one way or the
+    /// other (`Loaded` or `Failed`), with none still in flight. Boot proceeds
+    /// once this holds, installing the maps that loaded and skipping those that
+    /// failed, so a single bad map can never wedge the game in the loading state.
+    fn maps_settled(&self, assets: &AssetServer) -> bool {
+        self.maps.iter().all(|m| {
+            assets
+                .get_load_state(m.id())
+                .is_some_and(|s| s.is_loaded() || s.is_failed())
+        })
     }
 }
 
 fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
-    commands.insert_resource(GameAssets::new(&assets));
+    // Load the manifest first; `load_assets` expands it into GameAssets once it
+    // arrives. The manifest's bespoke `.manifest` extension keeps it off the
+    // script loader (which owns `.json`).
+    commands.insert_resource(Manifest(assets.load("game.manifest")));
     commands.insert_resource(SfxAssets::new(&assets));
 }
 
+// Bevy system parameters: each `Res`/`ResMut` is a distinct world access, so the
+// arity is structural — bundling them into a `SystemParam` would only hide it.
+#[allow(clippy::too_many_arguments)]
 fn load_assets(
     mut commands: Commands,
+    manifest: Option<Res<Manifest>>,
     game_assets: Option<Res<GameAssets>>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMapAsset>>,
+    tilesets: Res<Assets<TilesetAsset>>,
+    manifests: Res<Assets<ManifestAsset>>,
     scripts: Res<Assets<ScriptAsset>>,
     mut state: ResMut<EggGame>,
 ) {
-    if let Some(game_assets) = game_assets {
-        match game_assets.load_state(&assets) {
-            LoadState::Loaded => {
-                let font = images.get(&game_assets.font);
-                let sheet = images.get(&game_assets.sheet);
-                if let (Some(font), Some(sheet)) = (font, sheet) {
-                    state.system.set_font(font);
-                    // The sprite sheets live on DrawState (their single owner);
-                    // the host converts the Bevy image into the engine's formats
-                    // and fills DrawState directly. Sprite flags initialise
-                    // themselves from the built-in blob in DrawState::default.
-                    let palette = state.state.draw_state.palettes[0].clone();
-                    state.state.draw_state.rgba_sprites = FantasyConsole::sprites_from_image(sheet);
-                    state.state.draw_state.indexed_sprites =
-                        FantasyConsole::indexed_sprites_from_image(sheet, &palette);
-                    // Maps live on the engine's MapStore, keyed by file stem —
-                    // the single copy that drawing, collision and the editor
-                    // all read.
-                    for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
-                        let map = maps.get(handle).expect("Map missing!").0.clone();
-                        state.state.maps.insert(name.clone(), map);
-                    }
-                    if let Some(script) = scripts.get(&game_assets.script) {
-                        state.state.script.set_base(script.0.clone());
-                    }
-                    state.loaded = true;
-                    info!("Finished loading assets.");
-                    commands.remove_resource::<GameAssets>();
+    // Phase 1: wait for the manifest, then expand it into GameAssets. We only do
+    // this once — GameAssets existing is the signal that phase 1 is done.
+    if game_assets.is_none() {
+        let Some(manifest) = manifest else { return };
+        match assets.get_load_state(manifest.0.id()) {
+            Some(s) if s.is_loaded() => {
+                if let Some(loaded) = manifests.get(&manifest.0) {
+                    info!(
+                        "Manifest loaded: {} map(s), {} tileset(s).",
+                        loaded.0.maps.len(),
+                        loaded.0.tilesets.len()
+                    );
+                    commands.insert_resource(GameAssets::from_manifest(&assets, &loaded.0));
                 }
             }
-            LoadState::Loading | LoadState::NotLoaded => {}
-            x => panic!("Could not load assets: {x:?}"),
+            Some(s) if s.is_failed() => panic!("Could not load game.manifest: {s:?}"),
+            _ => {}
+        }
+        return;
+    }
+    let game_assets = game_assets.unwrap();
+
+    // Phase 2: install once the essentials are loaded and every map has settled
+    // (loaded or failed) — never blocking boot on an individual map. A *failed*
+    // essential, by contrast, can never resolve: fail loudly like the old
+    // loader did rather than waiting on the loading screen forever.
+    if let Some(which) = game_assets.essential_failure(&assets) {
+        panic!("Essential asset failed to load: {which}");
+    }
+    if !(game_assets.essentials_loaded(&assets) && game_assets.maps_settled(&assets)) {
+        return;
+    }
+    let (Some(font), Some(sheet)) = (images.get(&game_assets.font), images.get(&game_assets.sheet))
+    else {
+        return;
+    };
+    state.system.set_font(font);
+    // The sprite sheets live on DrawState (their single owner); the host
+    // converts the Bevy image into the engine's formats and fills DrawState
+    // directly.
+    let palette = state.state.draw_state.palettes[0].clone();
+    state.state.draw_state.rgba_sprites = FantasyConsole::sprites_from_image(sheet);
+    state.state.draw_state.indexed_sprites =
+        FantasyConsole::indexed_sprites_from_image(sheet, &palette);
+    // Sprite flags are data now: install the per-tile collision-flag table from
+    // the manifest's tileset(s). The last loaded tileset wins (there's one in
+    // practice, `tiles`); DrawState::default's blob seed is now overwritten.
+    for handle in &game_assets.tilesets {
+        if let Some(tileset) = tilesets.get(handle) {
+            state.state.draw_state.sprite_flags = tileset.0.flag_table();
         }
     }
+    // Maps live on the engine's MapStore, keyed by file stem — the single copy
+    // that drawing, collision and the editor all read. RESILIENCE: each map is
+    // installed independently; one that failed to load/parse (these five were
+    // authored in Tiled 1.8–1.10 and never been through our parser) is logged
+    // and skipped, so it can't block boot or panic this system.
+    let mut loaded = Vec::new();
+    for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
+        match maps.get(handle) {
+            Some(map) => {
+                state.state.maps.insert(name.clone(), map.0.clone());
+                loaded.push(name.clone());
+            }
+            None => warn!("Skipping map `{name}` (failed to load or parse)."),
+        }
+    }
+    info!("Loaded {}/{} maps: {loaded:?}", loaded.len(), game_assets.map_names.len());
+    if let Some(script) = scripts.get(&game_assets.script) {
+        state.state.script.set_base(script.0.clone());
+    }
+    state.loaded = true;
+    info!("Finished loading assets.");
+    commands.remove_resource::<GameAssets>();
+    commands.remove_resource::<Manifest>();
 }
 
 /// The script handle for a language requested at runtime, while it loads.

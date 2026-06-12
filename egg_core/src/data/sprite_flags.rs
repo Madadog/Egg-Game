@@ -1,15 +1,24 @@
-//! The default per-tile collision/behaviour flags for the built-in sprite
-//! sheet, plus the parser that decodes them.
+//! The original TIC-80 sprite-flag blob and its decoder — now a **test oracle
+//! only**, no longer the runtime source of truth.
 //!
-//! Flags are the 2048-entry table [`crate::drawstate::DrawState`] consults for
-//! tile collision ([`crate::map::layer_collides_flags`] indexes it by tile id).
-//! For now they live as a hardcoded hex blob exported from the original TIC-80
-//! cartridge; the plan is to replace this with flags-as-data loaded from the
-//! Tiled tileset's per-tile properties, at which point this module goes away.
+//! The runtime per-tile collision-flag table ([`crate::drawstate::DrawState::sprite_flags`],
+//! consulted by [`crate::map::layer_collides_flags`]) is loaded from the Tiled
+//! tileset `assets/maps/tiles.tsj` (its per-tile `flags` int property), parsed
+//! by [`crate::data::tmj::TilesetFile`]. This module's hardcoded hex blob is the
+//! frozen export it was generated from: the `tsj_oracle` test asserts the two
+//! agree exactly, pinning the data file to the historical flags. Nothing in the
+//! shipping game reads the blob — only the test does.
+//!
+//! Full deletion waits for the all-maps-modern sweep (legacy bank-window maps
+//! still feed [`layer_collides_flags`] the runtime table, which now just arrives
+//! from data instead of from here). Until then this stays as the oracle.
 //!
 //! Blob layout is a TIC-80 quirk preserved byte-for-byte: the source string is
 //! read in 16-tile rows but written into a 32-tile-wide table, and each pair of
-//! hex digits is byte-swapped before parsing (see [`parse_sprite_flags`]).
+//! hex digits is byte-swapped before parsing (see [`parse_sprite_flags`]). That
+//! quirk is exactly what was *baked into* `tiles.tsj` on export — the tile ids
+//! there are honest sheet positions, so the data file carries no quirk and the
+//! quirk now lives only in this oracle.
 
 /// Build the default 2048-entry sprite-flag table by decoding the built-in
 /// blob into a zeroed table.
@@ -46,3 +55,33 @@ const SPRITE_FLAGS_BLOB: &str = concat!(
     "000000001010101000000000000000000070601010700000000000000000000010000000001000000000000000000000601010606060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000000010100000000000000000000000001010101000000000000000700000302030200000000000000000d0006000",
     "00000000101010100000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000010001000000000000000000000000000100010000000000000000000000010001010100000000000000000000000000000000000000000000000000000000000001010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 );
+
+#[cfg(test)]
+mod tests {
+    use super::default_sprite_flags;
+    use crate::data::tmj::tileset_from_json;
+
+    /// Oracle: the flag table the shipping game loads from `assets/maps/tiles.tsj`
+    /// must equal, tile for tile, the table the historical blob decodes to. This
+    /// is the same cross-check pattern as `eggtext_matches_en_json` — the data
+    /// file is the runtime source of truth, the blob is the frozen reference it
+    /// was generated from, and this pins the two together so an accidental edit
+    /// to either is caught. Reads the real asset via the `../assets/` path the
+    /// other egg_core data tests already use.
+    #[test]
+    fn tsj_oracle() {
+        let bytes = std::fs::read("../assets/maps/tiles.tsj").expect("read tiles.tsj");
+        let tileset = tileset_from_json(&bytes).expect("parse tiles.tsj");
+        let from_tsj = tileset.flag_table();
+        let from_blob = default_sprite_flags();
+        assert_eq!(
+            from_tsj.len(),
+            from_blob.len(),
+            "tiles.tsj tilecount must size the table like the blob does"
+        );
+        assert_eq!(
+            from_tsj, from_blob,
+            "tiles.tsj-derived flags must match the historical blob exactly"
+        );
+    }
+}

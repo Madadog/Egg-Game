@@ -1,0 +1,15 @@
+{
+  "maps": [
+    "bank1",
+    "bank2",
+    "office",
+    "bedroom1",
+    "class1",
+    "hall1",
+    "hall2",
+    "house_stairwell"
+  ],
+  "tilesets": [
+    "tiles"
+  ]
+}

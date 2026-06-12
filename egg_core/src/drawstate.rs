@@ -15,9 +15,13 @@ pub struct DrawState {
 
     /// Per-tile collision/behaviour flags, indexed by tile id (see
     /// [`crate::map::layer_collides_flags`]). The single source of truth for
-    /// flags. Initialised from the built-in blob in
-    /// [`crate::data::sprite_flags`]; the plan is to load these from the Tiled
-    /// tileset's per-tile properties instead (flags-as-data), retiring the blob.
+    /// flags at runtime. Loaded from the Tiled tileset `assets/maps/tiles.tsj`
+    /// (its per-tile `flags` int property) by the host's asset pipeline and
+    /// installed here — flags are data now, not code. [`Default`] seeds it from
+    /// the frozen built-in blob in [`crate::data::sprite_flags`] so collision
+    /// works before the tileset asset finishes loading; the host overwrites it
+    /// with the parsed `.tsj` table the moment that asset is ready (the two are
+    /// identical by the `tsj_oracle` test, so the swap is invisible).
     pub sprite_flags: Vec<u8>,
 }
 
