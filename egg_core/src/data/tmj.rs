@@ -1,12 +1,18 @@
 //! Codec for Tiled's JSON map format (`.tmj`): parsing, the object-layer ↔
-//! runtime (interactable/warp) mapping, and re-serialisation for the in-game
-//! editor. Lives in `egg_core` so every host shares one map model; hosts only
-//! wrap [`TiledMap`] for their own asset pipelines.
+//! runtime [`MapObject`] mapping, and re-serialisation for the in-game editor.
+//! Lives in `egg_core` so every host shares one map model; hosts only wrap
+//! [`TiledMap`] for their own asset pipelines.
+//!
+//! Each Tiled object becomes one [`MapObject`]: a `type == "warp"` (or warp
+//! properties) object an [`ObjectEffect::Warp`], a `description`-carrying object
+//! an [`ObjectEffect::Interact`] dialogue. Parsing preserves file order so a
+//! hand-mixed object layer keeps its interleaving across a save round-trip;
+//! serialisation walks the one objects list in order.
 
 use crate::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
-use crate::interact::{Interactable, Interaction};
-use crate::map::{Axis, LayerInfo, Warp, WarpMode};
+use crate::interact::Interaction;
+use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
 use serde::{Deserialize, Serialize};
@@ -115,11 +121,25 @@ impl TiledObject {
         let (w, h) = (self.width as i16, self.height as i16);
         (w > 0 && h > 0).then(|| Hitbox::new(self.x as i16, self.y as i16, w, h))
     }
-    /// Build a warp if this object is one (`type == "warp"`, or it carries warp
-    /// properties): `to_map` (a map name, taken verbatim — numeric values from
-    /// old files resolve through `map_by_name`'s fallback; absent = same map),
-    /// `to_x`/`to_y` (destination pixels, default = the warp's own position),
-    /// `flip`, `mode` (`auto`/`interact`), `sound`.
+    /// Resolve this object into a runtime [`MapObject`], discriminating the same
+    /// way the two old paths did: try the warp interpretation first
+    /// ([`to_warp`](Self::to_warp)), then the dialogue interactable
+    /// ([`to_interactable`](Self::to_interactable)). `None` for an object that's
+    /// neither (and for degenerate zero-size objects, via [`hitbox`](Self::hitbox)).
+    fn to_object(&self) -> Option<MapObject> {
+        let hitbox = self.hitbox()?;
+        if let Some(warp) = self.to_warp() {
+            Some(MapObject::warp(hitbox, warp))
+        } else {
+            self.to_interactable()
+        }
+    }
+    /// Build a warp effect if this object is one (`type == "warp"`, or it carries
+    /// warp properties): `to_map` (a map name, taken verbatim — numeric values
+    /// from old files resolve through `map_by_name`'s fallback; absent = same
+    /// map), `to_x`/`to_y` (destination pixels, default = the object's own
+    /// position), `flip`, `mode` (`auto`/`interact`), `sound`. The trigger
+    /// hitbox lives on the owning [`MapObject`], so it isn't built here.
     fn to_warp(&self) -> Option<Warp> {
         let is_warp = self.class.eq_ignore_ascii_case("warp")
             || self.prop("to_map").is_some()
@@ -133,7 +153,7 @@ impl TiledObject {
             self.prop("to_x").and_then(|s| s.parse().ok()).unwrap_or(from.x),
             self.prop("to_y").and_then(|s| s.parse().ok()).unwrap_or(from.y),
         );
-        let mut warp = Warp::new(from, map, to);
+        let mut warp = Warp::new(map, to);
         if let Some(flip) = self.prop("flip") {
             warp = warp.with_flip(parse_axis(flip));
         }
@@ -145,21 +165,21 @@ impl TiledObject {
         }
         Some(warp)
     }
-    /// Build a dialogue interactable if this object carries a `description` (the
-    /// dialogue-registry key). Optional `sprite` property = a tile id drawn at
-    /// the interactable.
-    fn to_interactable(&self) -> Option<Interactable> {
+    /// Build a dialogue interaction object if this object carries a `description`
+    /// (the dialogue-registry key). Optional `sprite` property = a tile id drawn
+    /// at the object.
+    fn to_interactable(&self) -> Option<MapObject> {
         let key = self.prop("description").filter(|s| !s.is_empty())?;
-        let mut interactable = Interactable::dialogue(self.hitbox()?, key);
+        let mut object = MapObject::dialogue(self.hitbox()?, key);
         if let Some(id) = self.prop("sprite").and_then(|s| s.parse::<u16>().ok()) {
-            interactable = interactable.with_sprite(vec![AnimFrame::new(
+            object = object.with_sprite(vec![AnimFrame::new(
                 Vec2::splat(0),
                 id,
                 30,
                 SpriteOptions::transparent_zero(),
             )]);
         }
-        Some(interactable)
+        Some(object)
     }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -216,8 +236,23 @@ fn sound_name(sfx: &SfxData) -> Option<&'static str> {
     })
 }
 
-/// Serialise a warp as a Tiled object (`type: "warp"` + warp properties).
-fn warp_to_object(warp: &Warp, id: usize) -> Value {
+/// Serialise one [`MapObject`] to a Tiled object by its effect, reusing the
+/// owning object's `hitbox` for the placed rectangle. A warp serialises with
+/// `type: "warp"` + warp properties; a dialogue interaction with `description` +
+/// optional `sprite`. Interactions that aren't a dialogue key (functions / none)
+/// can't be expressed as Tiled objects → `None` (the caller counts them dropped).
+fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
+    match &object.effect {
+        ObjectEffect::Warp(warp) => Some(warp_to_object(object.hitbox, warp, id)),
+        ObjectEffect::Interact(interaction) => {
+            interaction_to_object(object.hitbox, interaction, object.sprite.as_deref(), id)
+        }
+    }
+}
+
+/// Serialise a warp effect as a Tiled object (`type: "warp"` + warp properties),
+/// placed at `hitbox`.
+fn warp_to_object(hitbox: Hitbox, warp: &Warp, id: usize) -> Value {
     let mut properties = Vec::new();
     if let Some(map) = &warp.map {
         properties.push(prop_str("to_map", map));
@@ -235,23 +270,28 @@ fn warp_to_object(warp: &Warp, id: usize) -> Value {
     }
     json!({
         "id": id, "name": "", "type": "warp", "rotation": 0, "visible": true,
-        "x": warp.from.0.x, "y": warp.from.0.y,
-        "width": warp.from.1.x, "height": warp.from.1.y,
+        "x": hitbox.x, "y": hitbox.y,
+        "width": hitbox.w, "height": hitbox.h,
         "properties": properties,
     })
 }
 
-/// Serialise a dialogue interactable as a Tiled object (`description` + optional
-/// `sprite` tile id). Non-dialogue interactions don't round-trip → `None`.
-fn interactable_to_object(interactable: &Interactable, id: usize) -> Option<Value> {
-    let Interaction::Dialogue(key) = &interactable.interaction else {
+/// Serialise a dialogue interaction as a Tiled object (`description` + optional
+/// `sprite` tile id), placed at `hitbox`. Non-dialogue interactions don't
+/// round-trip → `None`.
+fn interaction_to_object(
+    hitbox: Hitbox,
+    interaction: &Interaction,
+    sprite: Option<&[AnimFrame]>,
+    id: usize,
+) -> Option<Value> {
+    let Interaction::Dialogue(key) = interaction else {
         return None;
     };
     let mut properties = vec![prop_str("description", key)];
-    if let Some(frame) = interactable.sprite.as_ref().and_then(|f| f.first()) {
+    if let Some(frame) = sprite.and_then(|f| f.first()) {
         properties.push(prop_str("sprite", &frame.spr_id.to_string()));
     }
-    let hitbox = interactable.hitbox;
     Some(json!({
         "id": id, "name": "", "type": "", "rotation": 0, "visible": true,
         "x": hitbox.x, "y": hitbox.y, "width": hitbox.w, "height": hitbox.h,
@@ -295,38 +335,37 @@ impl TiledMap {
             }
         }
     }
-    /// Parse this map's object layers into runtime interactables + warps. Warps
-    /// are objects with `type == "warp"` or warp properties; interactables are
-    /// objects carrying a `description` (dialogue key). See [`TiledObject`].
-    pub fn parse_objects(&self) -> (Vec<Interactable>, Vec<Warp>) {
-        let mut interactables = Vec::new();
-        let mut warps = Vec::new();
+    /// Parse this map's object layers into one ordered list of runtime
+    /// [`MapObject`]s, in file order. Warps are objects with `type == "warp"` or
+    /// warp properties; interactions are objects carrying a `description`
+    /// (dialogue key). See [`TiledObject::to_object`].
+    pub fn parse_objects(&self) -> Vec<MapObject> {
+        let mut objects = Vec::new();
         for layer in &self.layers {
             if let TiledMapLayer::ObjectLayer(group) = layer {
                 for object in &group.objects {
-                    if let Some(warp) = object.to_warp() {
-                        warps.push(warp);
-                    } else if let Some(interactable) = object.to_interactable() {
-                        interactables.push(interactable);
+                    if let Some(object) = object.to_object() {
+                        objects.push(object);
                     }
                 }
             }
         }
-        (interactables, warps)
+        objects
     }
     /// Re-serialise this map to Tiled JSON: `self` is both the structural
     /// template (dimensions, layer names, tilesets) and the live tile data
     /// (its tile layers hold flattened/sheet-local ids, which are re-gid'd on
-    /// the way out), while the object layer is rebuilt from `interactables` +
-    /// `warps`. Returns pretty-printed JSON. Interactables whose interaction
-    /// isn't a dialogue key can't be expressed as Tiled objects and are
-    /// dropped (with a warning).
+    /// the way out), while the object layer is rebuilt from `objects` in vector
+    /// order (so a hand-mixed layer keeps its interleaving). Returns
+    /// pretty-printed JSON. Objects whose effect is an interaction that isn't a
+    /// dialogue key (function / none) can't be expressed as Tiled objects and
+    /// are dropped (with a warning).
     ///
     /// The flattened→gid inverse maps `0` to an empty cell, so a cell holding
     /// the tileset's very first tile (which flattened to `0` on load) is saved
     /// as empty — an unavoidable consequence of the lossy flatten and the same
     /// way the engine already treats those cells.
-    pub fn to_tmj(&self, interactables: &[Interactable], warps: &[Warp]) -> String {
+    pub fn to_tmj(&self, objects: &[MapObject]) -> String {
         // Single-tileset assumption: `flatten_gids` subtracted per-tile firstgids, but only the first is re-added.
         let firstgid = self.tilesets.first().map(|t| t.firstgid).unwrap_or(1);
         let mut dropped = 0usize;
@@ -348,15 +387,10 @@ impl TiledMap {
                     }));
                 }
                 TiledMapLayer::ObjectLayer(object_layer) => {
-                    let mut objects = Vec::new();
-                    for warp in warps {
-                        objects.push(warp_to_object(warp, objects.len() + 1));
-                    }
-                    for interactable in interactables {
-                        if let Some(object) =
-                            interactable_to_object(interactable, objects.len() + 1)
-                        {
-                            objects.push(object);
+                    let mut json_objects = Vec::new();
+                    for object in objects {
+                        if let Some(value) = object_to_tmj(object, json_objects.len() + 1) {
+                            json_objects.push(value);
                         } else {
                             dropped += 1;
                         }
@@ -364,14 +398,14 @@ impl TiledMap {
                     layers.push(json!({
                         "type": "objectgroup", "id": id, "name": object_layer.name,
                         "x": 0, "y": 0, "opacity": 1, "visible": true,
-                        "draworder": "topdown", "objects": objects,
+                        "draworder": "topdown", "objects": json_objects,
                     }));
                 }
             }
         }
         if dropped > 0 {
             log::warn!(
-                "{dropped} interactable(s) with non-dialogue interactions could not be serialised and were dropped"
+                "{dropped} object(s) with non-dialogue interactions could not be serialised and were dropped"
             );
         }
         let map = json!({
@@ -381,7 +415,7 @@ impl TiledMap {
             "width": self.width, "height": self.height,
             "tilewidth": 8, "tileheight": 8,
             "nextlayerid": self.layers.len() + 1,
-            "nextobjectid": warps.len() + interactables.len() + 1,
+            "nextobjectid": objects.len() + 1,
             "tilesets": self
                 .tilesets
                 .iter()
@@ -398,7 +432,16 @@ impl TiledMap {
 mod tests {
     use super::{TiledMap, TiledMapLayer, from_json};
     use crate::interact::Interaction;
-    use crate::map::WarpMode;
+    use crate::map::{MapObject, ObjectEffect, WarpMode};
+
+    /// The destination-map name of an object's warp effect, or `None` if it
+    /// isn't a warp.
+    fn warp_map(object: &MapObject) -> Option<&str> {
+        match &object.effect {
+            ObjectEffect::Warp(w) => w.map.as_deref(),
+            _ => None,
+        }
+    }
 
     #[test]
     fn test_map_serialization() {
@@ -426,14 +469,17 @@ mod tests {
     fn parses_office_interactables() {
         let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
-        let (interactables, warps) = map.parse_objects();
-        // office.tmj's object layer is 7 dialogue interactables, no warps.
-        assert_eq!(interactables.len(), 7);
-        assert!(warps.is_empty());
+        let objects = map.parse_objects();
+        // office.tmj's object layer is 7 dialogue interactions, no warps.
+        assert_eq!(objects.len(), 7);
+        assert!(objects.iter().all(|o| matches!(o.effect, ObjectEffect::Interact(_))));
         // The first object is the desk front; its hitbox matches the Tiled object.
-        let desk = &interactables[0];
+        let desk = &objects[0];
         assert_eq!((desk.hitbox.x, desk.hitbox.y), (89, 65));
-        assert!(matches!(&desk.interaction, Interaction::Dialogue(k) if k == "office_desk_front"));
+        assert!(matches!(
+            &desk.effect,
+            ObjectEffect::Interact(Interaction::Dialogue(k)) if k == "office_desk_front"
+        ));
     }
 
     #[test]
@@ -458,11 +504,14 @@ mod tests {
             }]
         }"#;
         let map: TiledMap = serde_json::from_str(json).unwrap();
-        let (interactables, warps) = map.parse_objects();
-        assert!(interactables.is_empty());
-        assert_eq!(warps.len(), 1);
-        let warp = &warps[0];
-        assert_eq!((warp.from.0.x, warp.from.0.y), (16, 24));
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 1);
+        let object = &objects[0];
+        // The trigger hitbox now lives on the MapObject.
+        assert_eq!((object.hitbox.x, object.hitbox.y), (16, 24));
+        let ObjectEffect::Warp(warp) = &object.effect else {
+            panic!("the parsed object is a warp");
+        };
         assert_eq!((warp.to.x, warp.to.y), (120, 40));
         // The numeric id is kept verbatim — resolution to a legacy map happens
         // in `map_by_name`, not here.
@@ -475,22 +524,24 @@ mod tests {
     fn tmj_round_trips_office_objects() {
         let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
         let map = from_json(json.as_bytes()).unwrap();
-        let (interactables, warps) = map.parse_objects();
+        let objects = map.parse_objects();
         // Re-serialise (the map's tile layers hold the live flattened data),
         // then reload + reparse.
-        let out = map.to_tmj(&interactables, &warps);
+        let out = map.to_tmj(&objects);
         let reloaded = from_json(out.as_bytes()).unwrap();
-        let (interactables2, warps2) = reloaded.parse_objects();
-        assert_eq!(interactables2.len(), interactables.len());
-        assert_eq!(warps2.len(), warps.len());
-        for (a, b) in interactables.iter().zip(&interactables2) {
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), objects.len());
+        for (a, b) in objects.iter().zip(&objects2) {
             assert_eq!(
                 (a.hitbox.x, a.hitbox.y, a.hitbox.w, a.hitbox.h),
                 (b.hitbox.x, b.hitbox.y, b.hitbox.w, b.hitbox.h)
             );
             assert!(matches!(
-                (&a.interaction, &b.interaction),
-                (Interaction::Dialogue(x), Interaction::Dialogue(y)) if x == y
+                (&a.effect, &b.effect),
+                (
+                    ObjectEffect::Interact(Interaction::Dialogue(x)),
+                    ObjectEffect::Interact(Interaction::Dialogue(y)),
+                ) if x == y
             ));
         }
         // Flattened tile data is stable across the gid round-trip.
@@ -504,6 +555,49 @@ mod tests {
                 .collect()
         };
         assert_eq!(tile_layers(&map), tile_layers(&reloaded));
+    }
+
+    /// A hand-mixed object layer (warp, interaction, warp) keeps its
+    /// interleaving across parse → to_tmj → parse — the single ordered objects
+    /// list, not a group-by-kind split, is what survives.
+    #[test]
+    fn tmj_preserves_object_order() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {
+                        "x": 0, "y": 0, "width": 8, "height": 8, "type": "warp",
+                        "properties": [{"name": "to_map", "type": "string", "value": "a"}]
+                    },
+                    {
+                        "x": 8, "y": 0, "width": 8, "height": 8, "type": "",
+                        "properties": [{"name": "description", "type": "string", "value": "mid"}]
+                    },
+                    {
+                        "x": 16, "y": 0, "width": 8, "height": 8, "type": "warp",
+                        "properties": [{"name": "to_map", "type": "string", "value": "b"}]
+                    }
+                ]
+            }]
+        }"#;
+        let map: TiledMap = serde_json::from_str(json).unwrap();
+        let objects = map.parse_objects();
+        // Parsed in file order: warp("a"), dialogue("mid"), warp("b").
+        let kinds: Vec<Option<&str>> = objects.iter().map(warp_map).collect();
+        assert_eq!(kinds, vec![Some("a"), None, Some("b")]);
+        // The interleaving survives a serialise → reparse cycle.
+        let out = map.to_tmj(&objects);
+        let reloaded: TiledMap = serde_json::from_str(&out).unwrap();
+        let objects2 = reloaded.parse_objects();
+        let kinds2: Vec<Option<&str>> = objects2.iter().map(warp_map).collect();
+        assert_eq!(kinds2, kinds);
+        assert!(matches!(
+            &objects2[1].effect,
+            ObjectEffect::Interact(Interaction::Dialogue(k)) if k == "mid"
+        ));
     }
 
     #[test]
@@ -527,21 +621,25 @@ mod tests {
             }]
         }"#;
         let map: TiledMap = serde_json::from_str(json).unwrap();
-        let (interactables, warps) = map.parse_objects();
-        let out = map.to_tmj(&interactables, &warps);
+        let objects = map.parse_objects();
+        let out = map.to_tmj(&objects);
         let reloaded: TiledMap = serde_json::from_str(&out).unwrap();
-        let (_, warps2) = reloaded.parse_objects();
-        assert_eq!(warps2.len(), 1);
-        let (a, b) = (&warps[0], &warps2[0]);
-        assert_eq!((a.to.x, a.to.y), (b.to.x, b.to.y));
-        assert_eq!(a.map, b.map);
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 1);
+        let (a, b) = (&objects[0], &objects2[0]);
+        let (ObjectEffect::Warp(aw), ObjectEffect::Warp(bw)) = (&a.effect, &b.effect) else {
+            panic!("both objects are warps");
+        };
+        assert_eq!((aw.to.x, aw.to.y), (bw.to.x, bw.to.y));
+        assert_eq!(aw.map, bw.map);
+        // The trigger hitbox round-trips through the owning MapObject.
         assert_eq!(
-            (a.from.0.x, a.from.0.y, a.from.1.x, a.from.1.y),
-            (b.from.0.x, b.from.0.y, b.from.1.x, b.from.1.y)
+            (a.hitbox.x, a.hitbox.y, a.hitbox.w, a.hitbox.h),
+            (b.hitbox.x, b.hitbox.y, b.hitbox.w, b.hitbox.h)
         );
-        assert!(matches!(b.mode, WarpMode::Auto));
-        assert!(b.sound.is_some());
-        assert!(b.flip.y());
+        assert!(matches!(bw.mode, WarpMode::Auto));
+        assert!(bw.sound.is_some());
+        assert!(bw.flip.y());
     }
 
     /// A warp whose `to_map` is a map *name* survives serialise → reparse with
@@ -565,13 +663,16 @@ mod tests {
             }]
         }"#;
         let map: TiledMap = serde_json::from_str(json).unwrap();
-        let (_, warps) = map.parse_objects();
-        assert_eq!(warps[0].map.as_deref(), Some("supermarket_hall"));
-        let out = map.to_tmj(&[], &warps);
+        let objects = map.parse_objects();
+        assert_eq!(warp_map(&objects[0]), Some("supermarket_hall"));
+        let out = map.to_tmj(&objects);
         let reloaded: TiledMap = serde_json::from_str(&out).unwrap();
-        let (_, warps2) = reloaded.parse_objects();
-        assert_eq!(warps2.len(), 1);
-        assert_eq!(warps2[0].map.as_deref(), Some("supermarket_hall"));
-        assert_eq!((warps2[0].to.x, warps2[0].to.y), (72, 32));
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 1);
+        assert_eq!(warp_map(&objects2[0]), Some("supermarket_hall"));
+        let ObjectEffect::Warp(warp) = &objects2[0].effect else {
+            panic!("the round-tripped object is a warp");
+        };
+        assert_eq!((warp.to.x, warp.to.y), (72, 32));
     }
 }

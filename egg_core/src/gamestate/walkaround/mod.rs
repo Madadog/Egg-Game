@@ -5,7 +5,7 @@ use crate::data::save::SaveData;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::interact::{InteractFn, Interaction};
-use crate::map::{Axis, MapInfo, map_by_name};
+use crate::map::{Axis, MapInfo, ObjectEffect, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
@@ -98,10 +98,12 @@ impl WalkaroundState {
         self.bg_colour = map_set.bg_colour;
         system.music(map_set.music_track.as_ref());
 
+        // One animation per object that carries a sprite, in object order — the
+        // same order `draw_world` zips them back against the objects' hitboxes.
         self.map_animations = map_set
-            .interactables
+            .objects
             .iter()
-            .flat_map(|x| x.clone().sprite)
+            .filter_map(|object| object.sprite.clone())
             .map(|frames| Animation {
                 frames,
                 ..Animation::default()
@@ -283,6 +285,26 @@ impl WalkaroundState {
 }
 
 impl WalkaroundState {
+    /// Fire one triggered [`Interaction`]: open its dialogue, run its function
+    /// (then maybe open the dialogue that function returns), or do nothing. The
+    /// single place both the map-object and companion interact paths resolve to,
+    /// so they stay identical.
+    fn fire_interaction<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, interaction: &Interaction) {
+        match interaction {
+            Interaction::Dialogue(key) => {
+                let convo = ctx.get_dialogue(key);
+                self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
+            }
+            Interaction::Func(x) => {
+                if let Some(key) = self.execute_interact_fn(x, ctx.system, ctx.save) {
+                    let convo = ctx.get_dialogue(key);
+                    self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
+                }
+            }
+            Interaction::None => {}
+        }
+    }
+
     pub fn step<S: ConsoleApi>(
         &mut self,
         ctx: &mut Ctx<S>,
@@ -412,19 +434,39 @@ impl WalkaroundState {
             .hitbox()
             .offset_xy(self.player().dir.0.into(), self.player().dir.1.into());
 
-        let mut warp_target = None;
-        for warp in self.current_map.warps.iter() {
-            if self.player_ref().hitbox().touches(warp.hitbox())
-                || (interact && interact_hitbox.touches(warp.hitbox()))
-            {
-                if let Some(sound) = &warp.sound {
-                    ctx.system.play_sound(sound.clone());
+        // Two-phase object trigger. Phase 1 only *reads*: it finds the winning
+        // warp and/or interaction by index, touching nothing. Phase 2 acts on the
+        // winner — and a warp's `load_map_by_name` replaces the very vec we scan,
+        // so the scan must finish (and not borrow the vec) before we apply.
+        //
+        // Trigger semantics by effect kind (a future task adds a data-driven
+        // axis): a warp fires on body-touch OR a facing-direction press; an
+        // interaction fires only on a facing press. Warp beats interaction.
+        let player_hitbox = self.player_ref().hitbox();
+        let mut warp_hit = None;
+        let mut interact_hit = None;
+        for (i, object) in self.current_map.objects.iter().enumerate() {
+            let touched = player_hitbox.touches(object.hitbox);
+            let probed = interact && interact_hitbox.touches(object.hitbox);
+            match &object.effect {
+                ObjectEffect::Warp(_) if warp_hit.is_none() && (touched || probed) => {
+                    warp_hit = Some(i);
                 }
-                warp_target = Some(warp.clone());
-                break;
+                ObjectEffect::Interact(_) if interact_hit.is_none() && probed => {
+                    interact_hit = Some(i);
+                }
+                _ => {}
             }
         }
-        if let Some(target) = warp_target {
+
+        if let Some(i) = warp_hit {
+            let ObjectEffect::Warp(target) = &self.current_map.objects[i].effect else {
+                unreachable!("warp_hit only records Warp effects");
+            };
+            let target = target.clone();
+            if let Some(sound) = &target.sound {
+                ctx.system.play_sound(sound.clone());
+            }
             self.player().pos = target.target();
             self.player().flip_controls = target.flip;
             self.companion_trail
@@ -434,27 +476,24 @@ impl WalkaroundState {
                 self.load_map_by_name(ctx, &new_map);
             }
         } else if interact {
-            for item in self.current_map.interactables.iter().cloned().chain(
-                self.companion_list
-                    .interact(&self.companion_trail)
-                    .iter()
-                    .cloned(),
-            ) {
-                if interact_hitbox.touches(item.hitbox) {
-                    match &item.interaction {
-                        Interaction::Dialogue(key) => {
-                            let convo = ctx.get_dialogue(key);
-                            self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
+            if let Some(i) = interact_hit {
+                // Clone only the winning interaction, then fire it exactly as before.
+                let ObjectEffect::Interact(interaction) = self.current_map.objects[i].effect.clone()
+                else {
+                    unreachable!("interact_hit only records Interact effects");
+                };
+                self.fire_interaction(ctx, &interaction);
+            } else {
+                // No map object matched: fall back to the companions, checked
+                // against the facing hitbox in order (today's chain ordering —
+                // companions fire only when nothing on the map did).
+                for companion in self.companion_list.interact(&self.companion_trail) {
+                    if interact_hitbox.touches(companion.hitbox) {
+                        if let ObjectEffect::Interact(interaction) = companion.effect {
+                            self.fire_interaction(ctx, &interaction);
                         }
-                        Interaction::Func(x) => {
-                            if let Some(key) = self.execute_interact_fn(x, ctx.system, ctx.save) {
-                                let convo = ctx.get_dialogue(key);
-                                self.dialogue.set_messages(ctx.system, ctx.save.small_text_on, &convo);
-                            };
-                        }
-                        Interaction::None => {}
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -518,10 +557,10 @@ impl WalkaroundState {
 
         for (anim, hitbox) in self.map_animations.iter().zip(
             self.current_map
-                .interactables
+                .objects
                 .iter()
-                .filter(|x| x.sprite.is_some())
-                .map(|x| x.hitbox),
+                .filter(|object| object.sprite.is_some())
+                .map(|object| object.hitbox),
         ) {
             sprites.push(DrawParams::new(
                 anim.current_frame().spr_id.into(),
@@ -573,19 +612,21 @@ impl WalkaroundState {
                 .draw_dialogue_box(ctx.draw, BG, ctx.system, ctx.save.small_text_on, &string, true);
         }
         if debug_info.map_info {
-            for warp in self.current_map.warps.iter() {
-                warp.hitbox()
-                    .offset_xy(-camera_pos.x, -camera_pos.y)
-                    .draw(ctx.draw, BG, 12);
-            }
+            // Warp hitboxes in colour 12, interaction hitboxes in colour 14;
+            // the player hitbox shares the warps' colour.
             self.player_ref()
                 .hitbox()
                 .offset_xy(-camera_pos.x, -camera_pos.y)
                 .draw(ctx.draw, BG, 12);
-            for item in self.current_map.interactables.iter() {
-                item.hitbox
+            for object in self.current_map.objects.iter() {
+                let colour = match object.effect {
+                    ObjectEffect::Warp(_) => 12,
+                    ObjectEffect::Interact(_) => 14,
+                };
+                object
+                    .hitbox
                     .offset_xy(-camera_pos.x, -camera_pos.y)
-                    .draw(ctx.draw, BG, 14);
+                    .draw(ctx.draw, BG, colour);
             }
         }
         if debug_info.player_info {

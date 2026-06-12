@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::animation::AnimFrame;
 use crate::system::MapOptions;
 use crate::{
     camera::CameraBounds,
@@ -8,7 +9,7 @@ use crate::{
         sound::{SfxData, music::MusicTrack},
         tmj::{TiledMap, TiledMapLayer},
     },
-    interact::Interactable,
+    interact::{InteractFn, Interaction},
     position::{Collider, Hitbox, Vec2, touches_tile},
     system::drawing::image::IndexedImage,
 };
@@ -20,7 +21,7 @@ pub enum TileMapCollision {
 
 pub enum TileMapInteraction {
     None,
-    Interaction(Interactable),
+    Interaction(MapObject),
     Warp(usize),
 }
 
@@ -57,7 +58,7 @@ impl MapStore {
         names
     }
     /// Whether `name` is a "modern" map — one that carries an object layer
-    /// (interactables/warps live in the map file, not in code).
+    /// (its map objects live in the map file, not in code).
     pub fn is_modern(&self, name: &str) -> bool {
         self.get(name).is_some_and(|map| {
             map.layers
@@ -95,10 +96,10 @@ pub fn map_by_name(
 /// Build the runtime [`MapInfo`] for a modern (Tiled) map: tile layer 0 is
 /// the collision layer (drawn invisible, its colliders derived per-tile from
 /// the sprite art), the remaining tile layers split into bg/fg by the Tiled
-/// layer-name `fg` prefix, and interactables/warps come from the object
-/// layer. `source_layer` is each layer's index in `TiledMap::layers` — object
-/// layers occupy indices too ([`TiledMap::get`] returns `None` for them), so
-/// the numbering stays aligned with the file.
+/// layer-name `fg` prefix, and the map objects (warps + interactions) come
+/// from the object layer. `source_layer` is each layer's index in
+/// [`TiledMap::layers`] — object layers occupy indices too ([`TiledMap::get`]
+/// returns `None` for them), so the numbering stays aligned with the file.
 fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -> MapInfo {
     let (width, height) = match map.layers.first() {
         Some(TiledMapLayer::TileLayer(layer)) => (
@@ -148,12 +149,11 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
             layers.push(info);
         }
     }
-    let (interactables, warps) = map.parse_objects();
+    let objects = map.parse_objects();
     MapInfo {
         layers,
         fg_layers,
-        interactables,
-        warps,
+        objects,
         source: name.to_string(),
         ..Default::default()
     }
@@ -164,8 +164,9 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
 pub struct MapInfo {
     pub layers: Vec<LayerInfo>,
     pub fg_layers: Vec<LayerInfo>,
-    pub warps: Vec<Warp>,
-    pub interactables: Vec<Interactable>,
+    /// The map's triggerable objects (warps + interactions) in one ordered
+    /// list — the walk loop scans them in vector order, so order is gameplay.
+    pub objects: Vec<MapObject>,
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
     /// Name of the [`MapStore`] map the layers window into: `"bank1"`/`"bank2"`
@@ -308,7 +309,93 @@ impl From<LayerInfo> for MapOptions {
     }
 }
 
+/// A triggerable object placed on a map: a hitbox, the effect it fires, and an
+/// optional animated sprite drawn at its location. Unifies the old separate
+/// "warp" and "interactable" object kinds into one list (see [`MapInfo::objects`]).
+///
+/// Trigger semantics currently derive purely from the effect kind:
+/// - [`ObjectEffect::Warp`] fires on body-touch **or** a facing-direction press;
+/// - [`ObjectEffect::Interact`] fires only on a facing-direction press.
+///
+/// A future task adds a data-driven trigger axis (touch vs. press) on the object
+/// itself; until then the effect kind alone decides.
+#[derive(Clone, Debug)]
+pub struct MapObject {
+    pub hitbox: Hitbox,
+    pub effect: ObjectEffect,
+    pub sprite: Option<Vec<AnimFrame>>,
+}
+
+/// What a [`MapObject`] does when triggered: warp the player, or run an
+/// [`Interaction`] (dialogue / one-off function / nothing).
+#[derive(Clone, Debug)]
+pub enum ObjectEffect {
+    Warp(Warp),
+    Interact(Interaction),
+}
+
+impl MapObject {
+    pub const fn new(hitbox: Hitbox, effect: ObjectEffect, sprite: Option<Vec<AnimFrame>>) -> Self {
+        Self {
+            hitbox,
+            effect,
+            sprite,
+        }
+    }
+    /// A warp object: its `hitbox` is the trigger region, `warp` the destination.
+    pub const fn warp(hitbox: Hitbox, warp: Warp) -> Self {
+        Self::new(hitbox, ObjectEffect::Warp(warp), None)
+    }
+    /// A tile-coordinate warp object (8px tiles), mirroring the old
+    /// `Warp::new_tile`: trigger tile at `(tx1, ty1)`, destination `(tx2, ty2)`.
+    pub fn warp_tile(tx1: i16, ty1: i16, map: Option<&str>, tx2: i16, ty2: i16) -> Self {
+        Self::warp(
+            Hitbox::new(tx1 * 8, ty1 * 8, 8, 8),
+            Warp::new(map, Vec2::new(tx2 * 8, ty2 * 8)),
+        )
+    }
+    /// An interaction object showing the dialogue registered under `key`.
+    pub fn dialogue(hitbox: Hitbox, key: &str) -> Self {
+        Self::new(hitbox, ObjectEffect::Interact(Interaction::Dialogue(key.to_string())), None)
+    }
+    /// An interaction object running a one-off [`InteractFn`].
+    pub fn func(hitbox: Hitbox, func: InteractFn) -> Self {
+        Self::new(hitbox, ObjectEffect::Interact(Interaction::Func(func)), None)
+    }
+    /// Attach an animated sprite drawn at the object's location.
+    pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
+        self.sprite = Some(frames);
+        self
+    }
+    /// Run `f` over this object's inner [`Warp`] effect, if it is one — lets the
+    /// legacy builders keep their old fluent `Warp` setters as a single chain off
+    /// the tile-warp constructor. No-op on non-warp objects.
+    fn map_warp(mut self, f: impl FnOnce(Warp) -> Warp) -> Self {
+        if let ObjectEffect::Warp(warp) = self.effect {
+            self.effect = ObjectEffect::Warp(f(warp));
+        }
+        self
+    }
+    /// Set the warp's destination-flip axis (warp objects only).
+    pub fn with_warp_flip(self, flip: Axis) -> Self {
+        self.map_warp(|w| w.with_flip(flip))
+    }
+    /// Set the warp's [`WarpMode`] (warp objects only).
+    pub fn with_warp_mode(self, mode: WarpMode) -> Self {
+        self.map_warp(|w| w.with_mode(mode))
+    }
+    /// Set the warp's trigger sound (warp objects only).
+    pub fn with_warp_sound(self, sound: SfxData) -> Self {
+        self.map_warp(|w| w.with_sound(sound))
+    }
+}
+
 /// Defines how a warp is interacted with.
+///
+/// Parsed from `.tmj`, edited in the map editor, and serialised back — but the
+/// walk loop does **not** consult it yet (warps fire on body-touch or a facing
+/// press regardless of mode). It's intentional future surface for an "automatic
+/// doors" setting, not dead code: keep parsing/editing/serialising it.
 #[derive(Clone, Debug)]
 pub enum WarpMode {
     /// Automatically used when touched.
@@ -318,9 +405,10 @@ pub enum WarpMode {
     Interact,
 }
 
+/// The effect of a warp [`MapObject`]: where the player lands and how. The
+/// trigger hitbox now lives on the owning [`MapObject`], not here.
 #[derive(Clone, Debug)]
 pub struct Warp {
-    pub from: (Vec2, Vec2),
     /// Destination map name (`None` = same map). Resolved via [`map_by_name`],
     /// so numeric strings from old `.tmj` files keep working.
     pub map: Option<String>,
@@ -331,25 +419,15 @@ pub struct Warp {
 }
 
 impl Warp {
-    pub fn new(from: Hitbox, map: Option<&str>, to: Vec2) -> Self {
-        let from = (Vec2::new(from.x, from.y), Vec2::new(from.w, from.h));
+    pub fn new(map: Option<&str>, to: Vec2) -> Self {
         let to = Vec2::new(to.x, to.y);
         Self {
-            from,
             map: map.map(str::to_string),
             to,
             flip: Axis::None,
             mode: WarpMode::Interact,
             sound: None,
         }
-    }
-    /// Defaults to 8x8 tile, start and end destinations are in 8x8 tile coordinates (i.e. tx1=2 becomes x=16)
-    pub fn new_tile(tx1: i16, ty1: i16, map: Option<&str>, tx2: i16, ty2: i16) -> Self {
-        Self::new(
-            Hitbox::new(tx1 * 8, ty1 * 8, 8, 8),
-            map,
-            Vec2::new(tx2 * 8, ty2 * 8),
-        )
     }
     pub fn with_flip(self, flip: Axis) -> Self {
         Self { flip, ..self }
@@ -362,9 +440,6 @@ impl Warp {
             sound: Some(sound),
             ..self
         }
-    }
-    pub fn hitbox(&self) -> Hitbox {
-        Hitbox::new(self.from.0.x, self.from.0.y, self.from.1.x, self.from.1.y)
     }
     pub fn target(&self) -> Vec2 {
         Vec2::new(self.to.x, self.to.y)
@@ -474,8 +549,11 @@ mod tests {
         assert_eq!(bedroom.source, "bank1");
         // The bedroom's room layer windows into bank1 at (30, 0).
         assert_eq!(bedroom.layers[0].origin, Vec2::new(30, 0));
+        let ObjectEffect::Warp(warp) = &bedroom.objects[0].effect else {
+            panic!("the bedroom's first object is its stairwell warp");
+        };
         assert_eq!(
-            bedroom.warps[0].map.as_deref(),
+            warp.map.as_deref(),
             Some("house_stairwell"),
             "resolved the same map the bedroom() builder describes"
         );

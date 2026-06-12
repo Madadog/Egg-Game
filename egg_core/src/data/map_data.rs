@@ -16,8 +16,8 @@
 
 use crate::animation::AnimFrame;
 use crate::camera::CameraBounds;
-use crate::interact::{InteractFn, Interactable, Interaction};
-use crate::map::{Axis, LayerInfo, MapInfo, Warp, WarpMode};
+use crate::interact::{InteractFn, Interaction};
+use crate::map::{Axis, LayerInfo, MapInfo, MapObject, ObjectEffect, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
 
@@ -120,26 +120,23 @@ fn supermarket() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(13 * 8, 5 * 4),
         ],
-        warps: vec![
-            Warp::new_tile(17, 4, Some("supermarket_hall"), 9, 4).with_sound(sound::DOOR),
-            Warp::new_tile(8, 4, Some("supermarket_hall"), 3, 4).with_sound(sound::DOOR),
-            Warp::new(
+        objects: vec![
+            MapObject::warp_tile(17, 4, Some("supermarket_hall"), 9, 4).with_warp_sound(sound::DOOR),
+            MapObject::warp_tile(8, 4, Some("supermarket_hall"), 3, 4).with_warp_sound(sound::DOOR),
+            MapObject::warp(
                 Hitbox::new(11 * 8, 11 * 8, 3 * 8, 8),
-                Some("town"),
-                Vec2::new(51 * 4, 15 * 8),
-            )
-            .with_sound(sound::DOOR)
-            .with_mode(WarpMode::Auto),
-        ],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3), "sm_coin_return"),
-            Interactable::dialogue(Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2), "sm_fruit_basket"),
-            Interactable::dialogue(Hitbox::new(4 * 8, 5 * 8, 8, 20), "sm_main_window"),
-            Interactable::dialogue(Hitbox::new(19 * 8, 5 * 8, 8, 15), "sm_fridge_1"),
-            Interactable::dialogue(Hitbox::new(20 * 8, 6 * 8, 8, 15), "sm_fridge_2"),
-            Interactable::dialogue(Hitbox::new(21 * 8, 7 * 8, 8, 16), "sm_vending_machine"),
-            Interactable::dialogue(Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8), "construction_1"),
-            Interactable::dialogue(Hitbox::new(80, 24, 16, 20), "thing").with_sprite(vec![
+                Warp::new(Some("town"), Vec2::new(51 * 4, 15 * 8))
+                    .with_sound(sound::DOOR)
+                    .with_mode(WarpMode::Auto),
+            ),
+            MapObject::dialogue(Hitbox::new(13 * 8, 5 * 4, 8 * 2, 8 * 3), "sm_coin_return"),
+            MapObject::dialogue(Hitbox::new(2 * 8, 8 * 8, 8 * 3, 8 * 2), "sm_fruit_basket"),
+            MapObject::dialogue(Hitbox::new(4 * 8, 5 * 8, 8, 20), "sm_main_window"),
+            MapObject::dialogue(Hitbox::new(19 * 8, 5 * 8, 8, 15), "sm_fridge_1"),
+            MapObject::dialogue(Hitbox::new(20 * 8, 6 * 8, 8, 15), "sm_fridge_2"),
+            MapObject::dialogue(Hitbox::new(21 * 8, 7 * 8, 8, 16), "sm_vending_machine"),
+            MapObject::dialogue(Hitbox::new(11 * 8, 10 * 8, 3 * 8, 8), "construction_1"),
+            MapObject::dialogue(Hitbox::new(80, 24, 16, 20), "thing").with_sprite(vec![
                 AnimFrame::new(
                     Vec2::splat(0),
                     661,
@@ -186,20 +183,18 @@ fn supermarket_hall() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(11 * 8, 2 * 8),
         ],
-        warps: vec![
-            Warp::new_tile(9, 6, Some("supermarket"), 17, 4)
-                .with_mode(WarpMode::Auto)
-                .with_sound(sound::DOOR),
-            Warp::new_tile(3, 6, Some("supermarket"), 8, 4)
-                .with_mode(WarpMode::Auto)
-                .with_sound(sound::DOOR),
-            Warp::new_tile(4, 2, Some("supermarket_storeroom"), 2, 3).with_sound(sound::DOOR),
-        ],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(11 * 8, 4 * 8, 8, 8), "emergency_exit"),
-            Interactable::dialogue(Hitbox::new(8 * 8, 3 * 8, 8, 8), "construction_2"),
-            Interactable::dialogue(Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4), "sm_hall_shelf"),
-            Interactable::dialogue(Hitbox::new(8, 3 * 8, 12, 16), "sm_hall_window"),
+        objects: vec![
+            MapObject::warp_tile(9, 6, Some("supermarket"), 17, 4)
+                .with_warp_mode(WarpMode::Auto)
+                .with_warp_sound(sound::DOOR),
+            MapObject::warp_tile(3, 6, Some("supermarket"), 8, 4)
+                .with_warp_mode(WarpMode::Auto)
+                .with_warp_sound(sound::DOOR),
+            MapObject::warp_tile(4, 2, Some("supermarket_storeroom"), 2, 3).with_warp_sound(sound::DOOR),
+            MapObject::dialogue(Hitbox::new(11 * 8, 4 * 8, 8, 8), "emergency_exit"),
+            MapObject::dialogue(Hitbox::new(8 * 8, 3 * 8, 8, 8), "construction_2"),
+            MapObject::dialogue(Hitbox::new(11 * 4, 0, 2 * 8, 7 * 4), "sm_hall_shelf"),
+            MapObject::dialogue(Hitbox::new(8, 3 * 8, 12, 16), "sm_hall_window"),
         ],
         bg_colour: 1,
         source: "bank1".to_string(),
@@ -217,12 +212,12 @@ fn supermarket_storeroom() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(2 * 8, 0),
         ],
-        warps: vec![Warp::new_tile(2, 5, Some("supermarket_hall"), 4, 2)
-            .with_mode(WarpMode::Auto)
-            .with_sound(sound::DOOR)],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(53, 28, 8, 10), "egg_1").with_sprite(bob(524)),
-            Interactable::dialogue(Hitbox::new(16, 0, 5 * 8, 4 * 7), "sm_storeroom_shelf"),
+        objects: vec![
+            MapObject::warp_tile(2, 5, Some("supermarket_hall"), 4, 2)
+                .with_warp_mode(WarpMode::Auto)
+                .with_warp_sound(sound::DOOR),
+            MapObject::dialogue(Hitbox::new(53, 28, 8, 10), "egg_1").with_sprite(bob(524)),
+            MapObject::dialogue(Hitbox::new(16, 0, 5 * 8, 4 * 7), "sm_storeroom_shelf"),
         ],
         bg_colour: 1,
         source: "bank1".to_string(),
@@ -233,9 +228,9 @@ fn supermarket_storeroom() -> MapInfo {
 fn test_pen() -> MapInfo {
     MapInfo {
         layers: vec![LayerInfo::new(53, 17, 7, 9).with_rot_and_shift_flags(1, 0)],
-        warps: vec![Warp::new_tile(3, 8, Some("supermarket"), 10, 4)],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(5 * 8, 8, 8, 10), "egg_1").with_sprite(bob(524)),
+        objects: vec![
+            MapObject::warp_tile(3, 8, Some("supermarket"), 10, 4),
+            MapObject::dialogue(Hitbox::new(5 * 8, 8, 8, 10), "egg_1").with_sprite(bob(524)),
         ],
         bg_colour: 1,
         source: "bank1".to_string(),
@@ -257,17 +252,15 @@ fn bedroom() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(38, 27),
         ],
-        warps: vec![Warp::new(
-            Hitbox::new(15 * 8, 6 * 8, 8, 8),
-            Some("house_stairwell"),
-            Vec2::new(8 + 1, 2 * 8),
-        )
-        .with_sound(sound::DOOR)],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(38, 27, 3 * 8, 2 * 8), "bedroom_mattress"),
-            Interactable::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8), "bedroom_closet"),
-            Interactable::dialogue(Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8), "bedroom_trolley"),
-            Interactable::dialogue(Hitbox::new(9 * 8, 3 * 8, 8, 8), "bedroom_window"),
+        objects: vec![
+            MapObject::warp(
+                Hitbox::new(15 * 8, 6 * 8, 8, 8),
+                Warp::new(Some("house_stairwell"), Vec2::new(8 + 1, 2 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::dialogue(Hitbox::new(38, 27, 3 * 8, 2 * 8), "bedroom_mattress"),
+            MapObject::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 4 * 8), "bedroom_closet"),
+            MapObject::dialogue(Hitbox::new(101 - 16, 22, 3 * 8, 2 * 8), "bedroom_trolley"),
+            MapObject::dialogue(Hitbox::new(9 * 8, 3 * 8, 8, 8), "bedroom_window"),
         ],
         source: "bank1".to_string(),
         ..MapInfo::default()
@@ -288,26 +281,21 @@ fn house_stairwell() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(120, 6),
         ],
-        warps: vec![
-            Warp::new(
+        objects: vec![
+            MapObject::warp(
                 Hitbox::new(1, 3 * 8, 8, 8),
-                Some("bedroom"),
-                Vec2::new(14 * 8, 5 * 8),
-            )
-            .with_sound(sound::DOOR),
-            Warp::new(
+                Warp::new(Some("bedroom"), Vec2::new(14 * 8, 5 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::warp(
                 Hitbox::new(7 * 8, 9 * 8, 2 * 8, 8),
-                Some("house_living_room"),
-                Vec2::new(21 * 4, 4 * 8),
-            )
-            .with_sound(sound::STAIRS_DOWN)
-            .with_mode(WarpMode::Auto),
-        ],
-        interactables: vec![
-            Interactable::func(Hitbox::new(2 * 8, 2 * 8, 8, 8), InteractFn::StairwellWindow),
-            Interactable::func(Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8), InteractFn::StairwellPainting),
-            Interactable::dialogue(Hitbox::new(13 * 8, 2 * 8, 8, 8), "house_stairwell_window2"),
-            Interactable::dialogue(Hitbox::new(15 * 8, 3 * 8, 8, 8), "house_stairwell_door"),
+                Warp::new(Some("house_living_room"), Vec2::new(21 * 4, 4 * 8))
+                    .with_sound(sound::STAIRS_DOWN)
+                    .with_mode(WarpMode::Auto),
+            ),
+            MapObject::func(Hitbox::new(2 * 8, 2 * 8, 8, 8), InteractFn::StairwellWindow),
+            MapObject::func(Hitbox::new(7 * 8, 4 * 8, 2 * 8, 8), InteractFn::StairwellPainting),
+            MapObject::dialogue(Hitbox::new(13 * 8, 2 * 8, 8, 8), "house_stairwell_window2"),
+            MapObject::dialogue(Hitbox::new(15 * 8, 3 * 8, 8, 8), "house_stairwell_door"),
         ],
         source: "bank1".to_string(),
         ..MapInfo::default()
@@ -334,50 +322,42 @@ fn house_living_room() -> MapInfo {
                 .with_trans(&[0])
                 .with_offset(15 * 8 + 2, 9 * 8 - 1),
         ],
-        warps: vec![
-            Warp::new(
+        objects: vec![
+            MapObject::warp(
                 Hitbox::new(10 * 8, 4 * 8, 2 * 8, 8),
-                Some("house_stairwell"),
-                Vec2::new(15 * 4, 7 * 8),
-            )
-            .with_sound(sound::STAIRS_UP)
-            .with_mode(WarpMode::Auto),
-            Warp::new(
+                Warp::new(Some("house_stairwell"), Vec2::new(15 * 4, 7 * 8))
+                    .with_sound(sound::STAIRS_UP)
+                    .with_mode(WarpMode::Auto),
+            ),
+            MapObject::warp(
                 Hitbox::new(3 * 8, 9 * 8, 8, 8),
-                Some("town"),
-                Vec2::new(17 * 8, 13 * 8),
-            )
-            .with_sound(sound::DOOR)
-            .with_flip(Axis::Y),
-            Warp::new(
+                Warp::new(Some("town"), Vec2::new(17 * 8, 13 * 8))
+                    .with_sound(sound::DOOR)
+                    .with_flip(Axis::Y),
+            ),
+            MapObject::warp(
                 Hitbox::new(14 * 8, 5 * 8, 8, 8),
-                Some("house_kitchen"),
-                Vec2::new(7 * 4, 7 * 8),
-            )
-            .with_sound(sound::DOOR),
-            Warp::new(
+                Warp::new(Some("house_kitchen"), Vec2::new(7 * 4, 7 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::warp(
                 Hitbox::new(8 * 8, 5 * 8, 8, 8),
-                Some("piano_room"),
-                Vec2::new(19 * 4, 6 * 8),
-            )
-            .with_sound(sound::DOOR),
-        ],
-        interactables: vec![
-            Interactable::dialogue(
+                Warp::new(Some("piano_room"), Vec2::new(19 * 4, 6 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::dialogue(
                 Hitbox::new(12 * 8 + 2, 7 * 8, 3 * 8, 3 * 8),
                 "house_living_room_couch",
             ),
-            Interactable::dialogue(
+            MapObject::dialogue(
                 Hitbox::new(15 * 8 + 2, 11 * 8 - 1, 2 * 8, 2 * 8),
                 "house_living_room_tv_1",
             ),
-            Interactable::dialogue(
+            MapObject::dialogue(
                 Hitbox::new(5 * 8, 6 * 8, 2 * 8, 2 * 8),
                 "house_living_room_window",
             ),
-            Interactable::new(
+            MapObject::new(
                 Hitbox::new(12 * 8 + 2, 7 * 8, 1, 1),
-                Interaction::None,
+                ObjectEffect::Interact(Interaction::None),
                 Some(vec![AnimFrame::new(
                     Vec2::new(0, 0),
                     35,
@@ -390,9 +370,9 @@ fn house_living_room() -> MapInfo {
                 )
                 .with_outline(None)]),
             ),
-            Interactable::new(
+            MapObject::new(
                 Hitbox::new(12 * 8 + 9, 7 * 8, 8, 8),
-                Interaction::None,
+                ObjectEffect::Interact(Interaction::None),
                 Some(vec![
                     AnimFrame::new(
                         Vec2::new(0, 0),
@@ -432,29 +412,24 @@ fn house_kitchen() -> MapInfo {
                 .with_offset(7 * 8 + 6, 4 * 8 - 3)
                 .with_trans(&[0]),
         ],
-        warps: vec![
-            Warp::new(
+        objects: vec![
+            MapObject::warp(
                 Hitbox::new(2 * 8, 8 * 8 + 7, 4 * 8, 8),
-                Some("house_living_room"),
-                Vec2::new(14 * 8, 5 * 8),
-            )
-            .with_sound(sound::DOOR)
-            .with_mode(WarpMode::Auto),
-            Warp::new(
+                Warp::new(Some("house_living_room"), Vec2::new(14 * 8, 5 * 8))
+                    .with_sound(sound::DOOR)
+                    .with_mode(WarpMode::Auto),
+            ),
+            MapObject::warp(
                 Hitbox::new(11 * 8, 4 * 8, 8, 3 * 8),
-                Some("backyard"),
-                Vec2::new(15 * 8, 5 * 8),
-            )
-            .with_sound(sound::DOOR),
-        ],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8), "house_kitchen_cupboard"),
-            Interactable::dialogue(Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8), "house_kitchen_sink"),
-            Interactable::dialogue(
+                Warp::new(Some("backyard"), Vec2::new(15 * 8, 5 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::dialogue(Hitbox::new(2 * 8, 4 * 8, 2 * 8, 2 * 8), "house_kitchen_cupboard"),
+            MapObject::dialogue(Hitbox::new(5 * 8, 4 * 8, 4 * 3 - 2, 2 * 8), "house_kitchen_sink"),
+            MapObject::dialogue(
                 Hitbox::new(16 * 4 - 2, 4 * 8, 2 * 8 + 2, 2 * 8),
                 "house_kitchen_microwave",
             ),
-            Interactable::dialogue(Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8), "house_kitchen_window"),
+            MapObject::dialogue(Hitbox::new(7 * 8, 4 * 8, 8, 2 * 8), "house_kitchen_window"),
         ],
         source: "bank1".to_string(),
         ..MapInfo::default()
@@ -467,36 +442,32 @@ fn backyard() -> MapInfo {
             //room
             LayerInfo::new(120, 0, 30, 17),
         ],
-        warps: vec![
-            Warp::new(
+        objects: vec![
+            MapObject::warp(
                 Hitbox::new(15 * 8, 5 * 8, 8, 8),
-                Some("house_kitchen"),
-                Vec2::new(10 * 8 - 3, 5 * 8 + 3),
-            )
-            .with_sound(sound::DOOR)
-            .with_flip(Axis::Y),
-            Warp::new(
+                Warp::new(Some("house_kitchen"), Vec2::new(10 * 8 - 3, 5 * 8 + 3))
+                    .with_sound(sound::DOOR)
+                    .with_flip(Axis::Y),
+            ),
+            MapObject::warp(
                 Hitbox::new(12 * 8, 16 * 8 + 7, 4 * 8, 8),
-                Some("wilderness"),
-                Vec2::new(8 * 8, 61 * 8),
-            )
-            .with_mode(WarpMode::Auto)
-            .with_flip(Axis::Y),
-        ],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8), "house_backyard_basement"),
-            Interactable::dialogue(Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8), "house_backyard_shed"),
-            Interactable::dialogue(
+                Warp::new(Some("wilderness"), Vec2::new(8 * 8, 61 * 8))
+                    .with_mode(WarpMode::Auto)
+                    .with_flip(Axis::Y),
+            ),
+            MapObject::dialogue(Hitbox::new(9 * 8, 5 * 8, 2 * 8, 2 * 8), "house_backyard_basement"),
+            MapObject::dialogue(Hitbox::new(20 * 8, 8 * 8, 8, 2 * 8), "house_backyard_shed"),
+            MapObject::dialogue(
                 Hitbox::new(22 * 8, 8 * 8, 8, 2 * 8),
                 "house_backyard_shed_window",
             ),
-            Interactable::dialogue(
+            MapObject::dialogue(
                 Hitbox::new(24 * 8, 10 * 8, 8, 6 * 8),
                 "house_backyard_neighbours",
             ),
-            Interactable::func(Hitbox::new(21 * 8, 13 * 8, 8, 8), InteractFn::ToggleDog),
-            Interactable::dialogue(Hitbox::new(5 * 8, 0, 8, 16 * 8), "house_backyard_stormdrain"),
-            Interactable::dialogue(Hitbox::new(3, 2 * 8, 8, 8), "default").with_sprite(vec![
+            MapObject::func(Hitbox::new(21 * 8, 13 * 8, 8, 8), InteractFn::ToggleDog),
+            MapObject::dialogue(Hitbox::new(5 * 8, 0, 8, 16 * 8), "house_backyard_stormdrain"),
+            MapObject::dialogue(Hitbox::new(3, 2 * 8, 8, 8), "default").with_sprite(vec![
                 AnimFrame::new(Vec2::new(0, 0), 646, 30, SpriteOptions::transparent_zero()),
                 AnimFrame::new(Vec2::new(0, 0), 647, 30, SpriteOptions::transparent_zero()),
             ]),
@@ -551,14 +522,14 @@ fn wilderness() -> MapInfo {
             LayerInfo::new(120, 0, 30 * 4, 17 * 4).with_trans(&[0]),
         ],
         bg_colour: 3,
-        warps: vec![Warp::new(
-            Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
-            Some("backyard"),
-            Vec2::new(14 * 8 - 4, 15 * 8),
-        )
-        .with_mode(WarpMode::Auto)
-        .with_flip(Axis::Y)],
-        interactables: vec![],
+        objects: vec![
+            MapObject::warp(
+                Hitbox::new(7 * 8, 63 * 8 + 4, 2 * 8, 8),
+                Warp::new(Some("backyard"), Vec2::new(14 * 8 - 4, 15 * 8))
+                    .with_mode(WarpMode::Auto)
+                    .with_flip(Axis::Y),
+            ),
+        ],
         source: "bank2".to_string(),
         ..MapInfo::default()
     }
@@ -579,25 +550,19 @@ fn town() -> MapInfo {
                 .with_rot_and_shift_flags(0, 0),
         ],
         bg_colour: 0,
-        warps: vec![
-            Warp::new(
+        objects: vec![
+            MapObject::warp(
                 Hitbox::new(17 * 8, 13 * 8, 8, 8),
-                Some("house_living_room"),
-                Vec2::new(4 * 9, 8 * 8),
-            )
-            .with_sound(sound::DOOR),
-            Warp::new(
+                Warp::new(Some("house_living_room"), Vec2::new(4 * 9, 8 * 8)).with_sound(sound::DOOR),
+            ),
+            MapObject::warp(
                 Hitbox::new(25 * 8, 15 * 8, 2 * 8, 8),
-                Some("supermarket"),
-                Vec2::new(97, 73),
-            )
-            .with_sound(sound::DOOR),
-        ],
-        interactables: vec![
-            Interactable::dialogue(Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8), "town_traffic"),
-            Interactable::dialogue(Hitbox::new(8 * 8, 17 * 8, 8, 8), "town_lamppost"),
-            Interactable::dialogue(Hitbox::new(14 * 8, 13 * 8, 8, 8), "town_home_window"),
-            Interactable::dialogue(Hitbox::new(224, 142, 8 * 2, 8), "town_wide"),
+                Warp::new(Some("supermarket"), Vec2::new(97, 73)).with_sound(sound::DOOR),
+            ),
+            MapObject::dialogue(Hitbox::new(8 * 6, 17 * 8, 8, 6 * 8), "town_traffic"),
+            MapObject::dialogue(Hitbox::new(8 * 8, 17 * 8, 8, 8), "town_lamppost"),
+            MapObject::dialogue(Hitbox::new(14 * 8, 13 * 8, 8, 8), "town_home_window"),
+            MapObject::dialogue(Hitbox::new(224, 142, 8 * 2, 8), "town_wide"),
         ],
         source: "bank2".to_string(),
         ..MapInfo::default()
@@ -608,19 +573,18 @@ fn piano_room() -> MapInfo {
     MapInfo {
         layers: vec![LayerInfo::new(99, 15, 21, 10)],
         bg_colour: 0,
-        warps: vec![Warp::new(
-            Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
-            Some("house_living_room"),
-            Vec2::new(8 * 8, 5 * 8),
-        )
-        .with_sound(sound::DOOR)
-        .with_mode(WarpMode::Auto)],
-        interactables: vec![
-            Interactable::func(
+        objects: vec![
+            MapObject::warp(
+                Hitbox::new(9 * 8, 9 * 8, 8 * 2, 8),
+                Warp::new(Some("house_living_room"), Vec2::new(8 * 8, 5 * 8))
+                    .with_sound(sound::DOOR)
+                    .with_mode(WarpMode::Auto),
+            ),
+            MapObject::func(
                 Hitbox::new(4 * 8, 8, 4 * 25, 4 * 9),
                 InteractFn::Piano(Vec2::new(4 * 8, 8)),
             ),
-            Interactable::dialogue(Hitbox::new(0, 6 * 8, 8 * 2, 8), "unknown_3"),
+            MapObject::dialogue(Hitbox::new(0, 6 * 8, 8 * 2, 8), "unknown_3"),
         ],
         camera_bounds: Some(CameraBounds::stick(21 * 8 / 2 - 120, -64)),
         source: "bank1".to_string(),

@@ -1,12 +1,17 @@
 //! In-game editor for modern Tiled maps: toggle layers, paint tiles, and place
-//! or drag interactables and warps. Opened with `L` in walkaround; freezes the
-//! sim while focused and writes edits back to the map's `.tmj`.
+//! or drag map objects (warps and interactions). Opened with `L` in walkaround;
+//! freezes the sim while focused and writes edits back to the map's `.tmj`.
+//!
+//! Warps and interactions live in one [`MapInfo::objects`] list. The two object
+//! tools (Interacts / Warps) are *filtered views* over that single list — each
+//! tab lists only objects of its kind, mapping its display rows to real vector
+//! indices — so the UX is unchanged while the data model is unified.
 
 use crate::{
     data::sound::{self, SfxData},
     drawstate::{DrawState, LayerId},
-    interact::{Interactable, Interaction},
-    map::{Axis, LayerInfo, MapInfo, MapStore, Warp, WarpMode},
+    interact::Interaction,
+    map::{Axis, LayerInfo, MapInfo, MapObject, MapStore, ObjectEffect, Warp, WarpMode},
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
@@ -17,7 +22,8 @@ use crate::{
 use super::walkaround::WalkaroundState;
 
 /// The active editing tool. The map editor is the old layer viewer grown into a
-/// tabbed tool: toggle layers, paint tiles, or place interactables/warps.
+/// tabbed tool: toggle layers, paint tiles, or place map objects. The Interacts
+/// and Warps tabs are filtered views over the one objects list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EditorTool {
     #[default]
@@ -55,29 +61,34 @@ enum CycleField {
     Sound,
 }
 
-/// Which object list an [`EditAction`] refers to. Captured at record time so
-/// undo/redo replays into the right collection even if the active tool has
-/// since changed.
+/// Which kind of object a tool creates / filters its view to. The object lists
+/// are unified now, so this no longer routes between collections — it only
+/// distinguishes the two object tabs (Interacts vs. Warps).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObjKind {
     Interactable,
     Warp,
 }
-
-/// A whole-object snapshot used by the object undo entries. One of the two
-/// fields is always `Some`, matching the [`ObjKind`] — cloning the object is
-/// cheap (a hitbox + a small interaction/warp) and keeps undo trivially correct
-/// without per-field diffing.
-#[derive(Debug, Clone)]
-enum ObjSnapshot {
-    Interactable(Interactable),
-    Warp(Warp),
+impl ObjKind {
+    /// Whether `object` belongs in this kind's filtered tab view.
+    fn matches(self, object: &MapObject) -> bool {
+        match object.effect {
+            ObjectEffect::Warp(_) => self == ObjKind::Warp,
+            ObjectEffect::Interact(_) => self == ObjKind::Interactable,
+        }
+    }
 }
+
+/// A whole-object snapshot used by the object undo entries. Cloning a
+/// [`MapObject`] is cheap (a hitbox + a small effect) and keeps undo trivially
+/// correct without per-field diffing.
+type ObjSnapshot = MapObject;
 
 /// One reversible edit, the unit of the undo/redo stacks. Tile paints batch a
 /// whole press-drag-release stroke into a single entry (so one Ctrl+Z undoes a
 /// brush stroke, not one pixel of it); object edits snapshot the affected object
-/// before and/or after so they replay exactly.
+/// before and/or after so they replay exactly. Object `index` is the real index
+/// into the single [`MapInfo::objects`] list (not a per-tab display row).
 #[derive(Debug, Clone)]
 enum EditAction {
     /// Tiles changed by one paint stroke: `(x, y, old, new)` per cell, in the
@@ -87,21 +98,12 @@ enum EditAction {
         layer: usize,
         cells: Vec<(i32, i32, usize, usize)>,
     },
-    /// An object was appended at `index` (always the end of its list).
-    Add {
-        kind: ObjKind,
-        index: usize,
-        after: ObjSnapshot,
-    },
+    /// An object was appended at `index` (always the end of the objects list).
+    Add { index: usize, after: ObjSnapshot },
     /// An object was removed from `index`; `before` is the object as it was.
-    Remove {
-        kind: ObjKind,
-        index: usize,
-        before: ObjSnapshot,
-    },
+    Remove { index: usize, before: ObjSnapshot },
     /// An object was mutated in place (moved, retyped, or a field edited).
     Modify {
-        kind: ObjKind,
         index: usize,
         before: ObjSnapshot,
         after: ObjSnapshot,
@@ -413,21 +415,25 @@ impl MapViewer {
             .id();
         rows.push(b.row(2.0, [new, del]).id());
 
-        let count = if warps {
-            map.warps.len()
-        } else {
-            map.interactables.len()
-        };
-        for i in 0..count {
-            let label = if warps {
-                let dest = map.warps[i].map.as_deref().unwrap_or("-");
-                format!("{i}: ->{dest}")
-            } else {
-                match &map.interactables[i].interaction {
-                    Interaction::Dialogue(k) => format!("{i}: {k}"),
-                    Interaction::Func(_) => format!("{i}: <fn>"),
-                    Interaction::None => format!("{i}: <->"),
+        // Filtered view: list only this tab's kind, numbering rows by their
+        // position *within the tab* (`row`), but keying each by its real index
+        // into `map.objects` so selection/click map straight back to the vec.
+        let kind = self.obj_kind();
+        for (row, (i, object)) in map
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| kind.matches(o))
+            .enumerate()
+        {
+            let label = match &object.effect {
+                ObjectEffect::Warp(w) => {
+                    let dest = w.map.as_deref().unwrap_or("-");
+                    format!("{row}: ->{dest}")
                 }
+                ObjectEffect::Interact(Interaction::Dialogue(k)) => format!("{row}: {k}"),
+                ObjectEffect::Interact(Interaction::Func(_)) => format!("{row}: <fn>"),
+                ObjectEffect::Interact(Interaction::None) => format!("{row}: <->"),
             };
             rows.push(
                 b.text(label)
@@ -441,8 +447,8 @@ impl MapViewer {
 
         if let Some(i) = self.selected {
             rows.push(b.spacer(2.0).id());
-            if warps {
-                if let Some(w) = map.warps.get(i) {
+            match map.objects.get(i).map(|o| &o.effect) {
+                Some(ObjectEffect::Warp(w)) => {
                     let dest = w.map.as_deref().unwrap_or("-");
                     self.field_row(b, rows, EditField::ToMap, "map", dest);
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
@@ -451,12 +457,14 @@ impl MapViewer {
                     self.cycle_row(b, rows, CycleField::Mode, "mode", mode_label(&w.mode));
                     self.cycle_row(b, rows, CycleField::Sound, "snd", sound_label(&w.sound));
                 }
-            } else if let Some(it) = map.interactables.get(i) {
-                let key = match &it.interaction {
-                    Interaction::Dialogue(k) => k.as_str(),
-                    _ => "-",
-                };
-                self.field_row(b, rows, EditField::Key, "key", key);
+                Some(ObjectEffect::Interact(interaction)) => {
+                    let key = match interaction {
+                        Interaction::Dialogue(k) => k.as_str(),
+                        _ => "-",
+                    };
+                    self.field_row(b, rows, EditField::Key, "key", key);
+                }
+                None => {}
             }
         }
     }
@@ -531,47 +539,33 @@ impl MapViewer {
         layers.get(self.layer_index)
     }
 
-    /// Index of the interactable/warp whose hitbox contains `world` (px).
+    /// Real `map.objects` index of the active tab's object whose hitbox contains
+    /// `world` (px) — so clicking in the Warps tab only grabs warps, and the
+    /// returned index is the vec index selection works in.
     fn object_at(&self, map: &MapInfo, world: Vec2) -> Option<usize> {
-        if self.tool == EditorTool::Warps {
-            map.warps
-                .iter()
-                .position(|w| w.hitbox().touches_point(world))
-        } else {
-            map.interactables
-                .iter()
-                .position(|it| it.hitbox.touches_point(world))
-        }
+        let kind = self.obj_kind();
+        map.objects
+            .iter()
+            .position(|o| kind.matches(o) && o.hitbox.touches_point(world))
     }
 
-    /// Top-left (px) of object `i`'s hitbox for the active object tool.
+    /// Top-left (px) of object `i`'s hitbox.
     fn object_origin(&self, map: &MapInfo, i: usize) -> Vec2 {
-        if self.tool == EditorTool::Warps {
-            map.warps
-                .get(i)
-                .map(|w| w.from.0)
-                .unwrap_or(Vec2::new(0, 0))
-        } else {
-            map.interactables
-                .get(i)
-                .map(|it| Vec2::new(it.hitbox.x, it.hitbox.y))
-                .unwrap_or(Vec2::new(0, 0))
-        }
+        map.objects
+            .get(i)
+            .map(|o| Vec2::new(o.hitbox.x, o.hitbox.y))
+            .unwrap_or(Vec2::new(0, 0))
     }
 
     /// Move object `i`'s hitbox top-left to `pos`, keeping its size.
     fn set_object_origin(&self, map: &mut MapInfo, i: usize, pos: Vec2) {
-        if self.tool == EditorTool::Warps {
-            if let Some(w) = map.warps.get_mut(i) {
-                w.from.0 = pos;
-            }
-        } else if let Some(it) = map.interactables.get_mut(i) {
-            it.hitbox.x = pos.x;
-            it.hitbox.y = pos.y;
+        if let Some(o) = map.objects.get_mut(i) {
+            o.hitbox.x = pos.x;
+            o.hitbox.y = pos.y;
         }
     }
 
-    /// The object kind the active object tool edits.
+    /// The object kind the active object tool creates / filters its view to.
     fn obj_kind(&self) -> ObjKind {
         if self.tool == EditorTool::Warps {
             ObjKind::Warp
@@ -580,16 +574,9 @@ impl MapViewer {
         }
     }
 
-    /// Clone object `i` of `kind` into a snapshot, if it exists.
-    fn snapshot(map: &MapInfo, kind: ObjKind, i: usize) -> Option<ObjSnapshot> {
-        match kind {
-            ObjKind::Interactable => map
-                .interactables
-                .get(i)
-                .cloned()
-                .map(ObjSnapshot::Interactable),
-            ObjKind::Warp => map.warps.get(i).cloned().map(ObjSnapshot::Warp),
-        }
+    /// Clone object `i` into a snapshot, if it exists.
+    fn snapshot(map: &MapInfo, i: usize) -> Option<ObjSnapshot> {
+        map.objects.get(i).cloned()
     }
 
     // --- History --------------------------------------------------------------
@@ -630,26 +617,17 @@ impl MapViewer {
                 }
             }
             // Undo an add by removing the (last) object it appended.
-            EditAction::Add { kind, index, .. } => {
-                remove_object(map, *kind, *index);
+            EditAction::Add { index, .. } => {
+                remove_object(map, *index);
                 self.selected = None;
             }
             // Undo a remove by re-inserting the snapshot at its old index.
-            EditAction::Remove {
-                kind,
-                index,
-                before,
-            } => {
-                insert_object(map, *kind, *index, before.clone());
+            EditAction::Remove { index, before } => {
+                insert_object(map, *index, before.clone());
             }
             // Undo a modify by restoring the "before" snapshot.
-            EditAction::Modify {
-                kind,
-                index,
-                before,
-                ..
-            } => {
-                set_object(map, *kind, *index, before.clone());
+            EditAction::Modify { index, before, .. } => {
+                set_object(map, *index, before.clone());
             }
         }
     }
@@ -664,17 +642,15 @@ impl MapViewer {
                     }
                 }
             }
-            EditAction::Add { kind, index, after } => {
-                insert_object(map, *kind, *index, after.clone());
+            EditAction::Add { index, after } => {
+                insert_object(map, *index, after.clone());
             }
-            EditAction::Remove { kind, index, .. } => {
-                remove_object(map, *kind, *index);
+            EditAction::Remove { index, .. } => {
+                remove_object(map, *index);
                 self.selected = None;
             }
-            EditAction::Modify {
-                kind, index, after, ..
-            } => {
-                set_object(map, *kind, *index, after.clone());
+            EditAction::Modify { index, after, .. } => {
+                set_object(map, *index, after.clone());
             }
         }
     }
@@ -1121,16 +1097,14 @@ impl MapViewer {
             return;
         };
         self.moving = None;
-        let kind = self.obj_kind();
         let to = self.object_origin(map, i);
         if to != from
-            && let Some(after) = Self::snapshot(map, kind, i)
+            && let Some(after) = Self::snapshot(map, i)
         {
             // Rebuild the "before" snapshot by re-deriving it from `after`'s
             // contents with the original origin restored.
             let before = move_snapshot(after.clone(), from);
             self.record(EditAction::Modify {
-                kind,
                 index: i,
                 before,
                 after,
@@ -1145,60 +1119,40 @@ impl MapViewer {
     }
 
     fn create_object(&mut self, map: &mut MapInfo, hitbox: Hitbox) {
-        let kind = self.obj_kind();
-        let index = if kind == ObjKind::Warp {
+        // The active tab decides the kind; both append to the one objects list.
+        let object = if self.obj_kind() == ObjKind::Warp {
             let to = Vec2::new(hitbox.x, hitbox.y);
-            map.warps.push(Warp::new(hitbox, None, to));
-            map.warps.len() - 1
+            MapObject::warp(hitbox, Warp::new(None, to))
         } else {
-            map.interactables
-                .push(Interactable::dialogue(hitbox, "new_key"));
-            map.interactables.len() - 1
+            MapObject::dialogue(hitbox, "new_key")
         };
+        map.objects.push(object);
+        let index = map.objects.len() - 1;
         self.selected = Some(index);
         self.editing = None;
-        if let Some(after) = Self::snapshot(map, kind, index) {
-            self.record(EditAction::Add { kind, index, after });
+        if let Some(after) = Self::snapshot(map, index) {
+            self.record(EditAction::Add { index, after });
         }
     }
 
     fn delete_object(&mut self, map: &mut MapInfo) {
         let Some(i) = self.selected else { return };
-        let kind = self.obj_kind();
-        let before = Self::snapshot(map, kind, i);
-        remove_object(map, kind, i);
+        let before = Self::snapshot(map, i);
+        remove_object(map, i);
         self.selected = None;
         self.editing = None;
         if let Some(before) = before {
-            self.record(EditAction::Remove {
-                kind,
-                index: i,
-                before,
-            });
+            self.record(EditAction::Remove { index: i, before });
         }
     }
 
     fn begin_edit(&mut self, field: EditField, map: &MapInfo) {
-        let value = match (self.selected, field) {
-            (Some(i), EditField::Key) => match map.interactables.get(i).map(|it| &it.interaction) {
-                Some(Interaction::Dialogue(k)) => k.clone(),
-                _ => String::new(),
-            },
-            (Some(i), EditField::ToMap) => map
-                .warps
-                .get(i)
-                .and_then(|w| w.map.clone())
-                .unwrap_or_default(),
-            (Some(i), EditField::ToX) => map
-                .warps
-                .get(i)
-                .map(|w| w.to.x.to_string())
-                .unwrap_or_default(),
-            (Some(i), EditField::ToY) => map
-                .warps
-                .get(i)
-                .map(|w| w.to.y.to_string())
-                .unwrap_or_default(),
+        let effect = self.selected.and_then(|i| map.objects.get(i)).map(|o| &o.effect);
+        let value = match (effect, field) {
+            (Some(ObjectEffect::Interact(Interaction::Dialogue(k))), EditField::Key) => k.clone(),
+            (Some(ObjectEffect::Warp(w)), EditField::ToMap) => w.map.clone().unwrap_or_default(),
+            (Some(ObjectEffect::Warp(w)), EditField::ToX) => w.to.x.to_string(),
+            (Some(ObjectEffect::Warp(w)), EditField::ToY) => w.to.y.to_string(),
             _ => String::new(),
         };
         self.editing = Some(field);
@@ -1225,23 +1179,17 @@ impl MapViewer {
     /// Snapshot the selected object, run `f` to mutate it, then record a single
     /// [`EditAction::Modify`] if it actually changed. The before/after snapshots
     /// make every field edit undoable without per-field bookkeeping.
-    fn modify_object(
-        &mut self,
-        map: &mut MapInfo,
-        kind: ObjKind,
-        f: impl FnOnce(&mut MapInfo, usize),
-    ) {
+    fn modify_object(&mut self, map: &mut MapInfo, f: impl FnOnce(&mut MapInfo, usize)) {
         let Some(i) = self.selected else { return };
-        let Some(before) = Self::snapshot(map, kind, i) else {
+        let Some(before) = Self::snapshot(map, i) else {
             return;
         };
         f(map, i);
-        let Some(after) = Self::snapshot(map, kind, i) else {
+        let Some(after) = Self::snapshot(map, i) else {
             return;
         };
         if !snapshot_eq(&before, &after) {
             self.record(EditAction::Modify {
-                kind,
                 index: i,
                 before,
                 after,
@@ -1249,51 +1197,52 @@ impl MapViewer {
         }
     }
 
+    /// Mutate the selected object's [`Warp`] effect via `f` (no-op if it isn't a
+    /// warp), recording the change as one undo step.
+    fn modify_warp(&mut self, map: &mut MapInfo, f: impl FnOnce(&mut Warp)) {
+        self.modify_object(map, |map, i| {
+            if let Some(ObjectEffect::Warp(w)) = map.objects.get_mut(i).map(|o| &mut o.effect) {
+                f(w);
+            }
+        });
+    }
+
     fn commit_edit(&mut self, map: &mut MapInfo) {
         let (Some(_), Some(field)) = (self.selected, self.editing) else {
             return;
         };
         let buffer = self.buffer.trim().to_string();
-        let kind = match field {
-            EditField::Key => ObjKind::Interactable,
-            _ => ObjKind::Warp,
-        };
-        self.modify_object(map, kind, |map, i| match field {
-            EditField::Key => {
-                if let Some(it) = map.interactables.get_mut(i) {
-                    it.interaction = Interaction::Dialogue(buffer.clone());
+        match field {
+            EditField::Key => self.modify_object(map, |map, i| {
+                if let Some(ObjectEffect::Interact(interaction)) =
+                    map.objects.get_mut(i).map(|o| &mut o.effect)
+                {
+                    *interaction = Interaction::Dialogue(buffer.clone());
                 }
-            }
-            EditField::ToMap => {
-                if let Some(w) = map.warps.get_mut(i) {
-                    // The name is stored verbatim (empty = same-map warp);
-                    // numeric strings keep working via `map_by_name`'s fallback.
-                    w.map = (!buffer.is_empty()).then(|| buffer.clone());
-                }
-            }
+            }),
+            EditField::ToMap => self.modify_warp(map, |w| {
+                // The name is stored verbatim (empty = same-map warp);
+                // numeric strings keep working via `map_by_name`'s fallback.
+                w.map = (!buffer.is_empty()).then(|| buffer.clone());
+            }),
             EditField::ToX => {
-                if let (Some(w), Ok(x)) = (map.warps.get_mut(i), buffer.parse()) {
-                    w.to.x = x;
+                if let Ok(x) = buffer.parse() {
+                    self.modify_warp(map, |w| w.to.x = x);
                 }
             }
             EditField::ToY => {
-                if let (Some(w), Ok(y)) = (map.warps.get_mut(i), buffer.parse()) {
-                    w.to.y = y;
+                if let Ok(y) = buffer.parse() {
+                    self.modify_warp(map, |w| w.to.y = y);
                 }
             }
-        });
+        }
     }
 
     fn cycle(&mut self, map: &mut MapInfo, field: CycleField) {
-        self.modify_object(map, ObjKind::Warp, |map, i| {
-            let Some(w) = map.warps.get_mut(i) else {
-                return;
-            };
-            match field {
-                CycleField::Flip => w.flip = cycle_flip(&w.flip),
-                CycleField::Mode => w.mode = cycle_mode(&w.mode),
-                CycleField::Sound => w.sound = cycle_sound(&w.sound),
-            }
+        self.modify_warp(map, |w| match field {
+            CycleField::Flip => w.flip = cycle_flip(&w.flip),
+            CycleField::Mode => w.mode = cycle_mode(&w.mode),
+            CycleField::Sound => w.sound = cycle_sound(&w.sound),
         });
     }
 
@@ -1301,10 +1250,7 @@ impl MapViewer {
     /// have a `.tmj` to write back to; legacy windows just log.
     fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo, maps: &MapStore) {
         if maps.is_modern(&map.source) {
-            let json = maps
-                .get(&map.source)
-                .unwrap()
-                .to_tmj(&map.interactables, &map.warps);
+            let json = maps.get(&map.source).unwrap().to_tmj(&map.objects);
             system.write_file(&format!("maps/{}.tmj", map.source), json.as_bytes());
         } else {
             log::info!("save: {:?} is not a modern map; not saving", map.source);
@@ -1389,30 +1335,19 @@ impl MapViewer {
                     );
                 }
             }
-            EditorTool::Interactables => {
-                let base = draw_state.colour(14);
+            EditorTool::Interactables | EditorTool::Warps => {
+                // Filtered overlay: only the active tab's kind, warps in colour
+                // 12 and interactions in 14, the selected object highlighted.
+                let kind = self.obj_kind();
+                let base = draw_state.colour(if kind == ObjKind::Warp { 12 } else { 14 });
                 let sel = draw_state.colour(11);
                 let canvas = draw_state.rgba(LayerId::BG);
-                for (i, it) in map.interactables.iter().enumerate() {
+                for (i, object) in map.objects.iter().enumerate() {
+                    if !kind.matches(object) {
+                        continue;
+                    }
                     let colour = if Some(i) == self.selected { sel } else { base };
-                    let h = it.hitbox;
-                    canvas.stroke_rect(
-                        i32::from(h.x) - cx,
-                        i32::from(h.y) - cy,
-                        i32::from(h.w),
-                        i32::from(h.h),
-                        colour,
-                    );
-                }
-                self.draw_drag_preview(draw_state, system, camera_pos);
-            }
-            EditorTool::Warps => {
-                let base = draw_state.colour(12);
-                let sel = draw_state.colour(11);
-                let canvas = draw_state.rgba(LayerId::BG);
-                for (i, w) in map.warps.iter().enumerate() {
-                    let h = w.hitbox();
-                    let colour = if Some(i) == self.selected { sel } else { base };
+                    let h = object.hitbox;
                     canvas.stroke_rect(
                         i32::from(h.x) - cx,
                         i32::from(h.y) - cy,
@@ -1484,40 +1419,35 @@ fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
 
 /// Return a copy of `snapshot` with its hitbox origin set to `origin` — used to
 /// reconstruct the pre-drag "before" snapshot for a move's undo entry.
-fn move_snapshot(snapshot: ObjSnapshot, origin: Vec2) -> ObjSnapshot {
-    match snapshot {
-        ObjSnapshot::Interactable(mut it) => {
-            it.hitbox.x = origin.x;
-            it.hitbox.y = origin.y;
-            ObjSnapshot::Interactable(it)
-        }
-        ObjSnapshot::Warp(mut w) => {
-            w.from.0 = origin;
-            ObjSnapshot::Warp(w)
-        }
-    }
+fn move_snapshot(mut snapshot: ObjSnapshot, origin: Vec2) -> ObjSnapshot {
+    snapshot.hitbox.x = origin.x;
+    snapshot.hitbox.y = origin.y;
+    snapshot
 }
 
-/// Structural equality for object snapshots. `Interactable`/`Warp` don't derive
-/// `PartialEq` (their interaction can hold a fn pointer), so compare the fields
-/// the editor can actually change — enough to skip recording no-op edits.
+/// Structural equality for object snapshots. [`MapObject`] doesn't derive
+/// `PartialEq` (its effect can hold a fn pointer), so compare the fields the
+/// editor can actually change — enough to skip recording no-op edits.
 fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
+    let same_box = a.hitbox.x == b.hitbox.x
+        && a.hitbox.y == b.hitbox.y
+        && a.hitbox.w == b.hitbox.w
+        && a.hitbox.h == b.hitbox.h;
+    same_box && effect_eq(&a.effect, &b.effect)
+}
+
+/// Compare two object effects by their editable content (warp fields / dialogue
+/// key / interaction kind). Cross-kind never compares equal.
+fn effect_eq(a: &ObjectEffect, b: &ObjectEffect) -> bool {
     match (a, b) {
-        (ObjSnapshot::Interactable(x), ObjSnapshot::Interactable(y)) => {
-            let same_box = x.hitbox.x == y.hitbox.x
-                && x.hitbox.y == y.hitbox.y
-                && x.hitbox.w == y.hitbox.w
-                && x.hitbox.h == y.hitbox.h;
-            same_box && interaction_eq(&x.interaction, &y.interaction)
-        }
-        (ObjSnapshot::Warp(x), ObjSnapshot::Warp(y)) => {
-            x.from == y.from
-                && x.map == y.map
+        (ObjectEffect::Warp(x), ObjectEffect::Warp(y)) => {
+            x.map == y.map
                 && x.to == y.to
                 && axis_label(&x.flip) == axis_label(&y.flip)
                 && mode_label(&x.mode) == mode_label(&y.mode)
                 && sound_label(&x.sound) == sound_label(&y.sound)
         }
+        (ObjectEffect::Interact(x), ObjectEffect::Interact(y)) => interaction_eq(x, y),
         _ => false,
     }
 }
@@ -1532,50 +1462,25 @@ fn interaction_eq(a: &Interaction, b: &Interaction) -> bool {
     }
 }
 
-/// Remove object `i` of `kind` from its list, ignoring out-of-range indices.
-fn remove_object(map: &mut MapInfo, kind: ObjKind, i: usize) {
-    match kind {
-        ObjKind::Interactable if i < map.interactables.len() => {
-            map.interactables.remove(i);
-        }
-        ObjKind::Warp if i < map.warps.len() => {
-            map.warps.remove(i);
-        }
-        _ => {}
+/// Remove object `i` from the objects list, ignoring out-of-range indices.
+fn remove_object(map: &mut MapInfo, i: usize) {
+    if i < map.objects.len() {
+        map.objects.remove(i);
     }
 }
 
-/// Insert `snapshot` at index `i` of its list, clamping past-the-end inserts to
-/// a push so undo of a delete always lands the object back.
-fn insert_object(map: &mut MapInfo, kind: ObjKind, i: usize, snapshot: ObjSnapshot) {
-    match snapshot {
-        ObjSnapshot::Interactable(it) if kind == ObjKind::Interactable => {
-            let i = i.min(map.interactables.len());
-            map.interactables.insert(i, it);
-        }
-        ObjSnapshot::Warp(w) if kind == ObjKind::Warp => {
-            let i = i.min(map.warps.len());
-            map.warps.insert(i, w);
-        }
-        _ => {}
-    }
+/// Insert `snapshot` at index `i`, clamping past-the-end inserts to a push so
+/// undo of a delete always lands the object back.
+fn insert_object(map: &mut MapInfo, i: usize, snapshot: ObjSnapshot) {
+    let i = i.min(map.objects.len());
+    map.objects.insert(i, snapshot);
 }
 
-/// Overwrite object `i` of `kind` in place with `snapshot` (used to replay an
-/// in-place modify). No-op if the index or kind no longer match.
-fn set_object(map: &mut MapInfo, kind: ObjKind, i: usize, snapshot: ObjSnapshot) {
-    match snapshot {
-        ObjSnapshot::Interactable(it) if kind == ObjKind::Interactable => {
-            if let Some(slot) = map.interactables.get_mut(i) {
-                *slot = it;
-            }
-        }
-        ObjSnapshot::Warp(w) if kind == ObjKind::Warp => {
-            if let Some(slot) = map.warps.get_mut(i) {
-                *slot = w;
-            }
-        }
-        _ => {}
+/// Overwrite object `i` in place with `snapshot` (used to replay an in-place
+/// modify). No-op if the index no longer exists.
+fn set_object(map: &mut MapInfo, i: usize, snapshot: ObjSnapshot) {
+    if let Some(slot) = map.objects.get_mut(i) {
+        *slot = snapshot;
     }
 }
 
@@ -1703,62 +1608,62 @@ mod tests {
         assert_eq!((dot.w, dot.h), (1, 1));
     }
 
+    /// The dialogue key of an object's interaction effect, or `""` otherwise.
+    fn dialogue_key(object: &MapObject) -> &str {
+        match &object.effect {
+            ObjectEffect::Interact(Interaction::Dialogue(k)) => k.as_str(),
+            _ => "",
+        }
+    }
+
     /// `move_snapshot` relocates an object's origin without touching its size or
     /// payload, so a drag's "before" snapshot is exact for undo.
     #[test]
     fn move_snapshot_relocates_origin() {
-        let it = Interactable::dialogue(Hitbox::new(40, 50, 16, 8), "k");
-        let moved = move_snapshot(ObjSnapshot::Interactable(it), Vec2::new(1, 2));
-        let ObjSnapshot::Interactable(out) = moved else {
-            panic!("kind")
-        };
+        let it = MapObject::dialogue(Hitbox::new(40, 50, 16, 8), "k");
+        let out = move_snapshot(it, Vec2::new(1, 2));
         assert_eq!((out.hitbox.x, out.hitbox.y), (1, 2));
         assert_eq!((out.hitbox.w, out.hitbox.h), (16, 8)); // size preserved
+        assert_eq!(dialogue_key(&out), "k"); // payload untouched
     }
 
     /// `snapshot_eq` is true only for identical editable content, so no-op edits
     /// aren't recorded as undo steps.
     #[test]
     fn snapshot_eq_detects_changes() {
-        let a = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "x"));
-        let same = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "x"));
-        let diff_key =
-            ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "y"));
-        let diff_box =
-            ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(1, 0, 8, 8), "x"));
+        let a = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "x");
+        let same = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "x");
+        let diff_key = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "y");
+        let diff_box = MapObject::dialogue(Hitbox::new(1, 0, 8, 8), "x");
         assert!(snapshot_eq(&a, &same));
         assert!(!snapshot_eq(&a, &diff_key));
         assert!(!snapshot_eq(&a, &diff_box));
-        // Cross-kind never compares equal.
-        let warp = ObjSnapshot::Warp(Warp::new(Hitbox::new(0, 0, 8, 8), None, Vec2::new(0, 0)));
+        // Cross-kind (interaction vs. warp) never compares equal.
+        let warp = MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)));
         assert!(!snapshot_eq(&a, &warp));
     }
 
-    /// Object add/remove undo replays into the right list at the right index:
+    /// Object add/remove undo replays into the one list at the right index:
     /// undo of a remove re-inserts the exact object, undo of an add removes it.
     #[test]
     fn object_insert_remove_round_trip() {
         let mut map = MapInfo::default();
-        map.interactables
-            .push(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "a"));
-        map.interactables
-            .push(Interactable::dialogue(Hitbox::new(8, 0, 8, 8), "b"));
+        map.objects
+            .push(MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "a"));
+        map.objects
+            .push(MapObject::dialogue(Hitbox::new(8, 0, 8, 8), "b"));
 
         // Snapshot + remove index 0, then re-insert it: list shape is restored.
-        let snap = MapViewer::snapshot(&map, ObjKind::Interactable, 0).unwrap();
-        remove_object(&mut map, ObjKind::Interactable, 0);
-        assert_eq!(map.interactables.len(), 1);
-        insert_object(&mut map, ObjKind::Interactable, 0, snap);
-        assert_eq!(map.interactables.len(), 2);
-        let key = match &map.interactables[0].interaction {
-            Interaction::Dialogue(k) => k.as_str(),
-            _ => "",
-        };
-        assert_eq!(key, "a", "re-inserted at original index");
+        let snap = MapViewer::snapshot(&map, 0).unwrap();
+        remove_object(&mut map, 0);
+        assert_eq!(map.objects.len(), 1);
+        insert_object(&mut map, 0, snap);
+        assert_eq!(map.objects.len(), 2);
+        assert_eq!(dialogue_key(&map.objects[0]), "a", "re-inserted at original index");
 
         // A past-the-end insert clamps to a push rather than panicking.
-        let extra = ObjSnapshot::Interactable(Interactable::dialogue(Hitbox::new(0, 0, 8, 8), "c"));
-        insert_object(&mut map, ObjKind::Interactable, 99, extra);
-        assert_eq!(map.interactables.len(), 3);
+        let extra = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "c");
+        insert_object(&mut map, 99, extra);
+        assert_eq!(map.objects.len(), 3);
     }
 }

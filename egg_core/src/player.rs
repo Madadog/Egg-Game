@@ -19,8 +19,8 @@ use std::mem;
 use crate::{
     camera::Camera,
     data::{sound, tmj::TiledMap},
-    interact::{Interactable, Interaction},
-    map::{Axis, LayerInfo, MapInfo},
+    interact::Interaction,
+    map::{Axis, LayerInfo, MapInfo, MapObject},
     position::{Hitbox, Vec2},
     system::{ConsoleApi, ConsoleHelper, DrawParams, Flip, SpriteOptions},
 };
@@ -565,8 +565,9 @@ impl Companion {
         position: Vec2,
         direction: (i8, i8),
         player_position: Vec2,
-    ) -> Interactable {
+    ) -> MapObject {
         use crate::interact::InteractFn;
+        use crate::map::ObjectEffect;
         match self {
             Companion::Dog => {
                 let mut pixel = 0;
@@ -580,9 +581,9 @@ impl Companion {
                     x
                 };
                 let position = position + Vec2::new(pixel, 0);
-                Interactable::new(
+                MapObject::new(
                     Hitbox::new(position.x, position.y, 16, 16),
-                    Interaction::Func(InteractFn::Pet(position, Some(offset))),
+                    ObjectEffect::Interact(Interaction::Func(InteractFn::Pet(position, Some(offset)))),
                     None,
                 )
             }
@@ -688,7 +689,7 @@ impl CompanionList {
             .filter(|companion| companion.is_some())
             .count()
     }
-    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<Interactable> {
+    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<MapObject> {
         // Trail points go to companions by presence, not slot: with two, the
         // first walks at the trail's midpoint and the second at its tail; a
         // lone companion (whichever slot it occupies) takes the tail.

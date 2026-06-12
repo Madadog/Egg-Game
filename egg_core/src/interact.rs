@@ -14,10 +14,11 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::animation::*;
-use crate::position::Hitbox;
 use crate::position::Vec2;
 
+/// The effect payload of an interaction [`MapObject`](crate::map::MapObject):
+/// what running it does. Resolved against the dialogue registry / dispatched
+/// when the player triggers the object.
 #[derive(Debug, Clone)]
 pub enum Interaction {
     /// A dialogue-registry key. Resolved to a `Vec<Message>` when it fires.
@@ -26,41 +27,7 @@ pub enum Interaction {
     None,
 }
 
-#[derive(Debug, Clone)]
-pub struct Interactable {
-    pub hitbox: Hitbox,
-    pub interaction: Interaction,
-    pub sprite: Option<Vec<AnimFrame>>,
-}
-
-impl Interactable {
-    pub const fn new(
-        hitbox: Hitbox,
-        interaction: Interaction,
-        sprite: Option<Vec<AnimFrame>>,
-    ) -> Self {
-        Self {
-            hitbox,
-            interaction,
-            sprite,
-        }
-    }
-    /// An interactable that shows the dialogue registered under `key`.
-    pub fn dialogue(hitbox: Hitbox, key: &str) -> Self {
-        Self::new(hitbox, Interaction::Dialogue(key.to_string()), None)
-    }
-    /// An interactable that runs a one-off [`InteractFn`].
-    pub fn func(hitbox: Hitbox, func: InteractFn) -> Self {
-        Self::new(hitbox, Interaction::Func(func), None)
-    }
-    /// Attach an animated sprite drawn at the interactable's location.
-    pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
-        self.sprite = Some(frames);
-        self
-    }
-}
-
-/// A 'scripting' API for the walkaround section of the game. Various interactables
+/// A 'scripting' API for the walkaround section of the game. Various interactions
 /// do one-off things, so they are all put inside this enum.
 ///
 /// This probably doesn't scale well.
