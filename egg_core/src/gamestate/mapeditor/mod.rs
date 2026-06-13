@@ -498,8 +498,10 @@ impl MapsDialog {
 #[derive(Debug, Clone, Copy)]
 enum PalDrag {
     Select { anchor_col: usize, anchor_row: usize },
-    ScrollV,
-    ScrollH,
+    /// A scroll-bar drag. `grab` is the px offset between the cursor and the
+    /// thumb's near edge at press, preserved so the thumb tracks the cursor.
+    ScrollV { grab: i16 },
+    ScrollH { grab: i16 },
 }
 
 /// The Select tool's marquee: a rectangle of tiles on the active layer, in tile
@@ -990,6 +992,28 @@ impl MapViewer {
         )
     }
 
+    /// Vertical scroll-thumb metrics in px: `(thumb height, travel)`, where
+    /// `travel` is the track length the thumb's top moves over as `pal_row` runs
+    /// `0..=max_r`. Shared by [`draw_palette`](Self::draw_palette) and the drag
+    /// math so the thumb the user grabs is exactly the thumb they move.
+    fn palette_thumb_v(&self) -> (i32, i32) {
+        let v = self.pal_rect;
+        let (_, vr) = self.palette_visible();
+        let total_rows = self.sheet_tiles().div_ceil(self.sheet_cols()).max(1);
+        let th = ((v.h as usize * vr) / total_rows).max(2) as i32;
+        (th, (v.h as i32 - th).max(1))
+    }
+
+    /// Horizontal counterpart of [`palette_thumb_v`](Self::palette_thumb_v):
+    /// `(thumb width, travel)`.
+    fn palette_thumb_h(&self) -> (i32, i32) {
+        let v = self.pal_rect;
+        let (vc, _) = self.palette_visible();
+        let cols = self.sheet_cols().max(1);
+        let tw = ((v.w as usize * vc) / cols).max(2) as i32;
+        (tw, (v.w as i32 - tw).max(1))
+    }
+
     /// The maximum scroll `(col, row)` so the last column/row can reach the edge.
     fn palette_scroll_max(&self) -> (usize, usize) {
         let (vc, vr) = self.palette_visible();
@@ -1016,35 +1040,37 @@ impl MapViewer {
                     self.pal_drag = None;
                 }
             }
-            PalDrag::ScrollV => {
+            PalDrag::ScrollV { grab } => {
                 if up {
                     self.pal_drag = None;
                 } else {
-                    self.scroll_palette_bar(true, p);
+                    self.scroll_palette_bar(true, p, grab);
                 }
             }
-            PalDrag::ScrollH => {
+            PalDrag::ScrollH { grab } => {
                 if up {
                     self.pal_drag = None;
                 } else {
-                    self.scroll_palette_bar(false, p);
+                    self.scroll_palette_bar(false, p, grab);
                 }
             }
         }
     }
 
-    /// Map a scroll-bar drag at `p` to a scroll position: the bar's fraction
-    /// along its track sets the top-left visible row (`vertical`) or column.
-    fn scroll_palette_bar(&mut self, vertical: bool, p: Vec2) {
-        let v = self.pal_rect;
+    /// Map a scroll-bar drag to a scroll position, preserving the `grab` offset
+    /// captured at press — so the thumb moves *with* the cursor rather than
+    /// snapping its top under it. The desired thumb edge (`cursor − grab`) maps
+    /// linearly across the thumb's travel onto `0..=max`.
+    fn scroll_palette_bar(&mut self, vertical: bool, p: Vec2, grab: i16) {
         let (max_c, max_r) = self.palette_scroll_max();
-        if vertical && v.h > 0 && max_r > 0 {
-            let total = self.sheet_tiles().div_ceil(self.sheet_cols()) as i32;
-            let frac = (p.y - v.y).clamp(0, v.h) as i32 * total / v.h as i32;
-            self.pal_row = (frac as usize).min(max_r);
-        } else if !vertical && v.w > 0 && max_c > 0 {
-            let frac = (p.x - v.x).clamp(0, v.w) as i32 * self.sheet_cols() as i32 / v.w as i32;
-            self.pal_col = (frac as usize).min(max_c);
+        if vertical && max_r > 0 {
+            let (_, travel) = self.palette_thumb_v();
+            let top = (i32::from(p.y) - i32::from(grab) - i32::from(self.pal_rect.y)).clamp(0, travel);
+            self.pal_row = (top * max_r as i32 / travel) as usize;
+        } else if !vertical && max_c > 0 {
+            let (_, travel) = self.palette_thumb_h();
+            let left = (i32::from(p.x) - i32::from(grab) - i32::from(self.pal_rect.x)).clamp(0, travel);
+            self.pal_col = (left * max_c as i32 / travel) as usize;
         }
     }
 
@@ -2056,11 +2082,19 @@ impl MapViewer {
                     let v = self.pal_rect;
                     let (max_c, max_r) = self.palette_scroll_max();
                     if max_r > 0 && p.x >= v.x + v.w - PALETTE_BAR_GRAB {
-                        self.pal_drag = Some(PalDrag::ScrollV);
-                        self.scroll_palette_bar(true, p);
+                        // Grab offset within the thumb (clamped to its height, so
+                        // a click off the thumb snaps the near edge under the cursor).
+                        let (th, travel) = self.palette_thumb_v();
+                        let thumb_top = i32::from(v.y) + travel * self.pal_row as i32 / max_r as i32;
+                        let grab = (i32::from(p.y) - thumb_top).clamp(0, th) as i16;
+                        self.pal_drag = Some(PalDrag::ScrollV { grab });
+                        self.scroll_palette_bar(true, p, grab);
                     } else if max_c > 0 && p.y >= v.y + v.h - PALETTE_BAR_GRAB {
-                        self.pal_drag = Some(PalDrag::ScrollH);
-                        self.scroll_palette_bar(false, p);
+                        let (tw, travel) = self.palette_thumb_h();
+                        let thumb_left = i32::from(v.x) + travel * self.pal_col as i32 / max_c as i32;
+                        let grab = (i32::from(p.x) - thumb_left).clamp(0, tw) as i16;
+                        self.pal_drag = Some(PalDrag::ScrollH { grab });
+                        self.scroll_palette_bar(false, p, grab);
                     } else {
                         // Start a brush box-select (a click stays 1×1).
                         let (c, r) = self.palette_tile_at(p);
@@ -3002,6 +3036,22 @@ impl MapViewer {
         );
     }
 
+    /// Draw the dock resize bars (the inner-edge splitter band per occupied dock
+    /// side). Drawn between the docked panels and the floats so a floating window
+    /// sits on top of any bar it overlaps.
+    fn draw_splitters(&self, draw_state: &mut DrawState) {
+        let splitter = draw_state.colour(13);
+        for &(_side, band) in &self.dock.solved.splitters {
+            draw_state.rgba(LayerId::BG).fill_rect(
+                band.x as i32,
+                band.y as i32,
+                band.w as i32,
+                band.h as i32,
+                splitter,
+            );
+        }
+    }
+
     /// Draw the editor overlay + panels for `map` from an explicit `camera_pos`.
     /// Generalises [`draw_map_viewer`](Self::draw_map_viewer) so an extra view
     /// can run its own editor against its own free camera, rather than the live
@@ -3024,8 +3074,17 @@ impl MapViewer {
         // between step and draw can't misregister hit vs. draw; it heals next
         // frame. A floating panel gets a small SE resize-handle mark, and a Maps
         // panel gets its thumbnails blitted over the cells.
+        // `rects` is ordered docked-first then floats (ascending z). Draw the
+        // dock splitters at that boundary — after the docked panels (so a bar sits
+        // on top of its own dock's edge) but before the floats (so a floating
+        // window covers a bar it overlaps, rather than the bar drawing over it).
         let handle = draw_state.colour(13);
+        let mut splitters_drawn = false;
         for &(idx, rect) in &self.dock.solved.rects {
+            if !splitters_drawn && self.dock.is_float(idx) {
+                self.draw_splitters(draw_state);
+                splitters_drawn = true;
+            }
             let ui = self.build_panel(idx, rect, map, maps);
             ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
             match self.dock.panels[idx].kind {
@@ -3044,16 +3103,9 @@ impl MapViewer {
                 );
             }
         }
-        // Resize splitters between each dock side and the world.
-        let splitter = draw_state.colour(13);
-        for &(_side, band) in &self.dock.solved.splitters {
-            draw_state.rgba(LayerId::BG).fill_rect(
-                band.x as i32,
-                band.y as i32,
-                band.w as i32,
-                band.h as i32,
-                splitter,
-            );
+        // No floats this frame: the splitters still draw, after the docked panels.
+        if !splitters_drawn {
+            self.draw_splitters(draw_state);
         }
         // Drop-zone highlight: while dragging a panel near an edge, outline where
         // a release would dock it.
@@ -3174,18 +3226,17 @@ impl MapViewer {
         let track = draw_state.colour(0);
         let thumb = draw_state.colour(13);
         if max_r > 0 {
-            let total_rows = self.sheet_tiles().div_ceil(self.sheet_cols());
             let bx = (v.x + v.w - 2) as i32;
             draw_state.rgba(LayerId::BG).fill_rect(bx, v.y as i32, 2, v.h as i32, track);
-            let th = ((v.h as usize * vr) / total_rows).max(2) as i32;
-            let ty = v.y as i32 + (v.h as i32 - th) * self.pal_row as i32 / max_r as i32;
+            let (th, travel) = self.palette_thumb_v();
+            let ty = v.y as i32 + travel * self.pal_row as i32 / max_r as i32;
             draw_state.rgba(LayerId::BG).fill_rect(bx, ty, 2, th, thumb);
         }
         if max_c > 0 {
             let by = (v.y + v.h - 2) as i32;
             draw_state.rgba(LayerId::BG).fill_rect(v.x as i32, by, v.w as i32, 2, track);
-            let tw = ((v.w as usize * vc) / self.sheet_cols()).max(2) as i32;
-            let tx = v.x as i32 + (v.w as i32 - tw) * self.pal_col as i32 / max_c as i32;
+            let (tw, travel) = self.palette_thumb_h();
+            let tx = v.x as i32 + travel * self.pal_col as i32 / max_c as i32;
             draw_state.rgba(LayerId::BG).fill_rect(tx, by, tw, 2, thumb);
         }
     }
@@ -4089,6 +4140,42 @@ mod tests {
         assert_eq!(v.palette_tile_at(Vec2::new(500, 500)), (5 + 10 - 1, 2 + 8 - 1));
         // Scroll bounds: 10 of 32 cols, 8 of the sheet's 128 rows visible.
         assert_eq!(v.palette_scroll_max(), (32 - 10, 128 - 8));
+    }
+
+    /// A scroll-bar drag preserves the grab offset: the thumb tracks the cursor
+    /// instead of snapping its top under it. (A bigger grab offset at the same
+    /// cursor scrolls less, and the old behaviour ignored grab entirely.)
+    #[test]
+    fn scroll_bar_drag_preserves_grab_offset() {
+        let base = MapViewer {
+            pal_rect: Rect { x: 0, y: 0, w: 80, h: 80 }, // 10x10 visible
+            sheet: (10, 30),                              // 10 cols, 30 rows -> max_r = 20
+            pal_row: 5,
+            ..Default::default()
+        };
+        assert_eq!(base.palette_scroll_max(), (0, 20));
+        let (_, travel) = base.palette_thumb_v();
+        assert!(travel > 0);
+
+        // Same cursor y, different grab: the larger offset puts the thumb (and so
+        // pal_row) higher — proof the offset shifts the thumb, not the cursor.
+        let mut top_grab = base.clone();
+        top_grab.scroll_palette_bar(true, Vec2::new(0, 40), 0);
+        let mut mid_grab = base.clone();
+        mid_grab.scroll_palette_bar(true, Vec2::new(0, 40), 20);
+        assert!(mid_grab.pal_row < top_grab.pal_row);
+
+        // Same grab, cursor moves down: pal_row follows it (moves *with* the mouse).
+        let mut near = base.clone();
+        near.scroll_palette_bar(true, Vec2::new(0, 20), 10);
+        let mut far = base.clone();
+        far.scroll_palette_bar(true, Vec2::new(0, 40), 10);
+        assert!(far.pal_row > near.pal_row);
+
+        // Dragging past the end clamps to max_r — no overscroll.
+        let mut overshoot = base.clone();
+        overshoot.scroll_palette_bar(true, Vec2::new(0, 1000), 0);
+        assert_eq!(overshoot.pal_row, 20);
     }
 
     /// The palette adapts to the live sheet size (passed in by the host each
