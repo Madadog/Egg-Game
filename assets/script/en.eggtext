@@ -281,7 +281,7 @@ menu_music_test = "Music Test"
 // --- mayor's office ---
 
 #dialogue mayor_desk_front
-    It's made of cardboard.
+    The desk is made of cardboard.
 
 #dialogue mayor_desk_back
     It's stuffed full of straw. There's a water bottle and a pellet feeder.
@@ -289,19 +289,22 @@ menu_music_test = "Music Test"
 #dialogue mayor_plant
     It clings to the light.
 
+#dialogue mayor_window
+    The windows are too high to reach.
+
 #dialogue mayor_exit
     The valve won't budge.
 
 #dialogue mayor_vending_machine
+    There are 8 options. All of them are "granulated rabbit feed".
+
+#dialogue mayor_vending_machine_button
     One of the buttons is worn and faded with use. Press it?
 
-#dialogue mayor_vending_machine_after
+#dialogue mayor_vending_machine_button_after
     You got: Rabbit food.
 
     ... Hooray.
-
-#dialogue office_vending_machine
-    There are 8 options. All of them are "granulated rabbit feed".
 
 // --- the gamedev (debug instructions) ---
 
