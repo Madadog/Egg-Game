@@ -15,7 +15,9 @@ use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, LayerInfo, MapObject, ObjectEffect, Trigger, Warp, WarpMode};
 use crate::position::{Hitbox, Vec2};
 use crate::system::SpriteOptions;
+use crate::system::drawing::Rotate;
 use crate::system::drawing::image::RgbaImage;
+use crate::system::types::Flip;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -140,16 +142,112 @@ pub struct GameManifest {
     pub tilesets: Vec<String>,
 }
 
+/// A typed Tiled custom property (`{ name, type, value }`) read for round-trip
+/// fidelity. Unlike the kind-specific [`TileProperty`] (int), [`ObjectProperties`]
+/// (string) and [`ImageLayerProperty`] (bool), this keeps the raw `value` as a
+/// JSON [`Value`] and carries the Tiled `type` tag, so any property — the
+/// int-valued `palette_rotate` on a tile layer, the int `bg_colour` or string
+/// `camera_stick` at map level — parses and re-serialises unchanged. The engine
+/// only consumes a handful by name; the rest survive an in-game save verbatim.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Property {
+    pub name: String,
+    #[serde(rename = "type", default = "default_property_type")]
+    pub r#type: String,
+    pub value: Value,
+}
+impl Property {
+    /// This property's integer value, if it is one (Tiled `int` properties carry
+    /// a JSON number).
+    pub fn as_int(&self) -> Option<i64> {
+        self.value.as_i64()
+    }
+    /// This property's string value, if it is one.
+    pub fn as_str(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+    /// An `int` property.
+    pub fn int(name: &str, value: i64) -> Self {
+        Self {
+            name: name.to_string(),
+            r#type: "int".to_string(),
+            value: Value::from(value),
+        }
+    }
+    /// A `string` property.
+    pub fn string(name: &str, value: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            r#type: "string".to_string(),
+            value: Value::from(value),
+        }
+    }
+}
+
+/// Look up `name` in a property list and read it as an integer.
+fn property_int(properties: &[Property], name: &str) -> Option<i64> {
+    properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(Property::as_int)
+}
+
+/// Look up `name` in a property list and read it as a string.
+fn property_str<'a>(properties: &'a [Property], name: &str) -> Option<&'a str> {
+    properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(Property::as_str)
+}
+
+/// Serialise a property list to Tiled's `[{ name, type, value }, …]` array, for
+/// the tile-layer and map-level `properties` echoes in [`TiledMap::to_tmj`].
+fn properties_to_json(properties: &[Property]) -> Value {
+    Value::Array(
+        properties
+            .iter()
+            .map(|p| json!({ "name": p.name, "type": p.r#type, "value": p.value }))
+            .collect(),
+    )
+}
+
+/// Serde default for an absent property `type` tag (Tiled defaults untyped
+/// properties to `string`).
+fn default_property_type() -> String {
+    "string".to_string()
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TileLayer {
     pub width: usize,
     pub height: usize,
     pub data: Vec<usize>,
     pub name: String,
+    /// Horizontal pixel placement (Tiled stores it as a JSON number; can be
+    /// negative). Absent ⇒ 0. Mirrors [`ImageLayer::offsetx`] so an offset tile
+    /// layer (e.g. a bed nudged a few pixels) round-trips instead of snapping to
+    /// the grid on save.
+    #[serde(default)]
+    pub offsetx: f64,
+    /// Vertical pixel placement. Absent ⇒ 0.
+    #[serde(default)]
+    pub offsety: f64,
+    /// Custom properties — read only for the int `palette_rotate` (a per-layer
+    /// palette rotation, the modern spelling of the legacy `rotate_and_shift_flags`
+    /// first field). Round-tripped verbatim.
+    #[serde(default)]
+    pub properties: Vec<Property>,
 }
 impl TileLayer {
     pub fn get(&self, x: usize, y: usize) -> Option<usize> {
         self.data.get(y.checked_mul(self.width)? + x).copied()
+    }
+    /// This layer's `palette_rotate` property (the per-layer palette rotation
+    /// fed into [`LayerInfo`]'s `rotate_and_shift_flags.0`), or 0 if absent.
+    pub fn palette_rotate(&self) -> u8 {
+        property_int(&self.properties, "palette_rotate")
+            .and_then(|v| u8::try_from(v).ok())
+            .unwrap_or(0)
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
         self.data.get_mut(y.checked_mul(self.width)? + x)
@@ -386,25 +484,45 @@ impl TiledObject {
             self.hitbox()?,
         )
     }
-    /// A pure sprite object: a `sprite` tile id with no warp/func/`description`,
-    /// kept as an [`Interaction::None`] so legacy animation-only objects (the
-    /// living-room TV) survive a map round-trip. No `sprite` ⇒ `None` (skip).
+    /// A pure sprite object: an animated sprite (`anim` or a `sprite` tile id)
+    /// with no warp/func/`description`, kept as an [`Interaction::None`] so legacy
+    /// animation-only objects (the living-room TV) survive a map round-trip.
+    /// Neither sprite property ⇒ `None` (skip).
     fn to_sprite_only(&self, hitbox: Hitbox) -> Option<MapObject> {
-        self.prop_int::<u16>("sprite")?;
+        self.sprite_frames()?;
         let object = MapObject::new(hitbox, ObjectEffect::Interact(Interaction::None), None);
         Some(self.attach_sprite(object))
     }
-    /// Attach this object's `sprite` tile id (if any) as a one-frame animation.
+    /// Attach this object's sprite (if any) as an animation. Prefers a full
+    /// `anim` property (the JSON serialisation of a `Vec<AnimFrame>` — multi-frame
+    /// with per-frame offsets/durations/palette-rotation/outline and multi-tile
+    /// [`SpriteOptions`]) over the plain single-tile `sprite` id, so the richer
+    /// legacy sprites round-trip; falls back to the one-frame `sprite` for the
+    /// common case (and for maps authored before `anim` existed).
     fn attach_sprite(&self, object: MapObject) -> MapObject {
-        match self.prop_int::<u16>("sprite") {
-            Some(id) => object.with_sprite(vec![AnimFrame::new(
-                Vec2::splat(0),
-                id,
-                30,
-                SpriteOptions::transparent_zero(),
-            )]),
+        match self.sprite_frames() {
+            Some(frames) => object.with_sprite(frames),
             None => object,
         }
+    }
+    /// This object's sprite as animation frames, from `anim` (preferred) or the
+    /// single-tile `sprite` id, or `None` if it carries neither. A malformed
+    /// `anim` value is ignored (falls through to `sprite`).
+    fn sprite_frames(&self) -> Option<Vec<AnimFrame>> {
+        if let Some(frames) = self
+            .prop("anim")
+            .and_then(|s| serde_json::from_str::<Vec<AnimFrame>>(s).ok())
+            .filter(|frames| !frames.is_empty())
+        {
+            return Some(frames);
+        }
+        let id = self.prop_int::<u16>("sprite")?;
+        Some(vec![AnimFrame::new(
+            Vec2::splat(0),
+            id,
+            30,
+            SpriteOptions::transparent_zero(),
+        )])
     }
     /// Build a warp effect if this object is one (`type == "warp"`, or it carries
     /// warp properties): `to_map` (a map name, taken verbatim — numeric values
@@ -596,35 +714,90 @@ fn warp_to_object(hitbox: Hitbox, warp: &Warp, id: usize) -> Value {
 }
 
 /// Serialise an [`Interaction`] as a (non-warp) Tiled object placed at `hitbox`,
-/// carrying the optional `sprite` tile id. Dialogue → `description`; a named
-/// `func` → `func` + its scalar props (`pitch`/`count`; piano/none need none);
-/// a sprite-carrying [`Interaction::None`] → just its `sprite`. The cases with
-/// no spelling (unnamed func, sprite-less `None`) → `None`.
+/// carrying its optional sprite. Dialogue → `description`; a named `func` →
+/// `func` + its scalar props (`pitch`/`count`; piano/none need none); a
+/// sprite-carrying [`Interaction::None`] → just its sprite. The sprite is emitted
+/// as a plain `sprite` tile id when it is a single default-options frame, and as
+/// a full `anim` (JSON `Vec<AnimFrame>`) otherwise, so richer legacy sprites
+/// round-trip losslessly (see [`sprite_property`]). The cases with no spelling
+/// (unnamed func, sprite-less `None`) → `None`.
 fn interaction_to_object(
     hitbox: Hitbox,
     interaction: &Interaction,
     sprite: Option<&[AnimFrame]>,
     id: usize,
 ) -> Option<Value> {
-    let sprite_id = sprite.and_then(|f| f.first()).map(|frame| frame.spr_id);
+    let sprite_prop = sprite.and_then(sprite_property);
     let mut properties = match interaction {
         Interaction::Dialogue(key) => vec![prop_str("description", key)],
         Interaction::Func(func) => func_properties(func)?,
         // A pure animation object only round-trips if it actually has a sprite;
         // a sprite-less `None` is nothing Tiled can represent.
         Interaction::None => {
-            sprite_id?;
+            sprite_prop.as_ref()?;
             Vec::new()
         }
     };
-    if let Some(id) = sprite_id {
-        properties.push(prop_str("sprite", &id.to_string()));
+    if let Some(prop) = sprite_prop {
+        properties.push(prop);
     }
     Some(json!({
         "id": id, "name": "", "type": "", "rotation": 0, "visible": true,
         "x": hitbox.x, "y": hitbox.y, "width": hitbox.w, "height": hitbox.h,
         "properties": properties,
     }))
+}
+
+/// The Tiled property carrying an object's sprite, or `None` for an empty frame
+/// list. A sprite that is exactly **one default-options frame** — what the
+/// `sprite`-property parse reconstructs ([`TiledObject::sprite_frames`]) —
+/// serialises as the compact `sprite` tile id, keeping pre-`anim` maps stable;
+/// any richer sprite (multiple frames, per-frame offsets/durations, palette
+/// rotation, a non-default outline, or multi-tile [`SpriteOptions`]) serialises
+/// as a full `anim` JSON array so nothing is lost.
+fn sprite_property(frames: &[AnimFrame]) -> Option<Value> {
+    let id = simple_sprite_id(frames)?;
+    match id {
+        Some(id) => Some(prop_str("sprite", &id.to_string())),
+        None => Some(prop_str("anim", &serde_json::to_string(frames).ok()?)),
+    }
+}
+
+/// Classify an object's sprite frames: `None` for an empty list (no sprite);
+/// `Some(Some(id))` for a single frame identical to what `sprite`-property
+/// parsing builds (so it can round-trip as the compact `sprite` id);
+/// `Some(None)` for any richer sprite (so it must round-trip as `anim`).
+fn simple_sprite_id(frames: &[AnimFrame]) -> Option<Option<u16>> {
+    let [frame] = frames else {
+        return (!frames.is_empty()).then_some(None);
+    };
+    let simple = frame.pos == Vec2::splat(0)
+        && frame.duration == 30
+        && frame.outline_colour == Some(1)
+        && frame.palette_rotate == 0
+        && is_transparent_zero(&frame.options);
+    Some(simple.then_some(frame.spr_id))
+}
+
+/// Whether these sprite options are exactly [`SpriteOptions::transparent_zero`]
+/// (the default a `sprite`-property frame carries): default everything but a
+/// transparent index of 0.
+fn is_transparent_zero(options: &SpriteOptions) -> bool {
+    let SpriteOptions {
+        id: 0,
+        x_offset: 0,
+        y_offset: 0,
+        transparent: Some(0),
+        scale: 1,
+        flip: Flip::None,
+        rotate: Rotate::None,
+        w: 1,
+        h: 1,
+    } = options
+    else {
+        return false;
+    };
+    true
 }
 
 /// The Tiled properties an [`InteractFn`] serialises to: a `func` name plus the
@@ -643,14 +816,32 @@ fn func_properties(func: &InteractFn) -> Option<Vec<Value>> {
     Some(properties)
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TiledMap {
     pub width: usize,
     pub height: usize,
     pub layers: Vec<TiledMapLayer>,
     pub tilesets: Vec<Tileset>,
+    /// Map-level custom properties, read for the runtime metadata Tiled has no
+    /// native field for: the int `bg_colour` (palette index behind the map) and
+    /// the string `camera_stick` (`"x,y"`, a pinned camera position). Tiled's own
+    /// cosmetic `backgroundcolor` is deliberately *not* consulted. Round-tripped
+    /// verbatim, so a save preserves them. Absent ⇒ empty.
+    #[serde(default)]
+    pub properties: Vec<Property>,
 }
 impl TiledMap {
+    /// This map's `bg_colour` property (palette index), if present.
+    pub fn bg_colour(&self) -> Option<u8> {
+        property_int(&self.properties, "bg_colour").and_then(|v| u8::try_from(v).ok())
+    }
+    /// This map's `camera_stick` property parsed as an `(x, y)` i16 pair (the
+    /// pinned camera position), if present and well-formed (`"x,y"`).
+    pub fn camera_stick(&self) -> Option<(i16, i16)> {
+        let value = property_str(&self.properties, "camera_stick")?;
+        let (x, y) = value.split_once(',')?;
+        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+    }
     pub fn get(&self, layer: usize, x: usize, y: usize) -> Option<usize> {
         self.layers.get(layer).and_then(|layer| match layer {
             TiledMapLayer::TileLayer(layer) => layer.get(x, y),
@@ -753,12 +944,26 @@ impl TiledMap {
                         .iter()
                         .map(|&t| if t == 0 { 0 } else { t + firstgid })
                         .collect();
-                    layers.push(json!({
+                    let mut layer = json!({
                         "type": "tilelayer", "id": id, "name": tile_layer.name,
                         "width": tile_layer.width, "height": tile_layer.height,
                         "x": 0, "y": 0, "opacity": 1, "visible": true,
                         "data": data,
-                    }));
+                    });
+                    // Tiled omits zero offsets and empty property lists; match
+                    // that so a plain tile layer round-trips byte-stable while an
+                    // offset/property-carrying one (a nudged decor layer, a
+                    // `palette_rotate`d bg) keeps its data across an in-game save.
+                    if tile_layer.offsetx != 0.0 {
+                        layer["offsetx"] = json!(tile_layer.offsetx);
+                    }
+                    if tile_layer.offsety != 0.0 {
+                        layer["offsety"] = json!(tile_layer.offsety);
+                    }
+                    if !tile_layer.properties.is_empty() {
+                        layer["properties"] = properties_to_json(&tile_layer.properties);
+                    }
+                    layers.push(layer);
                 }
                 TiledMapLayer::ObjectLayer(object_layer) => {
                     let mut json_objects = Vec::new();
@@ -807,7 +1012,7 @@ impl TiledMap {
                 "{dropped} object(s) had no Tiled spelling (unnamed func, or sprite-less Interaction::None) and were dropped"
             );
         }
-        let map = json!({
+        let mut map = json!({
             "type": "map", "version": "1.11", "tiledversion": "1.11.2",
             "orientation": "orthogonal", "renderorder": "right-down",
             "compressionlevel": -1, "infinite": false,
@@ -822,6 +1027,11 @@ impl TiledMap {
                 .collect::<Vec<_>>(),
             "layers": layers,
         });
+        // Map-level properties (`bg_colour`, `camera_stick`) echo only when
+        // present, again matching Tiled's omit-when-empty convention.
+        if !self.properties.is_empty() {
+            map["properties"] = properties_to_json(&self.properties);
+        }
         serde_json::to_string_pretty(&map).unwrap_or_default()
     }
 }
@@ -932,6 +1142,7 @@ mod tests {
             height: 10,
             layers: Vec::new(),
             tilesets: Vec::new(),
+            properties: Vec::new(),
         };
         let json = serde_json::to_string(&map).unwrap();
         println!("{}", json);
@@ -1440,17 +1651,18 @@ mod tests {
         }
     }
 
-    /// The real `assets/maps/house_stairwell.tmj` parses too: two tile layers
-    /// and one image layer at its (positive) offset.
+    /// The exported `assets/maps/house_stairwell.tmj` keeps the user's tracing
+    /// mask: a single (now hidden, non-collision) image layer at its positive
+    /// offset, appended after the exported collision/art/object layers.
     #[test]
     fn parses_house_stairwell_image_layer() {
         let bytes = std::fs::read("../assets/maps/house_stairwell.tmj").unwrap();
         let map = from_json(&bytes).unwrap();
-        assert_eq!(map.layers.len(), 3);
         let image = only_image_layer(&map);
         assert_eq!(image.name, "Image Layer 1");
         assert_eq!(image.image, "images/house_stairwell_mask.png");
         assert_eq!((image.offsetx, image.offsety), (74.0, 33.0));
+        assert!(!image.visible, "the tracing mask is preserved but hidden");
         assert!(!image.is_collision());
     }
 
@@ -1580,5 +1792,178 @@ mod tests {
         // A path that matches nothing is a harmless no-op.
         map.attach_image("images/other.png", RgbaImage::new(8, 8));
         assert!(only_image_layer(&map).pixels.is_some());
+    }
+
+    /// The first tile layer of a parsed map (panics if it has none).
+    fn first_tile_layer(map: &TiledMap) -> &super::TileLayer {
+        map.layers
+            .iter()
+            .find_map(|l| match l {
+                TiledMapLayer::TileLayer(t) => Some(t),
+                _ => None,
+            })
+            .expect("map has a tile layer")
+    }
+
+    /// A tile layer's pixel offset (`offsetx`/`offsety`) parses and round-trips —
+    /// previously dropped on save, which is the motivating fix (the user's
+    /// bedroom1 bed layer sits at offset (−3, 3)). Checked on the real bedroom1.
+    #[test]
+    fn tmj_round_trips_tile_layer_offset() {
+        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let map = from_json(&bytes).unwrap();
+        let bed = map
+            .layers
+            .iter()
+            .find_map(|l| match l {
+                TiledMapLayer::TileLayer(t) if t.name == "bed" => Some(t),
+                _ => None,
+            })
+            .expect("bedroom1 has a `bed` tile layer");
+        assert_eq!((bed.offsetx, bed.offsety), (-3.0, 3.0));
+        let out = map.to_tmj(&map.parse_objects());
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let bed2 = reloaded
+            .layers
+            .iter()
+            .find_map(|l| match l {
+                TiledMapLayer::TileLayer(t) if t.name == "bed" => Some(t),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            (bed2.offsetx, bed2.offsety),
+            (-3.0, 3.0),
+            "the bed layer's offset survives a save (no longer dropped)"
+        );
+        // A zero-offset layer emits no `offsetx`/`offsety` (Tiled-style omission).
+        assert!(!out.contains("\"offsetx\": 0"));
+    }
+
+    /// A tile layer's int `palette_rotate` property parses (into the
+    /// accessor) and round-trips through `to_tmj`; an absent one reads 0.
+    #[test]
+    fn tmj_round_trips_tile_layer_palette_rotate() {
+        let json = r#"{
+            "width": 1, "height": 1, "tilesets": [],
+            "layers": [{ "type": "tilelayer", "name": "bg", "id": 1,
+                         "width": 1, "height": 1, "data": [0],
+                         "properties": [{ "name": "palette_rotate", "type": "int", "value": 1 }] }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        assert_eq!(first_tile_layer(&map).palette_rotate(), 1);
+        let out = map.to_tmj(&[]);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert_eq!(first_tile_layer(&reloaded).palette_rotate(), 1);
+
+        // A layer with no properties reads palette_rotate 0 and emits none.
+        let plain = r#"{
+            "width": 1, "height": 1, "tilesets": [],
+            "layers": [{ "type": "tilelayer", "name": "bg", "id": 1,
+                         "width": 1, "height": 1, "data": [0] }]
+        }"#;
+        let pmap = from_json(plain.as_bytes()).unwrap();
+        assert_eq!(first_tile_layer(&pmap).palette_rotate(), 0);
+        assert!(!pmap.to_tmj(&[]).contains("palette_rotate"));
+    }
+
+    /// Map-level `bg_colour` / `camera_stick` properties parse (via the
+    /// accessors) and round-trip; absent ones read `None`.
+    #[test]
+    fn tmj_round_trips_map_properties() {
+        let json = r#"{
+            "width": 1, "height": 1, "tilesets": [], "layers": [],
+            "properties": [
+                { "name": "bg_colour", "type": "int", "value": 3 },
+                { "name": "camera_stick", "type": "string", "value": "-36,-64" }
+            ]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        assert_eq!(map.bg_colour(), Some(3));
+        assert_eq!(map.camera_stick(), Some((-36, -64)));
+        let out = map.to_tmj(&[]);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert_eq!(reloaded.bg_colour(), Some(3));
+        assert_eq!(reloaded.camera_stick(), Some((-36, -64)));
+
+        // Absent map properties read None and serialise nothing.
+        let plain = from_json(
+            r#"{ "width": 1, "height": 1, "tilesets": [], "layers": [] }"#.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(plain.bg_colour(), None);
+        assert_eq!(plain.camera_stick(), None);
+        assert!(!plain.to_tmj(&[]).contains("properties"));
+    }
+
+    /// A rich object sprite (multi-frame, per-frame offset, palette rotation,
+    /// multi-tile options) serialises as an `anim` property and round-trips
+    /// frame-for-frame; a single default-options frame still serialises as the
+    /// compact `sprite` id (so pre-`anim` maps stay byte-stable).
+    #[test]
+    fn tmj_round_trips_anim_sprite() {
+        use crate::animation::AnimFrame;
+        use crate::map::{MapObject, ObjectEffect};
+        use crate::position::{Hitbox, Vec2};
+        use crate::system::SpriteOptions;
+
+        let frames = vec![
+            AnimFrame::new(
+                Vec2::new(0, 0),
+                661,
+                30,
+                SpriteOptions {
+                    w: 2,
+                    h: 2,
+                    ..SpriteOptions::transparent_zero()
+                },
+            )
+            .with_palette_rotate(1),
+            AnimFrame::new(
+                Vec2::new(0, 1),
+                661,
+                30,
+                SpriteOptions {
+                    w: 2,
+                    h: 2,
+                    ..SpriteOptions::transparent_zero()
+                },
+            )
+            .with_palette_rotate(1),
+        ];
+        let object = MapObject::dialogue(Hitbox::new(8, 8, 16, 16), "thing").with_sprite(frames);
+        let map = TiledMap {
+            width: 4,
+            height: 4,
+            layers: vec![TiledMapLayer::ObjectLayer(super::ObjectLayer {
+                name: "objects".to_string(),
+                objects: Vec::new(),
+            })],
+            tilesets: Vec::new(),
+            properties: Vec::new(),
+        };
+        let out = map.to_tmj(std::slice::from_ref(&object));
+        assert!(out.contains("\"anim\""), "a rich sprite emits `anim`");
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let parsed = reloaded.parse_objects();
+        assert_eq!(parsed.len(), 1);
+        let sprite = parsed[0].sprite.as_ref().expect("sprite round-tripped");
+        assert_eq!(sprite.len(), 2);
+        assert_eq!(sprite[0].spr_id, 661);
+        assert_eq!(sprite[0].palette_rotate, 1);
+        assert_eq!((sprite[0].options.w, sprite[0].options.h), (2, 2));
+        assert_eq!(sprite[1].pos, Vec2::new(0, 1));
+        assert!(matches!(
+            parsed[0].effect,
+            ObjectEffect::Interact(crate::interact::Interaction::Dialogue(ref k)) if k == "thing"
+        ));
+
+        // A single default-options frame stays the compact `sprite` id.
+        let simple = MapObject::dialogue(Hitbox::new(8, 8, 8, 8), "egg").with_sprite(vec![
+            AnimFrame::new(Vec2::splat(0), 524, 30, SpriteOptions::transparent_zero()),
+        ]);
+        let simple_out = map.to_tmj(std::slice::from_ref(&simple));
+        assert!(simple_out.contains("\"sprite\""), "a simple sprite stays `sprite`");
+        assert!(!simple_out.contains("\"anim\""));
     }
 }

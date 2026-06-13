@@ -7,7 +7,18 @@
     "class1",
     "hall1",
     "hall2",
-    "house_stairwell"
+    "house_stairwell",
+    "supermarket",
+    "supermarket_hall",
+    "supermarket_storeroom",
+    "test_pen",
+    "bedroom",
+    "house_living_room",
+    "house_kitchen",
+    "backyard",
+    "wilderness",
+    "town",
+    "piano_room"
   ],
   "tilesets": [
     "tiles"

@@ -117,8 +117,9 @@ impl Default for MapOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum Flip {
+    #[default]
     None,
     Horizontal,
     Vertical,
@@ -144,17 +145,32 @@ pub use super::drawing::Rotate;
 /// describe a sprite *frame* (used by the animation/player code to position
 /// frames); the raster core ignores them. A single colour key suffices for
 /// every call site, so `transparent` is one optional index rather than a slice.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpriteOptions {
+    #[serde(default)]
     pub id: i32,
+    #[serde(default)]
     pub x_offset: i32,
+    #[serde(default)]
     pub y_offset: i32,
+    #[serde(default)]
     pub transparent: Option<u8>,
+    #[serde(default = "one_i32")]
     pub scale: i32,
+    #[serde(default)]
     pub flip: Flip,
+    #[serde(default)]
     pub rotate: Rotate,
+    #[serde(default = "one_i32")]
     pub w: i32,
+    #[serde(default = "one_i32")]
     pub h: i32,
+}
+
+/// Serde default for the `scale`/`w`/`h` fields, whose natural absent value is
+/// `1` (a 1×1 unscaled sprite), not `0`.
+fn one_i32() -> i32 {
+    1
 }
 impl SpriteOptions {
     pub const fn default() -> Self {

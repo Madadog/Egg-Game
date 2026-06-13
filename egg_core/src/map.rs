@@ -88,27 +88,30 @@ impl MapStore {
     }
 }
 
-/// Resolve a map name to its load metadata. Tries the hardcoded legacy table
-/// first; a name that parses as a number is re-resolved through the legacy
-/// name table (the one place old numeric saves and numeric `to_map`
-/// properties in existing `.tmj` files are translated); otherwise a "modern"
-/// map's [`MapInfo`] is built straight from its own layers. `None` when the
-/// name matches nothing. `indexed_sprites` is only read for the sprite art the
-/// modern collision layer derives its colliders from (the sheet that lives on
+/// Resolve a map name to its load metadata. A **modern** map in the store wins
+/// (its content lives in its `.tmj`), so an exported map shadows the hardcoded
+/// legacy builder of the same name; failing that the hardcoded legacy table is
+/// tried, then a name that parses as a number is re-resolved through the legacy
+/// name table (the one place old numeric saves and numeric `to_map` properties
+/// in existing `.tmj` files are translated). `None` when the name matches
+/// nothing. `indexed_sprites` is only read for the sprite art the modern
+/// collision layer derives its colliders from (the sheet that lives on
 /// [`crate::drawstate::DrawState`]).
 pub fn map_by_name(
     indexed_sprites: &IndexedImage,
     name: &str,
     maps: &MapStore,
 ) -> Option<MapInfo> {
+    if maps.is_modern(name) {
+        return Some(modern_map_info(indexed_sprites, name, maps.get(name)?));
+    }
     if let Some(map) = legacy_map(name) {
         return Some(map);
     }
     if let Ok(index) = name.parse::<usize>() {
-        return legacy_map(MapIndex(index).name());
-    }
-    if maps.is_modern(name) {
-        return Some(modern_map_info(indexed_sprites, name, maps.get(name)?));
+        // Re-resolve the numeric shim through the *name* so an old numeric
+        // save lands on the same (modern-first) map every door leads to.
+        return map_by_name(indexed_sprites, MapIndex(index).name(), maps);
     }
     None
 }
@@ -175,9 +178,10 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
                         tile_layer.width.try_into().unwrap(),
                         tile_layer.height.try_into().unwrap(),
                     ),
-                    offset: Vec2::new(0, 0),
+                    offset: Vec2::new(tile_layer.offsetx as i16, tile_layer.offsety as i16),
                     source_layer: i,
                     transparent: Some(0),
+                    rotate_and_shift_flags: (tile_layer.palette_rotate(), 0),
                     ..LayerInfo::DEFAULT_LAYER
                 };
                 push_bg_or_fg(&mut layers, &mut fg_layers, info, &tile_layer.name);
@@ -199,6 +203,10 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
         layers,
         fg_layers,
         objects,
+        bg_colour: map.bg_colour().unwrap_or(0),
+        camera_bounds: map
+            .camera_stick()
+            .map(|(x, y)| CameraBounds::stick(x, y)),
         source: name.to_string(),
         ..Default::default()
     }
@@ -909,6 +917,7 @@ mod tests {
                     height: 4,
                     data: vec![0; 16],
                     name: "Collision".to_string(),
+                    ..Default::default()
                 }),
                 TiledMapLayer::ObjectLayer(ObjectLayer {
                     name: "Object Layer 1".to_string(),
@@ -916,6 +925,7 @@ mod tests {
                 }),
             ],
             tilesets: Vec::new(),
+            properties: Vec::new(),
         }
     }
 
@@ -1154,6 +1164,7 @@ mod tests {
                     }),
                 ],
                 tilesets: Vec::new(),
+                properties: Vec::new(),
             },
         );
         let info = map_by_name(&console.indexed_sprites, "painted", &store).unwrap();
@@ -1191,6 +1202,7 @@ mod tests {
                     }),
                 ],
                 tilesets: Vec::new(),
+                properties: Vec::new(),
             },
         );
         let info = map_by_name(&console.indexed_sprites, "art", &store).unwrap();
@@ -1226,6 +1238,7 @@ mod tests {
                     }),
                 ],
                 tilesets: Vec::new(),
+                properties: Vec::new(),
             },
         );
         let info = map_by_name(&console.indexed_sprites, "pure", &store).unwrap();
@@ -1269,6 +1282,7 @@ mod tests {
                     }),
                 ],
                 tilesets: Vec::new(),
+                properties: Vec::new(),
             },
         );
         let info = map_by_name(&console.indexed_sprites, "offset", &store).unwrap();
@@ -1315,6 +1329,7 @@ mod tests {
                     }),
                 ],
                 tilesets: Vec::new(),
+                properties: Vec::new(),
             },
         );
         let info = map_by_name(&console.indexed_sprites, "broken", &store).unwrap();
@@ -1349,10 +1364,11 @@ mod tests {
     }
 
     /// A map with an image layer but **no object layer** still counts as modern,
-    /// so a pure-painted map resolves through [`map_by_name`] — house_stairwell's
-    /// real `.tmj` (two tile layers + one image layer, no objects) is the live
-    /// example. (Under its own name it'd resolve to the legacy table first, so a
-    /// non-legacy store key is used to probe the modern path.)
+    /// so a pure-painted map resolves through [`map_by_name`] — `house_stairwell`'s
+    /// `.tmj` (which carries a tracing-mask image layer) is the live example.
+    /// (Stored under a non-legacy key here so the probe is purely about
+    /// [`MapStore::is_modern`], independent of the modern-first resolution order
+    /// in [`map_by_name`].)
     #[test]
     fn image_only_map_is_modern() {
         let mut store = MapStore::default();

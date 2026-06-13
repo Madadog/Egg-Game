@@ -16,9 +16,11 @@
 
 use std::ops::{Add, Div, Mul, Sub};
 
+use serde::{Deserialize, Serialize};
+
 use crate::system::drawing::image::IndexedImage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vec2 {
     pub x: i16,
     pub y: i16,
@@ -29,6 +31,10 @@ impl Vec2 {
     }
     pub const fn splat(value: i16) -> Self {
         Vec2::new(value, value)
+    }
+    /// The origin `(0, 0)`; a named path for serde `#[serde(default)]`.
+    pub const fn zero() -> Self {
+        Vec2::new(0, 0)
     }
     pub fn towards(&self, other: &Vec2) -> Vec2 {
         let diff = *other - *self;

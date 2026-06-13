@@ -22,7 +22,7 @@ pub enum EdgePolicy {
 }
 
 /// 90-degree rotation steps applied to the source before blitting.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Rotate {
     #[default]
     None,

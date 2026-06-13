@@ -14,17 +14,42 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use serde::{Deserialize, Serialize};
+
 use crate::position::Vec2;
 use crate::system::SpriteOptions;
 
-#[derive(Debug, Clone)]
+/// One frame of an object's animated sprite. Serde-serialisable so an object's
+/// full sprite (multi-frame, per-frame offsets/durations, palette rotation,
+/// outline, multi-tile [`SpriteOptions`]) can round-trip through a map file's
+/// `anim` object property — the legacy builders carry sprites richer than a
+/// single static tile id, and the `.tmj` export must preserve every one. The
+/// `#[serde(default)]`s let a partial frame (just a `spr_id`, say) still parse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnimFrame {
+    #[serde(default = "Vec2::zero")]
     pub pos: Vec2,
     pub spr_id: u16,
+    #[serde(default = "one_u16")]
     pub duration: u16,
+    #[serde(default)]
     pub options: SpriteOptions,
+    #[serde(default = "default_outline")]
     pub outline_colour: Option<u8>,
+    #[serde(default)]
     pub palette_rotate: u8,
+}
+
+/// Serde default for [`AnimFrame::duration`]: one tick, never zero.
+fn one_u16() -> u16 {
+    1
+}
+
+/// Serde default for [`AnimFrame::outline_colour`]: the `Some(1)` the
+/// [`AnimFrame::new`] constructor picks (so a frame authored without an explicit
+/// outline keeps the historical outlined look).
+fn default_outline() -> Option<u8> {
+    Some(1)
 }
 impl AnimFrame {
     pub const fn new(pos: Vec2, spr_id: u16, duration: u16, options: SpriteOptions) -> Self {
