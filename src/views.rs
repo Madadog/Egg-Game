@@ -426,8 +426,10 @@ pub fn update_views(
                 };
                 g.state.walkaround.load_map_by_name(&mut ctx, &name);
             }
-            // A layer edit from this view: re-derive the shared map's layer lists
-            // (using this view's sprite sheet), preserving objects/camera/player.
+            // A layer or Setup edit from this view: re-derive the shared map's
+            // layer lists and scalar metadata (bg colour, camera framing) using
+            // this view's sprite sheet, preserving objects/camera/player. The live
+            // background colour is pushed too so a swatch click shows immediately.
             if views.views[i].editor.pending_reload {
                 views.views[i].editor.pending_reload = false;
                 let name = g.state.walkaround.current_map.source.clone();
@@ -437,6 +439,9 @@ pub fn update_views(
                     &g.state.maps,
                 );
                 if let Some(fresh) = fresh {
+                    g.state.walkaround.bg_colour = fresh.bg_colour;
+                    g.state.walkaround.current_map.bg_colour = fresh.bg_colour;
+                    g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
                     g.state.walkaround.current_map.layers = fresh.layers;
                     g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
                 }

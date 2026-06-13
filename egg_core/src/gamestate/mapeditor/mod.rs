@@ -67,6 +67,15 @@ enum EditField {
     Pitch,
     /// The `add_creatures` Func interaction's spawn count (a `usize`).
     Count,
+    /// The selected object's trigger-hitbox geometry (`i16` px) — the numeric
+    /// counterpart to dragging the box. Common to every object kind.
+    HitX,
+    HitY,
+    HitW,
+    HitH,
+    /// The selected layer's name (lives on the store's `TiledMap`, not an object;
+    /// see [`MapViewer::rename_target`]).
+    LayerName,
 }
 
 /// An enum-field the editor advances with a click. [`Flip`](Self::Flip)/
@@ -130,6 +139,35 @@ enum EditAction {
         index: usize,
         before: ObjSnapshot,
         after: ObjSnapshot,
+    },
+    /// A layer was inserted at `index` in `source`'s layer list (add / duplicate
+    /// layer). Undo removes it; redo re-inserts the stored layer. Boxed so the
+    /// common (object/tile) actions don't pay for the layer payload's size.
+    LayerInsert {
+        source: String,
+        index: usize,
+        layer: Box<TiledMapLayer>,
+    },
+    /// A layer was removed from `index` in `source`. Undo re-inserts the stored
+    /// layer; redo removes it again.
+    LayerRemove {
+        source: String,
+        index: usize,
+        layer: Box<TiledMapLayer>,
+    },
+    /// Two layers in `source` were swapped (move up / down) — self-inverse.
+    LayerSwap {
+        source: String,
+        a: usize,
+        b: usize,
+    },
+    /// A layer at `index` in `source` was renamed (also the FG/BG toggle, which
+    /// flips the `fg` name prefix).
+    LayerRename {
+        source: String,
+        index: usize,
+        before: String,
+        after: String,
     },
 }
 
@@ -238,15 +276,20 @@ enum EditorKey {
     Layer(usize),
     /// A layer row's visibility (eye) toggle.
     LayerVis(usize),
-    /// Layers panel toolbar: add tile layer / delete / move up / move down.
+    /// Layers panel toolbar: add tile layer / duplicate / delete / move up /
+    /// move down / rename / toggle foreground.
     LayerAdd,
+    LayerDup,
     LayerDel,
     LayerUp,
     LayerDown,
+    LayerRename,
+    LayerFg,
     /// The scrollable tile palette viewport (drag to pan, click to pick a tile).
     PaletteView,
     Object(usize),
     NewObject,
+    DupObject,
     DeleteObject,
     Field(EditField),
     Cycle(CycleField),
@@ -276,6 +319,13 @@ enum EditorKey {
     MapDup,
     MapRename,
     MapDelete,
+    /// Setup panel: a background-colour swatch (palette index).
+    BgColour(u8),
+    /// Setup panel: pin the camera at the current view centre / clear the pin.
+    CamPin,
+    CamAuto,
+    /// Setup panel: open the resize-map dialog.
+    MapResize,
 }
 
 /// Fallback sprite-sheet dimensions in tiles (32×128, the current
@@ -478,6 +528,14 @@ enum MapsDialog {
     Rename { from: String, name: TextField },
     /// Confirming deletion of `name` (Return = delete, Escape = keep).
     ConfirmDelete(String),
+    /// Resizing `source` to typed `w`×`h`; `focus` is the field being typed
+    /// (0=w, 1=h). Enter advances, then commits.
+    Resize {
+        source: String,
+        w: TextField,
+        h: TextField,
+        focus: u8,
+    },
 }
 
 impl MapsDialog {
@@ -487,7 +545,10 @@ impl MapsDialog {
     /// Whether a text field is capturing input (so the host suppresses its global
     /// hotkeys while the user types a map name).
     fn is_typing(&self) -> bool {
-        matches!(self, MapsDialog::New { .. } | MapsDialog::Rename { .. })
+        matches!(
+            self,
+            MapsDialog::New { .. } | MapsDialog::Rename { .. } | MapsDialog::Resize { .. }
+        )
     }
 }
 
@@ -533,6 +594,8 @@ enum DialogAction {
     Create(String, usize, usize),
     Rename(String, String),
     Delete(String),
+    /// Resize the named map to `(w, h)` tiles.
+    Resize(String, usize, usize),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -579,6 +642,10 @@ pub struct MapViewer {
     /// The line-editing buffer for the focused `editing` field, or `None` when no
     /// field is being typed into.
     field: Option<TextField>,
+    /// While renaming a layer ([`EditField::LayerName`]): the *source* layer index
+    /// being renamed, captured at the start so the commit targets the right layer
+    /// even though the name lives in the store, not on an object.
+    rename_target: Option<usize>,
     /// In-progress paint stroke: the cells touched since the mouse went down,
     /// flushed into one history entry on release so a stroke undoes atomically.
     stroke: Option<EditAction>,
@@ -648,6 +715,9 @@ impl MapViewer {
                 .wrapping_add(1);
             self.dock.panels = layout.panels;
         }
+        // A pre-upgrade layout file may predate a panel kind (e.g. Setup); add any
+        // missing one so its toggle still works.
+        self.dock.ensure_all_kinds();
     }
 
     /// Write the current dock layout (primary only), clearing the dirty flag.
@@ -688,7 +758,7 @@ impl MapViewer {
         );
 
         match kind {
-            PanelKind::Layers => self.build_layers(&mut b, &mut rows, map),
+            PanelKind::Layers => self.build_layers(&mut b, &mut rows, map, maps),
             PanelKind::Paint => {
                 self.build_paint_tabs(&mut b, &mut rows);
                 if self.tool == EditorTool::Select {
@@ -702,6 +772,7 @@ impl MapViewer {
                 self.build_objects(&mut b, &mut rows, map);
             }
             PanelKind::Maps => self.build_maps(&mut b, &mut rows, rect, maps),
+            PanelKind::Map => self.build_setup(&mut b, &mut rows, map, maps),
         }
 
         let size = (rect.w as f32, rect.h as f32);
@@ -801,6 +872,14 @@ impl MapViewer {
                 format!("delete '{}'?", truncate(n, 14)),
                 "Enter=yes  Esc=no",
             ),
+            MapsDialog::Resize { w, h, focus, .. } => {
+                let cur = |i: u8| if *focus == i { "_" } else { "" };
+                (
+                    "Resize map".to_string(),
+                    format!("w: {}{}  h: {}{}", w.text(), cur(0), h.text(), cur(1)),
+                    "Enter=next/ok  Esc=cancel",
+                )
+            }
             MapsDialog::None => (String::new(), String::new(), ""),
         };
         let t = b.text(title).small(true).color(11).full_width(8.0).id();
@@ -930,6 +1009,73 @@ impl MapViewer {
         );
     }
 
+    /// The Setup panel: map-level settings read from the store — camera pin,
+    /// background palette colour, and the map size with a resize button.
+    fn build_setup(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        map: &MapInfo,
+        maps: &MapStore,
+    ) {
+        let tm = maps.get(&map.source);
+        let stick = tm.and_then(|t| t.camera_stick());
+        let bg = tm.and_then(|t| t.bg_colour()).unwrap_or(0);
+        let (w, h) = tm.map(|t| (t.width, t.height)).unwrap_or((0, 0));
+
+        // Camera: auto-frame vs. a fixed pin at the current view centre.
+        rows.push(b.text("CAMERA:").small(true).color(13).full_width(8.0).id());
+        let cam = match stick {
+            Some((x, y)) => format!("stick {x},{y}"),
+            None => "auto".to_string(),
+        };
+        rows.push(b.text(cam).small(true).color(12).full_width(7.0).id());
+        let toggle = |b: &mut UiBuilder<EditorKey>, label: &str, on: bool, key: EditorKey| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if on { 0 } else { 12 })
+                .full_width(7.0)
+                .grow(1.0)
+                .fill_if(on, 11)
+                .outlined(0, 12)
+                .key(key)
+                .id()
+        };
+        let auto = toggle(b, "auto", stick.is_none(), EditorKey::CamAuto);
+        let pin = toggle(b, "pin", stick.is_some(), EditorKey::CamPin);
+        rows.push(b.row(1.0, [auto, pin]).id());
+
+        // Background colour: 16 palette swatches, the current one ringed.
+        rows.push(b.text(format!("BG: {bg}")).small(true).color(13).full_width(8.0).id());
+        let mut swatches = Vec::new();
+        for c in 0..16u8 {
+            swatches.push(
+                b.boxed([])
+                    .size(8.0, 8.0)
+                    .fill(c)
+                    .outline(if c == bg { 11 } else { 0 })
+                    .key(EditorKey::BgColour(c))
+                    .id(),
+            );
+        }
+        rows.push(b.wrap_row(1.0, swatches).width(64.0).id());
+
+        // Size + resize.
+        rows.push(b.text(format!("SIZE: {w}x{h}")).small(true).color(13).full_width(8.0).id());
+        rows.push(
+            b.text("resize")
+                .small(true)
+                .center()
+                .color(12)
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, 12)
+                .key(EditorKey::MapResize)
+                .id(),
+        );
+    }
+
     /// The sorted modern-map names — the Maps browser's contents.
     fn modern_names(&self, maps: &MapStore) -> Vec<String> {
         maps.names()
@@ -979,7 +1125,8 @@ impl MapViewer {
                     EditorTool::Interactables
                 },
             ),
-            PanelKind::Maps => None,
+            // Map settings and the Maps browser don't own the canvas tool.
+            PanelKind::Maps | PanelKind::Map => None,
         }
     }
 
@@ -1124,7 +1271,13 @@ impl MapViewer {
         self.brush_h = r1 - r0 + 1;
     }
 
-    fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
+    fn build_layers(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        map: &MapInfo,
+        maps: &MapStore,
+    ) {
         let layers = if self.fg { &map.fg_layers } else { &map.layers };
         let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
         rows.push(
@@ -1134,8 +1287,10 @@ impl MapViewer {
                 .key(EditorKey::Title)
                 .id(),
         );
-        // Toolbar: add a tile layer / delete, move the selected layer up / down.
-        // (The collision layer — bg #0 — is protected; ops on it no-op.)
+        // Toolbar (two rows): add / duplicate / delete; then move up / down /
+        // rename / toggle-foreground. The collision layer (bg #0) is protected
+        // from delete / move / rename / fg-flip — its identity is "first tile
+        // layer" and an fg-prefix would move it out and break collision.
         let collision = !self.fg && self.layer_index == 0;
         let lt = |b: &mut UiBuilder<EditorKey>, label: &str, c: u8, on: bool, key: EditorKey| {
             b.text(label)
@@ -1149,13 +1304,22 @@ impl MapViewer {
                 .id()
         };
         let add = lt(b, "+L", 11, true, EditorKey::LayerAdd);
+        let dup = lt(b, "dup", 12, !collision, EditorKey::LayerDup);
         let del = lt(b, "del", 8, !collision, EditorKey::LayerDel);
+        rows.push(b.row(1.0, [add, dup, del]).id());
         let up = lt(b, "^", 12, !collision, EditorKey::LayerUp);
         let dn = lt(b, "v", 12, !collision, EditorKey::LayerDown);
-        rows.push(b.row(1.0, [add, del, up, dn]).id());
+        let ren = lt(b, "ren", 12, !collision, EditorKey::LayerRename);
+        // `fg` highlights when the current view is the foreground list.
+        let fg = lt(b, "fg", if self.fg { 11 } else { 12 }, !collision, EditorKey::LayerFg);
+        rows.push(b.row(1.0, [up, dn, ren, fg]).id());
+
+        let store = maps.get(&map.source);
         for (i, layer) in layers.iter().enumerate() {
             // Eye toggles visibility; the name selects the layer (sticky, by
-            // click). Image layers are flagged `img` — never a paint target.
+            // click). The colour flags the kind: red = the protected collision
+            // layer (bg #0), grey = an image layer (never a paint target), else
+            // a plain tile layer.
             let eye = b
                 .text(if layer.visible { "O" } else { "-" })
                 .small(true)
@@ -1164,21 +1328,34 @@ impl MapViewer {
                 .size(7.0, 7.0)
                 .key(EditorKey::LayerVis(i))
                 .id();
-            // BG layer 0 is the collision layer — protected, and the source the
-            // colliders derive from — so mark it out from the plain tile layers.
             let is_collision = !self.fg && i == 0;
-            let label = match layer.kind {
-                LayerKind::Image => format!("img {i}"),
-                LayerKind::Tiles if is_collision => "collision".to_string(),
-                LayerKind::Tiles => format!("Layer {i}"),
+            let renaming = self.editing == Some(EditField::LayerName)
+                && self.rename_target == Some(layer.source_layer);
+            let src_name = store.and_then(|tm| tm.layer_name(layer.source_layer)).unwrap_or("");
+            let label = if renaming {
+                format!("{}_", self.field.as_ref().map(|f| f.text()).unwrap_or(""))
+            } else if is_collision {
+                "collision".to_string()
+            } else if src_name.is_empty() {
+                format!("Layer {i}")
+            } else {
+                src_name.to_string()
+            };
+            let colour = if is_collision {
+                8
+            } else if layer.kind == LayerKind::Image {
+                13
+            } else {
+                12
             };
             let name = b
                 .text(label)
                 .small(true)
-                .color(if is_collision { 8 } else { 12 })
+                .color(if renaming { 0 } else { colour })
                 .full_width(7.0)
                 .grow(1.0)
-                .fill_if(i == self.layer_index, 15)
+                .fill_if(renaming, 14)
+                .fill_if(!renaming && i == self.layer_index, 15)
                 .key(EditorKey::Layer(i))
                 .id();
             rows.push(b.row(1.0, [eye, name]).id());
@@ -1294,27 +1471,22 @@ impl MapViewer {
                 .full_width(8.0)
                 .id(),
         );
-        let new = b
-            .text("+new")
-            .small(true)
-            .center()
-            .color(11)
-            .full_width(7.0)
-            .grow(1.0)
-            .outlined(0, 11)
-            .key(EditorKey::NewObject)
-            .id();
-        let del = b
-            .text("-del")
-            .small(true)
-            .center()
-            .color(8)
-            .full_width(7.0)
-            .grow(1.0)
-            .outlined(0, 8)
-            .key(EditorKey::DeleteObject)
-            .id();
-        rows.push(b.row(2.0, [new, del]).id());
+        let has_sel = self.selected.is_some();
+        let obj_btn = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if on { colour } else { 13 })
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, if on { colour } else { 13 })
+                .key(key)
+                .id()
+        };
+        let new = obj_btn(b, "+new", 11, true, EditorKey::NewObject);
+        let dup = obj_btn(b, "dup", 12, has_sel, EditorKey::DupObject);
+        let del = obj_btn(b, "-del", 8, has_sel, EditorKey::DeleteObject);
+        rows.push(b.row(2.0, [new, dup, del]).id());
 
         // Filtered view: list only this tab's kind, numbering rows by their
         // position *within the tab* (`row`), but keying each by its real index
@@ -1347,6 +1519,14 @@ impl MapViewer {
         }
 
         if let Some(object) = self.selected.and_then(|i| map.objects.get(i)) {
+            rows.push(b.spacer(2.0).id());
+            // Hitbox geometry — numeric pos/size for every object, alongside drag.
+            let hb = object.hitbox;
+            rows.push(b.text("box:").small(true).color(13).full_width(7.0).id());
+            self.field_row(b, rows, EditField::HitX, "x", &hb.x.to_string());
+            self.field_row(b, rows, EditField::HitY, "y", &hb.y.to_string());
+            self.field_row(b, rows, EditField::HitW, "w", &hb.w.to_string());
+            self.field_row(b, rows, EditField::HitH, "h", &hb.h.to_string());
             rows.push(b.spacer(2.0).id());
             match &object.effect {
                 ObjectEffect::Warp(w) => {
@@ -1459,10 +1639,46 @@ impl MapViewer {
         list.get(self.layer_index).map(|l| l.source_layer)
     }
 
-    /// Common bookkeeping after a layer add/delete/move: flag the map dirty and
-    /// ask the host to re-derive the runtime layer lists from the edited store.
-    fn after_layer_edit(&mut self) {
-        self.status.edited();
+    /// Open the rename text field on the layer at store `index`, seeded with its
+    /// current name. The commit ([`commit_layer_rename`](Self::commit_layer_rename))
+    /// writes it back to the store and records the undo step.
+    fn begin_layer_rename(&mut self, maps: &MapStore, source: &str, index: usize) {
+        let name = maps
+            .get(source)
+            .and_then(|tm| tm.layer_name(index))
+            .unwrap_or("")
+            .to_string();
+        self.stop_editing();
+        self.rename_target = Some(index);
+        self.editing = Some(EditField::LayerName);
+        self.field = Some(TextField::new(name));
+    }
+
+    /// Flip the layer at store `index` between the bg and fg draw lists by
+    /// toggling its `fg` name prefix (the one convention that decides it),
+    /// recorded as a rename so it undoes like any other.
+    fn toggle_layer_fg(&mut self, map: &MapInfo, maps: &mut MapStore, index: usize) {
+        let Some(before) = maps.get(&map.source).and_then(|tm| tm.layer_name(index)).map(str::to_string)
+        else {
+            return;
+        };
+        let after = toggle_fg_prefix(&before);
+        if after == before {
+            return;
+        }
+        if let Some(tm) = maps.get_mut(&map.source) {
+            tm.set_layer_name(index, &after);
+        }
+        // Follow the layer to whichever list it now belongs to, so it doesn't
+        // vanish from view (the re-derive next frame settles its row).
+        self.fg = after.to_lowercase().starts_with("fg");
+        self.layer_index = 0;
+        self.record(EditAction::LayerRename {
+            source: map.source.clone(),
+            index,
+            before,
+            after,
+        });
         self.pending_reload = true;
     }
 
@@ -1576,6 +1792,32 @@ impl MapViewer {
             EditAction::Modify { index, before, .. } => {
                 set_object(map, *index, before.clone());
             }
+            // Undo an insert by removing the layer; undo a remove by restoring it;
+            // a swap is its own inverse. All change the layer list, so re-derive.
+            EditAction::LayerInsert { source, index, .. } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.remove_layer_at(*index);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerRemove { source, index, layer } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.insert_layer(*index, (**layer).clone());
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerSwap { source, a, b } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.swap_layers(*a, *b);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerRename { source, index, before, .. } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.set_layer_name(*index, before);
+                }
+                self.pending_reload = true;
+            }
         }
     }
 
@@ -1599,6 +1841,31 @@ impl MapViewer {
             }
             EditAction::Modify { index, after, .. } => {
                 set_object(map, *index, after.clone());
+            }
+            // Redo: re-insert / re-remove / re-swap, mirroring `revert`.
+            EditAction::LayerInsert { source, index, layer } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.insert_layer(*index, (**layer).clone());
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerRemove { source, index, .. } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.remove_layer_at(*index);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerSwap { source, a, b } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.swap_layers(*a, *b);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerRename { source, index, after, .. } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.set_layer_name(*index, after);
+                }
+                self.pending_reload = true;
             }
         }
     }
@@ -1687,7 +1954,7 @@ impl MapViewer {
         } else if self.editing.is_some() {
             // While a text field is focused all keys feed the buffer — don't let
             // editor shortcuts (incl. a typed "z") fire.
-            self.step_text_entry(system, map);
+            self.step_text_entry(system, map, maps);
         } else {
             self.handle_shortcuts(system, map, maps);
         }
@@ -2034,41 +2301,75 @@ impl MapViewer {
                     && let Some(tm) = maps.get_mut(&map.source)
                 {
                     let name = format!("Layer {}", tm.layers.len());
-                    tm.add_tile_layer(&name);
-                    self.after_layer_edit();
+                    let index = tm.add_tile_layer(&name);
+                    let layer = Box::new(tm.layers[index].clone());
+                    self.record(EditAction::LayerInsert { source: map.source.clone(), index, layer });
+                    self.pending_reload = true;
                 }
             }
             EditorKey::LayerDel => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
+                    && let Some(layer) = maps.get_mut(&map.source).and_then(|tm| tm.remove_layer_at(src))
                 {
-                    if let Some(tm) = maps.get_mut(&map.source) {
-                        tm.remove_layer(src);
-                    }
+                    self.record(EditAction::LayerRemove {
+                        source: map.source.clone(),
+                        index: src,
+                        layer: Box::new(layer),
+                    });
                     self.layer_index = self.layer_index.saturating_sub(1);
-                    self.after_layer_edit();
+                    self.pending_reload = true;
                 }
             }
             EditorKey::LayerUp => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
+                    && let Some((a, b)) = maps.get_mut(&map.source).and_then(|tm| tm.move_layer(src, true))
                 {
-                    if let Some(tm) = maps.get_mut(&map.source) {
-                        tm.move_layer(src, true);
-                    }
+                    self.record(EditAction::LayerSwap { source: map.source.clone(), a, b });
                     self.layer_index = self.layer_index.saturating_sub(1);
-                    self.after_layer_edit();
+                    self.pending_reload = true;
                 }
             }
             EditorKey::LayerDown => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
+                    && let Some((a, b)) = maps.get_mut(&map.source).and_then(|tm| tm.move_layer(src, false))
                 {
-                    if let Some(tm) = maps.get_mut(&map.source) {
-                        tm.move_layer(src, false);
-                    }
-                    self.layer_index += 1;
-                    self.after_layer_edit();
+                    self.record(EditAction::LayerSwap { source: map.source.clone(), a, b });
+                    // Follow the moved layer, clamped to the (unchanged-length) list.
+                    self.layer_index = (self.layer_index + 1).min(self.layer_list_len(map).saturating_sub(1));
+                    self.pending_reload = true;
+                }
+            }
+            EditorKey::LayerDup => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                    && let Some(tm) = maps.get_mut(&map.source)
+                {
+                    let index = src + 1;
+                    let dup = tm.layers[src].clone();
+                    tm.insert_layer(index, dup);
+                    let layer = Box::new(tm.layers[index].clone());
+                    self.record(EditAction::LayerInsert { source: map.source.clone(), index, layer });
+                    self.pending_reload = true;
+                }
+            }
+            EditorKey::LayerRename => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                {
+                    self.begin_layer_rename(maps, &map.source, src);
+                }
+            }
+            EditorKey::LayerFg => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                {
+                    self.toggle_layer_fg(map, maps, src);
                 }
             }
             // Palette: wheel scrolls; a press starts a scroll-bar drag (edge grab
@@ -2117,6 +2418,11 @@ impl MapViewer {
                         system.width() as i16,
                         system.height() as i16,
                     );
+                }
+            }
+            EditorKey::DupObject => {
+                if click {
+                    self.duplicate_object(map);
                 }
             }
             EditorKey::DeleteObject => {
@@ -2237,6 +2543,52 @@ impl MapViewer {
                     && let Some(sel) = self.maps_selected.clone()
                 {
                     self.maps_dialog = MapsDialog::ConfirmDelete(sel);
+                }
+            }
+            // Setup panel. These map-level settings aren't on the undo stack —
+            // they just mutate the stored map and ask for a re-derive.
+            EditorKey::BgColour(c) => {
+                if click {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.set_bg_colour(c);
+                    }
+                    self.status.edited();
+                    self.pending_reload = true;
+                }
+            }
+            EditorKey::CamAuto => {
+                if click {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.set_camera_stick(None);
+                    }
+                    self.status.edited();
+                    self.pending_reload = true;
+                }
+            }
+            EditorKey::CamPin => {
+                if click {
+                    // `camera_stick` is consumed as the camera's top-left (see
+                    // `CameraBounds::stick`) — exactly `camera_pos` — so pinning
+                    // reproduces the framing the editor is showing, in any view.
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.set_camera_stick(Some((camera_pos.x, camera_pos.y)));
+                    }
+                    self.status.edited();
+                    self.pending_reload = true;
+                }
+            }
+            EditorKey::MapResize => {
+                if click {
+                    let (w, h) = maps
+                        .get(&map.source)
+                        .map(|t| (t.width, t.height))
+                        .unwrap_or((NEW_MAP_W, NEW_MAP_H));
+                    self.maps_dialog = MapsDialog::Resize {
+                        source: map.source.clone(),
+                        w: TextField::new(w.to_string()),
+                        h: TextField::new(h.to_string()),
+                        focus: 0,
+                    };
                 }
             }
         }
@@ -2643,12 +2995,31 @@ impl MapViewer {
         }
     }
 
+    /// Duplicate the selected object, nudged a tile down-right so the copy is
+    /// visible, select it, and record the append as one undo step.
+    fn duplicate_object(&mut self, map: &mut MapInfo) {
+        let Some(i) = self.selected else { return };
+        let Some(mut copy) = map.objects.get(i).cloned() else {
+            return;
+        };
+        copy.hitbox.x += 8;
+        copy.hitbox.y += 8;
+        map.objects.push(copy);
+        let index = map.objects.len() - 1;
+        self.selected = Some(index);
+        self.stop_editing();
+        if let Some(after) = Self::snapshot(map, index) {
+            self.record(EditAction::Add { index, after });
+        }
+    }
+
     /// Clear text-entry focus: forget which field was being edited and drop its
     /// buffer. `editing` and `field` are always set/cleared together so
     /// [`is_typing`](Self::is_typing) stays in step with the live buffer.
     fn stop_editing(&mut self) {
         self.editing = None;
         self.field = None;
+        self.rename_target = None;
     }
 
     /// Forget all per-map editor state: undo/redo history, text-entry focus,
@@ -2671,7 +3042,8 @@ impl MapViewer {
     }
 
     fn begin_edit(&mut self, field: EditField, map: &MapInfo) {
-        let effect = self.selected.and_then(|i| map.objects.get(i)).map(|o| &o.effect);
+        let object = self.selected.and_then(|i| map.objects.get(i));
+        let effect = object.map(|o| &o.effect);
         let value = match (effect, field) {
             (Some(ObjectEffect::Interact(Interaction::Dialogue(k))), EditField::Key) => k.clone(),
             (Some(ObjectEffect::Warp(w)), EditField::ToMap) => w.map.clone().unwrap_or_default(),
@@ -2687,20 +3059,25 @@ impl MapViewer {
                 Some(ObjectEffect::Interact(Interaction::Func(InteractFn::AddCreatures(c)))),
                 EditField::Count,
             ) => c.to_string(),
+            // Hitbox geometry lives on the object itself, not the effect.
+            (_, EditField::HitX) => object.map(|o| o.hitbox.x.to_string()).unwrap_or_default(),
+            (_, EditField::HitY) => object.map(|o| o.hitbox.y.to_string()).unwrap_or_default(),
+            (_, EditField::HitW) => object.map(|o| o.hitbox.w.to_string()).unwrap_or_default(),
+            (_, EditField::HitH) => object.map(|o| o.hitbox.h.to_string()).unwrap_or_default(),
             _ => String::new(),
         };
         self.editing = Some(field);
         self.field = Some(TextField::new(value));
     }
 
-    fn step_text_entry(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo) {
+    fn step_text_entry(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, maps: &mut MapStore) {
         let Some(field) = self.field.as_mut() else {
             return;
         };
         match field.step(system) {
             TextEvent::Active => {}
             TextEvent::Commit => {
-                self.commit_edit(map);
+                self.commit_edit(map, maps);
                 self.stop_editing();
             }
             TextEvent::Cancel => self.stop_editing(),
@@ -2738,8 +3115,8 @@ impl MapViewer {
         });
     }
 
-    fn commit_edit(&mut self, map: &mut MapInfo) {
-        let (Some(_), Some(field)) = (self.selected, self.editing) else {
+    fn commit_edit(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
+        let Some(field) = self.editing else {
             return;
         };
         let buffer = self
@@ -2747,6 +3124,14 @@ impl MapViewer {
             .as_ref()
             .map(|f| f.text().trim().to_string())
             .unwrap_or_default();
+        // A layer rename targets the store, not the selected object.
+        if field == EditField::LayerName {
+            self.commit_layer_rename(map, maps, &buffer);
+            return;
+        }
+        if self.selected.is_none() {
+            return;
+        }
         match field {
             EditField::Key => self.modify_object(map, |map, i| {
                 if let Some(ObjectEffect::Interact(interaction)) =
@@ -2797,7 +3182,73 @@ impl MapViewer {
                     });
                 }
             }
+            // Hitbox geometry: width/height keep a 1px floor so a box stays usable.
+            EditField::HitX => {
+                if let Ok(x) = buffer.parse() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(o) = map.objects.get_mut(i) {
+                            o.hitbox.x = x;
+                        }
+                    });
+                }
+            }
+            EditField::HitY => {
+                if let Ok(y) = buffer.parse() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(o) = map.objects.get_mut(i) {
+                            o.hitbox.y = y;
+                        }
+                    });
+                }
+            }
+            EditField::HitW => {
+                if let Ok(w) = buffer.parse::<i16>() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(o) = map.objects.get_mut(i) {
+                            o.hitbox.w = w.max(1);
+                        }
+                    });
+                }
+            }
+            EditField::HitH => {
+                if let Ok(h) = buffer.parse::<i16>() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(o) = map.objects.get_mut(i) {
+                            o.hitbox.h = h.max(1);
+                        }
+                    });
+                }
+            }
+            // Handled by the early return above (it targets the store, not an object).
+            EditField::LayerName => {}
         }
+    }
+
+    /// Apply a finished layer rename to the store and record it for undo. Empty
+    /// names are ignored (a layer must stay identifiable). A rename can move the
+    /// layer between the bg/fg draw lists, so it flags a re-derive.
+    fn commit_layer_rename(&mut self, map: &mut MapInfo, maps: &mut MapStore, name: &str) {
+        let Some(index) = self.rename_target else { return };
+        if name.is_empty() {
+            return;
+        }
+        let Some(before) = maps.get(&map.source).and_then(|tm| tm.layer_name(index)).map(str::to_string)
+        else {
+            return;
+        };
+        if before == name {
+            return;
+        }
+        if let Some(tm) = maps.get_mut(&map.source) {
+            tm.set_layer_name(index, name);
+        }
+        self.record(EditAction::LayerRename {
+            source: map.source.clone(),
+            index,
+            before,
+            after: name.to_string(),
+        });
+        self.pending_reload = true;
     }
 
     fn cycle(&mut self, map: &mut MapInfo, field: CycleField) {
@@ -2898,6 +3349,40 @@ impl MapViewer {
                     DialogAction::Keep
                 }
             }
+            MapsDialog::Resize { source, w, h, focus } => {
+                if system.keyp(ScanCode::Escape) {
+                    DialogAction::Close
+                } else if system.keyp(ScanCode::Return) {
+                    if *focus >= 1 {
+                        // An emptied / invalid field keeps the map's CURRENT size
+                        // (not the new-map default) so a stray backspace can't
+                        // silently crop the map down to 30x17.
+                        let (cw, ch) = maps
+                            .get(source)
+                            .map(|t| (t.width, t.height))
+                            .unwrap_or((NEW_MAP_W, NEW_MAP_H));
+                        DialogAction::Resize(
+                            source.clone(),
+                            parse_dim(w.text(), cw),
+                            parse_dim(h.text(), ch),
+                        )
+                    } else {
+                        *focus += 1; // Enter advances w -> h, then commits.
+                        DialogAction::Keep
+                    }
+                } else {
+                    let field = if *focus == 0 { w } else { h };
+                    for c in system.key_chars() {
+                        if c.is_ascii_digit() {
+                            field.apply(TextOp::Push(*c));
+                        }
+                    }
+                    if system.keyp(ScanCode::Backspace) {
+                        field.apply(TextOp::Pop);
+                    }
+                    DialogAction::Keep
+                }
+            }
         };
         match action {
             DialogAction::Keep => {}
@@ -2917,6 +3402,14 @@ impl MapViewer {
             DialogAction::Delete(name) => {
                 self.maps_dialog = MapsDialog::None;
                 self.delete_map(system, maps, &name);
+            }
+            DialogAction::Resize(source, w, h) => {
+                self.maps_dialog = MapsDialog::None;
+                if let Some(tm) = maps.get_mut(&source) {
+                    tm.resize(w, h);
+                }
+                self.status.edited();
+                self.pending_reload = true;
             }
         }
     }
@@ -3615,6 +4108,22 @@ fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
     (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
 }
 
+/// Toggle a layer name's foreground `fg` prefix (the marker `push_bg_or_fg` keys
+/// on). A leading `fg` counts as the marker only when it stands alone or is
+/// followed by a separator — so `fg water` toggles back to `water`, while a
+/// plain word like `fgrass` is left untouched (a harmless no-op) rather than
+/// corrupted to `rass`. A name that is only the prefix falls back to `layer`.
+fn toggle_fg_prefix(name: &str) -> String {
+    if let Some(rest) = name.to_lowercase().strip_prefix("fg") {
+        if rest.is_empty() || !rest.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+            let stripped = name[2..].trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+            return if stripped.is_empty() { "layer".to_string() } else { stripped.to_string() };
+        }
+        return name.to_string(); // "fg" glued to a word — not a clean marker.
+    }
+    format!("fg {name}")
+}
+
 /// The tile [`TileSelection`] spanning world points `a`..=`b` (inclusive cells).
 /// `x`/`y` may be negative when dragged past the layer's top-left; the ops skip
 /// the off-layer cells.
@@ -3984,6 +4493,7 @@ mod tests {
 
         let mut viewer = MapViewer { focused: true, ..Default::default() };
         viewer.dock.toggle_panel(PanelKind::Maps); // open the Maps panel too
+        viewer.dock.toggle_panel(PanelKind::Map); // and the Setup panel
         viewer.dock.set_float(1, Vec2::new(100, 30), 80, 60); // float the Paint panel
         viewer.step_map_viewer_at(&mut console, &mut map, &mut store, Vec2::new(0, 0), screen, (0, 0));
         // Force the drop-zone highlight branch.
@@ -4094,6 +4604,134 @@ mod tests {
         viewer.undo(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().get(0, 0, 0), Some(9), "undo restores the tile");
         assert!(viewer.pending_reload, "undoing a collision edit re-derives too");
+    }
+
+    /// Editing an object's hitbox x/y/w/h commits to the box and is undoable;
+    /// w/h keep a 1px floor.
+    #[test]
+    fn object_hitbox_fields_edit_and_undo() {
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(10, 10, 16, 16), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { selected: Some(0), ..Default::default() };
+
+        let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
+            v.editing = Some(field);
+            v.field = Some(TextField::new(text));
+            v.commit_edit(map, maps);
+            v.stop_editing();
+        };
+        edit(&mut v, &mut map, &mut maps, EditField::HitX, "40");
+        edit(&mut v, &mut map, &mut maps, EditField::HitY, "24");
+        edit(&mut v, &mut map, &mut maps, EditField::HitW, "8");
+        edit(&mut v, &mut map, &mut maps, EditField::HitH, "0"); // floored to 1
+        let hb = map.objects[0].hitbox;
+        assert_eq!((hb.x, hb.y, hb.w, hb.h), (40, 24, 8, 1));
+
+        // Each edit is one undo step; undoing the last reverts just the height.
+        v.undo(&mut map, &mut maps);
+        assert_eq!(map.objects[0].hitbox.h, 16);
+        assert_eq!(map.objects[0].hitbox.w, 8);
+    }
+
+    /// Adding a layer is undoable (and redoable), and deleting a layer restores
+    /// its tile content on undo.
+    #[test]
+    fn layer_ops_are_undoable() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("m", TiledMap::blank_modern(4, 4));
+        let n0 = maps.get("m").unwrap().layers.len(); // collision + Layer 1 + objects
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo { source_layer: 0, ..LayerInfo::DEFAULT_LAYER },
+                LayerInfo { source_layer: 1, ..LayerInfo::DEFAULT_LAYER },
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+
+        // Add (mirror the handler): record the insert.
+        let index = maps.get_mut("m").unwrap().add_tile_layer("Layer 2");
+        let layer = Box::new(maps.get_mut("m").unwrap().layers[index].clone());
+        v.record(EditAction::LayerInsert { source: "m".to_string(), index, layer });
+        assert_eq!(maps.get("m").unwrap().layers.len(), n0 + 1);
+
+        v.undo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layers.len(), n0);
+        assert!(v.pending_reload, "layer undo re-derives");
+        v.redo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layers.len(), n0 + 1);
+
+        // Delete a tile layer holding content; undo brings it (and the tile) back.
+        maps.get_mut("m").unwrap().set(1, 0, 0, 7);
+        let removed = maps.get_mut("m").unwrap().remove_layer_at(1).unwrap();
+        v.record(EditAction::LayerRemove { source: "m".to_string(), index: 1, layer: Box::new(removed) });
+        assert_eq!(maps.get("m").unwrap().layers.len(), n0); // back down one
+        v.undo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().get(1, 0, 0), Some(7), "content restored");
+
+        // The collision layer (index 0) is protected — remove returns None.
+        assert!(maps.get_mut("m").unwrap().remove_layer_at(0).is_none());
+    }
+
+    /// Renaming a layer commits to the store and is undoable; the FG toggle flips
+    /// the `fg` name prefix (and back), itself undoable.
+    #[test]
+    fn layer_rename_and_fg_toggle() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("m", TiledMap::blank_modern(4, 4));
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo { source_layer: 0, ..LayerInfo::DEFAULT_LAYER },
+                LayerInfo { source_layer: 1, ..LayerInfo::DEFAULT_LAYER },
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { layer_index: 1, ..Default::default() };
+
+        // Rename "Layer 1" -> "water" via the begin/commit flow.
+        v.begin_layer_rename(&maps, "m", 1);
+        assert_eq!(v.editing, Some(EditField::LayerName));
+        v.field = Some(TextField::new("water"));
+        v.commit_edit(&mut map, &mut maps);
+        v.stop_editing();
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
+        v.undo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("Layer 1"));
+        v.redo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
+
+        // FG toggle adds the `fg` prefix; a second toggle strips it; both undoable.
+        v.toggle_layer_fg(&map, &mut maps, 1);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+        v.toggle_layer_fg(&map, &mut maps, 1);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
+        v.undo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+
+        // An empty rename is ignored (a layer stays identifiable).
+        v.rename_target = Some(1);
+        v.editing = Some(EditField::LayerName);
+        v.field = Some(TextField::new("   "));
+        v.commit_edit(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+    }
+
+    /// The fg-prefix toggle round-trips a separated marker, leaves a glued word
+    /// alone (no corruption), and is case-insensitive.
+    #[test]
+    fn fg_prefix_toggle_edge_cases() {
+        assert_eq!(toggle_fg_prefix("water"), "fg water");
+        assert_eq!(toggle_fg_prefix("fg water"), "water"); // round-trips
+        assert_eq!(toggle_fg_prefix("FG Bed"), "Bed"); // case-insensitive marker
+        assert_eq!(toggle_fg_prefix("fgrass"), "fgrass"); // glued word: untouched
+        assert_eq!(toggle_fg_prefix("fg"), "layer"); // bare prefix -> fallback
     }
 
     /// A name collision, a path-separator name and an empty name are all rejected.

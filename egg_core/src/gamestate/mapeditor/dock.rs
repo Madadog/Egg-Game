@@ -48,10 +48,13 @@ pub enum PanelKind {
     Paint,
     Objects,
     Maps,
+    /// Map-level settings: camera, background colour, resize.
+    Map,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 4] = [Self::Layers, Self::Paint, Self::Objects, Self::Maps];
+    pub const ALL: [PanelKind; 5] =
+        [Self::Layers, Self::Paint, Self::Objects, Self::Maps, Self::Map];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -59,6 +62,9 @@ impl PanelKind {
             Self::Paint => "Paint",
             Self::Objects => "Objects",
             Self::Maps => "Maps",
+            // "Setup" (not "Map") so its global-bar letter doesn't collide with
+            // the "Maps" browser's "M".
+            Self::Map => "Setup",
         }
     }
 }
@@ -198,9 +204,15 @@ impl Default for DockManager {
                     z: 3,
                     open: false,
                 },
+                Panel {
+                    kind: PanelKind::Map,
+                    place: Placement::Float { x: 70, y: 24, w: 86, h: 96 },
+                    z: 4,
+                    open: false,
+                },
             ],
             drag: DragState::Idle,
-            z_top: 4,
+            z_top: 5,
             solved: Solved::default(),
             loaded: false,
             dirty: false,
@@ -382,6 +394,24 @@ impl DockManager {
             p.open = !p.open;
         }
         self.dirty = true;
+    }
+
+    /// Add a (closed, floating) panel for every [`PanelKind`] not already present.
+    /// A layout file written before a panel kind existed won't list it, so this
+    /// keeps its global-bar toggle working after an upgrade.
+    pub fn ensure_all_kinds(&mut self) {
+        for kind in PanelKind::ALL {
+            if !self.panels.iter().any(|p| p.kind == kind) {
+                let z = self.z_top;
+                self.z_top = z.wrapping_add(1);
+                self.panels.push(Panel {
+                    kind,
+                    place: Placement::Float { x: 70, y: 24, w: 86, h: 96 },
+                    z,
+                    open: false,
+                });
+            }
+        }
     }
 
     /// Float panel `idx` at top-left `pos` with size `(w, h)`.

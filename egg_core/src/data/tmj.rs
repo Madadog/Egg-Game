@@ -324,6 +324,25 @@ pub enum TiledMapLayer {
     #[serde(rename = "imagelayer")]
     ImageLayer(ImageLayer),
 }
+impl TiledMapLayer {
+    /// This layer's name (all three kinds carry one).
+    pub fn name(&self) -> &str {
+        match self {
+            TiledMapLayer::TileLayer(l) => &l.name,
+            TiledMapLayer::ObjectLayer(l) => &l.name,
+            TiledMapLayer::ImageLayer(l) => &l.name,
+        }
+    }
+    /// Rename this layer (the `fg`-prefix convention means a rename can also flip
+    /// it between the bg/fg draw lists on the next derive).
+    pub fn set_name(&mut self, name: &str) {
+        match self {
+            TiledMapLayer::TileLayer(l) => l.name = name.to_string(),
+            TiledMapLayer::ObjectLayer(l) => l.name = name.to_string(),
+            TiledMapLayer::ImageLayer(l) => l.name = name.to_string(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Tileset {
@@ -845,9 +864,9 @@ impl TiledMap {
     }
 
     /// Append an empty drawable tile layer (sized to the map's tile grid), placed
-    /// just before the first object layer so tile layers stay contiguous. Used by
-    /// the editor's "add layer" tool.
-    pub fn add_tile_layer(&mut self, name: &str) {
+    /// just before the first object layer so tile layers stay contiguous. Returns
+    /// the index it landed at (for the editor's undo). Used by the "add layer" tool.
+    pub fn add_tile_layer(&mut self, name: &str) -> usize {
         let (w, h) = self
             .layers
             .iter()
@@ -871,36 +890,128 @@ impl TiledMap {
             .position(|l| matches!(l, TiledMapLayer::ObjectLayer(_)))
             .unwrap_or(self.layers.len());
         self.layers.insert(pos, layer);
+        pos
     }
 
-    /// Remove the layer at `idx`, refusing to drop the collision (first tile)
-    /// layer. Used by the editor's "delete layer" tool.
-    pub fn remove_layer(&mut self, idx: usize) {
+    /// Insert `layer` at `idx` (clamped to the list end) — the raw inverse of a
+    /// removal, used to replay layer undo/redo. Unprotected by design: it only
+    /// restores a layer the editor previously took out.
+    pub fn insert_layer(&mut self, idx: usize, layer: TiledMapLayer) {
+        let idx = idx.min(self.layers.len());
+        self.layers.insert(idx, layer);
+    }
+
+    /// Remove the layer at `idx` and return it, refusing to drop the collision
+    /// (first tile) layer (returns `None`). The editor's "delete layer" tool and
+    /// its undo recording both go through this so the protection is in one place.
+    pub fn remove_layer_at(&mut self, idx: usize) -> Option<TiledMapLayer> {
         if idx < self.layers.len() && Some(idx) != self.collision_layer() {
-            self.layers.remove(idx);
+            Some(self.layers.remove(idx))
+        } else {
+            None
+        }
+    }
+
+    /// Back-compat shim: remove without returning the layer.
+    pub fn remove_layer(&mut self, idx: usize) {
+        self.remove_layer_at(idx);
+    }
+
+    /// Swap two layers by index (no-op if either is out of range) — the raw
+    /// operation behind a move and its undo.
+    pub fn swap_layers(&mut self, a: usize, b: usize) {
+        if a < self.layers.len() && b < self.layers.len() {
+            self.layers.swap(a, b);
+        }
+    }
+
+    /// The layer at `idx`'s name, if it exists.
+    pub fn layer_name(&self, idx: usize) -> Option<&str> {
+        self.layers.get(idx).map(|l| l.name())
+    }
+
+    /// Rename the layer at `idx` (no-op if out of range).
+    pub fn set_layer_name(&mut self, idx: usize, name: &str) {
+        if let Some(l) = self.layers.get_mut(idx) {
+            l.set_name(name);
+        }
+    }
+
+    /// Set (replacing in place) a map-level custom property; the editor's Setup
+    /// panel writes `bg_colour` / `camera_stick` through the typed wrappers below.
+    fn set_property(&mut self, name: &str, ty: &str, value: Value) {
+        if let Some(p) = self.properties.iter_mut().find(|p| p.name == name) {
+            p.r#type = ty.to_string();
+            p.value = value;
+        } else {
+            self.properties.push(Property {
+                name: name.to_string(),
+                r#type: ty.to_string(),
+                value,
+            });
+        }
+    }
+
+    /// Drop a map-level property by name (no-op if absent).
+    fn remove_property(&mut self, name: &str) {
+        self.properties.retain(|p| p.name != name);
+    }
+
+    /// Set the map's background palette index (`bg_colour`).
+    pub fn set_bg_colour(&mut self, colour: u8) {
+        self.set_property("bg_colour", "int", Value::from(colour));
+    }
+
+    /// Pin the camera at `(x, y)` (`camera_stick`), or clear it (`None`) so the
+    /// engine auto-frames from the map size.
+    pub fn set_camera_stick(&mut self, point: Option<(i16, i16)>) {
+        match point {
+            Some((x, y)) => self.set_property("camera_stick", "string", Value::from(format!("{x},{y}"))),
+            None => self.remove_property("camera_stick"),
+        }
+    }
+
+    /// Resize the map to `width`×`height` tiles, reflowing every tile layer's data
+    /// anchored at the top-left: cells beyond the new bounds are dropped, new cells
+    /// start empty. Image and object layers are untouched.
+    pub fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        for layer in self.layers.iter_mut() {
+            if let TiledMapLayer::TileLayer(tl) = layer {
+                let mut data = vec![0usize; width * height];
+                for y in 0..height.min(tl.height) {
+                    for x in 0..width.min(tl.width) {
+                        data[y * width + x] = tl.data[y * tl.width + x];
+                    }
+                }
+                tl.width = width;
+                tl.height = height;
+                tl.data = data;
+            }
         }
     }
 
     /// Swap the layer at `idx` with its neighbour (`up` = earlier in draw order),
-    /// never reordering the collision (first tile) layer. Used by the editor's
-    /// move-layer tools.
-    pub fn move_layer(&mut self, idx: usize, up: bool) {
+    /// never reordering the collision (first tile) layer. Returns the swapped
+    /// `(idx, other)` pair (for undo), or `None` if nothing moved. Used by the
+    /// editor's move-layer tools.
+    pub fn move_layer(&mut self, idx: usize, up: bool) -> Option<(usize, usize)> {
         let n = self.layers.len();
         if idx >= n {
-            return;
+            return None;
         }
-        let Some(other) = (if up {
-            idx.checked_sub(1)
+        let other = if up {
+            idx.checked_sub(1)?
         } else {
-            (idx + 1 < n).then_some(idx + 1)
-        }) else {
-            return;
+            (idx + 1 < n).then_some(idx + 1)?
         };
         let collision = self.collision_layer();
         if Some(idx) == collision || Some(other) == collision {
-            return;
+            return None;
         }
         self.layers.swap(idx, other);
+        Some((idx, other))
     }
 
     /// The `image` paths of every image layer, in file order — the list the
@@ -1744,6 +1855,43 @@ mod tests {
         m.add_tile_layer("third");
         m.move_layer(2, true); // swap "third" up with "extra"
         assert_eq!(names(&m), vec!["collision", "third", "extra", "objects"]);
+    }
+
+    /// The Setup panel's data ops: bg_colour / camera_stick round-trip through the
+    /// property list (replacing in place), and resize reflows tile layers.
+    #[test]
+    fn setup_properties_and_resize() {
+        let mut m = TiledMap::blank_modern(4, 3);
+
+        m.set_bg_colour(7);
+        assert_eq!(m.bg_colour(), Some(7));
+        m.set_camera_stick(Some((10, 20)));
+        assert_eq!(m.camera_stick(), Some((10, 20)));
+        m.set_camera_stick(None);
+        assert_eq!(m.camera_stick(), None);
+        // Re-setting replaces in place (no duplicate property).
+        m.set_bg_colour(3);
+        assert_eq!(m.bg_colour(), Some(3));
+        assert_eq!(m.properties.iter().filter(|p| p.name == "bg_colour").count(), 1);
+
+        // Resize: top-left anchored, in-bounds cells preserved, new cells empty.
+        m.set(1, 0, 0, 5);
+        m.set(1, 3, 2, 9);
+        m.resize(6, 5);
+        assert_eq!((m.width, m.height), (6, 5));
+        assert_eq!(m.get(1, 0, 0), Some(5));
+        assert_eq!(m.get(1, 3, 2), Some(9));
+        assert_eq!(m.get(1, 5, 4), Some(0));
+        if let TiledMapLayer::TileLayer(tl) = &m.layers[1] {
+            assert_eq!(tl.data.len(), 30);
+        } else {
+            panic!("layer 1 is a tile layer");
+        }
+        // Shrinking drops out-of-bounds cells.
+        m.resize(2, 2);
+        assert_eq!((m.width, m.height), (2, 2));
+        assert_eq!(m.get(1, 0, 0), Some(5));
+        assert_eq!(m.get(1, 1, 1), Some(0));
     }
 
     /// The real `assets/maps/bedroom1.tmj` now parses (it has an image layer,

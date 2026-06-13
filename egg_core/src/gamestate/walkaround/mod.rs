@@ -92,15 +92,15 @@ impl WalkaroundState {
         &self.entities[0]
     }
 
-    /// Loads a map from given data
-    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
-        let map_set = map_set.into();
-        // The camera frames the first bg layer's area. Tile-first maps keep their
-        // historical sizing (layer 0 is the collision tile layer at offset 0); a
-        // pure-painted map sizes from its first image layer instead. A layer with
-        // no positive size (e.g. a collision mask whose pixels never loaded) is
-        // skipped so `from_map_size`'s positive-size assert can't trip; if nothing
-        // sizable remains we keep the existing camera rather than panicking.
+    /// Frame the camera and background from `map_set`: the camera bounds (an
+    /// explicit `camera_stick`, else auto-sized from the first sizable layer) and
+    /// the background palette colour. A layer with no positive size (e.g. a
+    /// collision mask whose pixels never loaded) is skipped so `from_map_size`'s
+    /// positive-size assert can't trip; if nothing sizable remains the existing
+    /// camera is kept rather than panicking. Shared by [`load_map`](Self::load_map)
+    /// and the in-editor re-derive so a Setup-panel edit (camera / bg / resize)
+    /// applies live, not only after a full reload.
+    fn apply_map_framing(&mut self, system: &mut impl ConsoleApi, map_set: &MapInfo) {
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else if let Some(map1) = map_set
@@ -116,6 +116,12 @@ impl WalkaroundState {
             );
         }
         self.bg_colour = map_set.bg_colour;
+    }
+
+    /// Loads a map from given data
+    pub fn load_map(&mut self, system: &mut impl ConsoleApi, map_set: impl Into<MapInfo>) {
+        let map_set = map_set.into();
+        self.apply_map_framing(system, &map_set);
         system.music(map_set.music_track.as_ref());
 
         // One animation per object that carries a sprite, in object order — the
@@ -391,13 +397,18 @@ impl WalkaroundState {
             if let Some(name) = self.map_viewer.pending_open.take() {
                 self.load_map_by_name(ctx, &name);
             }
-            // A layer add/delete/move edited the stored map: re-derive only the
-            // runtime layer lists (objects, camera and player stay as they are).
+            // A layer or Setup edit changed the stored map: re-derive the runtime
+            // layer lists and the scalar metadata (bg colour, camera framing), so
+            // a colour / camera / resize edit applies live. Objects and the player
+            // stay as they are.
             if self.map_viewer.pending_reload {
                 self.map_viewer.pending_reload = false;
                 if let Some(fresh) =
                     map_by_name(&ctx.draw.indexed_sprites, &self.current_map.source, ctx.maps)
                 {
+                    self.apply_map_framing(ctx.system, &fresh);
+                    self.current_map.bg_colour = fresh.bg_colour;
+                    self.current_map.camera_bounds = fresh.camera_bounds;
                     self.current_map.layers = fresh.layers;
                     self.current_map.fg_layers = fresh.fg_layers;
                 }
