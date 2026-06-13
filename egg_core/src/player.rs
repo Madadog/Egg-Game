@@ -467,10 +467,10 @@ impl Shell {
         Self::preset(Hitbox::new(0, 12, 7, 5), ShellSprites::may())
     }
     pub fn dog() -> Self {
-        Self::preset(Hitbox::new(0, 11, 7, 6), ShellSprites::dog())
+        Self::preset(Hitbox::new(0, 12, 7, 5), ShellSprites::dog())
     }
     pub fn bro() -> Self {
-        Self::preset(Hitbox::new(0, 8, 7, 4), ShellSprites::bro())
+        Self::preset(Hitbox::new(0, 8, 7, 5), ShellSprites::bro())
     }
 }
 
@@ -560,12 +560,7 @@ impl Companion {
             }
         }
     }
-    pub fn interact(
-        self,
-        position: Vec2,
-        direction: (i8, i8),
-        player_position: Vec2,
-    ) -> MapObject {
+    pub fn interact(self, position: Vec2, direction: (i8, i8), player_position: Vec2) -> MapObject {
         use crate::interact::InteractFn;
         use crate::map::ObjectEffect;
         match self {
@@ -583,7 +578,10 @@ impl Companion {
                 let position = position + Vec2::new(pixel, 0);
                 MapObject::new(
                     Hitbox::new(position.x, position.y, 16, 16),
-                    ObjectEffect::Interact(Interaction::Func(InteractFn::Pet(position, Some(offset)))),
+                    ObjectEffect::Interact(Interaction::Func(InteractFn::Pet(
+                        position,
+                        Some(offset),
+                    ))),
                     None,
                 )
             }
