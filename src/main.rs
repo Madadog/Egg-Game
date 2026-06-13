@@ -491,20 +491,34 @@ fn draw_overlay(game: &mut EggGame, text: &str) {
 /// [`views::view_hotkeys`] (Update schedule), where `just_pressed` fires
 /// exactly once per tap — here it would re-fire on every catch-up step of a
 /// lagging frame.
+#[allow(clippy::too_many_arguments)] // a Bevy system — each param is an injected resource/query
 fn step_state(
     mut game: ResMut<EggGame>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard_events: MessageReader<KeyboardInput>,
     windows: Query<(Entity, &Window, Has<bevy::window::PrimaryWindow>)>,
     mouse_button: Res<ButtonInput<MouseButton>>,
+    mut mouse_wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     gamepads: Query<(Entity, &Gamepad)>,
     views: Res<views::ViewWindows>,
 ) {
     if !game.loaded {
+        // Still drain wheel events so they don't pile up before the game loads.
+        mouse_wheel.clear();
         return;
     }
 
     game.system.input().refresh();
+
+    // Mouse wheel (the editor's palette scrolls with it). Summed across this
+    // frame's events; touchpad pixel deltas are clamped into the i8 range.
+    let (mut wheel_x, mut wheel_y) = (0.0f32, 0.0f32);
+    for ev in mouse_wheel.read() {
+        wheel_x += ev.x;
+        wheel_y += ev.y;
+    }
+    game.system.input().mouse.scroll_x[0] = wheel_x.clamp(-127.0, 127.0) as i8;
+    game.system.input().mouse.scroll_y[0] = wheel_y.clamp(-127.0, 127.0) as i8;
 
     // Which window owns keyboard input this frame? Only the primary window
     // drives the player; an extra window drives its own free camera/editor

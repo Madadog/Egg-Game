@@ -271,6 +271,8 @@ const SHEET_COLS: usize = 32;
 const SHEET_TILES: usize = 2048;
 /// Manhattan px a palette press must move before it pans rather than picks.
 const PALETTE_PAN_THRESHOLD: i16 = 2;
+/// Grab width (px) of a palette scroll bar at the viewport's edge.
+const PALETTE_BAR_GRAB: i16 = 4;
 /// The global undo/redo/save + panel-toggle toolbar's size, px.
 const GLOBAL_BAR_W: f32 = 72.0;
 const GLOBAL_BAR_H: f32 = 11.0;
@@ -476,6 +478,20 @@ impl MapsDialog {
     }
 }
 
+/// An in-progress palette drag. `Pan` moves the content (or, if barely moved,
+/// picks the tile on release); `ScrollV`/`ScrollH` drag a scroll bar.
+#[derive(Debug, Clone, Copy)]
+enum PalDrag {
+    Pan {
+        press: Vec2,
+        col0: usize,
+        row0: usize,
+        moved: bool,
+    },
+    ScrollV,
+    ScrollH,
+}
+
 /// The outcome of stepping a [`MapsDialog`], applied by the caller after the
 /// dialog's borrow ends (so the CRUD op can take `&mut self`).
 enum DialogAction {
@@ -500,9 +516,8 @@ pub struct MapViewer {
     /// The palette viewport's screen rect, cached each frame (the palette is
     /// drawn/hit manually, not as flex nodes).
     pal_rect: Rect,
-    /// An in-progress palette drag: (press point, scroll col/row at press, moved
-    /// past the click threshold). A small move is a tile pick; a larger one pans.
-    pal_pan: Option<(Vec2, usize, usize, bool)>,
+    /// An in-progress palette drag (pan / tile-pick or a scroll-bar drag).
+    pal_drag: Option<PalDrag>,
     selected: Option<usize>,
     drag: Option<Vec2>,
     /// While dragging an existing object: the grab offset (cursor − hitbox origin).
@@ -921,28 +936,71 @@ impl MapViewer {
         (SHEET_COLS.saturating_sub(vc), total_rows.saturating_sub(vr))
     }
 
-    /// Advance an in-progress palette drag: a still click (on release) picks the
-    /// tile under the press; a larger drag pans the viewport (content follows the
-    /// cursor). Started by a `PaletteView` press in `handle_panel`.
-    fn step_palette_pan(&mut self, mouse: &MouseInput) {
-        let Some((press, col0, row0, moved)) = self.pal_pan else {
+    /// Advance an in-progress palette drag. A `Pan` that barely moved picks the
+    /// tile under the press on release; a larger one pans (content follows the
+    /// cursor). A scroll-bar drag maps the cursor to the scroll position. Started
+    /// by a `PaletteView` press in `handle_panel`.
+    fn step_palette_drag(&mut self, mouse: &MouseInput) {
+        let Some(drag) = self.pal_drag else {
             return;
         };
         let p = mouse.pos();
-        let (dx, dy) = (p.x - press.x, p.y - press.y);
-        if released(mouse.left) {
-            if !moved && dx.abs() + dy.abs() <= PALETTE_PAN_THRESHOLD {
-                self.select_palette_tile(press);
+        let up = released(mouse.left);
+        match drag {
+            PalDrag::Pan { press, col0, row0, moved } => {
+                let (dx, dy) = (p.x - press.x, p.y - press.y);
+                if up {
+                    if !moved && dx.abs() + dy.abs() <= PALETTE_PAN_THRESHOLD {
+                        self.select_palette_tile(press);
+                    }
+                    self.pal_drag = None;
+                    return;
+                }
+                if moved || dx.abs() + dy.abs() > PALETTE_PAN_THRESHOLD {
+                    let (max_c, max_r) = self.palette_scroll_max();
+                    self.pal_col = (col0 as i32 - (dx / 8) as i32).clamp(0, max_c as i32) as usize;
+                    self.pal_row = (row0 as i32 - (dy / 8) as i32).clamp(0, max_r as i32) as usize;
+                    self.pal_drag = Some(PalDrag::Pan { press, col0, row0, moved: true });
+                }
             }
-            self.pal_pan = None;
-            return;
+            PalDrag::ScrollV => {
+                if up {
+                    self.pal_drag = None;
+                } else {
+                    self.scroll_palette_bar(true, p);
+                }
+            }
+            PalDrag::ScrollH => {
+                if up {
+                    self.pal_drag = None;
+                } else {
+                    self.scroll_palette_bar(false, p);
+                }
+            }
         }
-        if moved || dx.abs() + dy.abs() > PALETTE_PAN_THRESHOLD {
-            let (max_c, max_r) = self.palette_scroll_max();
-            self.pal_col = (col0 as i32 - (dx / 8) as i32).clamp(0, max_c as i32) as usize;
-            self.pal_row = (row0 as i32 - (dy / 8) as i32).clamp(0, max_r as i32) as usize;
-            self.pal_pan = Some((press, col0, row0, true));
+    }
+
+    /// Map a scroll-bar drag at `p` to a scroll position: the bar's fraction
+    /// along its track sets the top-left visible row (`vertical`) or column.
+    fn scroll_palette_bar(&mut self, vertical: bool, p: Vec2) {
+        let v = self.pal_rect;
+        let (max_c, max_r) = self.palette_scroll_max();
+        if vertical && v.h > 0 && max_r > 0 {
+            let total = SHEET_TILES.div_ceil(SHEET_COLS) as i32;
+            let frac = (p.y - v.y).clamp(0, v.h) as i32 * total / v.h as i32;
+            self.pal_row = (frac as usize).min(max_r);
+        } else if !vertical && v.w > 0 && max_c > 0 {
+            let frac = (p.x - v.x).clamp(0, v.w) as i32 * SHEET_COLS as i32 / v.w as i32;
+            self.pal_col = (frac as usize).min(max_c);
         }
+    }
+
+    /// Scroll the palette by a mouse-wheel delta (vertical by default; the
+    /// horizontal wheel/touchpad axis scrolls columns). Up scrolls toward row 0.
+    fn palette_wheel(&mut self, sx: i8, sy: i8) {
+        let (max_c, max_r) = self.palette_scroll_max();
+        self.pal_row = (self.pal_row as i32 - sy as i32).clamp(0, max_r as i32) as usize;
+        self.pal_col = (self.pal_col as i32 - sx as i32).clamp(0, max_c as i32) as usize;
     }
 
     /// Pick the tile under `point` (screen px) in the palette viewport, if any.
@@ -1444,9 +1502,9 @@ impl MapViewer {
         // A modal dialog swallows mouse interaction with the panels/world.
         if self.maps_dialog.is_active() {
             // nothing
-        } else if self.pal_pan.is_some() {
-            // A palette drag (pan / tile-pick) owns the mouse this frame.
-            self.step_palette_pan(&mouse);
+        } else if self.pal_drag.is_some() {
+            // A palette drag (pan / tile-pick / scroll bar) owns the mouse.
+            self.step_palette_drag(&mouse);
         } else if self.step_drag(&mouse, screen) {
             // A panel drag (move / tear-off / resize) owns the mouse this frame —
             // suppress panel and canvas input so it can't paint or re-select.
@@ -1781,11 +1839,30 @@ impl MapViewer {
                     self.after_layer_edit();
                 }
             }
-            // Press in the palette: begin a drag (a small move picks a tile, a
-            // larger one pans). Advanced/finished in `step_palette_pan`.
+            // Palette: wheel scrolls; a press starts a scroll-bar drag (edge grab
+            // zones) or a content pan / tile-pick (`step_palette_drag`).
             EditorKey::PaletteView => {
+                if mouse.scroll_y[0] != 0 || mouse.scroll_x[0] != 0 {
+                    self.palette_wheel(mouse.scroll_x[0], mouse.scroll_y[0]);
+                }
                 if just_pressed(mouse.left) {
-                    self.pal_pan = Some((mouse.pos(), self.pal_col, self.pal_row, false));
+                    let p = mouse.pos();
+                    let v = self.pal_rect;
+                    let (max_c, max_r) = self.palette_scroll_max();
+                    if max_r > 0 && p.x >= v.x + v.w - PALETTE_BAR_GRAB {
+                        self.pal_drag = Some(PalDrag::ScrollV);
+                        self.scroll_palette_bar(true, p);
+                    } else if max_c > 0 && p.y >= v.y + v.h - PALETTE_BAR_GRAB {
+                        self.pal_drag = Some(PalDrag::ScrollH);
+                        self.scroll_palette_bar(false, p);
+                    } else {
+                        self.pal_drag = Some(PalDrag::Pan {
+                            press: p,
+                            col0: self.pal_col,
+                            row0: self.pal_row,
+                            moved: false,
+                        });
+                    }
                 }
             }
             EditorKey::Object(i) => {
@@ -2039,7 +2116,11 @@ impl MapViewer {
         let Some(tiles) = maps.get_mut(source) else {
             return;
         };
-        let old = tiles.get(layer, tx as usize, ty as usize).unwrap_or(0);
+        // `None` ⇒ off the layer (out of bounds / not a tile layer): skip, so a
+        // drag past the edge can't paint (or record a phantom undo cell).
+        let Some(old) = tiles.get(layer, tx as usize, ty as usize) else {
+            return;
+        };
         if old == value {
             return;
         }

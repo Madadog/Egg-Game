@@ -162,6 +162,9 @@ pub struct TileLayer {
 }
 impl TileLayer {
     pub fn get(&self, x: usize, y: usize) -> Option<usize> {
+        if x >= self.width {
+            return None; // guard the row wraparound past the right edge
+        }
         self.data.get(y.checked_mul(self.width)? + x).copied()
     }
     /// This layer's `palette_rotate` property (the per-layer palette rotation
@@ -173,6 +176,9 @@ impl TileLayer {
             .unwrap_or(0)
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
+        if x >= self.width {
+            return None; // guard the row wraparound past the right edge
+        }
         self.data.get_mut(y.checked_mul(self.width)? + x)
     }
     /// Subtract each tile's tileset `firstgid` so tile ids become sheet-local.
@@ -1059,7 +1065,9 @@ impl TiledMap {
         if !self.properties.is_empty() {
             map["properties"] = properties_to_json(&self.properties);
         }
-        serde_json::to_string_pretty(&map).unwrap_or_default()
+        // Compact (not pretty) to match Tiled's export style, so an in-game save
+        // is a small diff rather than reformatting the whole file.
+        serde_json::to_string(&map).unwrap_or_default()
     }
 }
 
@@ -1596,6 +1604,28 @@ mod tests {
                {"name":"narration","type":"string","value":""}"#,
         );
         assert_eq!(warp_narration(&empty.parse_objects()[0]), None);
+    }
+
+    /// A tile read/write past the right edge (`x >= width`) returns `None`
+    /// instead of wrapping into the next row — the paint-drag overflow bug.
+    #[test]
+    fn tile_layer_guards_the_x_edge() {
+        let mut layer = super::TileLayer {
+            width: 4,
+            height: 3,
+            data: vec![0usize; 12],
+            name: String::new(),
+            offsetx: 0.0,
+            offsety: 0.0,
+            properties: Vec::new(),
+        };
+        // The right-edge cell (3, 0) is in bounds.
+        *layer.get_mut(3, 0).unwrap() = 7;
+        assert_eq!(layer.get(3, 0), Some(7));
+        // x == width (raw index 4 = cell (0, 1)) must not wrap.
+        assert_eq!(layer.get(4, 0), None);
+        assert!(layer.get_mut(4, 0).is_none());
+        assert_eq!(layer.get(0, 1), Some(0), "the wrap target stayed untouched");
     }
 
     /// Editor layer ops: add inserts a drawable tile layer before the object
