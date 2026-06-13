@@ -153,35 +153,26 @@ pub const FOOTSTEP_PLAIN: SfxData = SfxData::new(
 );
 
 pub mod music {
-    use std::borrow::Cow;
-
     /// A music track, identified by name — its file stem under `assets/music/`,
-    /// which the host loads as `music/<id>.ogg`. The set of *real* tracks is
+    /// which the host loads as `music/<id>.ogg`. The set of real tracks is
     /// discovered from that directory at runtime (see
-    /// [`ConsoleApi::music_tracks`](crate::system::ConsoleApi::music_tracks)),
-    /// not hardcoded; a map stores a track by name in its `music` property.
+    /// [`ConsoleApi::music_tracks`](crate::system::ConsoleApi::music_tracks)); a
+    /// map (via its `music` property) or the title sequence refers to one by name.
     #[derive(Debug, Clone)]
     pub struct MusicTrack {
-        pub id: Cow<'static, str>,
+        pub id: String,
         pub speed: f32,
     }
     impl MusicTrack {
-        /// A track with a static name — for an engine-fixed track like the intro.
-        pub const fn new(id: &'static str) -> Self {
-            Self {
-                id: Cow::Borrowed(id),
-                speed: 1.0,
-            }
-        }
-        /// A track named at runtime — from a map's `music` property or a filename
-        /// in the music directory.
+        /// A track named by its file stem — from a map's `music` property, a
+        /// filename in the music directory, or an engine-fixed reference like the
+        /// title theme. The only way to construct a track: there is no hardcoded
+        /// track set anymore.
         pub fn named(name: impl Into<String>) -> Self {
             Self {
-                id: Cow::Owned(name.into()),
+                id: name.into(),
                 speed: 1.0,
             }
         }
-        /// The intro theme, played by the title sequence.
-        pub const INTRO: MusicTrack = MusicTrack::new("intro");
     }
 }

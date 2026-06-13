@@ -17,7 +17,7 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 // Black BG, Oblong sun + starfield on FG.
                 ctx.draw.set_palette(&[[0; 3]; 16]);
                 ctx.draw.indexed_canvas[BG as usize].fill(0);
-                ctx.system.music(Some(&MusicTrack::INTRO));
+                ctx.system.music(Some(&MusicTrack::named("intro")));
                 let fg = &mut ctx.draw.indexed(FG);
                 fg.fill(0);
                 fg.stroke_circle(90, 38, 4, 4);
