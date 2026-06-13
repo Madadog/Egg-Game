@@ -1379,20 +1379,18 @@ mod tests {
         let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
         let objects = map.parse_objects();
-        // office.tmj's object layer is 7 dialogue interactions, no warps.
-        assert_eq!(objects.len(), 7);
+        // office.tmj is a real, play-tested map (its objects get edited), so this
+        // pins only the invariant: it parses into objects that include dialogue
+        // interactions — not an exact count or per-index identity, which churn.
+        // Precise object parsing is covered by the synthetic-map tests above.
+        assert!(!objects.is_empty(), "office parses some objects");
         assert!(
-            objects
-                .iter()
-                .all(|o| matches!(o.effect, ObjectEffect::Interact(_)))
+            objects.iter().any(|o| matches!(
+                &o.effect,
+                ObjectEffect::Interact(Interaction::Dialogue(_))
+            )),
+            "office has dialogue interactions"
         );
-        // The first object is the desk front; its hitbox matches the Tiled object.
-        let desk = &objects[0];
-        assert_eq!((desk.hitbox.x, desk.hitbox.y), (89, 65));
-        assert!(matches!(
-            &desk.effect,
-            ObjectEffect::Interact(Interaction::Dialogue(k)) if k == "office_desk_front"
-        ));
     }
 
     #[test]
@@ -1450,13 +1448,20 @@ mod tests {
                 (a.hitbox.x, a.hitbox.y, a.hitbox.w, a.hitbox.h),
                 (b.hitbox.x, b.hitbox.y, b.hitbox.w, b.hitbox.h)
             );
-            assert!(matches!(
-                (&a.effect, &b.effect),
+            // The effect round-trips: a dialogue keeps its key, a warp its
+            // destination (office has both kinds now), and the kind never flips.
+            match (&a.effect, &b.effect) {
                 (
                     ObjectEffect::Interact(Interaction::Dialogue(x)),
                     ObjectEffect::Interact(Interaction::Dialogue(y)),
-                ) if x == y
-            ));
+                ) => assert_eq!(x, y),
+                (ObjectEffect::Warp(x), ObjectEffect::Warp(y)) => {
+                    assert_eq!(x.map, y.map);
+                    assert_eq!((x.to.x, x.to.y), (y.to.x, y.to.y));
+                }
+                (ObjectEffect::Interact(_), ObjectEffect::Interact(_)) => {}
+                _ => panic!("object effect kind changed across the round-trip"),
+            }
         }
         // Flattened tile data is stable across the gid round-trip.
         let tile_layers = |m: &TiledMap| -> Vec<Vec<usize>> {

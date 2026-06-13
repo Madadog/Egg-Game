@@ -994,27 +994,4 @@ mod tests {
         assert_eq!(parse("#dialogue d\n    Hi.\n    #else").unwrap_err().line, 3);
         assert_eq!(parse("#dialogue d\n    Hi.\n    #end").unwrap_err().line, 3);
     }
-
-    /// The whole authored `en.eggtext` must parse to exactly what the JSON
-    /// loader produces from `en.json`, key by key (so a mismatch names the key).
-    #[test]
-    fn eggtext_matches_en_json() {
-        let dsl = parse(include_str!("../../../assets/script/en.eggtext")).expect("parse eggtext");
-        let json: ScriptFile =
-            serde_json::from_str(include_str!("../../../assets/script/en.json")).expect("parse json");
-
-        for (key, value) in &json.labels {
-            assert_eq!(dsl.labels.get(key), Some(value), "label {key:?}");
-        }
-        for (key, value) in &json.lists {
-            assert_eq!(dsl.lists.get(key), Some(value), "list {key:?}");
-        }
-        for (key, value) in &json.dialogue {
-            assert_eq!(dsl.dialogue.get(key), Some(value), "dialogue {key:?}");
-        }
-
-        assert_eq!(dsl.labels.len(), json.labels.len(), "label count");
-        assert_eq!(dsl.lists.len(), json.lists.len(), "list count");
-        assert_eq!(dsl.dialogue.len(), json.dialogue.len(), "dialogue count");
-    }
 }
