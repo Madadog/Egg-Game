@@ -1065,10 +1065,67 @@ impl TiledMap {
         if !self.properties.is_empty() {
             map["properties"] = properties_to_json(&self.properties);
         }
-        // Compact (not pretty) to match Tiled's export style, so an in-game save
-        // is a small diff rather than reformatting the whole file.
-        serde_json::to_string(&map).unwrap_or_default()
+        // Pretty-print the structure (layers / objects / tilesets / properties)
+        // but keep each tile layer's big flat `data` array compact on one line —
+        // a readable, reviewable diff without thousands of one-number lines.
+        to_pretty_compact_arrays(&map)
     }
+}
+
+/// Serialize `value` as JSON that is pretty-printed (two-space indent, matching
+/// [`manifest_to_json`]) **except** for arrays whose elements are all scalars
+/// (numbers / strings / bools / null), which stay inline on one line. In a Tiled
+/// map this keeps the structure browsable while the one huge per-layer tile
+/// `data` array — the only large scalar array — stays compact.
+fn to_pretty_compact_arrays(value: &Value) -> String {
+    let mut out = String::new();
+    write_pretty(&mut out, value, 0);
+    out
+}
+
+/// Recursive worker for [`to_pretty_compact_arrays`]. Objects and arrays that
+/// contain a nested object/array expand one entry per line; scalars, empty
+/// containers, and all-scalar arrays fall through to serde's compact form.
+fn write_pretty(out: &mut String, value: &Value, depth: usize) {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            out.push_str("{\n");
+            for (i, (k, v)) in map.iter().enumerate() {
+                indent(out, depth + 1);
+                out.push_str(&Value::String(k.clone()).to_string());
+                out.push_str(": ");
+                write_pretty(out, v, depth + 1);
+                out.push_str(if i + 1 < map.len() { ",\n" } else { "\n" });
+            }
+            indent(out, depth);
+            out.push('}');
+        }
+        Value::Array(items) if items.iter().any(|v| !is_scalar(v)) => {
+            out.push_str("[\n");
+            for (i, v) in items.iter().enumerate() {
+                indent(out, depth + 1);
+                write_pretty(out, v, depth + 1);
+                out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+            }
+            indent(out, depth);
+            out.push(']');
+        }
+        // Scalar, empty object/array, or all-scalar array (e.g. tile `data`).
+        other => out.push_str(&other.to_string()),
+    }
+}
+
+/// Push `depth` levels of two-space indentation.
+fn indent(out: &mut String, depth: usize) {
+    for _ in 0..depth {
+        out.push_str("  ");
+    }
+}
+
+/// Whether `v` is a JSON scalar (not an array or object) — an array of only
+/// these is printed inline by [`write_pretty`].
+fn is_scalar(v: &Value) -> bool {
+    !matches!(v, Value::Array(_) | Value::Object(_))
 }
 
 // Tests for map serialization/deserialization:
@@ -1360,6 +1417,25 @@ mod tests {
             panic!("the round-tripped object is a warp");
         };
         assert_eq!((warp.to.x, warp.to.y), (72, 32));
+    }
+
+    /// A saved map pretty-prints its structure but keeps each tile layer's flat
+    /// `data` array compact on one line — a readable, reviewable diff.
+    #[test]
+    fn to_tmj_is_pretty_with_compact_tile_data() {
+        let map = TiledMap::blank_modern(4, 3);
+        let out = map.to_tmj(&[]);
+        // Structure is indented and multi-line.
+        assert!(out.contains("\n  \"layers\""), "expected indented keys:\n{out}");
+        // The 4×3 tile data sits inline, not one number per line.
+        assert!(
+            out.contains("\"data\": [0,0,0,0,0,0,0,0,0,0,0,0]"),
+            "expected a compact data array:\n{out}"
+        );
+        // And it still parses back to an equivalent map.
+        let reloaded: TiledMap = serde_json::from_str(&out).unwrap();
+        assert_eq!((reloaded.width, reloaded.height), (4, 3));
+        assert_eq!(reloaded.layers.len(), map.layers.len());
     }
 
     /// The runtime `InteractFn` of an object's interaction effect, if it is one.

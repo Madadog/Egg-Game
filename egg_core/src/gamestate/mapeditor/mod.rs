@@ -47,6 +47,9 @@ pub enum EditorTool {
     #[default]
     Layers,
     Paint,
+    /// Marquee-select a rectangle of tiles on the active layer, then copy / cut /
+    /// paste / delete it. A sub-mode of the Paint panel (shares its dock slot).
+    Select,
     Interactables,
     Warps,
 }
@@ -249,6 +252,12 @@ enum EditorKey {
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
     Eraser,
+    /// Select-tool ops on the current marquee / clipboard.
+    SelCopy,
+    SelCut,
+    SelPaste,
+    SelDelete,
+    SelClear,
     Undo,
     Redo,
     Save,
@@ -493,6 +502,27 @@ enum PalDrag {
     ScrollH,
 }
 
+/// The Select tool's marquee: a rectangle of tiles on the active layer, in tile
+/// coordinates (`x`/`y` may sit off the layer's left/top before a copy clamps
+/// them). Copy / Cut / Delete operate on the cells it covers.
+#[derive(Debug, Clone, Copy)]
+struct TileSelection {
+    x: i32,
+    y: i32,
+    w: usize,
+    h: usize,
+}
+
+/// Tiles lifted by Copy / Cut, ready for Paste — row-major `w`×`h` tile ids
+/// (`0` = empty). Held on the viewer across map switches, so a block can be
+/// copied from one map and pasted into another.
+#[derive(Debug, Clone)]
+struct Clipboard {
+    w: usize,
+    h: usize,
+    tiles: Vec<usize>,
+}
+
 /// The outcome of stepping a [`MapsDialog`], applied by the caller after the
 /// dialog's borrow ends (so the CRUD op can take `&mut self`).
 enum DialogAction {
@@ -530,6 +560,11 @@ pub struct MapViewer {
     sheet: (usize, usize),
     selected: Option<usize>,
     drag: Option<Vec2>,
+    /// The Select tool's committed marquee (tile coords), or `None`. A fresh
+    /// click-drag replaces it; Copy / Cut / Delete act on it.
+    selection: Option<TileSelection>,
+    /// The last Copy / Cut buffer, stamped at the selection origin by Paste.
+    clipboard: Option<Clipboard>,
     /// While dragging an existing object: the grab offset (cursor − hitbox origin).
     moving: Option<Vec2>,
     /// Origin of the object being dragged, captured at grab time so a completed
@@ -652,7 +687,14 @@ impl MapViewer {
 
         match kind {
             PanelKind::Layers => self.build_layers(&mut b, &mut rows, map),
-            PanelKind::Paint => self.build_paint(&mut b, &mut rows),
+            PanelKind::Paint => {
+                self.build_paint_tabs(&mut b, &mut rows);
+                if self.tool == EditorTool::Select {
+                    self.build_select(&mut b, &mut rows);
+                } else {
+                    self.build_paint(&mut b, &mut rows);
+                }
+            }
             PanelKind::Objects => {
                 self.build_obj_tabs(&mut b, &mut rows);
                 self.build_objects(&mut b, &mut rows, map);
@@ -907,7 +949,7 @@ impl MapViewer {
     fn active_kind(&self) -> Option<PanelKind> {
         Some(match self.tool {
             EditorTool::Layers => PanelKind::Layers,
-            EditorTool::Paint => PanelKind::Paint,
+            EditorTool::Paint | EditorTool::Select => PanelKind::Paint,
             EditorTool::Interactables | EditorTool::Warps => PanelKind::Objects,
         })
     }
@@ -921,7 +963,13 @@ impl MapViewer {
             // visibility / order); picking a layer must not steal the canvas tool
             // from Paint. (`Layers` stays reachable as a neutral tool via key 1.)
             PanelKind::Layers => None,
-            PanelKind::Paint => Some(EditorTool::Paint),
+            // The Paint panel hosts both Paint and its Select sub-mode; keep
+            // whichever is current so clicking the panel body doesn't flip it.
+            PanelKind::Paint => Some(if matches!(current, EditorTool::Paint | EditorTool::Select) {
+                current
+            } else {
+                EditorTool::Paint
+            }),
             PanelKind::Objects => Some(
                 if matches!(current, EditorTool::Interactables | EditorTool::Warps) {
                     current
@@ -1090,13 +1138,18 @@ impl MapViewer {
                 .size(7.0, 7.0)
                 .key(EditorKey::LayerVis(i))
                 .id();
+            // BG layer 0 is the collision layer — protected, and the source the
+            // colliders derive from — so mark it out from the plain tile layers.
+            let is_collision = !self.fg && i == 0;
             let label = match layer.kind {
                 LayerKind::Image => format!("img {i}"),
+                LayerKind::Tiles if is_collision => "collision".to_string(),
                 LayerKind::Tiles => format!("Layer {i}"),
             };
             let name = b
                 .text(label)
                 .small(true)
+                .color(if is_collision { 8 } else { 12 })
                 .full_width(7.0)
                 .grow(1.0)
                 .fill_if(i == self.layer_index, 15)
@@ -1148,6 +1201,63 @@ impl MapViewer {
                 .key(EditorKey::PaletteView)
                 .id(),
         );
+    }
+
+    /// The Paint panel's sub-tabs: freehand Paint vs. the marquee Select tool
+    /// (mirrors [`build_obj_tabs`](Self::build_obj_tabs)).
+    fn build_paint_tabs(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        let mk = |b: &mut UiBuilder<EditorKey>, tool: EditorTool, label: &str, sel: bool| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if sel { 0 } else { 12 })
+                .full_width(7.0)
+                .grow(1.0)
+                .fill_if(sel, 11)
+                .outlined(0, 12)
+                .key(EditorKey::Tool(tool))
+                .id()
+        };
+        let pt = mk(b, EditorTool::Paint, "Paint", self.tool == EditorTool::Paint);
+        let sl = mk(b, EditorTool::Select, "Sel", self.tool == EditorTool::Select);
+        rows.push(b.row(1.0, [pt, sl]).id());
+    }
+
+    /// The Select tool's body: the marquee/clipboard sizes and the ops that act
+    /// on them (copy / cut / paste / delete / clear). Disabled ops grey out.
+    fn build_select(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        let sel = match self.selection {
+            Some(s) => format!("sel {}x{}", s.w, s.h),
+            None => "drag to select".to_string(),
+        };
+        let clip = match &self.clipboard {
+            Some(c) => format!("clip {}x{}", c.w, c.h),
+            None => "clip -".to_string(),
+        };
+        rows.push(b.text(sel).small(true).color(13).full_width(8.0).id());
+        rows.push(b.text(clip).small(true).color(13).full_width(8.0).id());
+
+        let has_sel = self.selection.is_some();
+        let has_clip = self.clipboard.is_some();
+        let op = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if on { colour } else { 13 })
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, if on { colour } else { 13 })
+                .key(key)
+                .id()
+        };
+        let copy = op(b, "copy", 12, has_sel, EditorKey::SelCopy);
+        let cut = op(b, "cut", 12, has_sel, EditorKey::SelCut);
+        rows.push(b.row(1.0, [copy, cut]).id());
+        let paste = op(b, "paste", 11, has_sel && has_clip, EditorKey::SelPaste);
+        let del = op(b, "del", 8, has_sel, EditorKey::SelDelete);
+        rows.push(b.row(1.0, [paste, del]).id());
+        let clear = op(b, "clear", 12, has_sel, EditorKey::SelClear);
+        rows.push(b.row(1.0, [clear]).id());
     }
 
     fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -1405,6 +1515,17 @@ impl MapViewer {
         }
     }
 
+    /// Flag a collider re-derive if `layer` is the collision (first tile) layer.
+    /// The collision layer's tile art is what `Collider::from_sprite` derives
+    /// from, so any change to it — a forward edit *or* an undo/redo — must
+    /// re-derive, or in-game collision goes stale (see the host's `pending_reload`
+    /// drain). Forward tile edits flag it inline; this keeps undo/redo in step.
+    fn flag_collision_reload(&mut self, map: &MapInfo, layer: usize) {
+        if map.layers.first().map(|l| l.source_layer) == Some(layer) {
+            self.pending_reload = true;
+        }
+    }
+
     /// Reverse an action's effect (the undo direction).
     fn revert(&mut self, map: &mut MapInfo, maps: &mut MapStore, action: &EditAction) {
         match action {
@@ -1414,6 +1535,7 @@ impl MapViewer {
                         tiles.set(*layer, x as usize, y as usize, old);
                     }
                 }
+                self.flag_collision_reload(map, *layer);
             }
             // Undo an add by removing the (last) object it appended.
             EditAction::Add { index, .. } => {
@@ -1440,6 +1562,7 @@ impl MapViewer {
                         tiles.set(*layer, x as usize, y as usize, new);
                     }
                 }
+                self.flag_collision_reload(map, *layer);
             }
             EditAction::Add { index, after } => {
                 insert_object(map, *index, after.clone());
@@ -1457,8 +1580,9 @@ impl MapViewer {
     // --- Step (input) ---------------------------------------------------------
 
     /// The keys the map editor consumes from the shared console — text-entry
-    /// control keys plus its command shortcuts (Ctrl+Z/Y/S, Delete, the 1-4 tool
-    /// switches and their modifiers). The host forwards these even when the key
+    /// control keys plus its command shortcuts (Ctrl+Z/Y/S, the Select clipboard
+    /// chords Ctrl+C/X/V, Delete, the 1-5 tool switches and their modifiers). The
+    /// host forwards these even when the key
     /// wasn't aimed at the primary window, so editor shortcuts work over any
     /// view; they're inert unless an editor is actually reading them (see
     /// [`step_text_entry`](Self::step_text_entry) / [`handle_shortcuts`](Self::handle_shortcuts)).
@@ -1473,11 +1597,16 @@ impl MapViewer {
                 | ScanCode::Z
                 | ScanCode::Y
                 | ScanCode::S
+                // Select-tool clipboard chords (Ctrl+C/X/V).
+                | ScanCode::C
+                | ScanCode::X
+                | ScanCode::V
                 | ScanCode::Delete
                 | ScanCode::Digit1
                 | ScanCode::Digit2
                 | ScanCode::Digit3
                 | ScanCode::Digit4
+                | ScanCode::Digit5
         )
     }
 
@@ -1723,9 +1852,10 @@ impl MapViewer {
     }
 
     /// Global editor keyboard shortcuts (only while no text field is focused):
-    /// Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo, Ctrl+S save, Delete removes the
-    /// selected object, and `1`–`4` switch tools. These keys are forwarded to the
-    /// console by the host's editor-key gate (see `main.rs`).
+    /// Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo, Ctrl+S save, the Select tool's
+    /// Ctrl+C/X/V clipboard ops, Delete removes the selected object (or clears the
+    /// Select marquee), Escape drops the marquee, and `1`–`5` switch tools. These
+    /// keys are forwarded to the console by the host's editor-key gate (see `main.rs`).
     fn handle_shortcuts(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -1748,18 +1878,37 @@ impl MapViewer {
             if system.keyp(ScanCode::S) {
                 self.save(system, map, maps);
             }
+            // Select-tool clipboard ops (Ctrl+C/X/V) on the active layer.
+            if self.tool == EditorTool::Select {
+                if system.keyp(ScanCode::C) {
+                    self.selection_copy(maps, map);
+                }
+                if system.keyp(ScanCode::X) {
+                    self.selection_cut(maps, map);
+                }
+                if system.keyp(ScanCode::V) {
+                    self.selection_paste(maps, map);
+                }
+            }
             // Ctrl-chorded: don't also treat the digit as a tool switch.
             return;
         }
 
-        // Delete the selected object (object tools only).
-        if system.keyp(ScanCode::Delete)
-            && matches!(self.tool, EditorTool::Interactables | EditorTool::Warps)
-        {
-            self.delete_object(map);
+        // Delete: removes the selected object, or clears the Select marquee.
+        if system.keyp(ScanCode::Delete) {
+            if matches!(self.tool, EditorTool::Interactables | EditorTool::Warps) {
+                self.delete_object(map);
+            } else if self.tool == EditorTool::Select {
+                self.selection_delete(maps, map);
+            }
+        }
+        // Escape drops the Select marquee.
+        if system.keyp(ScanCode::Escape) && self.tool == EditorTool::Select {
+            self.selection = None;
         }
 
-        // Number-row tool switching, mirroring the tab order.
+        // Number-row tool switching, mirroring the tab order (5 = Select, the
+        // Paint panel's sub-mode).
         let tool = if system.keyp(ScanCode::Digit1) {
             Some(EditorTool::Layers)
         } else if system.keyp(ScanCode::Digit2) {
@@ -1768,6 +1917,8 @@ impl MapViewer {
             Some(EditorTool::Interactables)
         } else if system.keyp(ScanCode::Digit4) {
             Some(EditorTool::Warps)
+        } else if system.keyp(ScanCode::Digit5) {
+            Some(EditorTool::Select)
         } else {
             None
         };
@@ -1956,6 +2107,31 @@ impl MapViewer {
                     self.brush_h = 1;
                 }
             }
+            EditorKey::SelCopy => {
+                if click {
+                    self.selection_copy(maps, map);
+                }
+            }
+            EditorKey::SelCut => {
+                if click {
+                    self.selection_cut(maps, map);
+                }
+            }
+            EditorKey::SelPaste => {
+                if click {
+                    self.selection_paste(maps, map);
+                }
+            }
+            EditorKey::SelDelete => {
+                if click {
+                    self.selection_delete(maps, map);
+                }
+            }
+            EditorKey::SelClear => {
+                if click {
+                    self.selection = None;
+                }
+            }
             EditorKey::Undo => {
                 if click {
                     self.undo(map, maps);
@@ -2042,6 +2218,7 @@ impl MapViewer {
     ) {
         match self.tool {
             EditorTool::Paint => self.handle_paint(system, map, maps, camera_pos, mouse),
+            EditorTool::Select => self.handle_select(camera_pos, mouse),
             EditorTool::Interactables | EditorTool::Warps => {
                 let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
                 if just_pressed(mouse.left) {
@@ -2260,6 +2437,121 @@ impl MapViewer {
         self.flush_stroke();
     }
 
+    /// Select-tool input: drag the left button to rubber-band a tile marquee on
+    /// the active layer (a click is a 1×1), right-click to clear it. The clipboard
+    /// ops fire from the panel buttons / shortcuts, not the canvas.
+    fn handle_select(&mut self, camera_pos: Vec2, mouse: &MouseInput) {
+        let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
+        if just_pressed(mouse.left) {
+            self.drag = Some(world);
+        }
+        if pressed(mouse.left) {
+            // Grow the marquee live so the panel's `WxH` readout tracks the drag.
+            if let Some(start) = self.drag {
+                self.selection = Some(selection_between(start, world));
+            }
+        } else {
+            // Not held: drop any drag start stranded by releasing over a panel.
+            self.drag = None;
+        }
+        if just_pressed(mouse.right) {
+            self.selection = None;
+            self.drag = None;
+        }
+    }
+
+    /// The active tile layer for a Select op: `(source, source_layer,
+    /// is_collision)`, or `None` if the active layer isn't an editable tile
+    /// layer (an image layer carries a bitmap, not cells). Mirrors the
+    /// [`handle_paint`](Self::handle_paint) target guard.
+    fn selection_layer(&self, map: &MapInfo) -> Option<(String, usize, bool)> {
+        let (source, layer) = self
+            .active_layer(map)
+            .filter(|l| l.kind == LayerKind::Tiles)
+            .map(|l| (map.source.clone(), l.source_layer))?;
+        let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
+        Some((source, layer, is_collision))
+    }
+
+    /// Copy the active layer's tiles under the marquee into the clipboard (cells
+    /// off the layer read as empty). Non-destructive — no undo entry.
+    fn selection_copy(&mut self, maps: &MapStore, map: &MapInfo) {
+        let (Some(sel), Some((source, layer, _))) = (self.selection, self.selection_layer(map))
+        else {
+            return;
+        };
+        let Some(tiles) = maps.get(&source) else { return };
+        let mut buf = Vec::with_capacity(sel.w * sel.h);
+        for dy in 0..sel.h {
+            for dx in 0..sel.w {
+                let (tx, ty) = (sel.x + dx as i32, sel.y + dy as i32);
+                let id = if tx < 0 || ty < 0 {
+                    0
+                } else {
+                    tiles.get(layer, tx as usize, ty as usize).unwrap_or(0)
+                };
+                buf.push(id);
+            }
+        }
+        self.clipboard = Some(Clipboard { w: sel.w, h: sel.h, tiles: buf });
+    }
+
+    /// Copy the marquee, then clear it to empty — a single undo step.
+    fn selection_cut(&mut self, maps: &mut MapStore, map: &MapInfo) {
+        self.selection_copy(maps, map);
+        self.selection_delete(maps, map);
+    }
+
+    /// Clear every cell under the marquee to the empty tile, as one undo step.
+    fn selection_delete(&mut self, maps: &mut MapStore, map: &MapInfo) {
+        let (Some(sel), Some((source, layer, is_collision))) =
+            (self.selection, self.selection_layer(map))
+        else {
+            return;
+        };
+        self.stroke = Some(EditAction::Tiles {
+            source: source.clone(),
+            layer,
+            cells: Vec::new(),
+        });
+        for dy in 0..sel.h {
+            for dx in 0..sel.w {
+                self.paint_cell(maps, &source, layer, sel.x + dx as i32, sel.y + dy as i32, 0);
+            }
+        }
+        self.flush_stroke();
+        if is_collision {
+            self.pending_reload = true;
+        }
+    }
+
+    /// Stamp the clipboard with its top-left at the marquee's origin, as one undo
+    /// step (cells off the layer are skipped). Click to drop a 1×1 marquee where
+    /// you want the paste to land.
+    fn selection_paste(&mut self, maps: &mut MapStore, map: &MapInfo) {
+        let (Some(sel), Some(clip)) = (self.selection, self.clipboard.clone()) else {
+            return;
+        };
+        let Some((source, layer, is_collision)) = self.selection_layer(map) else {
+            return;
+        };
+        self.stroke = Some(EditAction::Tiles {
+            source: source.clone(),
+            layer,
+            cells: Vec::new(),
+        });
+        for dy in 0..clip.h {
+            for dx in 0..clip.w {
+                let value = clip.tiles[dy * clip.w + dx];
+                self.paint_cell(maps, &source, layer, sel.x + dx as i32, sel.y + dy as i32, value);
+            }
+        }
+        self.flush_stroke();
+        if is_collision {
+            self.pending_reload = true;
+        }
+    }
+
     /// Settle a finished object drag: if the origin actually changed, record a
     /// single move as one undo step.
     fn finish_move(&mut self, map: &mut MapInfo) {
@@ -2339,6 +2631,9 @@ impl MapViewer {
         self.stroke = None;
         self.moving = None;
         self.move_from = None;
+        // The marquee indexes the old map's tiles; drop it. (The clipboard
+        // survives, so a block can be pasted into a different map.)
+        self.selection = None;
     }
 
     fn begin_edit(&mut self, field: EditField, map: &MapInfo) {
@@ -2791,7 +3086,7 @@ impl MapViewer {
         maps: &MapStore,
         camera_pos: Vec2,
     ) {
-        if self.tool != EditorTool::Paint {
+        if !matches!(self.tool, EditorTool::Paint | EditorTool::Select) {
             return;
         }
         let Some(active) = self.active_layer(map) else {
@@ -3008,6 +3303,58 @@ impl MapViewer {
                     );
                 }
             }
+            EditorTool::Select => {
+                let Some(sel) = self.selection else {
+                    return;
+                };
+                let outline = draw_state.colour(11);
+                let (px, py) = (sel.x * 8 - cx, sel.y * 8 - cy);
+                // Paste preview: a dithered ghost of the clipboard at the marquee
+                // origin, exactly where `SelPaste` would stamp it.
+                if let Some(clip) = &self.clipboard {
+                    let mut ghost = RgbaImage::new((clip.w * 8) as u32, (clip.h * 8) as u32);
+                    for dy in 0..clip.h {
+                        for dx in 0..clip.w {
+                            let id = clip.tiles[dy * clip.w + dx];
+                            if id == 0 {
+                                continue;
+                            }
+                            ghost.spr_indexed(
+                                &draw_state.indexed_sprites,
+                                &draw_state.palettes[0],
+                                &PALETTE_MAP_IDENTITY,
+                                id as i32,
+                                (dx * 8) as i32,
+                                (dy * 8) as i32,
+                                SpriteOptions { transparent: Some(0), ..Default::default() },
+                            );
+                        }
+                    }
+                    for gy in 0..ghost.height() {
+                        for gx in 0..ghost.width() {
+                            if (gx + gy) % 2 == 1 {
+                                ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
+                            }
+                        }
+                    }
+                    draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+                        px,
+                        py,
+                        &ghost,
+                        EdgePolicy::Transparent,
+                        Transform::default(),
+                        |p| p.a() == 0,
+                    );
+                }
+                // The marquee outline on top.
+                draw_state.rgba(LayerId::BG).stroke_rect(
+                    px,
+                    py,
+                    (sel.w * 8) as i32,
+                    (sel.h * 8) as i32,
+                    outline,
+                );
+            }
             EditorTool::Interactables | EditorTool::Warps => {
                 // Filtered overlay: only the active tab's kind, warps in colour
                 // 12 and interactions in 14, the selected object highlighted.
@@ -3215,6 +3562,19 @@ fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
     let bx = i32::from(b.x).div_euclid(8);
     let by = i32::from(b.y).div_euclid(8);
     (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
+}
+
+/// The tile [`TileSelection`] spanning world points `a`..=`b` (inclusive cells).
+/// `x`/`y` may be negative when dragged past the layer's top-left; the ops skip
+/// the off-layer cells.
+fn selection_between(a: Vec2, b: Vec2) -> TileSelection {
+    let (x0, y0, x1, y1) = tile_bounds(a, b);
+    TileSelection {
+        x: x0,
+        y: y0,
+        w: (x1 - x0 + 1) as usize,
+        h: (y1 - y0 + 1) as usize,
+    }
 }
 
 /// Return a copy of `snapshot` with its hitbox origin set to `origin` — used to
@@ -3622,6 +3982,67 @@ mod tests {
         viewer.delete_map(&mut console, &mut maps, "renamed");
         assert!(!maps.contains("renamed"));
         assert!(!manifest(&console).contains(&"renamed".to_string()));
+    }
+
+    /// The Select tool's clipboard ops: copy lifts the marquee's tiles, paste
+    /// stamps them at a new origin as one undo step, cut clears the source while
+    /// keeping the buffer, and a collision-layer edit flags an immediate re-derive.
+    #[test]
+    fn select_copy_cut_paste_and_delete() {
+        let mut maps = MapStore::default();
+        maps.insert("m", crate::data::tmj::TiledMap::blank_modern(6, 4));
+        // A 2×2 block of tile 5 at the origin on the drawable layer (source 1).
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            maps.get_mut("m").unwrap().set(1, x, y, 5);
+        }
+        let map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo { source_layer: 0, ..LayerInfo::DEFAULT_LAYER }, // collision
+                LayerInfo { source_layer: 1, ..LayerInfo::DEFAULT_LAYER }, // drawable
+            ],
+            ..MapInfo::default()
+        };
+        let mut viewer = MapViewer { tool: EditorTool::Select, layer_index: 1, ..Default::default() };
+
+        // Copy the 2×2 block.
+        viewer.selection = Some(TileSelection { x: 0, y: 0, w: 2, h: 2 });
+        viewer.selection_copy(&maps, &map);
+        assert_eq!(viewer.clipboard.as_ref().map(|c| (c.w, c.h)), Some((2, 2)));
+        assert_eq!(viewer.clipboard.as_ref().unwrap().tiles, vec![5, 5, 5, 5]);
+
+        // Paste at (3,1): the block lands there as one undo step.
+        viewer.selection = Some(TileSelection { x: 3, y: 1, w: 1, h: 1 });
+        viewer.selection_paste(&mut maps, &map);
+        let m = maps.get("m").unwrap();
+        assert_eq!(
+            [m.get(1, 3, 1), m.get(1, 4, 1), m.get(1, 3, 2), m.get(1, 4, 2)],
+            [Some(5), Some(5), Some(5), Some(5)]
+        );
+        assert!(viewer.history.can_undo(), "paste records an undo step");
+
+        // Cut the original: it clears, but the clipboard still holds the block.
+        viewer.selection = Some(TileSelection { x: 0, y: 0, w: 2, h: 2 });
+        viewer.selection_cut(&mut maps, &map);
+        let m = maps.get("m").unwrap();
+        assert_eq!([m.get(1, 0, 0), m.get(1, 1, 1)], [Some(0), Some(0)]);
+        assert_eq!(viewer.clipboard.as_ref().unwrap().tiles, vec![5, 5, 5, 5]);
+
+        // Deleting on the collision layer (index 0) clears + flags a re-derive.
+        maps.get_mut("m").unwrap().set(0, 0, 0, 9);
+        viewer.layer_index = 0;
+        viewer.selection = Some(TileSelection { x: 0, y: 0, w: 2, h: 2 });
+        viewer.pending_reload = false;
+        viewer.selection_delete(&mut maps, &map);
+        assert_eq!(maps.get("m").unwrap().get(0, 0, 0), Some(0));
+        assert!(viewer.pending_reload, "collision edits re-derive colliders");
+
+        // Undoing that collision edit must also re-derive (restore tile + flag).
+        let mut map = map; // undo/redo take &mut MapInfo
+        viewer.pending_reload = false;
+        viewer.undo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().get(0, 0, 0), Some(9), "undo restores the tile");
+        assert!(viewer.pending_reload, "undoing a collision edit re-derives too");
     }
 
     /// A name collision, a path-separator name and an empty name are all rejected.
