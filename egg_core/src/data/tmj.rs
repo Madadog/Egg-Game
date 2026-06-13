@@ -38,6 +38,13 @@ pub fn manifest_from_json(bytes: &[u8]) -> Result<GameManifest, serde_json::Erro
     serde_json::from_slice(bytes)
 }
 
+/// Serialise a [`GameManifest`] back to its `assets/game.manifest` JSON, for the
+/// in-editor map CRUD (which appends/removes map stems as maps are created and
+/// deleted). Pretty-printed to stay human-diffable like the hand-authored file.
+pub fn manifest_to_json(manifest: &GameManifest) -> String {
+    serde_json::to_string_pretty(manifest).unwrap_or_else(|_| "{\"maps\":[]}".to_string())
+}
+
 /// The game's asset manifest: the data-driven list of what to load at boot,
 /// replacing a hardcoded set of map paths in the host. Each entry is a **base
 /// name** (file stem), not a path — the host expands `maps/<name>.tmj`, and
@@ -50,7 +57,7 @@ pub fn manifest_from_json(bytes: &[u8]) -> Result<GameManifest, serde_json::Erro
 /// ```json
 /// { "maps": ["office", "town", ...] }
 /// ```
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GameManifest {
     /// Map file stems to load (`maps/<name>.tmj`). The order is the load order;
     /// the names become the [`crate::map::MapStore`] keys.
@@ -785,6 +792,111 @@ impl TiledMap {
             }
         }
     }
+
+    /// A blank `width`×`height` (tiles) **modern** map: an empty collision tile
+    /// layer (layer 0), one empty drawable tile layer, and an empty object layer
+    /// (which is what makes it [`MapStore::is_modern`](crate::map::MapStore::is_modern)).
+    /// References the single standard `tiles.tsj` tileset — `to_tmj` re-gids with
+    /// only the first tileset, so a one-tileset map round-trips cleanly. The
+    /// editor's "new map" writes `to_tmj(&[])` of this to `maps/<name>.tmj`.
+    pub fn blank_modern(width: usize, height: usize) -> TiledMap {
+        let tile_layer = |name: &str| {
+            TiledMapLayer::TileLayer(TileLayer {
+                width,
+                height,
+                data: vec![0; width * height],
+                name: name.to_string(),
+                offsetx: 0.0,
+                offsety: 0.0,
+                properties: Vec::new(),
+            })
+        };
+        TiledMap {
+            width,
+            height,
+            layers: vec![
+                tile_layer("collision"),
+                tile_layer("Layer 1"),
+                TiledMapLayer::ObjectLayer(ObjectLayer {
+                    name: "objects".to_string(),
+                    objects: Vec::new(),
+                }),
+            ],
+            tilesets: vec![Tileset {
+                firstgid: 1,
+                source: "tiles.tsj".to_string(),
+            }],
+            properties: Vec::new(),
+        }
+    }
+    /// The index of the collision tile layer — the first tile layer, which the
+    /// editor never lets the user reorder or delete (its art derives the map's
+    /// colliders). `None` for a pure-painted map with no tile layer.
+    pub fn collision_layer(&self) -> Option<usize> {
+        self.layers
+            .iter()
+            .position(|l| matches!(l, TiledMapLayer::TileLayer(_)))
+    }
+
+    /// Append an empty drawable tile layer (sized to the map's tile grid), placed
+    /// just before the first object layer so tile layers stay contiguous. Used by
+    /// the editor's "add layer" tool.
+    pub fn add_tile_layer(&mut self, name: &str) {
+        let (w, h) = self
+            .layers
+            .iter()
+            .find_map(|l| match l {
+                TiledMapLayer::TileLayer(t) => Some((t.width, t.height)),
+                _ => None,
+            })
+            .unwrap_or((self.width, self.height));
+        let layer = TiledMapLayer::TileLayer(TileLayer {
+            width: w,
+            height: h,
+            data: vec![0; w * h],
+            name: name.to_string(),
+            offsetx: 0.0,
+            offsety: 0.0,
+            properties: Vec::new(),
+        });
+        let pos = self
+            .layers
+            .iter()
+            .position(|l| matches!(l, TiledMapLayer::ObjectLayer(_)))
+            .unwrap_or(self.layers.len());
+        self.layers.insert(pos, layer);
+    }
+
+    /// Remove the layer at `idx`, refusing to drop the collision (first tile)
+    /// layer. Used by the editor's "delete layer" tool.
+    pub fn remove_layer(&mut self, idx: usize) {
+        if idx < self.layers.len() && Some(idx) != self.collision_layer() {
+            self.layers.remove(idx);
+        }
+    }
+
+    /// Swap the layer at `idx` with its neighbour (`up` = earlier in draw order),
+    /// never reordering the collision (first tile) layer. Used by the editor's
+    /// move-layer tools.
+    pub fn move_layer(&mut self, idx: usize, up: bool) {
+        let n = self.layers.len();
+        if idx >= n {
+            return;
+        }
+        let Some(other) = (if up {
+            idx.checked_sub(1)
+        } else {
+            (idx + 1 < n).then_some(idx + 1)
+        }) else {
+            return;
+        };
+        let collision = self.collision_layer();
+        if Some(idx) == collision || Some(other) == collision {
+            return;
+        }
+        self.layers.swap(idx, other);
+    }
+
     /// The `image` paths of every image layer, in file order — the list the
     /// host walks to know which PNGs to load for this map. Each path is as
     /// authored (relative to the map file); the host resolves it under `maps/`.
@@ -1486,6 +1598,48 @@ mod tests {
         assert_eq!(warp_narration(&empty.parse_objects()[0]), None);
     }
 
+    /// Editor layer ops: add inserts a drawable tile layer before the object
+    /// layer; delete and move both refuse to touch the collision (first tile)
+    /// layer that the colliders derive from.
+    #[test]
+    fn layer_ops_protect_the_collision_layer() {
+        fn names(m: &TiledMap) -> Vec<&str> {
+            m.layers
+                .iter()
+                .filter_map(|l| match l {
+                    TiledMapLayer::TileLayer(t) => Some(t.name.as_str()),
+                    TiledMapLayer::ObjectLayer(o) => Some(o.name.as_str()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        let mut m = TiledMap::blank_modern(4, 4);
+        // blank_modern = [collision (tile), "Layer 1" (tile), objects].
+        assert_eq!(names(&m), vec!["collision", "Layer 1", "objects"]);
+        assert_eq!(m.collision_layer(), Some(0));
+
+        // Add: a new tile layer lands before the object layer.
+        m.add_tile_layer("extra");
+        assert_eq!(names(&m), vec!["collision", "Layer 1", "extra", "objects"]);
+
+        // Delete: the collision layer (0) is protected; a drawable one goes.
+        m.remove_layer(0);
+        assert_eq!(m.layers.len(), 4, "collision delete refused");
+        m.remove_layer(1);
+        assert_eq!(names(&m), vec!["collision", "extra", "objects"]);
+
+        // Move: neither the collision layer nor a swap into its slot is allowed
+        // (both refused, so the order is unchanged).
+        m.move_layer(0, false); // collision down — refused
+        m.move_layer(1, true); // would swap with collision — refused
+        assert_eq!(names(&m), vec!["collision", "extra", "objects"]);
+        // A legal move swaps two non-collision layers.
+        m.add_tile_layer("third");
+        m.move_layer(2, true); // swap "third" up with "extra"
+        assert_eq!(names(&m), vec!["collision", "third", "extra", "objects"]);
+    }
+
     /// The real `assets/maps/bedroom1.tmj` now parses (it has an image layer,
     /// which used to fail the whole parse) — and it's the first painted-art
     /// map: an office-style tile collision layer plus its wall art as an image
@@ -1509,15 +1663,18 @@ mod tests {
         assert!(!image.is_collision());
         // The image layer is enumerated for the host to load.
         assert_eq!(map.image_layer_paths(), vec!["images/bedroom1_walls.png"]);
-        // The room's one object is a touch warp to house_stairwell.
+        // The room keeps its touch warp to house_stairwell (alongside whatever
+        // interactables have since been authored in the in-game editor — so we
+        // find the warp rather than assert an exact object count).
         let objects = map.parse_objects();
-        assert_eq!(objects.len(), 1);
-        assert_eq!(objects[0].trigger, Trigger::Touch);
-        match &objects[0].effect {
-            ObjectEffect::Warp(warp) => {
-                assert_eq!(warp.map.as_deref(), Some("house_stairwell"));
-            }
-            other => panic!("expected a warp, got {other:?}"),
+        let warp = objects
+            .iter()
+            .find(|o| matches!(&o.effect, ObjectEffect::Warp(_)))
+            .expect("the stairwell warp");
+        assert_eq!(warp.trigger, Trigger::Touch);
+        match &warp.effect {
+            ObjectEffect::Warp(w) => assert_eq!(w.map.as_deref(), Some("house_stairwell")),
+            _ => unreachable!(),
         }
     }
 

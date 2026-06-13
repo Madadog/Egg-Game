@@ -8,21 +8,33 @@
 //! indices — so the UX is unchanged while the data model is unified.
 
 use crate::{
-    data::sound::{self, SfxData},
-    drawstate::{DrawState, LayerId},
-    interact::Interaction,
+    data::{
+        sound::{self, SfxData},
+        tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
+    },
+    drawstate::{DrawState, LayerId, palette_map_rotate},
+    interact::{InteractFn, Interaction},
     map::{
         Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp,
-        WarpMode,
+        WarpMode, map_by_name,
     },
     position::{Hitbox, Vec2},
     system::{
-        ConsoleApi, ConsoleHelper, MouseInput, ScanCode, drawing::Canvas, just_pressed, pressed,
+        ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode,
+        drawing::{Canvas, EdgePolicy, Transform, image::RgbaImage},
+        just_pressed, pressed,
     },
-    ui::{NodeId, Ui, UiBuilder},
+    ui::{NodeId, Rect, Ui, UiBuilder},
 };
 
 use super::walkaround::WalkaroundState;
+
+mod dock;
+use dock::{Chrome, DockLayout, DockManager, DragState, PanelKind, Placement, Side};
+
+/// Where the editor persists its dock arrangement (native only; on web the
+/// asset writes are silent no-ops, so the layout is session-only there).
+const LAYOUT_PATH: &str = "config/layout.json";
 
 /// The active editing tool. The map editor is the old layer viewer grown into a
 /// tabbed tool: toggle layers, paint tiles, or place map objects. The Interacts
@@ -35,17 +47,6 @@ pub enum EditorTool {
     Interactables,
     Warps,
 }
-impl EditorTool {
-    const ALL: [EditorTool; 4] = [Self::Layers, Self::Paint, Self::Interactables, Self::Warps];
-    fn label(self) -> &'static str {
-        match self {
-            Self::Layers => "Layers",
-            Self::Paint => "Paint",
-            Self::Interactables => "Interact",
-            Self::Warps => "Warps",
-        }
-    }
-}
 
 /// A field the editor focuses for keyboard text/number entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,10 @@ enum EditField {
     ToY,
     /// A warp's pre-warp narration dialogue key (empty buffer ⇒ no narration).
     Narration,
+    /// The `note` Func interaction's pitch (an `i32`).
+    Pitch,
+    /// The `add_creatures` Func interaction's spawn count (a `usize`).
+    Count,
 }
 
 /// An enum-field the editor advances with a click. [`Flip`](Self::Flip)/
@@ -68,6 +73,9 @@ enum CycleField {
     Mode,
     Sound,
     Trigger,
+    /// The interaction kind (none / dialogue / the named Func behaviours) — only
+    /// on the Interacts tab. Cycling rebuilds the effect, keeping a usable param.
+    IntKind,
 }
 
 /// Which kind of object a tool creates / filters its view to. The object lists
@@ -222,6 +230,11 @@ enum EditorKey {
     Tool(EditorTool),
     Title,
     Layer(usize),
+    /// Layers panel toolbar: add tile layer / delete / move up / move down.
+    LayerAdd,
+    LayerDel,
+    LayerUp,
+    LayerDown,
     Tile(usize),
     PaletteUp,
     PaletteDown,
@@ -235,12 +248,37 @@ enum EditorKey {
     Undo,
     Redo,
     Save,
+    /// A panel's frame chrome (title bar / close / resize handle), carrying the
+    /// panel's index so the dock can act on the right one.
+    Dock(usize, Chrome),
+    /// A global-bar button that shows/hides a panel.
+    TogglePanel(PanelKind),
+    /// A map cell in the Maps browser grid (index into the modern-map list).
+    MapSlot(usize),
+    /// Page the Maps browser grid up / down.
+    MapPrev,
+    MapNext,
+    /// Maps-browser CRUD toolbar: new / duplicate / rename / delete.
+    MapNew,
+    MapDup,
+    MapRename,
+    MapDelete,
 }
 
-const PANEL_W: f32 = 84.0;
+/// Fallback palette grid when no Paint panel is placed (the grid otherwise
+/// reflows to the panel size; see [`MapViewer::paint_grid_for`]).
 const PALETTE_COLS: usize = 9;
 const PALETTE_ROWS: usize = 7;
 const SHEET_TILES: usize = 2048;
+/// The global undo/redo/save + panel-toggle toolbar's size, px.
+const GLOBAL_BAR_W: f32 = 72.0;
+const GLOBAL_BAR_H: f32 = 11.0;
+/// A Maps-browser cell's thumbnail box size, px (a name label sits below it).
+const THUMB_W: f32 = 40.0;
+const THUMB_H: f32 = 22.0;
+/// Default dimensions (tiles) of a newly-created blank map — roughly one screen.
+const NEW_MAP_W: usize = 30;
+const NEW_MAP_H: usize = 17;
 /// Frames a save-confirmation toast stays on screen. At ~64 fps this is ~1.4s.
 const SAVE_TOAST_FRAMES: u32 = 90;
 
@@ -405,6 +443,48 @@ impl TextField {
     }
 }
 
+/// An open map-management dialog over the Maps browser. Keyboard-driven: typed
+/// keys plus Return commit, Escape cancels (reusing [`TextField`]). Rendered as
+/// a small centred modal so it works regardless of the Maps panel's size.
+#[derive(Debug, Clone, Default)]
+enum MapsDialog {
+    #[default]
+    None,
+    /// Naming a new blank map and its size: `name` / `w` / `h` fields, `focus`
+    /// the one being typed (0=name, 1=w, 2=h). Enter advances, then commits.
+    New {
+        name: TextField,
+        w: TextField,
+        h: TextField,
+        focus: u8,
+    },
+    /// Renaming `from` to the typed new name.
+    Rename { from: String, name: TextField },
+    /// Confirming deletion of `name` (Return = delete, Escape = keep).
+    ConfirmDelete(String),
+}
+
+impl MapsDialog {
+    fn is_active(&self) -> bool {
+        !matches!(self, MapsDialog::None)
+    }
+    /// Whether a text field is capturing input (so the host suppresses its global
+    /// hotkeys while the user types a map name).
+    fn is_typing(&self) -> bool {
+        matches!(self, MapsDialog::New { .. } | MapsDialog::Rename { .. })
+    }
+}
+
+/// The outcome of stepping a [`MapsDialog`], applied by the caller after the
+/// dialog's borrow ends (so the CRUD op can take `&mut self`).
+enum DialogAction {
+    Keep,
+    Close,
+    Create(String, usize, usize),
+    Rename(String, String),
+    Delete(String),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
     pub focused: bool,
@@ -437,104 +517,403 @@ pub struct MapViewer {
     /// `source` of the map this viewer last stepped. When it changes the viewer
     /// drops its per-map state (see [`reset_for_new_map`](Self::reset_for_new_map)).
     last_map: String,
+    /// Where the editor's panels live + the live drag FSM. Owns the per-frame
+    /// solved geometry both the hit pass and draw pass read.
+    dock: DockManager,
+    /// The Maps browser's selected map name (a second click on it opens it).
+    maps_selected: Option<String>,
+    /// First page row shown in the Maps browser grid (paging, no scroll widget).
+    maps_scroll: usize,
+    /// Set when the browser asks to open a map; drained by the host (which has
+    /// the sprite sheet needed to resolve it) so the editor stays engine-agnostic.
+    pub pending_open: Option<String>,
+    /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
+    /// the host re-derives `current_map`'s layer lists from the store, preserving
+    /// the in-memory objects, camera and player.
+    pub pending_reload: bool,
+    /// The open map-management dialog (new / rename / delete), if any.
+    maps_dialog: MapsDialog,
+    /// Whether this editor loads/saves the dock layout. Only the primary editor
+    /// does (`MapViewer::primary`); extra views are session-only so they don't
+    /// race the one layout file. Default `false`.
+    persist: bool,
 }
 
 impl MapViewer {
     /// True while a text field is capturing keyboard input — the host suppresses
     /// its global debug hotkeys so typed dialogue keys don't trigger them.
     pub fn is_typing(&self) -> bool {
-        self.editing.is_some()
+        self.editing.is_some() || self.maps_dialog.is_typing()
+    }
+
+    /// The primary editor: like [`default`](Default::default) but it persists its
+    /// dock layout to disk (extra views stay session-only).
+    pub fn primary() -> Self {
+        Self {
+            persist: true,
+            ..Default::default()
+        }
+    }
+
+    /// Load the persisted dock layout (primary only), once, on first focus. A
+    /// missing/corrupt/old file leaves the default layout. Floats are clamped
+    /// into the screen by `recompute`, so a smaller screen can't strand a panel.
+    fn load_layout(&mut self, system: &mut impl ConsoleApi) {
+        self.dock.loaded = true;
+        let Some(layout) = system
+            .read_file(LAYOUT_PATH)
+            .and_then(|b| serde_json::from_slice::<DockLayout>(&b).ok())
+        else {
+            return;
+        };
+        if !layout.panels.is_empty() {
+            self.dock.z_top = layout
+                .panels
+                .iter()
+                .map(|p| p.z)
+                .max()
+                .unwrap_or(0)
+                .wrapping_add(1);
+            self.dock.panels = layout.panels;
+        }
+    }
+
+    /// Write the current dock layout (primary only), clearing the dirty flag.
+    fn save_layout(&mut self, system: &mut impl ConsoleApi) {
+        self.dock.dirty = false;
+        let layout = DockLayout {
+            panels: self.dock.panels.clone(),
+            version: 1,
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&layout) {
+            system.write_file(LAYOUT_PATH, json.as_bytes());
+        }
     }
 
     // --- Layout (rebuilt each frame for both hit-testing and drawing) ---------
 
-    /// Lay the editor out as a fixed-width black column: tool tabs, the active
-    /// tool's controls, then a save button.
-    fn build_ui(&self, map: &MapInfo, screen: (f32, f32)) -> Ui<EditorKey> {
+    /// Build one panel — a title-bar chrome row plus the panel kind's body —
+    /// laid out at the origin and sized to fill its placed `rect`. The dock
+    /// translates it to `rect`'s screen position when hit-testing
+    /// ([`Ui::hit_at`]) and drawing ([`Ui::draw_at`]).
+    fn build_panel(&self, idx: usize, rect: Rect, map: &MapInfo, maps: &MapStore) -> Ui<EditorKey> {
         let mut b = UiBuilder::new();
         let mut rows: Vec<NodeId> = Vec::new();
+        let kind = self.dock.panels[idx].kind;
+        let active = self.active_kind() == Some(kind);
 
-        for tool in EditorTool::ALL {
-            let selected = tool == self.tool;
-            rows.push(
-                b.text(tool.label())
-                    .small(true)
-                    .color(if selected { 0 } else { 12 })
-                    .full_width(7.0)
-                    .fill_if(selected, 11)
-                    .key(EditorKey::Tool(tool))
-                    .id(),
-            );
-        }
-        rows.push(b.spacer(2.0).id());
+        // Title bar: the panel name — a focus/drag handle filling the width.
+        rows.push(
+            b.text(kind.title())
+                .small(true)
+                .center()
+                .color(if active { 0 } else { 12 })
+                .full_width(7.0)
+                .fill_if(active, 11)
+                .outline(13)
+                .key(EditorKey::Dock(idx, Chrome::TitleBar))
+                .id(),
+        );
 
-        match self.tool {
-            EditorTool::Layers => self.build_layers(&mut b, &mut rows, map),
-            EditorTool::Paint => self.build_paint(&mut b, &mut rows),
-            EditorTool::Interactables | EditorTool::Warps => {
-                self.build_objects(&mut b, &mut rows, map)
+        match kind {
+            PanelKind::Layers => self.build_layers(&mut b, &mut rows, map),
+            PanelKind::Paint => {
+                let (cols, prows) = self.paint_grid_for(rect);
+                self.build_paint(&mut b, &mut rows, cols, prows);
             }
+            PanelKind::Objects => {
+                self.build_obj_tabs(&mut b, &mut rows);
+                self.build_objects(&mut b, &mut rows, map);
+            }
+            PanelKind::Maps => self.build_maps(&mut b, &mut rows, rect, maps),
         }
 
-        rows.push(b.spacer(2.0).id());
-        self.build_footer(&mut b, &mut rows);
-
-        let root = b.column(0.0, rows).size(PANEL_W, screen.1).fill(0).id();
-        b.finish(root, screen)
+        let size = (rect.w as f32, rect.h as f32);
+        let root = b.column(0.0, rows).size(size.0, size.1).fill(0).id();
+        b.finish(root, size)
     }
 
-    /// The fixed bottom of the panel: an undo/redo row, the save button (with an
-    /// unsaved `*` marker / save toast), and a one-line shortcut/status hint.
-    fn build_footer(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
-        // Undo/redo, greyed when the respective stack is empty.
+    /// A small always-on toolbar — undo / redo / save — pinned to the world's
+    /// top-left. The global editor controls, independent of any panel (so they
+    /// survive whatever the user does with the tool panels).
+    fn build_global_bar(&self) -> Ui<EditorKey> {
+        let mut b = UiBuilder::new();
         let undo = b
-            .text("<undo")
+            .text("<")
             .small(true)
             .center()
             .color(if self.history.can_undo() { 12 } else { 13 })
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .size(8.0, 7.0)
             .outlined(0, 13)
             .key(EditorKey::Undo)
             .id();
         let redo = b
-            .text("redo>")
+            .text(">")
             .small(true)
             .center()
             .color(if self.history.can_redo() { 12 } else { 13 })
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .size(8.0, 7.0)
             .outlined(0, 13)
             .key(EditorKey::Redo)
             .id();
-        rows.push(b.row(2.0, [undo, redo]).id());
-
-        // Save button: a `*` flags unsaved edits; a transient toast confirms a
-        // write. Green outline normally, amber while dirty.
-        let (label, outline) = match self.status.button() {
-            SaveButton::Toast => ("[  SAVED!  ]", 11),
-            SaveButton::Dirty => ("[ SAVE * ]", 9),
-            SaveButton::Clean => ("[ SAVE MAP ]", 6),
+        // Save: `*` = unsaved, `OK` = just-saved toast, plain `S` = clean.
+        let (label, oc) = match self.status.button() {
+            SaveButton::Toast => ("OK", 11),
+            SaveButton::Dirty => ("S*", 9),
+            SaveButton::Clean => ("S", 6),
         };
-        rows.push(
+        let save = b
+            .text(label)
+            .small(true)
+            .center()
+            .color(oc)
+            .size(13.0, 7.0)
+            .outlined(0, oc)
+            .key(EditorKey::Save)
+            .id();
+        // Panel show/hide toggles (L / P / O / M), highlighted when open — the
+        // one way to reopen a closed panel (e.g. the Maps browser).
+        let mut buttons = vec![undo, redo, save];
+        for kind in PanelKind::ALL {
+            let open = self.dock.panels.iter().any(|p| p.kind == kind && p.open);
+            let letter = &kind.title()[..1];
+            buttons.push(
+                b.text(letter)
+                    .small(true)
+                    .center()
+                    .color(if open { 0 } else { 12 })
+                    .size(7.0, 7.0)
+                    .fill_if(open, 11)
+                    .outlined(0, 12)
+                    .key(EditorKey::TogglePanel(kind))
+                    .id(),
+            );
+        }
+        let root = b.row(1.0, buttons).fill(0).pad(1.0).id();
+        b.finish(root, (GLOBAL_BAR_W, GLOBAL_BAR_H))
+    }
+
+    /// The centred modal for the active map dialog (new / rename / delete). Pure
+    /// display — driven entirely by the keyboard in [`step_maps_dialog`].
+    fn build_dialog(&self) -> Ui<EditorKey> {
+        let (sw, sh) = self.dock.solved.screen;
+        let mut b = UiBuilder::new();
+        let (title, body, hint) = match &self.maps_dialog {
+            MapsDialog::New { name, w, h, focus } => {
+                let cur = |i: u8| if *focus == i { "_" } else { "" };
+                (
+                    "New map".to_string(),
+                    format!(
+                        "name: {}{}\nw: {}{}  h: {}{}",
+                        name.text(),
+                        cur(0),
+                        w.text(),
+                        cur(1),
+                        h.text(),
+                        cur(2),
+                    ),
+                    "Enter=next/ok  Esc=cancel",
+                )
+            }
+            MapsDialog::Rename { name, .. } => (
+                "Rename map".to_string(),
+                format!("name: {}_", name.text()),
+                "Enter=ok  Esc=cancel",
+            ),
+            MapsDialog::ConfirmDelete(n) => (
+                "Delete map".to_string(),
+                format!("delete '{}'?", truncate(n, 14)),
+                "Enter=yes  Esc=no",
+            ),
+            MapsDialog::None => (String::new(), String::new(), ""),
+        };
+        let t = b.text(title).small(true).color(11).full_width(8.0).id();
+        let bd = b.text(body).small(true).color(12).full_width(16.0).id();
+        let h = b.text(hint).small(true).color(13).full_width(8.0).id();
+        let panel = b
+            .column(1.0, [t, bd, h])
+            .size(120.0, 44.0)
+            .pad(3.0)
+            .outlined(0, 11)
+            .id();
+        let root = b.centered(panel).size(sw as f32, sh as f32).id();
+        b.finish(root, (sw as f32, sh as f32))
+    }
+
+    /// The Objects panel's sub-tabs: Interactables vs Warps, each a tool switch.
+    fn build_obj_tabs(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        let mk = |b: &mut UiBuilder<EditorKey>, tool: EditorTool, label: &str, sel: bool| {
             b.text(label)
                 .small(true)
                 .center()
-                .color(outline)
-                .full_width(8.0)
-                .outlined(0, outline)
-                .key(EditorKey::Save)
+                .color(if sel { 0 } else { 12 })
+                .full_width(7.0)
+                .grow(1.0)
+                .fill_if(sel, 11)
+                .outlined(0, 12)
+                .key(EditorKey::Tool(tool))
+                .id()
+        };
+        let it = mk(b, EditorTool::Interactables, "Intr", self.tool == EditorTool::Interactables);
+        let wp = mk(b, EditorTool::Warps, "Warp", self.tool == EditorTool::Warps);
+        rows.push(b.row(1.0, [it, wp]).id());
+    }
+
+    /// The Maps browser: a paged grid of map cells. A thumbnail is blitted over
+    /// each cell in `draw`; the name labels it. A first click selects a map, a
+    /// second click on the selected map opens it (via `pending_open`).
+    fn build_maps(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        rect: Rect,
+        maps: &MapStore,
+    ) {
+        let names = self.modern_names(maps);
+        let (cols, grid_rows) = self.maps_grid(rect);
+        let per_page = (cols * grid_rows).max(1);
+        let pages = names.len().div_ceil(per_page).max(1);
+        let page = self.maps_scroll.min(pages - 1);
+        let start = page * per_page;
+
+        // Header: prev / page-count / next.
+        let prev = b
+            .text("<")
+            .small(true)
+            .center()
+            .color(if page > 0 { 12 } else { 13 })
+            .full_width(7.0)
+            .grow(1.0)
+            .outlined(0, 12)
+            .key(EditorKey::MapPrev)
+            .id();
+        let count = b
+            .text(format!("{}/{}", page + 1, pages))
+            .small(true)
+            .center()
+            .color(13)
+            .full_width(7.0)
+            .grow(2.0)
+            .id();
+        let next = b
+            .text(">")
+            .small(true)
+            .center()
+            .color(if page + 1 < pages { 12 } else { 13 })
+            .full_width(7.0)
+            .grow(1.0)
+            .outlined(0, 12)
+            .key(EditorKey::MapNext)
+            .id();
+        rows.push(b.row(1.0, [prev, count, next]).id());
+
+        // CRUD toolbar: new is always live; dup/rename/delete need a selection.
+        let has_sel = self.maps_selected.is_some();
+        let tool = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if on { colour } else { 13 })
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, if on { colour } else { 13 })
+                .key(key)
+                .id()
+        };
+        let new = tool(b, "+", 11, true, EditorKey::MapNew);
+        let dup = tool(b, "dup", 12, has_sel, EditorKey::MapDup);
+        let ren = tool(b, "ren", 12, has_sel, EditorKey::MapRename);
+        let del = tool(b, "del", 8, has_sel, EditorKey::MapDelete);
+        rows.push(b.row(1.0, [new, dup, ren, del]).id());
+
+        // Grid cells: an outlined box (the thumbnail target) over a name label.
+        let mut cells = Vec::new();
+        for (i, name) in names.iter().enumerate().skip(start).take(per_page) {
+            let sel = self.maps_selected.as_deref() == Some(name.as_str());
+            let oc = if sel { 11 } else { 12 };
+            let thumb = b
+                .boxed([])
+                .size(THUMB_W, THUMB_H)
+                .fill(0)
+                .outline(oc)
+                .key(EditorKey::MapSlot(i))
+                .id();
+            let label = b
+                .text(truncate(name, 7))
+                .small(true)
+                .center()
+                .color(oc)
+                .size(THUMB_W, 6.0)
+                .id();
+            cells.push(b.column(0.0, [thumb, label]).id());
+        }
+        rows.push(
+            b.wrap_row(1.0, cells)
+                .width(cols as f32 * (THUMB_W + 1.0))
                 .id(),
         );
+    }
 
-        // Status line: the keys most worth remembering for the active tool. Kept
-        // short so it fits the 84px column; `^Z`/`^Y` are the undo/redo chords.
-        let hint = match self.tool {
-            EditorTool::Paint => "Rclk:erase Mclk:pick\nShift+drag:fill\n1-4:tool ^Z/^Y:undo",
-            EditorTool::Interactables | EditorTool::Warps => {
-                "drag:move Del:remove\n1-4:tool ^Z/^Y:undo"
-            }
-            EditorTool::Layers => "1-4:tool ^S:save\n^Z/^Y:undo/redo",
-        };
-        rows.push(b.text(hint).small(true).color(14).full_width(20.0).id());
+    /// The sorted modern-map names — the Maps browser's contents.
+    fn modern_names(&self, maps: &MapStore) -> Vec<String> {
+        maps.names()
+            .into_iter()
+            .filter(|n| maps.is_modern(n))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// How many `(cols, rows)` of map cells fit the Maps panel `rect`.
+    fn maps_grid(&self, rect: Rect) -> (usize, usize) {
+        let cols = (((rect.w as i32) - 2) / (THUMB_W as i32 + 1)).max(1) as usize;
+        let rows = (((rect.h as i32) - 16) / (THUMB_H as i32 + 7)).max(1) as usize;
+        (cols, rows)
+    }
+
+    /// The panel kind that currently owns the canvas (drives the active-panel
+    /// highlight), derived from the active [`EditorTool`].
+    fn active_kind(&self) -> Option<PanelKind> {
+        Some(match self.tool {
+            EditorTool::Layers => PanelKind::Layers,
+            EditorTool::Paint => PanelKind::Paint,
+            EditorTool::Interactables | EditorTool::Warps => PanelKind::Objects,
+        })
+    }
+
+    /// The tool a panel of `kind` should activate, given the `current` tool (so
+    /// re-activating the Objects panel keeps its Interact/Warp sub-tab). `None`
+    /// for panels (Maps) that don't own the canvas.
+    fn panel_tool(kind: PanelKind, current: EditorTool) -> Option<EditorTool> {
+        match kind {
+            PanelKind::Layers => Some(EditorTool::Layers),
+            PanelKind::Paint => Some(EditorTool::Paint),
+            PanelKind::Objects => Some(
+                if matches!(current, EditorTool::Interactables | EditorTool::Warps) {
+                    current
+                } else {
+                    EditorTool::Interactables
+                },
+            ),
+            PanelKind::Maps => None,
+        }
+    }
+
+    /// The palette grid `(cols, rows)` that fills the Paint panel `rect` — the
+    /// palette reflows to the panel size instead of a fixed 9×7.
+    fn paint_grid_for(&self, rect: Rect) -> (usize, usize) {
+        let cols = (((rect.w as i32) - 1) / 8).max(1) as usize;
+        // Body height left after the title bar, tile-info line, up/dn and eraser.
+        let rows = (((rect.h as i32) - 40) / 8).max(1) as usize;
+        (cols, rows)
+    }
+
+    /// As [`paint_grid_for`](Self::paint_grid_for) but for the currently-placed
+    /// Paint panel — used by the scroll handlers so paging matches the layout.
+    fn paint_grid(&self) -> (usize, usize) {
+        match self.dock.open_panel(PanelKind::Paint) {
+            Some((_, rect)) => self.paint_grid_for(rect),
+            None => (PALETTE_COLS, PALETTE_ROWS),
+        }
     }
 
     fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -547,6 +926,25 @@ impl MapViewer {
                 .key(EditorKey::Title)
                 .id(),
         );
+        // Toolbar: add a tile layer / delete, move the selected layer up / down.
+        // (The collision layer — bg #0 — is protected; ops on it no-op.)
+        let collision = !self.fg && self.layer_index == 0;
+        let lt = |b: &mut UiBuilder<EditorKey>, label: &str, c: u8, on: bool, key: EditorKey| {
+            b.text(label)
+                .small(true)
+                .center()
+                .color(if on { c } else { 13 })
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, if on { c } else { 13 })
+                .key(key)
+                .id()
+        };
+        let add = lt(b, "+L", 11, true, EditorKey::LayerAdd);
+        let del = lt(b, "del", 8, !collision, EditorKey::LayerDel);
+        let up = lt(b, "^", 12, !collision, EditorKey::LayerUp);
+        let dn = lt(b, "v", 12, !collision, EditorKey::LayerDown);
+        rows.push(b.row(1.0, [add, del, up, dn]).id());
         for (i, layer) in layers.iter().enumerate() {
             let hidden = if layer.visible { "" } else { "(H)" };
             // Image layers are flagged `img` so the painter knows they're not a
@@ -566,7 +964,16 @@ impl MapViewer {
         }
     }
 
-    fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+    /// `cols`/`rows` are the palette grid that fits the panel (see
+    /// [`paint_grid_for`](Self::paint_grid_for)); the split buttons stretch to
+    /// the panel width.
+    fn build_paint(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        cols: usize,
+        prows: usize,
+    ) {
         let target = if self.fg { "FG" } else { "BG" };
         rows.push(
             b.text(format!("Tile {} {target}{}", self.selected_tile, self.layer_index))
@@ -579,7 +986,8 @@ impl MapViewer {
             .text("-up")
             .small(true)
             .center()
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .full_width(7.0)
+            .grow(1.0)
             .outlined(0, 12)
             .key(EditorKey::PaletteUp)
             .id();
@@ -587,7 +995,8 @@ impl MapViewer {
             .text("dn+")
             .small(true)
             .center()
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .full_width(7.0)
+            .grow(1.0)
             .outlined(0, 12)
             .key(EditorKey::PaletteDown)
             .id();
@@ -605,9 +1014,9 @@ impl MapViewer {
         let eraser = if erasing { eraser.fill(8) } else { eraser.outlined(0, 8) };
         rows.push(eraser.id());
 
-        let start = self.palette_scroll * PALETTE_COLS;
-        let mut tiles = Vec::with_capacity(PALETTE_COLS * PALETTE_ROWS);
-        for n in 0..(PALETTE_COLS * PALETTE_ROWS) {
+        let start = self.palette_scroll * cols;
+        let mut tiles = Vec::with_capacity(cols * prows);
+        for n in 0..(cols * prows) {
             let id = start + n;
             if id >= SHEET_TILES {
                 break;
@@ -620,12 +1029,7 @@ impl MapViewer {
                     .id(),
             );
         }
-        rows.push(
-            b.wrap_row(0.0, tiles)
-                .width(PALETTE_COLS as f32 * 8.0)
-                .fill(0)
-                .id(),
-        );
+        rows.push(b.wrap_row(0.0, tiles).width(cols as f32 * 8.0).fill(0).id());
     }
 
     fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -641,7 +1045,8 @@ impl MapViewer {
             .small(true)
             .center()
             .color(11)
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .full_width(7.0)
+            .grow(1.0)
             .outlined(0, 11)
             .key(EditorKey::NewObject)
             .id();
@@ -650,7 +1055,8 @@ impl MapViewer {
             .small(true)
             .center()
             .color(8)
-            .size(PANEL_W / 2.0 - 1.0, 7.0)
+            .full_width(7.0)
+            .grow(1.0)
             .outlined(0, 8)
             .key(EditorKey::DeleteObject)
             .id();
@@ -702,11 +1108,27 @@ impl MapViewer {
                     self.field_row(b, rows, EditField::Narration, "narr", narr);
                 }
                 ObjectEffect::Interact(interaction) => {
-                    let key = match interaction {
-                        Interaction::Dialogue(k) => k.as_str(),
-                        _ => "-",
-                    };
-                    self.field_row(b, rows, EditField::Key, "key", key);
+                    // Interaction kind (click to cycle) + its one editable param.
+                    self.cycle_row(
+                        b,
+                        rows,
+                        CycleField::IntKind,
+                        "type",
+                        interaction_kind_label(interaction),
+                    );
+                    match interaction {
+                        Interaction::Dialogue(k) => {
+                            self.field_row(b, rows, EditField::Key, "key", k)
+                        }
+                        Interaction::Func(InteractFn::Note(p)) => {
+                            self.field_row(b, rows, EditField::Pitch, "pitch", &p.to_string())
+                        }
+                        Interaction::Func(InteractFn::AddCreatures(c)) => {
+                            self.field_row(b, rows, EditField::Count, "count", &c.to_string())
+                        }
+                        // None / toggle_dog / piano have no editable param.
+                        _ => {}
+                    }
                     self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
                 }
             }
@@ -774,6 +1196,20 @@ impl MapViewer {
         } else {
             map.layers.len()
         }
+    }
+
+    /// The `TiledMap` layer index of the currently-selected display layer (bg or
+    /// fg list at `layer_index`).
+    fn selected_source_layer(&self, map: &MapInfo) -> Option<usize> {
+        let list = if self.fg { &map.fg_layers } else { &map.layers };
+        list.get(self.layer_index).map(|l| l.source_layer)
+    }
+
+    /// Common bookkeeping after a layer add/delete/move: flag the map dirty and
+    /// ask the host to re-derive the runtime layer lists from the edited store.
+    fn after_layer_edit(&mut self) {
+        self.status.edited();
+        self.pending_reload = true;
     }
 
     /// The layer the paint tool writes into (selected in the Layers tool).
@@ -962,7 +1398,15 @@ impl MapViewer {
 
         self.status.tick();
 
-        if self.editing.is_some() {
+        // Restore the saved dock layout once, lazily, on first focus (primary).
+        if self.persist && !self.dock.loaded {
+            self.load_layout(system);
+        }
+
+        if self.maps_dialog.is_active() {
+            // A modal map dialog (new / rename / delete) captures all input.
+            self.step_maps_dialog(system, maps);
+        } else if self.editing.is_some() {
             // While a text field is focused all keys feed the buffer — don't let
             // editor shortcuts (incl. a typed "z") fire.
             self.step_text_entry(system, map);
@@ -970,11 +1414,46 @@ impl MapViewer {
             self.handle_shortcuts(system, map, maps);
         }
 
-        let panel_hit = self.build_ui(map, screen).hit(system.mouse().pos());
+        // Tile the panels once; both this hit pass and the later draw pass read
+        // the same `self.dock.solved`, so they can't disagree about geometry.
+        self.dock.recompute(screen);
         let mouse = system.mouse();
-        match panel_hit {
-            Some(key) => self.handle_panel(system, map, maps, key, &mouse, camera_pos),
-            None => self.handle_canvas(system, map, maps, camera_pos, &mouse),
+        let cursor = mouse.pos();
+
+        // A modal dialog swallows mouse interaction with the panels/world.
+        if self.maps_dialog.is_active() {
+            // nothing
+        } else if self.step_drag(&mouse, screen) {
+            // A panel drag (move / tear-off / resize) owns the mouse this frame —
+            // suppress panel and canvas input so it can't paint or re-select.
+        } else if let Some(key) = self.global_bar_hit(cursor) {
+            // The always-on undo/redo/save bar wins over the world beneath it.
+            self.handle_panel(system, map, maps, usize::MAX, key, camera_pos);
+        } else {
+            // Front-to-back pick across panels (reverse draw order); first keyed
+            // node under the cursor wins. Each panel is laid out at the origin
+            // and translated to its placed rect for the hit test.
+            let mut panel_hit = None;
+            for &(idx, rect) in self.dock.solved.rects.iter().rev() {
+                if let Some(key) = self
+                    .build_panel(idx, rect, map, maps)
+                    .hit_at(rect.x, rect.y, cursor)
+                {
+                    panel_hit = Some((idx, key));
+                    break;
+                }
+            }
+            match panel_hit {
+                Some((idx, key)) => {
+                    self.handle_panel(system, map, maps, idx, key, camera_pos)
+                }
+                // World gate: canvas tools fire only over the leftover world view
+                // (not behind a docked strip) and only when nothing is dragging.
+                None if self.dock.solved.world.contains(cursor) => {
+                    self.handle_canvas(system, map, maps, camera_pos, &mouse)
+                }
+                None => {}
+            }
         }
 
         // Controller fallback for the Layers tool (matches the old viewer).
@@ -994,6 +1473,121 @@ impl MapViewer {
                 self.fg = !self.fg;
             }
         }
+
+        // Debounced layout save: only after a committed dock change (the drag/
+        // resize/toggle handlers set `dirty`), and only the primary editor.
+        if self.persist && self.dock.dirty {
+            self.save_layout(system);
+        }
+    }
+
+    /// Advance (or start) a panel drag — splitter resize, float move/tear-off, or
+    /// float resize. Returns `true` while a drag is active so the caller
+    /// suppresses panel/canvas input. Mutations re-solve immediately, so the draw
+    /// pass shows the panel under the cursor this frame (no one-frame lag).
+    fn step_drag(&mut self, mouse: &MouseInput, screen: (f32, f32)) -> bool {
+        let p = mouse.pos();
+        let up = released(mouse.left);
+        match self.dock.drag {
+            DragState::Idle => {
+                if just_pressed(mouse.left) {
+                    // A float's SE handle wins over the splitter beneath it.
+                    if let Some(idx) = self.dock.float_handle_at(p) {
+                        let anchor = self.dock.solved.rect_of(idx).unwrap_or_default();
+                        self.dock.raise(idx);
+                        self.dock.drag = DragState::ResizeFloat { idx, anchor };
+                        return true;
+                    }
+                    if let Some(side) = self.dock.splitter_at(p) {
+                        self.dock.drag = DragState::ResizeDock { side };
+                        return true;
+                    }
+                }
+                false
+            }
+            DragState::ResizeDock { side } => {
+                if up {
+                    self.dock.drag = DragState::Idle;
+                    self.dock.dirty = true;
+                } else {
+                    let (sw, sh) = (screen.0 as i16, screen.1 as i16);
+                    let thick = match side {
+                        Side::Left => p.x,
+                        Side::Right => sw - p.x,
+                        Side::Top => p.y,
+                        Side::Bottom => sh - p.y,
+                    };
+                    self.dock.set_side_thickness(side, thick);
+                    self.dock.recompute(screen);
+                }
+                true
+            }
+            DragState::ResizeFloat { idx, anchor } => {
+                if up {
+                    self.dock.drag = DragState::Idle;
+                    self.dock.dirty = true;
+                } else {
+                    self.dock.resize_float(idx, anchor, p);
+                    self.dock.recompute(screen);
+                }
+                true
+            }
+            DragState::MovePanel { idx, grab_dx, grab_dy, arming } => {
+                if up {
+                    // Drop: snap to the edge under the cursor (computed fresh —
+                    // `recompute` clears `solved.hot_edge` at the top of step),
+                    // else stay where it floats.
+                    if let Some(side) = self.dock.edge_near(p, screen) {
+                        self.dock.dock_panel(idx, side);
+                    }
+                    self.dock.drag = DragState::Idle;
+                    self.dock.dirty = true;
+                    return true;
+                }
+                if arming {
+                    // Tear off only once dragged past the threshold; the panel is
+                    // still docked, so its origin is stable for measuring drag.
+                    let rect = self.dock.solved.rect_of(idx).unwrap_or_default();
+                    let press = Vec2::new(rect.x + grab_dx, rect.y + grab_dy);
+                    if (p.x - press.x).abs() + (p.y - press.y).abs() > dock::TEAR_THRESHOLD {
+                        self.dock
+                            .set_float(idx, Vec2::new(p.x - grab_dx, p.y - grab_dy), rect.w, rect.h);
+                        self.dock.drag = DragState::MovePanel { idx, grab_dx, grab_dy, arming: false };
+                        self.dock.recompute(screen);
+                    }
+                    return true;
+                }
+                // Following the cursor: move, flag the drop edge, then re-solve so
+                // draw places it under the cursor and shows the drop highlight.
+                self.dock.move_float(idx, Vec2::new(p.x - grab_dx, p.y - grab_dy));
+                self.dock.recompute(screen);
+                self.dock.solved.hot_edge = self.dock.edge_near(p, screen);
+                true
+            }
+        }
+    }
+
+    /// Pick the always-on global bar (pinned to the world's top-left), if the
+    /// cursor is over one of its buttons.
+    fn global_bar_hit(&self, cursor: Vec2) -> Option<EditorKey> {
+        let world = self.dock.solved.world;
+        self.build_global_bar()
+            .hit_at(world.x + 1, world.y + 1, cursor)
+    }
+
+    /// Make panel `idx` the active one: switch the canvas tool to match its kind
+    /// (so its content + the world interaction line up) and raise it to the
+    /// front. A no-op `idx` (the global bar's `usize::MAX`) just returns.
+    fn activate_panel(&mut self, idx: usize) {
+        let Some(panel) = self.dock.panels.get(idx) else {
+            return;
+        };
+        if let Some(tool) = Self::panel_tool(panel.kind, self.tool)
+            && tool != self.tool
+        {
+            self.switch_tool(tool);
+        }
+        self.dock.raise(idx);
     }
 
     /// Global editor keyboard shortcuts (only while no text field is focused):
@@ -1067,12 +1661,40 @@ impl MapViewer {
         system: &mut impl ConsoleApi,
         map: &mut MapInfo,
         maps: &mut MapStore,
+        idx: usize,
         key: EditorKey,
-        mouse: &MouseInput,
         camera_pos: Vec2,
     ) {
+        let mouse = system.mouse();
         let click = just_pressed(mouse.left);
+        // Clicking anywhere in a panel makes it the active canvas tool (the
+        // global bar passes `usize::MAX`, which `activate_panel` ignores).
+        if click {
+            self.activate_panel(idx);
+        }
         match key {
+            // Title-bar press begins a move: a float follows the cursor at once;
+            // a docked panel arms a tear-off (a still click just focuses, via
+            // `activate_panel` above).
+            EditorKey::Dock(pidx, Chrome::TitleBar) => {
+                if click {
+                    let rect = self.dock.solved.rect_of(pidx).unwrap_or_default();
+                    let cur = mouse.pos();
+                    self.dock.drag = DragState::MovePanel {
+                        idx: pidx,
+                        grab_dx: cur.x - rect.x,
+                        grab_dy: cur.y - rect.y,
+                        arming: matches!(self.dock.panels[pidx].place, Placement::Dock { .. }),
+                    };
+                }
+            }
+            // Resize handles are picked geometrically (see `step_drag`).
+            EditorKey::Dock(..) => {}
+            EditorKey::TogglePanel(kind) => {
+                if click {
+                    self.dock.toggle_panel(kind);
+                }
+            }
             EditorKey::Tool(tool) => {
                 if click {
                     self.switch_tool(tool);
@@ -1093,6 +1715,48 @@ impl MapViewer {
                     self.toggle_layer(map);
                 }
             }
+            EditorKey::LayerAdd => {
+                if click
+                    && let Some(tm) = maps.get_mut(&map.source)
+                {
+                    let name = format!("Layer {}", tm.layers.len());
+                    tm.add_tile_layer(&name);
+                    self.after_layer_edit();
+                }
+            }
+            EditorKey::LayerDel => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.remove_layer(src);
+                    }
+                    self.layer_index = self.layer_index.saturating_sub(1);
+                    self.after_layer_edit();
+                }
+            }
+            EditorKey::LayerUp => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.move_layer(src, true);
+                    }
+                    self.layer_index = self.layer_index.saturating_sub(1);
+                    self.after_layer_edit();
+                }
+            }
+            EditorKey::LayerDown => {
+                if click
+                    && let Some(src) = self.selected_source_layer(map)
+                {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.move_layer(src, false);
+                    }
+                    self.layer_index += 1;
+                    self.after_layer_edit();
+                }
+            }
             EditorKey::Tile(id) => {
                 if click {
                     self.selected_tile = id;
@@ -1100,15 +1764,15 @@ impl MapViewer {
             }
             EditorKey::PaletteUp => {
                 if click {
-                    self.palette_scroll = self.palette_scroll.saturating_sub(PALETTE_ROWS);
+                    let (_, prows) = self.paint_grid();
+                    self.palette_scroll = self.palette_scroll.saturating_sub(prows);
                 }
             }
             EditorKey::PaletteDown => {
                 if click {
-                    let max = SHEET_TILES
-                        .div_ceil(PALETTE_COLS)
-                        .saturating_sub(PALETTE_ROWS);
-                    self.palette_scroll = (self.palette_scroll + PALETTE_ROWS).min(max);
+                    let (cols, prows) = self.paint_grid();
+                    let max = SHEET_TILES.div_ceil(cols).saturating_sub(prows);
+                    self.palette_scroll = (self.palette_scroll + prows).min(max);
                 }
             }
             EditorKey::Object(i) => {
@@ -1160,6 +1824,64 @@ impl MapViewer {
             EditorKey::Save => {
                 if click {
                     self.save(system, map, maps);
+                }
+            }
+            // Maps browser: first click selects, a click on the already-selected
+            // map opens it (the host drains `pending_open` to load it).
+            EditorKey::MapSlot(i) => {
+                if click {
+                    let name = self.modern_names(maps).get(i).cloned();
+                    if let Some(name) = name {
+                        if self.maps_selected.as_deref() == Some(name.as_str()) {
+                            self.pending_open = Some(name);
+                        } else {
+                            self.maps_selected = Some(name);
+                        }
+                    }
+                }
+            }
+            EditorKey::MapPrev => {
+                if click {
+                    self.maps_scroll = self.maps_scroll.saturating_sub(1);
+                }
+            }
+            EditorKey::MapNext => {
+                if click {
+                    self.maps_scroll += 1; // clamped against the page count in build_maps
+                }
+            }
+            EditorKey::MapNew => {
+                if click {
+                    self.maps_dialog = MapsDialog::New {
+                        name: TextField::new(""),
+                        w: TextField::new(NEW_MAP_W.to_string()),
+                        h: TextField::new(NEW_MAP_H.to_string()),
+                        focus: 0,
+                    };
+                }
+            }
+            EditorKey::MapDup => {
+                if click
+                    && let Some(sel) = self.maps_selected.clone()
+                {
+                    self.duplicate_map(system, maps, &sel);
+                }
+            }
+            EditorKey::MapRename => {
+                if click
+                    && let Some(sel) = self.maps_selected.clone()
+                {
+                    self.maps_dialog = MapsDialog::Rename {
+                        from: sel.clone(),
+                        name: TextField::new(sel),
+                    };
+                }
+            }
+            EditorKey::MapDelete => {
+                if click
+                    && let Some(sel) = self.maps_selected.clone()
+                {
+                    self.maps_dialog = MapsDialog::ConfirmDelete(sel);
                 }
             }
         }
@@ -1437,6 +2159,13 @@ impl MapViewer {
             (Some(ObjectEffect::Warp(w)), EditField::Narration) => {
                 w.narration.clone().unwrap_or_default()
             }
+            (Some(ObjectEffect::Interact(Interaction::Func(InteractFn::Note(p)))), EditField::Pitch) => {
+                p.to_string()
+            }
+            (
+                Some(ObjectEffect::Interact(Interaction::Func(InteractFn::AddCreatures(c)))),
+                EditField::Count,
+            ) => c.to_string(),
             _ => String::new(),
         };
         self.editing = Some(field);
@@ -1524,6 +2253,29 @@ impl MapViewer {
                 // Empty buffer clears narration; otherwise it's the dialogue key.
                 w.narration = (!buffer.is_empty()).then(|| buffer.clone());
             }),
+            EditField::Pitch => {
+                if let Ok(pitch) = buffer.parse::<i32>() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(ObjectEffect::Interact(Interaction::Func(InteractFn::Note(p)))) =
+                            map.objects.get_mut(i).map(|o| &mut o.effect)
+                        {
+                            *p = pitch;
+                        }
+                    });
+                }
+            }
+            EditField::Count => {
+                if let Ok(count) = buffer.parse::<usize>() {
+                    self.modify_object(map, |map, i| {
+                        if let Some(ObjectEffect::Interact(Interaction::Func(
+                            InteractFn::AddCreatures(c),
+                        ))) = map.objects.get_mut(i).map(|o| &mut o.effect)
+                        {
+                            *c = count;
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -1539,6 +2291,17 @@ impl MapViewer {
             CycleField::Flip => self.modify_warp(map, |w| w.flip = cycle_flip(&w.flip)),
             CycleField::Mode => self.modify_warp(map, |w| w.mode = cycle_mode(&w.mode)),
             CycleField::Sound => self.modify_warp(map, |w| w.sound = cycle_sound(&w.sound)),
+            // Advance the interaction kind, rebuilding the effect in place and
+            // carrying a sensible default param (piano's origin = the hitbox).
+            CycleField::IntKind => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i)
+                    && let ObjectEffect::Interact(interaction) = &object.effect
+                {
+                    let origin = Vec2::new(object.hitbox.x, object.hitbox.y);
+                    let next = cycle_interaction(interaction, origin);
+                    object.effect = ObjectEffect::Interact(next);
+                }
+            }),
         }
     }
 
@@ -1556,23 +2319,203 @@ impl MapViewer {
         self.status.saved();
     }
 
+    // --- Map CRUD -------------------------------------------------------------
+
+    /// Drive the active map dialog from the keyboard: New/Rename take a typed name
+    /// (Return commits, Escape cancels); ConfirmDelete confirms on Return. The
+    /// dialog is read under one borrow, the resulting op applied after it ends.
+    fn step_maps_dialog(&mut self, system: &mut impl ConsoleApi, maps: &mut MapStore) {
+        let action = match &mut self.maps_dialog {
+            MapsDialog::None => DialogAction::Keep,
+            MapsDialog::New { name, w, h, focus } => {
+                if system.keyp(ScanCode::Escape) {
+                    DialogAction::Close
+                } else if system.keyp(ScanCode::Return) {
+                    if *focus >= 2 {
+                        DialogAction::Create(
+                            name.text().trim().to_string(),
+                            parse_dim(w.text(), NEW_MAP_W),
+                            parse_dim(h.text(), NEW_MAP_H),
+                        )
+                    } else {
+                        *focus += 1; // Enter advances to the next field, then commits.
+                        DialogAction::Keep
+                    }
+                } else {
+                    // Type into the focused field — digits only for w/h.
+                    let field = match focus {
+                        0 => name,
+                        1 => w,
+                        _ => h,
+                    };
+                    let digits_only = *focus != 0;
+                    for c in system.key_chars() {
+                        let allowed = !c.is_control() && (!digits_only || c.is_ascii_digit());
+                        if allowed {
+                            field.apply(TextOp::Push(*c));
+                        }
+                    }
+                    if system.keyp(ScanCode::Backspace) {
+                        field.apply(TextOp::Pop);
+                    }
+                    DialogAction::Keep
+                }
+            }
+            MapsDialog::Rename { from, name } => match name.step(system) {
+                TextEvent::Commit => {
+                    DialogAction::Rename(from.clone(), name.text().trim().to_string())
+                }
+                TextEvent::Cancel => DialogAction::Close,
+                TextEvent::Active => DialogAction::Keep,
+            },
+            MapsDialog::ConfirmDelete(name) => {
+                if system.keyp(ScanCode::Return) {
+                    DialogAction::Delete(name.clone())
+                } else if system.keyp(ScanCode::Escape) {
+                    DialogAction::Close
+                } else {
+                    DialogAction::Keep
+                }
+            }
+        };
+        match action {
+            DialogAction::Keep => {}
+            DialogAction::Close => self.maps_dialog = MapsDialog::None,
+            DialogAction::Create(name, w, h) => {
+                self.maps_dialog = MapsDialog::None;
+                if valid_map_name(&name, maps) {
+                    self.create_map(system, maps, &name, w, h);
+                }
+            }
+            DialogAction::Rename(from, to) => {
+                self.maps_dialog = MapsDialog::None;
+                if valid_map_name(&to, maps) {
+                    self.rename_map(system, maps, &from, &to);
+                }
+            }
+            DialogAction::Delete(name) => {
+                self.maps_dialog = MapsDialog::None;
+                self.delete_map(system, maps, &name);
+            }
+        }
+    }
+
+    /// Create a blank modern map: insert it, write its `.tmj`, and add it to the
+    /// manifest. (Disk writes are silent no-ops on web — the map still lives in
+    /// the store for the session.)
+    fn create_map(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        maps: &mut MapStore,
+        name: &str,
+        w: usize,
+        h: usize,
+    ) {
+        let map = TiledMap::blank_modern(w, h);
+        let json = map.to_tmj(&[]);
+        maps.insert(name, map);
+        system.write_file(&format!("maps/{name}.tmj"), json.as_bytes());
+        self.manifest_mutate(system, maps, |m| {
+            if !m.maps.iter().any(|n| n == name) {
+                m.maps.push(name.to_string());
+            }
+        });
+        self.maps_selected = Some(name.to_string());
+    }
+
+    /// Duplicate `src` under a deduped `<src>_copy` name. Byte-copies the on-disk
+    /// `.tmj` so objects and tilesets survive verbatim; falls back to re-serialising
+    /// the tiles if the source file can't be read (e.g. web).
+    fn duplicate_map(&mut self, system: &mut impl ConsoleApi, maps: &mut MapStore, src: &str) {
+        let Some(orig) = maps.get(src).cloned() else {
+            return;
+        };
+        let name = dedup_name(src, maps);
+        let bytes = system
+            .read_file(&format!("maps/{src}.tmj"))
+            .unwrap_or_else(|| orig.to_tmj(&[]).into_bytes());
+        maps.insert(name.clone(), orig);
+        system.write_file(&format!("maps/{name}.tmj"), &bytes);
+        let added = name.clone();
+        self.manifest_mutate(system, maps, |m| {
+            if !m.maps.contains(&added) {
+                m.maps.push(added.clone());
+            }
+        });
+        self.maps_selected = Some(name);
+    }
+
+    /// Rename `from` to `to`: write the new `.tmj` (byte-copy), re-key the store,
+    /// and update the manifest. The old `.tmj` is orphaned (no `remove_file`); the
+    /// manifest drop keeps it from reloading. Warps pointing at `from` are left
+    /// dangling — they no-op at runtime ([`map_by_name`] returns `None`).
+    fn rename_map(&mut self, system: &mut impl ConsoleApi, maps: &mut MapStore, from: &str, to: &str) {
+        if let Some(bytes) = system.read_file(&format!("maps/{from}.tmj")) {
+            system.write_file(&format!("maps/{to}.tmj"), &bytes);
+        } else if let Some(map) = maps.get(from) {
+            // No source file to copy (web): re-serialise the tiles.
+            let json = map.to_tmj(&[]);
+            system.write_file(&format!("maps/{to}.tmj"), json.as_bytes());
+        }
+        maps.rename(from, to);
+        let (from_s, to_s) = (from.to_string(), to.to_string());
+        self.manifest_mutate(system, maps, |m| {
+            for n in m.maps.iter_mut() {
+                if *n == from_s {
+                    *n = to_s.clone();
+                }
+            }
+        });
+        self.maps_selected = Some(to.to_string());
+    }
+
+    /// Delete a map: drop it from the store and the manifest. The `.tmj` is left
+    /// on disk (no `remove_file` in the console API) but won't reload.
+    fn delete_map(&mut self, system: &mut impl ConsoleApi, maps: &mut MapStore, name: &str) {
+        maps.remove(name);
+        self.manifest_mutate(system, maps, |m| m.maps.retain(|n| n != name));
+        if self.maps_selected.as_deref() == Some(name) {
+            self.maps_selected = None;
+        }
+    }
+
+    /// Read-modify-write the asset manifest. Falls back to the store's current
+    /// names if no manifest file is present, so a fresh manifest is still correct.
+    fn manifest_mutate(
+        &self,
+        system: &mut impl ConsoleApi,
+        maps: &MapStore,
+        f: impl FnOnce(&mut GameManifest),
+    ) {
+        let mut manifest = system
+            .read_file("game.manifest")
+            .and_then(|b| manifest_from_json(&b).ok())
+            .unwrap_or_else(|| GameManifest {
+                maps: maps.names().iter().map(|s| s.to_string()).collect(),
+            });
+        f(&mut manifest);
+        system.write_file("game.manifest", manifest_to_json(&manifest).as_bytes());
+    }
+
     // --- Draw -----------------------------------------------------------------
 
     pub fn draw_map_viewer(
         &self,
         draw_state: &mut DrawState,
         system: &mut impl ConsoleApi,
+        maps: &MapStore,
         walkaround: &WalkaroundState,
     ) {
         self.draw_at(
             draw_state,
             system,
             &walkaround.current_map,
+            maps,
             walkaround.camera.pos,
         );
     }
 
-    /// Draw the editor overlay + panel for `map` from an explicit `camera_pos`.
+    /// Draw the editor overlay + panels for `map` from an explicit `camera_pos`.
     /// Generalises [`draw_map_viewer`](Self::draw_map_viewer) so an extra view
     /// can run its own editor against its own free camera, rather than the live
     /// walkaround camera. No-op while unfocused.
@@ -1581,18 +2524,103 @@ impl MapViewer {
         draw_state: &mut DrawState,
         system: &mut impl ConsoleApi,
         map: &MapInfo,
+        maps: &MapStore,
         camera_pos: Vec2,
     ) {
         if !self.focused {
             return;
         }
-        // Lay the panel out against the canvas actually being drawn to — an
-        // extra view's framebuffer can differ from the console's screen size.
-        let canvas = draw_state.rgba(LayerId::BG);
-        let screen = (canvas.width() as f32, canvas.height() as f32);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
-        self.build_ui(map, screen)
-            .draw(draw_state, system, LayerId::BG);
+        // Draw each panel back-to-front from the geometry `step` already solved
+        // (not a fresh layout against the live canvas) — so a framebuffer resize
+        // between step and draw can't misregister hit vs. draw; it heals next
+        // frame. A floating panel gets a small SE resize-handle mark, and a Maps
+        // panel gets its thumbnails blitted over the cells.
+        let handle = draw_state.colour(13);
+        for &(idx, rect) in &self.dock.solved.rects {
+            let ui = self.build_panel(idx, rect, map, maps);
+            ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
+            if self.dock.panels[idx].kind == PanelKind::Maps {
+                self.draw_map_thumbnails(&ui, rect, maps, draw_state);
+            }
+            if self.dock.is_float(idx) {
+                let s = dock::FLOAT_HANDLE as i32;
+                draw_state.rgba(LayerId::BG).fill_rect(
+                    (rect.x + rect.w) as i32 - s,
+                    (rect.y + rect.h) as i32 - s,
+                    s,
+                    s,
+                    handle,
+                );
+            }
+        }
+        // Resize splitters between each dock side and the world.
+        let splitter = draw_state.colour(13);
+        for &(_side, band) in &self.dock.solved.splitters {
+            draw_state.rgba(LayerId::BG).fill_rect(
+                band.x as i32,
+                band.y as i32,
+                band.w as i32,
+                band.h as i32,
+                splitter,
+            );
+        }
+        // Drop-zone highlight: while dragging a panel near an edge, outline where
+        // a release would dock it.
+        if let Some(side) = self.dock.solved.hot_edge {
+            let (sw, sh) = self.dock.solved.screen;
+            let z = DockManager::edge_zone(side, (sw as f32, sh as f32));
+            let hot = draw_state.colour(11);
+            draw_state
+                .rgba(LayerId::BG)
+                .stroke_rect(z.x as i32, z.y as i32, z.w as i32, z.h as i32, hot);
+        }
+        // The always-on global bar, on top of everything, at the world's corner.
+        let world = self.dock.solved.world;
+        self.build_global_bar()
+            .draw_at(world.x + 1, world.y + 1, draw_state, system, LayerId::BG);
+        // A modal map dialog, centred over everything.
+        if self.maps_dialog.is_active() {
+            self.build_dialog()
+                .draw_at(0, 0, draw_state, system, LayerId::BG);
+        }
+    }
+
+    /// Blit a rendered preview of each visible map over its browser cell. Drawn
+    /// after the panel UI so the thumbnail lands on top of the cell's outline.
+    fn draw_map_thumbnails(
+        &self,
+        ui: &Ui<EditorKey>,
+        rect: Rect,
+        maps: &MapStore,
+        draw_state: &mut DrawState,
+    ) {
+        let names = self.modern_names(maps);
+        let (cols, grid_rows) = self.maps_grid(rect);
+        let per_page = (cols * grid_rows).max(1);
+        let pages = names.len().div_ceil(per_page).max(1);
+        let start = self.maps_scroll.min(pages - 1) * per_page;
+        for (i, name) in names.iter().enumerate().skip(start).take(per_page) {
+            let Some(slot) = ui.rect_at(rect.x, rect.y, EditorKey::MapSlot(i)) else {
+                continue;
+            };
+            // 1px inset so the thumbnail sits inside the cell outline.
+            let Some(thumb) =
+                render_map_thumbnail(name, maps, draw_state, slot.w as u32 - 2, slot.h as u32 - 2)
+            else {
+                continue;
+            };
+            let ox = slot.x as i32 + (slot.w as i32 - thumb.width() as i32) / 2;
+            let oy = slot.y as i32 + (slot.h as i32 - thumb.height() as i32) / 2;
+            draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+                ox,
+                oy,
+                &thumb,
+                EdgePolicy::Transparent,
+                Transform::default(),
+                |p| p.a() == 0,
+            );
+        }
     }
 
     /// Draw tool overlays onto the live world: a tile cursor (paint) or object
@@ -1692,6 +2720,133 @@ fn world_tile(mouse: &MouseInput, camera_pos: Vec2) -> (i32, i32) {
 
 fn released(button: [bool; 2]) -> bool {
     button[1] && !button[0]
+}
+
+/// A unique `<base>_copy[N]` name not already in the store (for Duplicate).
+fn dedup_name(base: &str, maps: &MapStore) -> String {
+    let first = format!("{base}_copy");
+    if !maps.contains(&first) {
+        return first;
+    }
+    (2..)
+        .map(|n| format!("{base}_copy{n}"))
+        .find(|name| !maps.contains(name))
+        .unwrap_or(first)
+}
+
+/// Whether `name` is a usable new/renamed map stem: non-empty, no path
+/// separators, and not already taken.
+fn valid_map_name(name: &str, maps: &MapStore) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\']) && !maps.contains(name)
+}
+
+/// Parse a new-map dimension (tiles), clamping to a sane 1..=512 and falling back
+/// to `default` on empty/invalid input.
+fn parse_dim(s: &str, default: usize) -> usize {
+    s.trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|&n| (1..=512).contains(&n))
+        .unwrap_or(default)
+}
+
+/// The short label for an interaction kind shown in the Objects panel.
+fn interaction_kind_label(i: &Interaction) -> &'static str {
+    match i {
+        Interaction::None => "none",
+        Interaction::Dialogue(_) => "dialog",
+        Interaction::Func(f) => f.name().unwrap_or("func"),
+    }
+}
+
+/// Advance an interaction to the next kind, preserving a sensible default param.
+/// Cycle: none → dialogue → toggle_dog → piano → note → add_creatures → none.
+/// `origin` seeds a fresh `piano` (it sounds the note under its own position).
+fn cycle_interaction(current: &Interaction, origin: Vec2) -> Interaction {
+    match current {
+        Interaction::None => Interaction::Dialogue(String::new()),
+        Interaction::Dialogue(_) => Interaction::Func(InteractFn::ToggleDog),
+        Interaction::Func(InteractFn::ToggleDog) => Interaction::Func(InteractFn::Piano(origin)),
+        Interaction::Func(InteractFn::Piano(_)) => Interaction::Func(InteractFn::Note(0)),
+        Interaction::Func(InteractFn::Note(_)) => Interaction::Func(InteractFn::AddCreatures(0)),
+        Interaction::Func(InteractFn::AddCreatures(_)) => Interaction::None,
+        // Pet (no `func` name) can't be authored; cycle it back to none.
+        Interaction::Func(_) => Interaction::None,
+    }
+}
+
+/// Clip `s` to at most `n` characters (so a long map name fits a browser cell).
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        s.chars().take(n).collect()
+    }
+}
+
+/// Render a downscaled preview of map `name` to fit `(max_w, max_h)` px, using
+/// the live sprite sheet from `draw_state`. Reuses the same per-layer render as
+/// the world (tile layers via the sheet, image layers blitted), at the map
+/// origin (no camera), then nearest-neighbour downscales. `None` if the map is
+/// unknown or degenerate.
+fn render_map_thumbnail(
+    name: &str,
+    maps: &MapStore,
+    draw_state: &DrawState,
+    max_w: u32,
+    max_h: u32,
+) -> Option<RgbaImage> {
+    let info = map_by_name(&draw_state.indexed_sprites, name, maps)?;
+    let tiled = maps.get(name)?;
+    let (fw, fh) = ((tiled.width as u32 * 8).max(1), (tiled.height as u32 * 8).max(1));
+    let sprites = &draw_state.indexed_sprites;
+    let palette = draw_state.palettes[0].as_slice();
+
+    // Render every visible bg then fg layer 1:1 at the map origin.
+    let mut full = RgbaImage::new(fw, fh);
+    for layer in info.layers.iter().chain(info.fg_layers.iter()) {
+        if !layer.visible {
+            continue;
+        }
+        let opts: MapOptions = layer.clone().into();
+        match tiled.layers.get(layer.source_layer) {
+            Some(TiledMapLayer::TileLayer(tl)) => {
+                let pmap = palette_map_rotate(layer.palette_rotate() as usize);
+                full.map_draw_indexed(tl, sprites, palette, &pmap, opts);
+            }
+            Some(TiledMapLayer::ImageLayer(img)) => {
+                if let Some(px) = &img.pixels {
+                    full.blit::<RgbaImage>(
+                        opts.sx,
+                        opts.sy,
+                        px,
+                        EdgePolicy::Transparent,
+                        Transform::default(),
+                        |p| p.a() == 0,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Fit within the cell (downscale only), nearest-neighbour.
+    if max_w == 0 || max_h == 0 {
+        return None;
+    }
+    let s = (max_w as f32 / fw as f32)
+        .min(max_h as f32 / fh as f32)
+        .min(1.0);
+    let (tw, th) = (((fw as f32 * s) as u32).max(1), ((fh as f32 * s) as u32).max(1));
+    let mut thumb = RgbaImage::new(tw, th);
+    for y in 0..th {
+        for x in 0..tw {
+            let sx = (x * fw / tw).min(fw - 1);
+            let sy = (y * fh / th).min(fh - 1);
+            thumb.set_pixel(x, y, full.get_pixel(sx, sy));
+        }
+    }
+    Some(thumb)
 }
 
 /// A hitbox spanning the rectangle between two world points (min size 1px).
@@ -2053,6 +3208,165 @@ mod tests {
         assert!(!viewer.history.can_undo(), "object undo entries went stale");
         assert!(!viewer.is_typing(), "text focus dropped");
         assert_eq!(viewer.selected, None, "selection index went stale");
+    }
+
+    /// Stepping then drawing a layout that exercises docked panels, a floating
+    /// panel, the global bar, splitters and a drop-zone highlight must not panic —
+    /// coverage for `build_panel`/`draw_at` across the dock features.
+    #[test]
+    fn draw_across_dock_features_does_not_panic() {
+        use crate::system::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut draw = DrawState::default();
+        let mut store = MapStore::default();
+        let screen = (240.0, 136.0);
+        let mut map = MapInfo::default();
+
+        let mut viewer = MapViewer { focused: true, ..Default::default() };
+        viewer.dock.toggle_panel(PanelKind::Maps); // open the Maps panel too
+        viewer.dock.set_float(1, Vec2::new(100, 30), 80, 60); // float the Paint panel
+        viewer.step_map_viewer_at(&mut console, &mut map, &mut store, Vec2::new(0, 0), screen);
+        // Force the drop-zone highlight branch.
+        viewer.dock.solved.hot_edge = Some(Side::Right);
+        viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));
+    }
+
+    /// Create → duplicate → rename → delete a map, checking the store and the
+    /// written manifest stay consistent at each step (native file path).
+    #[test]
+    fn map_crud_round_trip() {
+        use crate::system::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut maps = MapStore::default();
+        let mut viewer = MapViewer::default();
+
+        let manifest = |c: &TestConsole| -> Vec<String> {
+            manifest_from_json(c.files.get("game.manifest").expect("manifest written"))
+                .expect("manifest parses")
+                .maps
+        };
+
+        // Create at an explicit size.
+        viewer.create_map(&mut console, &mut maps, "newmap", 20, 15);
+        assert!(maps.is_modern("newmap"));
+        assert_eq!(maps.get("newmap").map(|m| (m.width, m.height)), Some((20, 15)));
+        assert!(console.files.contains_key("maps/newmap.tmj"));
+        assert!(manifest(&console).contains(&"newmap".to_string()));
+
+        // Duplicate the selected map.
+        viewer.maps_selected = Some("newmap".to_string());
+        viewer.duplicate_map(&mut console, &mut maps, "newmap");
+        assert!(maps.contains("newmap_copy"));
+        assert!(console.files.contains_key("maps/newmap_copy.tmj"));
+
+        // Rename.
+        viewer.rename_map(&mut console, &mut maps, "newmap", "renamed");
+        assert!(!maps.contains("newmap"));
+        assert!(maps.contains("renamed"));
+        assert!(console.files.contains_key("maps/renamed.tmj"));
+        let m = manifest(&console);
+        assert!(m.contains(&"renamed".to_string()));
+        assert!(!m.contains(&"newmap".to_string()));
+
+        // Delete.
+        viewer.delete_map(&mut console, &mut maps, "renamed");
+        assert!(!maps.contains("renamed"));
+        assert!(!manifest(&console).contains(&"renamed".to_string()));
+    }
+
+    /// A name collision, a path-separator name and an empty name are all rejected.
+    #[test]
+    fn new_map_name_validation() {
+        let mut maps = MapStore::default();
+        maps.insert("town", crate::data::tmj::TiledMap::blank_modern(4, 4));
+        assert!(valid_map_name("forest", &maps));
+        assert!(!valid_map_name("town", &maps)); // already exists
+        assert!(!valid_map_name("a/b", &maps)); // path separator
+        assert!(!valid_map_name("", &maps)); // empty
+        assert_eq!(dedup_name("town", &maps), "town_copy");
+
+        // Dimension parsing: valid in-range, else the default; clamps the range.
+        assert_eq!(parse_dim("48", 30), 48);
+        assert_eq!(parse_dim("", 30), 30);
+        assert_eq!(parse_dim("nope", 30), 30);
+        assert_eq!(parse_dim("0", 30), 30); // below min
+        assert_eq!(parse_dim("9999", 30), 30); // above max
+    }
+
+    /// Cycling an interaction reaches every authorable kind — the GUI's way to
+    /// place Func interactions (toggle_dog / piano / note / add_creatures).
+    #[test]
+    fn interaction_kind_cycles_through_func_variants() {
+        let o = Vec2::new(5, 7);
+        let mut i = Interaction::None;
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Dialogue(_)));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Func(InteractFn::ToggleDog)));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Func(InteractFn::Piano(p)) if p == o));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Func(InteractFn::Note(0))));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Func(InteractFn::AddCreatures(0))));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::None));
+        assert_eq!(
+            interaction_kind_label(&Interaction::Func(InteractFn::Note(3))),
+            "note"
+        );
+        assert_eq!(interaction_kind_label(&Interaction::None), "none");
+    }
+
+    /// A primary editor saves its dock arrangement and a fresh primary restores
+    /// it; a view editor (non-persistent) is gated off.
+    #[test]
+    fn layout_persists_round_trip() {
+        use crate::system::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut a = MapViewer::primary();
+        a.dock.set_side_thickness(Side::Left, 50);
+        a.dock.toggle_panel(PanelKind::Maps); // open Maps (closed by default)
+        a.save_layout(&mut console);
+        assert!(console.files.contains_key(LAYOUT_PATH));
+
+        let mut b = MapViewer::primary();
+        b.load_layout(&mut console);
+        assert!(
+            b.dock.panels.iter().any(|p| p.kind == PanelKind::Maps && p.open),
+            "Maps stays open after reload",
+        );
+        assert!(
+            b.dock
+                .panels
+                .iter()
+                .any(|p| matches!(p.place, Placement::Dock { side: Side::Left, size: 50 })),
+            "left dock thickness restored",
+        );
+
+        // View editors never persist.
+        assert!(!MapViewer::default().persist);
+        assert!(MapViewer::primary().persist);
+    }
+
+    /// Rendering a thumbnail for a blank modern map produces an image that fits
+    /// the cell — panic coverage for the P3 preview render path.
+    #[test]
+    fn thumbnail_renders_within_the_cell() {
+        // A real sheet so the modern-map collider derivation has art to read.
+        let draw = DrawState {
+            indexed_sprites: crate::system::drawing::image::IndexedImage::new(256, 256),
+            ..Default::default()
+        };
+        let mut maps = MapStore::default();
+        maps.insert("m", crate::data::tmj::TiledMap::blank_modern(10, 8));
+
+        let thumb = render_map_thumbnail("m", &maps, &draw, 40, 22).expect("thumbnail");
+        assert!(thumb.width() <= 40 && thumb.height() <= 22);
+        assert!(thumb.width() >= 1 && thumb.height() >= 1);
     }
 
     /// `tile_bounds` returns an inclusive, normalised tile range regardless of

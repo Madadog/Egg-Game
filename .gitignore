@@ -20,3 +20,6 @@ video1.gif
 test.tic
 video2.gif
 egg_game(1).tic
+
+# In-editor dock layout (per-user editor state)
+assets/config/layout.json

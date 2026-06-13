@@ -61,6 +61,21 @@ impl MapStore {
     pub fn get_mut(&mut self, name: &str) -> Option<&mut TiledMap> {
         self.maps.get_mut(name)
     }
+    /// Drop a map from the store (its `.tmj` on disk is left untouched — the
+    /// editor removes the name from the manifest so it won't reload).
+    pub fn remove(&mut self, name: &str) -> Option<TiledMap> {
+        self.maps.remove(name)
+    }
+    /// Re-key a map from `old` to `new` (a no-op if `old` is absent).
+    pub fn rename(&mut self, old: &str, new: impl Into<String>) {
+        if let Some(map) = self.maps.remove(old) {
+            self.maps.insert(new.into(), map);
+        }
+    }
+    /// Whether a map of this name is loaded (used to dedup new/duplicate names).
+    pub fn contains(&self, name: &str) -> bool {
+        self.maps.contains_key(name)
+    }
     /// All loaded map names, sorted for stable menu/UI listings.
     pub fn names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = self.maps.keys().map(String::as_str).collect();

@@ -92,7 +92,7 @@ struct NodeData<K> {
 /// the layout was computed against, not the fixed 240×136 base resolution. (Not
 /// [`crate::position::Hitbox`], whose `new` panics on zero-size boxes — layout
 /// containers are routinely empty.)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rect {
     pub x: i16,
     pub y: i16,
@@ -311,6 +311,15 @@ impl<K: Copy + PartialEq> Node<'_, K> {
         self.style.size = full_width(h);
         self
     }
+    /// Flex-grow factor: how much of a flex container's free *main-axis* space
+    /// this child claims. In a `row` give equal-`grow` children to split the
+    /// width evenly (plain `full_width` only stretches the cross axis, so in a
+    /// row it would shrink to content); `0` (the default) doesn't grow.
+    pub fn grow(mut self, factor: f32) -> Self {
+        self.style.flex_grow = factor;
+        self.style.flex_basis = length(0.0);
+        self
+    }
     /// Uniform padding on all four sides.
     pub fn pad(mut self, p: f32) -> Self {
         self.style.padding = pad(p);
@@ -439,27 +448,71 @@ impl<K: Copy + PartialEq> Ui<K> {
     /// The topmost keyed node under `point`, if any. Iterates front-to-back so
     /// nested children win over their containers.
     pub fn hit(&self, point: Vec2) -> Option<K> {
-        self.resolved
-            .iter()
-            .rev()
-            .find_map(|r| r.key.filter(|_| r.rect.contains(point)))
+        self.hit_at(0, 0, point)
+    }
+
+    /// Like [`hit`](Self::hit) but with the whole laid-out tree translated by
+    /// `(dx, dy)` px first. A panel is laid out at the origin (its own size) and
+    /// then *placed* at an arbitrary screen position by the dock; offsetting the
+    /// pick point keeps hit rects aligned with where the panel is drawn, without
+    /// touching the resolver (which double-counts `Position::Absolute`).
+    pub fn hit_at(&self, dx: i16, dy: i16, point: Vec2) -> Option<K> {
+        self.resolved.iter().rev().find_map(|r| {
+            let rect = Rect {
+                x: r.rect.x + dx,
+                y: r.rect.y + dy,
+                ..r.rect
+            };
+            r.key.filter(|_| rect.contains(point))
+        })
     }
 
     /// The absolute rect of the first node carrying `key`.
     pub fn rect(&self, key: K) -> Option<Rect> {
+        self.rect_at(0, 0, key)
+    }
+
+    /// Like [`rect`](Self::rect) but translated by `(dx, dy)` — recovers a keyed
+    /// node's screen rect when its panel was laid out at the origin and placed
+    /// elsewhere (used to blit map thumbnails into their reserved slots).
+    pub fn rect_at(&self, dx: i16, dy: i16, key: K) -> Option<Rect> {
         self.resolved
             .iter()
             .find(|r| r.key == Some(key))
-            .map(|r| r.rect)
+            .map(|r| Rect {
+                x: r.rect.x + dx,
+                y: r.rect.y + dy,
+                ..r.rect
+            })
     }
 
     /// Render every node's decoration then content onto `layer`, back-to-front.
     pub fn draw(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi, layer: LayerId) {
+        self.draw_at(0, 0, draw_state, system, layer);
+    }
+
+    /// Like [`draw`](Self::draw) but with the whole tree translated by `(dx, dy)`
+    /// px — draws a panel laid out at the origin at its docked/floating screen
+    /// position. The offset is applied to a local `rect` once, so every
+    /// decoration/text/sprite branch reads the placed rect.
+    pub fn draw_at(
+        &self,
+        dx: i16,
+        dy: i16,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        layer: LayerId,
+    ) {
         for r in &self.resolved {
             let Some(data) = self.tree.get_node_context(r.node) else {
                 continue;
             };
-            draw_deco(draw_state, layer, r.rect, data.deco);
+            let rect = Rect {
+                x: r.rect.x + dx,
+                y: r.rect.y + dy,
+                ..r.rect
+            };
+            draw_deco(draw_state, layer, rect, data.deco);
             match &data.content {
                 Content::None => {}
                 Content::Text {
@@ -476,19 +529,19 @@ impl<K: Copy + PartialEq> Ui<K> {
                     };
                     // 1px top margin so glyphs sit just below the box/highlight
                     // edge, matching the original hand-laid menus.
-                    let ty = i32::from(r.rect.y) + 1;
+                    let ty = i32::from(rect.y) + 1;
                     let canvas = draw_state.rgba(layer);
                     if *center {
                         system.print_to_centered(
                             canvas,
                             text,
-                            r.rect.center_x() as i32,
+                            rect.center_x() as i32,
                             ty,
                             colour,
                             opts,
                         );
                     } else {
-                        system.print_to(canvas, text, r.rect.x as i32, ty, colour, opts);
+                        system.print_to(canvas, text, rect.x as i32, ty, colour, opts);
                     }
                 }
                 Content::Sprite {
@@ -505,7 +558,7 @@ impl<K: Copy + PartialEq> Ui<K> {
                         h: *h,
                         ..Default::default()
                     };
-                    let (x, y) = (r.rect.x as i32, r.rect.y as i32);
+                    let (x, y) = (rect.x as i32, rect.y as i32);
                     match outline {
                         Some(oc) => draw_state.spr_with_outline(
                             layer,
@@ -703,6 +756,44 @@ mod tests {
         // ...and the unkeyed root padding / off-panel area hits nothing.
         assert_eq!(ui.hit(Vec2::new(120, 5)), None);
         assert_eq!(ui.hit(Vec2::new(120, 135)), None);
+    }
+
+    /// A panel laid out at the origin can be hit-tested and queried as if placed
+    /// at an arbitrary `(dx, dy)` — the translation that lets the dock float
+    /// panels without touching the resolver's `Position::Absolute` handling.
+    #[test]
+    fn offset_hit_and_rect_translate() {
+        let mut b: UiBuilder<usize> = UiBuilder::new();
+        let rows: Vec<_> = (0..3)
+            .map(|i| {
+                b.leaf(
+                    Style { size: full_width(8.0), ..Default::default() },
+                    Content::None,
+                    Decoration::default(),
+                    Some(i),
+                )
+            })
+            .collect();
+        let root = b.container(
+            Style { size: size(40.0, 24.0), ..column(0.0) },
+            Decoration::default(),
+            None,
+            &rows,
+        );
+        let ui = b.finish(root, (40.0, 24.0));
+
+        // Row 1 sits at local (0, 8). Untranslated it is hit at (10, 9)...
+        assert_eq!(ui.hit(Vec2::new(10, 9)), Some(1));
+        // ...and placed at (100, 50) the same row answers to (110, 59), while the
+        // old local point no longer hits anything in the panel.
+        assert_eq!(ui.hit_at(100, 50, Vec2::new(110, 59)), Some(1));
+        assert_eq!(ui.hit_at(100, 50, Vec2::new(10, 9)), None);
+        // `rect_at` reports the translated screen rect.
+        assert_eq!(ui.rect(1), Some(Rect { x: 0, y: 8, w: 40, h: 8 }));
+        assert_eq!(
+            ui.rect_at(100, 50, 1),
+            Some(Rect { x: 100, y: 58, w: 40, h: 8 })
+        );
     }
 
     /// `centered()` places a fixed-size panel in the middle of the viewport,

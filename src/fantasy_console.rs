@@ -193,6 +193,13 @@ impl ConsoleApi for FantasyConsole {
             info!("write_file: refusing non-relative path {path:?}");
             return;
         };
+        // Create the parent directory if it doesn't exist yet (e.g. the editor's
+        // `config/` for the dock layout, or a fresh `maps/` for a new map).
+        if let Some(parent) = dest.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            info!("write_file: mkdir {} failed: {e}", parent.display());
+        }
         if dest.exists() {
             let backup = format!("{}.bak", dest.display());
             if let Err(e) = std::fs::copy(&dest, &backup) {

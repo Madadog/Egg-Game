@@ -408,6 +408,34 @@ pub fn update_views(
                 cam,
                 screen,
             );
+            // Open a map the view's browser requested, into the shared map (so
+            // every window sees it). Uses this view's framebuffer sprite sheet.
+            if let Some(name) = views.views[i].editor.pending_open.take() {
+                let mut ctx = egg_core::Ctx {
+                    draw: &mut views.views[i].draw_state,
+                    system: &mut g.system,
+                    maps: &mut g.state.maps,
+                    rng: &mut g.state.rng,
+                    script: &g.state.script,
+                    save: &mut g.state.save,
+                };
+                g.state.walkaround.load_map_by_name(&mut ctx, &name);
+            }
+            // A layer edit from this view: re-derive the shared map's layer lists
+            // (using this view's sprite sheet), preserving objects/camera/player.
+            if views.views[i].editor.pending_reload {
+                views.views[i].editor.pending_reload = false;
+                let name = g.state.walkaround.current_map.source.clone();
+                let fresh = egg_core::map::map_by_name(
+                    &views.views[i].draw_state.indexed_sprites,
+                    &name,
+                    &g.state.maps,
+                );
+                if let Some(fresh) = fresh {
+                    g.state.walkaround.current_map.layers = fresh.layers;
+                    g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
+                }
+            }
         }
     }
 

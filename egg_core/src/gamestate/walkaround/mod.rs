@@ -70,7 +70,7 @@ impl WalkaroundState {
             creatures: Vec::new(),
             camera: Camera::default(),
             current_map: MapInfo::default(),
-            map_viewer: MapViewer::default(),
+            map_viewer: MapViewer::primary(),
             dialogue: Dialogue::default(),
             particles: ParticleList::new(),
             cutscene: None,
@@ -377,6 +377,22 @@ impl WalkaroundState {
         if self.map_viewer.focused {
             self.map_viewer
                 .step_map_viewer(ctx.system, &mut self.current_map, ctx.maps, self.camera.pos);
+            // The browser can't resolve a map itself (it lacks the sprite sheet),
+            // so it parks the request here and we load it through the tested path.
+            if let Some(name) = self.map_viewer.pending_open.take() {
+                self.load_map_by_name(ctx, &name);
+            }
+            // A layer add/delete/move edited the stored map: re-derive only the
+            // runtime layer lists (objects, camera and player stay as they are).
+            if self.map_viewer.pending_reload {
+                self.map_viewer.pending_reload = false;
+                if let Some(fresh) =
+                    map_by_name(&ctx.draw.indexed_sprites, &self.current_map.source, ctx.maps)
+                {
+                    self.current_map.layers = fresh.layers;
+                    self.current_map.fg_layers = fresh.fg_layers;
+                }
+            }
             return None;
         }
 
@@ -734,7 +750,7 @@ impl WalkaroundState {
                 opts,
             );
         }
-        editor.draw_at(ctx.draw, ctx.system, &self.current_map, camera_pos);
+        editor.draw_at(ctx.draw, ctx.system, &self.current_map, ctx.maps, camera_pos);
     }
 
     /// Composite the finished walkaround frame (left in `draw_state.rgba(BG)` by
