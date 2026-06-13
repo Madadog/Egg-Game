@@ -233,6 +233,8 @@ enum EditorKey {
     Tool(EditorTool),
     Title,
     Layer(usize),
+    /// A layer row's visibility (eye) toggle.
+    LayerVis(usize),
     /// Layers panel toolbar: add tile layer / delete / move up / move down.
     LayerAdd,
     LayerDel,
@@ -267,13 +269,12 @@ enum EditorKey {
     MapDelete,
 }
 
-/// The sprite sheet (`assets/sprites/sheet.png`) is 256×1024 px = 32×128 = 4096
-/// tiles. The Paint palette shows every tile (so collision-marker sprites in the
-/// lower rows are reachable) in the sheet's 32-wide layout — a tile's grid
-/// position matches the sheet — scrolling when the panel is smaller. Update these
-/// if the sheet is resized.
-const SHEET_COLS: usize = 32;
-const SHEET_TILES: usize = 4096;
+/// Fallback sprite-sheet dimensions in tiles (32×128, the current
+/// `assets/sprites/sheet.png`), used only until the first draw caches the real
+/// size from the live sheet (see [`MapViewer::sheet_cols`]). The palette shows
+/// *every* tile so collision-marker sprites are reachable.
+const SHEET_COLS_DEFAULT: usize = 32;
+const SHEET_ROWS_DEFAULT: usize = 128;
 /// Grab width (px) of a palette scroll bar at the viewport's edge.
 const PALETTE_BAR_GRAB: i16 = 4;
 /// The global undo/redo/save + panel-toggle toolbar's size, px.
@@ -515,14 +516,18 @@ pub struct MapViewer {
     brush_w: usize,
     brush_h: usize,
     /// Top-left visible tile of the Paint palette (column, row) — the palette is
-    /// a fixed [`SHEET_COLS`]-wide grid that scrolls rather than reflows.
+    /// a fixed [`self.sheet_cols()`]-wide grid that scrolls rather than reflows.
     pal_col: usize,
     pal_row: usize,
     /// The palette viewport's screen rect, cached each frame (the palette is
     /// drawn/hit manually, not as flex nodes).
     pal_rect: Rect,
-    /// An in-progress palette drag (pan / tile-pick or a scroll-bar drag).
+    /// An in-progress palette drag (box-select or a scroll-bar drag).
     pal_drag: Option<PalDrag>,
+    /// The live sprite sheet's `(cols, rows)` in tiles, passed into `step` by the
+    /// host each frame so the palette/brush math adapts as the sheet grows. `(0,
+    /// 0)` until the first step (see the `*_DEFAULT` fallback).
+    sheet: (usize, usize),
     selected: Option<usize>,
     drag: Option<Vec2>,
     /// While dragging an existing object: the grab offset (cursor − hitbox origin).
@@ -912,7 +917,10 @@ impl MapViewer {
     /// for panels (Maps) that don't own the canvas.
     fn panel_tool(kind: PanelKind, current: EditorTool) -> Option<EditorTool> {
         match kind {
-            PanelKind::Layers => Some(EditorTool::Layers),
+            // The Layers panel only edits shared layer state (selection /
+            // visibility / order); picking a layer must not steal the canvas tool
+            // from Paint. (`Layers` stays reachable as a neutral tool via key 1.)
+            PanelKind::Layers => None,
             PanelKind::Paint => Some(EditorTool::Paint),
             PanelKind::Objects => Some(
                 if matches!(current, EditorTool::Interactables | EditorTool::Warps) {
@@ -937,8 +945,8 @@ impl MapViewer {
     /// The maximum scroll `(col, row)` so the last column/row can reach the edge.
     fn palette_scroll_max(&self) -> (usize, usize) {
         let (vc, vr) = self.palette_visible();
-        let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
-        (SHEET_COLS.saturating_sub(vc), total_rows.saturating_sub(vr))
+        let total_rows = self.sheet_tiles().div_ceil(self.sheet_cols());
+        (self.sheet_cols().saturating_sub(vc), total_rows.saturating_sub(vr))
     }
 
     /// Advance an in-progress palette drag. A `Pan` that barely moved picks the
@@ -983,11 +991,11 @@ impl MapViewer {
         let v = self.pal_rect;
         let (max_c, max_r) = self.palette_scroll_max();
         if vertical && v.h > 0 && max_r > 0 {
-            let total = SHEET_TILES.div_ceil(SHEET_COLS) as i32;
+            let total = self.sheet_tiles().div_ceil(self.sheet_cols()) as i32;
             let frac = (p.y - v.y).clamp(0, v.h) as i32 * total / v.h as i32;
             self.pal_row = (frac as usize).min(max_r);
         } else if !vertical && v.w > 0 && max_c > 0 {
-            let frac = (p.x - v.x).clamp(0, v.w) as i32 * SHEET_COLS as i32 / v.w as i32;
+            let frac = (p.x - v.x).clamp(0, v.w) as i32 * self.sheet_cols() as i32 / v.w as i32;
             self.pal_col = (frac as usize).min(max_c);
         }
     }
@@ -1005,6 +1013,20 @@ impl MapViewer {
         (self.brush_w.max(1), self.brush_h.max(1))
     }
 
+    /// Live sprite-sheet width in tiles (the palette's column count), from the
+    /// draw-cached size, falling back to the current sheet until the first draw.
+    fn sheet_cols(&self) -> usize {
+        if self.sheet.0 == 0 { SHEET_COLS_DEFAULT } else { self.sheet.0 }
+    }
+    /// Live sprite-sheet height in tiles.
+    fn sheet_rows(&self) -> usize {
+        if self.sheet.1 == 0 { SHEET_ROWS_DEFAULT } else { self.sheet.1 }
+    }
+    /// Total tiles in the live sheet — every one is selectable in the palette.
+    fn sheet_tiles(&self) -> usize {
+        self.sheet_cols() * self.sheet_rows()
+    }
+
     /// The sheet `(col, row)` under `point`, clamped into the visible viewport and
     /// the sheet bounds — so a drag that runs off the edge sticks to the last
     /// visible tile rather than wrapping.
@@ -1013,8 +1035,8 @@ impl MapViewer {
         let (vc, vr) = self.palette_visible();
         let cx = (point.x - v.x).clamp(0, (v.w - 1).max(0)) as usize / 8;
         let cy = (point.y - v.y).clamp(0, (v.h - 1).max(0)) as usize / 8;
-        let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
-        let col = (self.pal_col + cx.min(vc - 1)).min(SHEET_COLS - 1);
+        let total_rows = self.sheet_tiles().div_ceil(self.sheet_cols());
+        let col = (self.pal_col + cx.min(vc - 1)).min(self.sheet_cols() - 1);
         let row = (self.pal_row + cy.min(vr - 1)).min(total_rows - 1);
         (col, row)
     }
@@ -1023,7 +1045,7 @@ impl MapViewer {
     fn set_brush_box(&mut self, ac: usize, ar: usize, cc: usize, cr: usize) {
         let (c0, c1) = (ac.min(cc), ac.max(cc));
         let (r0, r1) = (ar.min(cr), ar.max(cr));
-        self.selected_tile = r0 * SHEET_COLS + c0;
+        self.selected_tile = r0 * self.sheet_cols() + c0;
         self.brush_w = c1 - c0 + 1;
         self.brush_h = r1 - r0 + 1;
     }
@@ -1058,21 +1080,29 @@ impl MapViewer {
         let dn = lt(b, "v", 12, !collision, EditorKey::LayerDown);
         rows.push(b.row(1.0, [add, del, up, dn]).id());
         for (i, layer) in layers.iter().enumerate() {
-            let hidden = if layer.visible { "" } else { "(H)" };
-            // Image layers are flagged `img` so the painter knows they're not a
-            // paint target (paint silently refuses them; see `handle_paint`).
+            // Eye toggles visibility; the name selects the layer (sticky, by
+            // click). Image layers are flagged `img` — never a paint target.
+            let eye = b
+                .text(if layer.visible { "O" } else { "-" })
+                .small(true)
+                .center()
+                .color(if layer.visible { 11 } else { 13 })
+                .size(7.0, 7.0)
+                .key(EditorKey::LayerVis(i))
+                .id();
             let label = match layer.kind {
-                LayerKind::Image => format!("img {i} {hidden}"),
-                LayerKind::Tiles => format!("Layer {i} {hidden}"),
+                LayerKind::Image => format!("img {i}"),
+                LayerKind::Tiles => format!("Layer {i}"),
             };
-            rows.push(
-                b.text(label)
-                    .small(true)
-                    .full_width(7.0)
-                    .fill_if(i == self.layer_index, 15)
-                    .key(EditorKey::Layer(i))
-                    .id(),
-            );
+            let name = b
+                .text(label)
+                .small(true)
+                .full_width(7.0)
+                .grow(1.0)
+                .fill_if(i == self.layer_index, 15)
+                .key(EditorKey::Layer(i))
+                .id();
+            rows.push(b.row(1.0, [eye, name]).id());
         }
     }
 
@@ -1457,9 +1487,10 @@ impl MapViewer {
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
+        sheet: (usize, usize),
     ) {
         let screen = (system.width() as f32, system.height() as f32);
-        self.step_map_viewer_at(system, map, maps, camera_pos, screen);
+        self.step_map_viewer_at(system, map, maps, camera_pos, screen, sheet);
     }
 
     /// Like [`step_map_viewer`](Self::step_map_viewer) but with an explicit
@@ -1473,7 +1504,11 @@ impl MapViewer {
         maps: &mut MapStore,
         camera_pos: Vec2,
         screen: (f32, f32),
+        sheet: (usize, usize),
     ) {
+        // The live sprite-sheet size (in tiles), so the palette spans the whole
+        // sheet and the brush/scroll math adapt as it grows.
+        self.sheet = sheet;
         // A different map under the editor invalidates the per-map state: object
         // undo entries and the selection index point into the *old* map's objects
         // list, so replaying them here would edit the wrong things. Self-detected
@@ -1803,10 +1838,15 @@ impl MapViewer {
                     self.layer_index = 0;
                 }
             }
+            // Sticky select: a click sets the active layer (and stays — no
+            // hover-select, and the canvas tool isn't changed; see `panel_tool`).
             EditorKey::Layer(i) => {
-                if mouse.moved() {
+                if click {
                     self.layer_index = i;
                 }
+            }
+            // The eye toggles that layer's visibility (and selects it).
+            EditorKey::LayerVis(i) => {
                 if click {
                     self.layer_index = i;
                     self.toggle_layer(map);
@@ -2061,6 +2101,10 @@ impl MapViewer {
         else {
             return;
         };
+        // The first tile layer is the collision layer; painting it changes the
+        // derived colliders, so flag a re-derive (see the host drain) — collision
+        // then takes effect immediately, without a map reload.
+        let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
         let (tx, ty) = world_tile(mouse, camera_pos);
 
         // Middle-click eyedropper: lift the existing tile into a 1×1 brush.
@@ -2085,6 +2129,9 @@ impl MapViewer {
                 && let Some(start) = self.drag.take()
             {
                 self.fill_rect(maps, &source, layer, start, world);
+                if is_collision {
+                    self.pending_reload = true;
+                }
             }
             return;
         }
@@ -2107,6 +2154,9 @@ impl MapViewer {
             }
             if tx >= 0 && ty >= 0 {
                 self.paint_brush(maps, &source, layer, tx, ty, pressed(mouse.right));
+                if is_collision {
+                    self.pending_reload = true;
+                }
             }
         }
         if released(mouse.left) || released(mouse.right) {
@@ -2127,13 +2177,13 @@ impl MapViewer {
         erase: bool,
     ) {
         let (bw, bh) = self.brush_size();
-        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+        let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
         for dy in 0..bh {
             for dx in 0..bw {
-                if bc + dx >= SHEET_COLS {
+                if bc + dx >= self.sheet_cols() {
                     continue; // don't wrap past the sheet's right edge
                 }
-                let value = if erase { 0 } else { (br + dy) * SHEET_COLS + (bc + dx) };
+                let value = if erase { 0 } else { (br + dy) * self.sheet_cols() + (bc + dx) };
                 self.paint_cell(maps, source, layer, tx + dx as i32, ty + dy as i32, value);
             }
         }
@@ -2185,7 +2235,7 @@ impl MapViewer {
     fn fill_rect(&mut self, maps: &mut MapStore, source: &str, layer: usize, a: Vec2, b: Vec2) {
         let (x0, y0, x1, y1) = tile_bounds(a, b);
         let (bw, bh) = self.brush_size();
-        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+        let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
         self.stroke = Some(EditAction::Tiles {
             source: source.to_string(),
             layer,
@@ -2199,8 +2249,8 @@ impl MapViewer {
                 // Repeat the brush pattern across the fill region.
                 let ox = (tx - x0) as usize % bw;
                 let oy = (ty - y0) as usize % bh;
-                let value = if bc + ox < SHEET_COLS {
-                    (br + oy) * SHEET_COLS + (bc + ox)
+                let value = if bc + ox < self.sheet_cols() {
+                    (br + oy) * self.sheet_cols() + (bc + ox)
                 } else {
                     0
                 };
@@ -2672,6 +2722,7 @@ impl MapViewer {
         if !self.focused {
             return;
         }
+        self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
         // Draw each panel back-to-front from the geometry `step` already solved
         // (not a fresh layout against the live canvas) — so a framebuffer resize
@@ -2730,6 +2781,58 @@ impl MapViewer {
         }
     }
 
+    /// While painting a *hidden* layer (e.g. the collision layer), ghost its
+    /// tiles over the world — checkerboard-dithered — so you can see what you're
+    /// editing without un-hiding it.
+    fn draw_hidden_active_layer(
+        &self,
+        draw_state: &mut DrawState,
+        map: &MapInfo,
+        maps: &MapStore,
+        camera_pos: Vec2,
+    ) {
+        if self.tool != EditorTool::Paint {
+            return;
+        }
+        let Some(active) = self.active_layer(map) else {
+            return;
+        };
+        if active.visible || active.kind != LayerKind::Tiles {
+            return;
+        }
+        let Some(TiledMapLayer::TileLayer(tl)) = maps
+            .get(&map.source)
+            .and_then(|m| m.layers.get(active.source_layer))
+        else {
+            return;
+        };
+        let (fw, fh) = ((tl.width * 8) as u32, (tl.height * 8) as u32);
+        if fw == 0 || fh == 0 {
+            return;
+        }
+        let mut ghost = RgbaImage::new(fw, fh);
+        let mut opts: MapOptions = active.clone().into();
+        opts.sx = 0;
+        opts.sy = 0;
+        let pmap = palette_map_rotate(active.palette_rotate() as usize);
+        ghost.map_draw_indexed(tl, &draw_state.indexed_sprites, &draw_state.palettes[0], &pmap, opts);
+        for gy in 0..fh {
+            for gx in 0..fw {
+                if (gx + gy) % 2 == 1 {
+                    ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
+                }
+            }
+        }
+        draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+            -(camera_pos.x as i32),
+            -(camera_pos.y as i32),
+            &ghost,
+            EdgePolicy::Transparent,
+            Transform::default(),
+            |p| p.a() == 0,
+        );
+    }
+
     /// Blit the Paint palette into its viewport: the sheet's 32-wide tile grid,
     /// scrolled to `(pal_col, pal_row)`, the selected tile outlined, plus thin
     /// scroll bars on the overflowing edges.
@@ -2740,15 +2843,15 @@ impl MapViewer {
         }
         let (vc, vr) = self.palette_visible();
         let (bw, bh) = self.brush_size();
-        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+        let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
         for r in 0..vr {
             for c in 0..vc {
                 let (col, row) = (self.pal_col + c, self.pal_row + r);
-                if col >= SHEET_COLS {
+                if col >= self.sheet_cols() {
                     continue;
                 }
-                let id = row * SHEET_COLS + col;
-                if id >= SHEET_TILES {
+                let id = row * self.sheet_cols() + col;
+                if id >= self.sheet_tiles() {
                     continue;
                 }
                 let x = v.x as i32 + c as i32 * 8;
@@ -2776,7 +2879,7 @@ impl MapViewer {
         let track = draw_state.colour(0);
         let thumb = draw_state.colour(13);
         if max_r > 0 {
-            let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
+            let total_rows = self.sheet_tiles().div_ceil(self.sheet_cols());
             let bx = (v.x + v.w - 2) as i32;
             draw_state.rgba(LayerId::BG).fill_rect(bx, v.y as i32, 2, v.h as i32, track);
             let th = ((v.h as usize * vr) / total_rows).max(2) as i32;
@@ -2786,7 +2889,7 @@ impl MapViewer {
         if max_c > 0 {
             let by = (v.y + v.h - 2) as i32;
             draw_state.rgba(LayerId::BG).fill_rect(v.x as i32, by, v.w as i32, 2, track);
-            let tw = ((v.w as usize * vc) / SHEET_COLS).max(2) as i32;
+            let tw = ((v.w as usize * vc) / self.sheet_cols()).max(2) as i32;
             let tx = v.x as i32 + (v.w as i32 - tw) * self.pal_col as i32 / max_c as i32;
             draw_state.rgba(LayerId::BG).fill_rect(tx, by, tw, 2, thumb);
         }
@@ -2861,14 +2964,14 @@ impl MapViewer {
                     let (tx, ty) = world_tile(&system.mouse(), camera_pos);
                     let (px, py) = (tx * 8 - cx, ty * 8 - cy);
                     let (bw, bh) = self.brush_size();
-                    let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+                    let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
                     let mut ghost = RgbaImage::new((bw * 8) as u32, (bh * 8) as u32);
                     for dy in 0..bh {
                         for dx in 0..bw {
-                            if bc + dx >= SHEET_COLS {
+                            if bc + dx >= self.sheet_cols() {
                                 continue;
                             }
-                            let id = ((br + dy) * SHEET_COLS + (bc + dx)) as i32;
+                            let id = ((br + dy) * self.sheet_cols() + (bc + dx)) as i32;
                             ghost.spr_indexed(
                                 &draw_state.indexed_sprites,
                                 &draw_state.palettes[0],
@@ -3430,7 +3533,7 @@ mod tests {
             source: "a".to_string(),
             ..MapInfo::default()
         };
-        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen);
+        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen, (0, 0));
 
         // Seed per-map state on map "a".
         viewer.record(tiles(vec![(0, 0, 1, 2)]));
@@ -3439,7 +3542,7 @@ mod tests {
         viewer.field = Some(TextField::new("x"));
 
         // Stepping the same map keeps it all.
-        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen);
+        viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen, (0, 0));
         assert!(viewer.history.can_undo());
         assert!(viewer.is_typing());
         assert_eq!(viewer.selected, Some(0));
@@ -3449,7 +3552,7 @@ mod tests {
             source: "b".to_string(),
             ..MapInfo::default()
         };
-        viewer.step_map_viewer_at(&mut console, &mut map_b, &mut store, Vec2::new(0, 0), screen);
+        viewer.step_map_viewer_at(&mut console, &mut map_b, &mut store, Vec2::new(0, 0), screen, (0, 0));
         assert!(!viewer.history.can_undo(), "object undo entries went stale");
         assert!(!viewer.is_typing(), "text focus dropped");
         assert_eq!(viewer.selected, None, "selection index went stale");
@@ -3471,7 +3574,7 @@ mod tests {
         let mut viewer = MapViewer { focused: true, ..Default::default() };
         viewer.dock.toggle_panel(PanelKind::Maps); // open the Maps panel too
         viewer.dock.set_float(1, Vec2::new(100, 30), 80, 60); // float the Paint panel
-        viewer.step_map_viewer_at(&mut console, &mut map, &mut store, Vec2::new(0, 0), screen);
+        viewer.step_map_viewer_at(&mut console, &mut map, &mut store, Vec2::new(0, 0), screen, (0, 0));
         // Force the drop-zone highlight branch.
         viewer.dock.solved.hot_edge = Some(Side::Right);
         viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));
@@ -3555,16 +3658,32 @@ mod tests {
         let (c, r) = v.palette_tile_at(Vec2::new(4 + 2 * 8 + 1, 20 + 1));
         assert_eq!((c, r), (7, 2));
         v.set_brush_box(c, r, c, r); // a click is a 1x1 brush
-        assert_eq!(v.selected_tile, 2 * SHEET_COLS + 7);
+        assert_eq!(v.selected_tile, 2 * v.sheet_cols() + 7);
         assert_eq!(v.brush_size(), (1, 1));
         // Drag a 3x2 box from (7,2) to (9,3): top-left tile + size.
         v.set_brush_box(7, 2, 9, 3);
-        assert_eq!(v.selected_tile, 2 * SHEET_COLS + 7);
+        assert_eq!(v.selected_tile, 2 * v.sheet_cols() + 7);
         assert_eq!(v.brush_size(), (3, 2));
         // A point off the viewport clamps to the last visible tile, not wraps.
         assert_eq!(v.palette_tile_at(Vec2::new(500, 500)), (5 + 10 - 1, 2 + 8 - 1));
         // Scroll bounds: 10 of 32 cols, 8 of the sheet's 128 rows visible.
         assert_eq!(v.palette_scroll_max(), (32 - 10, 128 - 8));
+    }
+
+    /// The palette adapts to the live sheet size (passed in by the host each
+    /// step): it falls back to the current sheet until set, then reflects a
+    /// grown sheet immediately.
+    #[test]
+    fn palette_adapts_to_sheet_size() {
+        let mut v = MapViewer {
+            pal_rect: Rect { x: 0, y: 0, w: 80, h: 64 }, // 10 x 8 tiles visible
+            ..Default::default()
+        };
+        assert_eq!((v.sheet_cols(), v.sheet_rows()), (32, 128)); // fallback
+        v.sheet = (40, 200); // a bigger sheet after an art update
+        assert_eq!(v.sheet_cols(), 40);
+        assert_eq!(v.sheet_tiles(), 8000);
+        assert_eq!(v.palette_scroll_max(), (40 - 10, 200 - 8));
     }
 
     /// Cycling an interaction reaches every authorable kind — the GUI's way to

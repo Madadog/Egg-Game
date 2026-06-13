@@ -375,8 +375,17 @@ impl WalkaroundState {
         // When the map editor is open it takes over all input and freezes the
         // sim, so painting/typing can't move the player or trip warps/reloads.
         if self.map_viewer.focused {
-            self.map_viewer
-                .step_map_viewer(ctx.system, &mut self.current_map, ctx.maps, self.camera.pos);
+            let sheet = (
+                ctx.draw.indexed_sprites.width() as usize / 8,
+                ctx.draw.indexed_sprites.height() as usize / 8,
+            );
+            self.map_viewer.step_map_viewer(
+                ctx.system,
+                &mut self.current_map,
+                ctx.maps,
+                self.camera.pos,
+                sheet,
+            );
             // The browser can't resolve a map itself (it lacks the sprite sheet),
             // so it parks the request here and we load it through the tested path.
             if let Some(name) = self.map_viewer.pending_open.take() {

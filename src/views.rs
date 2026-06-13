@@ -401,12 +401,17 @@ pub fn update_views(
                 views.views[i].output.height() as f32,
             );
             let g = &mut *game;
+            let sheet = (
+                views.views[i].draw_state.indexed_sprites.width() as usize / 8,
+                views.views[i].draw_state.indexed_sprites.height() as usize / 8,
+            );
             views.views[i].editor.step_map_viewer_at(
                 &mut g.system,
                 &mut g.state.walkaround.current_map,
                 &mut g.state.maps,
                 cam,
                 screen,
+                sheet,
             );
             // Open a map the view's browser requested, into the shared map (so
             // every window sees it). Uses this view's framebuffer sprite sheet.
