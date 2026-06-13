@@ -8,7 +8,7 @@ use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture};
 use script_asset::{ScriptAsset, ScriptPlugin};
-use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin, TilesetAsset};
+use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
 
 mod fantasy_console;
 mod hotkeys;
@@ -147,14 +147,14 @@ impl Plugin for CorePlugin {
     }
 }
 
-/// Asset loading plugin. Spans both data domains (Tiled maps/tilesets via
+/// Asset loading plugin. Spans both data domains (Tiled maps via
 /// [`crate::tiled`] and language scripts via [`crate::script_asset`]) plus the
 /// manifest that names them, so it lives in the host root rather than inside
 /// either loader's module. The loader is manifest-driven and runs in **three
 /// phases** (all in [`load_assets`], gated on resource presence/load state):
 ///
 /// 1. **expand** — wait for the manifest, then build [`GameAssets`] from the
-///    maps/tilesets it names (so the set of maps is data, not code).
+///    maps it names (so the set of maps is data, not code).
 /// 2. **discover images** — once the essentials are loaded and every map has
 ///    settled, walk the *loaded* maps for their image-layer PNG paths, resolve
 ///    each under `maps/`, and start loading it (recorded in
@@ -182,8 +182,8 @@ impl Plugin for AssetsPlugin {
 }
 
 /// The asset manifest handle, loaded first (in `setup_assets`). `load_assets`
-/// waits for it, then builds the real [`GameAssets`] from the maps/tilesets it
-/// names — so the set of maps is data, not code.
+/// waits for it, then builds the real [`GameAssets`] from the maps it names — so
+/// the set of maps is data, not code.
 #[derive(Resource)]
 pub struct Manifest(pub Handle<ManifestAsset>);
 
@@ -204,8 +204,8 @@ pub struct MapImage {
 
 /// Every handle the game needs to boot, expanded from the [`Manifest`]. Built
 /// once the manifest finishes loading (see [`GameAssets::from_manifest`]); the
-/// font/sheet/script are fixed, while the maps and tilesets come from the
-/// manifest's name lists.
+/// font/sheet/script are fixed, while the maps come from the manifest's name
+/// list.
 #[derive(Debug, Resource)]
 pub struct GameAssets {
     pub font: Handle<Image>,
@@ -217,9 +217,6 @@ pub struct GameAssets {
     /// and skipped at install time, so what actually lands in the store is the
     /// subset of these that loaded cleanly.
     pub map_names: Vec<String>,
-    /// Tileset handles (`maps/<name>.tsj`) named by the manifest, for their
-    /// per-tile collision-flag tables.
-    pub tilesets: Vec<Handle<TilesetAsset>>,
     pub script: Handle<ScriptAsset>,
     /// The image-layer PNGs the loaded maps reference, collected in phase 2 once
     /// the maps have parsed. `None` until that phase runs (so its presence is the
@@ -228,8 +225,8 @@ pub struct GameAssets {
 }
 impl GameAssets {
     /// Expand a loaded [`GameManifest`] into concrete asset handles: each map
-    /// stem → `maps/<name>.tmj`, each tileset stem → `maps/<name>.tsj`, plus the
-    /// fixed font/sheet/script. Kicks off loading all of them.
+    /// stem → `maps/<name>.tmj`, plus the fixed font/sheet/script. Kicks off
+    /// loading all of them.
     fn from_manifest(assets: &AssetServer, manifest: &egg_core::data::tmj::GameManifest) -> Self {
         Self {
             font: assets.load("fonts/tic80_font.png"),
@@ -240,19 +237,14 @@ impl GameAssets {
                 .map(|name| assets.load(format!("maps/{name}.tmj")))
                 .collect(),
             map_names: manifest.maps.clone(),
-            tilesets: manifest
-                .tilesets
-                .iter()
-                .map(|name| assets.load(format!("maps/{name}.tsj")))
-                .collect(),
             script: assets.load("script/en.eggtext"),
             map_images: None,
         }
     }
-    /// The essential assets (font, sheet, script, every tileset) by name —
-    /// the ones the game cannot boot without. Maps are deliberately excluded:
-    /// boot must not block on an individual map (see [`Self::maps_settled`]),
-    /// so they're handled resiliently at install time instead.
+    /// The essential assets (font, sheet, script) by name — the ones the game
+    /// cannot boot without. Maps are deliberately excluded: boot must not block
+    /// on an individual map (see [`Self::maps_settled`]), so they're handled
+    /// resiliently at install time instead.
     fn essentials(&self) -> impl Iterator<Item = (String, bevy::asset::UntypedAssetId)> + '_ {
         [
             ("font", self.font.id().untyped()),
@@ -261,12 +253,6 @@ impl GameAssets {
         ]
         .into_iter()
         .map(|(name, id)| (name.to_string(), id))
-        .chain(
-            self.tilesets
-                .iter()
-                .enumerate()
-                .map(|(i, t)| (format!("tileset #{i}"), t.id().untyped())),
-        )
     }
     /// Whether every essential asset is loaded.
     fn essentials_loaded(&self, assets: &AssetServer) -> bool {
@@ -324,23 +310,19 @@ fn load_assets(
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMapAsset>>,
-    tilesets: Res<Assets<TilesetAsset>>,
     manifests: Res<Assets<ManifestAsset>>,
     scripts: Res<Assets<ScriptAsset>>,
     mut state: ResMut<EggGame>,
 ) {
-    // Phase 1: wait for the manifest, then expand it into GameAssets. We only do
-    // this once — GameAssets existing is the signal that phase 1 is done.
+    // Phase 1: wait for the manifest, then expand it into GameAssets from the
+    // maps it names. We only do this once — GameAssets existing is the signal
+    // that phase 1 is done.
     if game_assets.is_none() {
         let Some(manifest) = manifest else { return };
         match assets.get_load_state(manifest.0.id()) {
             Some(s) if s.is_loaded() => {
                 if let Some(loaded) = manifests.get(&manifest.0) {
-                    info!(
-                        "Manifest loaded: {} map(s), {} tileset(s).",
-                        loaded.0.maps.len(),
-                        loaded.0.tilesets.len()
-                    );
+                    info!("Manifest loaded: {} map(s).", loaded.0.maps.len());
                     commands.insert_resource(GameAssets::from_manifest(&assets, &loaded.0));
                 }
             }
@@ -404,14 +386,6 @@ fn load_assets(
     state.state.draw_state.rgba_sprites = FantasyConsole::sprites_from_image(sheet);
     state.state.draw_state.indexed_sprites =
         FantasyConsole::indexed_sprites_from_image(sheet, &palette);
-    // Sprite flags are data now: install the per-tile collision-flag table from
-    // the manifest's tileset(s). The last loaded tileset wins (there's one in
-    // practice, `tiles`); DrawState::default's blob seed is now overwritten.
-    for handle in &game_assets.tilesets {
-        if let Some(tileset) = tilesets.get(handle) {
-            state.state.draw_state.sprite_flags = tileset.0.flag_table();
-        }
-    }
     // Maps live on the engine's MapStore, keyed by file stem — the single copy
     // that drawing, collision and the editor all read. RESILIENCE: each map is
     // installed independently; one that failed to load/parse (these five were

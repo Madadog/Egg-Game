@@ -12,17 +12,6 @@ pub struct DrawState {
     pub indexed_sprites: IndexedImage,
 
     pub palettes: Vec<Vec<[u8; 3]>>,
-
-    /// Per-tile collision/behaviour flags, indexed by tile id (see
-    /// [`crate::map::layer_collides_flags`]). The single source of truth for
-    /// flags at runtime. Loaded from the Tiled tileset `assets/maps/tiles.tsj`
-    /// (its per-tile `flags` int property) by the host's asset pipeline and
-    /// installed here — flags are data now, not code. [`Default`] seeds it from
-    /// the frozen built-in blob in [`crate::data::sprite_flags`] so collision
-    /// works before the tileset asset finishes loading; the host overwrites it
-    /// with the parsed `.tsj` table the moment that asset is ready (the two are
-    /// identical by the `tsj_oracle` test, so the swap is invisible).
-    pub sprite_flags: Vec<u8>,
 }
 
 impl Default for DrawState {
@@ -33,7 +22,6 @@ impl Default for DrawState {
             indexed_canvas: vec![IndexedImage::new(WIDTH as usize, HEIGHT as usize); 2],
             indexed_sprites: IndexedImage::new(0, 0),
             palettes: vec![default_palette()],
-            sprite_flags: crate::data::sprite_flags::default_sprite_flags(),
         }
     }
 }

@@ -1,6 +1,5 @@
 use crate::Ctx;
 use crate::animation::Animation;
-use crate::data::map_data::{MapIndex, legacy_index};
 use crate::data::save::SaveData;
 use crate::data::sound;
 use crate::debug::DebugInfo;
@@ -147,12 +146,11 @@ impl WalkaroundState {
         self.creatures.clear();
         self.particles.clear();
     }
-    /// Load a map by name through [`map_by_name`] (legacy table, numeric
-    /// fallback, then modern maps from `maps`). Unknown names log and leave
-    /// the current map in place — the old bank-indexed loader panicked on a
-    /// bad index, which a typo'd warp or stale save shouldn't do. Reads the
-    /// sprite sheet (`ctx.draw`, for modern colliders), the loaded maps, and
-    /// the console (camera/audio setup) straight off `ctx`.
+    /// Load a map by name through [`map_by_name`] (the loaded `maps` store).
+    /// Unknown names log and leave the current map in place — a typo'd warp or
+    /// a stale save name shouldn't take the player anywhere. Reads the sprite
+    /// sheet (`ctx.draw`, for modern colliders), the loaded maps, and the
+    /// console (camera/audio setup) straight off `ctx`.
     pub fn load_map_by_name<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, name: &str) {
         let Some(map_info) = map_by_name(&ctx.draw.indexed_sprites, name, ctx.maps) else {
             info!("load_map_by_name: unknown map {name:?}");
@@ -264,28 +262,25 @@ impl WalkaroundState {
 
     /// Record the player's position and the map they're on into `save` (the
     /// persistent progress on [`EggState`]). The engine flushes it to storage
-    /// at the end of the frame — this just updates the in-memory copy.
+    /// at the end of the frame — this just updates the in-memory copy. Saves
+    /// carry the map *name* only now (every map is named).
     fn save(&self, new_map: &str, save: &mut SaveData) {
         let pos = self.player_ref().pos;
         save.save_count += 1;
         save.current_map_name = Some(new_map.to_string());
-        // Legacy maps also refresh the numeric id, so a save written here
-        // still loads in old binaries. Modern (named-only) maps leave it
-        // untouched — there's no number that means them.
-        if let Some(index) = legacy_index(new_map) {
-            save.current_map = index.0 as u8;
-        }
         save.player_x = pos.x;
         save.player_y = pos.y;
     }
 
     pub fn load_pmem<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) {
         let save = ctx.save.clone();
-        // Pre-rename saves only carry the numeric id; translate it to a name
-        // and resolve everything through the one name-based loader.
+        // A save with no map name (a pre-name save, whose only map field was the
+        // numeric `current_map` we no longer read) falls back to the bedroom —
+        // where [`new_game`](Self::new_game) starts, so a save with a lost
+        // location resumes at the game's beginning rather than nowhere.
         let name = save
             .current_map_name
-            .unwrap_or_else(|| MapIndex(save.current_map.into()).name().to_string());
+            .unwrap_or_else(|| "bedroom".to_string());
         self.load_map_by_name(ctx, &name);
         self.player().pos.x = save.player_x;
         self.player().pos.y = save.player_y;
@@ -451,7 +446,6 @@ impl WalkaroundState {
                 MoveMode::Player => {
                     let (dx, dy) = shell.walk(
                         ctx.system,
-                        &ctx.draw.sprite_flags,
                         dx,
                         dy,
                         noclip,
@@ -471,7 +465,6 @@ impl WalkaroundState {
                     };
                     let (dx, dy) = shell.walk(
                         ctx.system,
-                        &ctx.draw.sprite_flags,
                         dx,
                         dy,
                         false,

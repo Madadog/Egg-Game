@@ -57,8 +57,8 @@ impl MenuState {
             ..Self::new()
         }
     }
-    /// The debug map-test menu: one entry per loaded modern map (legacy maps
-    /// are reachable through their warps; modern maps need an entry point).
+    /// The debug map-test menu: one entry per loaded map, so any map can be
+    /// jumped to directly rather than only reached through its warps.
     pub fn map_select(maps: &MapStore) -> Self {
         let entries = std::iter::once(MenuEntry::Debug(6))
             .chain(

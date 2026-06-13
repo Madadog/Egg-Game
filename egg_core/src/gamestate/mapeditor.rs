@@ -1506,8 +1506,8 @@ impl MapViewer {
                 }
             }),
             EditField::ToMap => self.modify_warp(map, |w| {
-                // The name is stored verbatim (empty = same-map warp);
-                // numeric strings keep working via `map_by_name`'s fallback.
+                // The name is stored verbatim (empty = same-map warp); it's
+                // resolved against the map store when the warp fires.
                 w.map = (!buffer.is_empty()).then(|| buffer.clone());
             }),
             EditField::ToX => {
@@ -1542,8 +1542,9 @@ impl MapViewer {
         }
     }
 
-    /// Persist the map and start the save-confirmation toast. Only modern maps
-    /// have a `.tmj` to write back to; legacy windows just log.
+    /// Persist the map and start the save-confirmation toast. A map only writes
+    /// back when it's in the store as a modern map; anything else (e.g. the
+    /// empty default map, source `""`) has no `.tmj` to save to and just logs.
     fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo, maps: &mut MapStore) {
         if maps.is_modern(&map.source) {
             let json = maps.get(&map.source).unwrap().to_tmj(&map.objects);

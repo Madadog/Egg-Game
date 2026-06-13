@@ -1,7 +1,5 @@
 {
   "maps": [
-    "bank1",
-    "bank2",
     "office",
     "bedroom1",
     "class1",
@@ -19,8 +17,5 @@
     "wilderness",
     "town",
     "piano_room"
-  ],
-  "tilesets": [
-    "tiles"
   ]
 }

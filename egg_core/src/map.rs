@@ -5,12 +5,11 @@ use crate::system::MapOptions;
 use crate::{
     camera::CameraBounds,
     data::{
-        map_data::{MapIndex, legacy_map},
         sound::{SfxData, music::MusicTrack},
         tmj::{ImageLayer, TiledMap, TiledMapLayer},
     },
     interact::{InteractFn, Interaction},
-    position::{Collider, Hitbox, Vec2, touches_tile},
+    position::{Collider, Hitbox, Vec2},
     system::drawing::image::{IndexedImage, RgbaImage},
 };
 
@@ -43,11 +42,10 @@ pub trait TileMap {
     fn step(&mut self, console: &impl ConsoleApi);
 }*/
 
-/// Every loaded Tiled map, keyed by file stem (`"bank1"`, `"office"`, …).
-/// This is the single owner of live tile data — legacy maps are windows into
-/// the big `bank1`/`bank2` surfaces, "modern" maps (those with an object
-/// layer) are self-contained — replacing the lossy tile copies the console
-/// used to keep. Draw, collision and the editor all read (and the editor
+/// Every loaded Tiled map, keyed by file stem (`"office"`, `"town"`, …). This
+/// is the single owner of live tile data: every map is self-contained — its
+/// content lives in its own `.tmj` — and resolves through [`map_by_name`] /
+/// [`modern_map_info`]. Draw, collision and the editor all read (and the editor
 /// writes) through here.
 #[derive(Debug, Default)]
 pub struct MapStore {
@@ -88,15 +86,13 @@ impl MapStore {
     }
 }
 
-/// Resolve a map name to its load metadata. A **modern** map in the store wins
-/// (its content lives in its `.tmj`), so an exported map shadows the hardcoded
-/// legacy builder of the same name; failing that the hardcoded legacy table is
-/// tried, then a name that parses as a number is re-resolved through the legacy
-/// name table (the one place old numeric saves and numeric `to_map` properties
-/// in existing `.tmj` files are translated). `None` when the name matches
-/// nothing. `indexed_sprites` is only read for the sprite art the modern
-/// collision layer derives its colliders from (the sheet that lives on
-/// [`crate::drawstate::DrawState`]).
+/// Resolve a map name to its load metadata: a **modern** map in the store
+/// ([`MapStore::is_modern`]) builds via [`modern_map_info`]; any other name —
+/// an unknown one, or a stale numeric string from an old save / `to_map`
+/// property — returns `None`. Every map is modern now (each lives in its own
+/// `.tmj`), so the store is the sole source. `indexed_sprites` is only read for
+/// the sprite art the modern collision layer derives its colliders from (the
+/// sheet that lives on [`crate::drawstate::DrawState`]).
 pub fn map_by_name(
     indexed_sprites: &IndexedImage,
     name: &str,
@@ -104,14 +100,6 @@ pub fn map_by_name(
 ) -> Option<MapInfo> {
     if maps.is_modern(name) {
         return Some(modern_map_info(indexed_sprites, name, maps.get(name)?));
-    }
-    if let Some(map) = legacy_map(name) {
-        return Some(map);
-    }
-    if let Ok(index) = name.parse::<usize>() {
-        // Re-resolve the numeric shim through the *name* so an old numeric
-        // save lands on the same (modern-first) map every door leads to.
-        return map_by_name(indexed_sprites, MapIndex(index).name(), maps);
     }
     None
 }
@@ -181,7 +169,7 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
                     offset: Vec2::new(tile_layer.offsetx as i16, tile_layer.offsety as i16),
                     source_layer: i,
                     transparent: Some(0),
-                    rotate_and_shift_flags: (tile_layer.palette_rotate(), 0),
+                    palette_rotate: tile_layer.palette_rotate(),
                     ..LayerInfo::DEFAULT_LAYER
                 };
                 push_bg_or_fg(&mut layers, &mut fg_layers, info, &tile_layer.name);
@@ -323,7 +311,7 @@ fn image_tile_size(image: &ImageLayer) -> (i16, i16) {
 }
 
 /// Slice an RGBA image into a `w`×`h` grid of 8×8 [`Collider`]s (row-major,
-/// matching [`layer_collides_flags`]'s `x + y * size.x` indexing): each cell is
+/// matching [`layer_collides`]'s `x + y * size.x` indexing): each cell is
 /// solid at the pixels whose alpha ≥ [`PAINTED_SOLID_ALPHA`]. Pixels past the
 /// image edge (when it isn't a whole multiple of 8) are treated as transparent.
 fn painted_colliders(pixels: &RgbaImage, w: i16, h: i16) -> Vec<Collider> {
@@ -357,8 +345,7 @@ pub struct MapInfo {
     pub objects: Vec<MapObject>,
     pub bg_colour: u8,
     pub music_track: Option<MusicTrack>,
-    /// Name of the [`MapStore`] map the layers window into: `"bank1"`/`"bank2"`
-    /// for the legacy windowed maps, the map's own name for modern maps.
+    /// Name of the [`MapStore`] map these layers draw from — the map's own name.
     /// Empty (the default) means no tile source — draw and collision guard on
     /// the lookup miss.
     pub source: String,
@@ -417,8 +404,9 @@ pub struct LayerInfo {
     pub size: Vec2,
     pub offset: Vec2,
     pub transparent: Option<u8>,
-    /// (rotate_palette, shift_sprite_flags)
-    pub rotate_and_shift_flags: (u8, u8),
+    /// Per-layer palette rotation: every palette index is shifted by this much
+    /// (wrapping at 16) when the layer draws (see [`palette_rotate`](Self::palette_rotate)).
+    pub palette_rotate: u8,
     pub visible: bool,
     pub source_layer: usize,
     pub colliders: Vec<Collider>,
@@ -434,7 +422,7 @@ impl LayerInfo {
         size: Vec2::new(30, 17),
         offset: Vec2::new(0, 0),
         transparent: None,
-        rotate_and_shift_flags: (0, 0),
+        palette_rotate: 0,
         visible: true,
         source_layer: 0,
         colliders: Vec::new(),
@@ -454,15 +442,12 @@ impl LayerInfo {
         self.transparent = Some(transparent[0]);
         self
     }
-    pub const fn with_rot_and_shift_flags(mut self, rot: u8, sprite_flag_shift: u8) -> Self {
-        self.rotate_and_shift_flags = (rot, sprite_flag_shift);
+    pub const fn with_palette_rotate(mut self, rotate: u8) -> Self {
+        self.palette_rotate = rotate;
         self
     }
     pub fn palette_rotate(&self) -> u8 {
-        self.rotate_and_shift_flags.0
-    }
-    pub fn shift_sprite_flags(&self) -> bool {
-        self.rotate_and_shift_flags.1 != 0
+        self.palette_rotate
     }
     pub fn draw_indexed(
         &self,
@@ -778,8 +763,10 @@ pub enum WarpMode {
 /// trigger hitbox now lives on the owning [`MapObject`], not here.
 #[derive(Clone, Debug)]
 pub struct Warp {
-    /// Destination map name (`None` = same map). Resolved via [`map_by_name`],
-    /// so numeric strings from old `.tmj` files keep working.
+    /// Destination map name (`None` = same map). Resolved via [`map_by_name`]
+    /// against the loaded [`MapStore`]; an unresolvable name (e.g. a stale
+    /// numeric `to_map` from an old `.tmj`) is a no-op (the warp keeps the
+    /// current map, logged).
     pub map: Option<String>,
     pub to: Vec2,
     pub flip: Axis,
@@ -845,20 +832,15 @@ impl Axis {
     }
 }
 
-/// Whether `point` collides with `layer` at this map position. `sprite_flags`
-/// is the per-tile flag table ([`crate::drawstate::DrawState::sprite_flags`]),
-/// consulted by tile id; the layer's own bitmap colliders are the second source.
+/// Whether `point` collides with `layer` at this map position, read from the
+/// layer's own bitmap [`Collider`]s. Every map is modern now: a tile layer's
+/// colliders are derived from its tile art ([`Collider::from_sprite`], see
+/// [`collision_tile_layer`]) and a `collision` image layer's from its painted
+/// mask, so both kinds answer purely from their collider grid.
 ///
-/// An **image-kind** layer ([`LayerKind::Image`]) skips the tile-flag path
-/// entirely — it has no tile data to look up, only its painted colliders — and
-/// its collider grid is indexed (and sampled) relative to the layer's pixel
-/// `offset`, so a mask placed at a non-tile-aligned offset still lines up.
-pub fn layer_collides_flags(
-    sprite_flags: &[u8],
-    point: Vec2,
-    layer: &LayerInfo,
-    tiles: &TiledMap,
-) -> bool {
+/// The grid is indexed (and sampled) relative to the layer's pixel `offset`, so
+/// a mask placed at a non-tile-aligned offset still lines up.
+pub fn layer_collides(point: Vec2, layer: &LayerInfo) -> bool {
     let layer_hitbox = layer.hitbox();
     if !layer_hitbox.touches_point(point) {
         return false;
@@ -867,21 +849,7 @@ pub fn layer_collides_flags(
     // coordinate both the collider cell index and the in-cell sample derive from.
     let local = Vec2::new(point.x - layer_hitbox.x, point.y - layer_hitbox.y);
     let map_point = Vec2::new(local.x / 8 + layer.origin.x, local.y / 8 + layer.origin.y);
-
-    // Image collision masks carry no tile data — bitmap colliders only, sampled
-    // at the offset-relative pixel so a non-tile-aligned offset stays exact.
-    if layer.kind == LayerKind::Image {
-        return collider_at(layer, map_point, local.x as usize, local.y as usize);
-    }
-
-    let spr_flag_offset = if layer.shift_sprite_flags() { 256 } else { 0 };
-    let id = tiles
-        .get(0, map_point.x as usize, map_point.y as usize)
-        .unwrap_or(0)
-        + spr_flag_offset;
-    let mget_collision = touches_tile(*sprite_flags.get(id).unwrap_or(&0), local);
-    let bitmap_collision = collider_at(layer, map_point, point.x as usize, point.y as usize);
-    mget_collision || bitmap_collision
+    collider_at(layer, map_point, local.x as usize, local.y as usize)
 }
 
 /// Sample `layer`'s bitmap collider grid: the cell at tile coordinate
@@ -929,38 +897,27 @@ mod tests {
         }
     }
 
-    /// Legacy names resolve through the hardcoded table, with their tile
-    /// source pointing at the right bank surface.
+    /// Resolution is store-only now: a name with no store entry — including a
+    /// former legacy-builder name like "town" — returns `None` (there is no
+    /// hardcoded fallback table any more), as does an unknown name.
     #[test]
-    fn map_by_name_resolves_legacy_name() {
+    fn map_by_name_unknown_name_is_none() {
         let console = TestConsole::new();
         let store = MapStore::default();
-        let town =
-            map_by_name(&console.indexed_sprites, "town", &store).expect("town is a legacy map");
-        assert_eq!(town.source, "bank2");
-        assert_eq!(town.fg_layers.len(), 1);
+        assert!(
+            map_by_name(&console.indexed_sprites, "town", &store).is_none(),
+            "a legacy name with no store entry no longer resolves"
+        );
         assert!(map_by_name(&console.indexed_sprites, "no_such_map", &store).is_none());
     }
 
-    /// Numeric strings (old saves / numeric `to_map` properties) fall back to
-    /// the legacy index → name mapping: "4" is the bedroom.
+    /// Numeric strings (old saves / numeric `to_map` properties) are not map
+    /// names and resolve to nothing — the numeric-id shim is gone.
     #[test]
-    fn map_by_name_resolves_numeric_fallback() {
+    fn map_by_name_numeric_string_is_none() {
         let console = TestConsole::new();
         let store = MapStore::default();
-        let bedroom =
-            map_by_name(&console.indexed_sprites, "4", &store).expect("4 is a legacy index");
-        assert_eq!(bedroom.source, "bank1");
-        // The bedroom's room layer windows into bank1 at (30, 0).
-        assert_eq!(bedroom.layers[0].origin, Vec2::new(30, 0));
-        let ObjectEffect::Warp(warp) = &bedroom.objects[0].effect else {
-            panic!("the bedroom's first object is its stairwell warp");
-        };
-        assert_eq!(
-            warp.map.as_deref(),
-            Some("house_stairwell"),
-            "resolved the same map the bedroom() builder describes"
-        );
+        assert!(map_by_name(&console.indexed_sprites, "4", &store).is_none());
     }
 
     /// Modern names build their MapInfo from the map's own layers: layer 0
@@ -1246,19 +1203,13 @@ mod tests {
         assert_eq!(info.layers.len(), 2);
         assert!(info.layers.iter().all(|l| l.kind == LayerKind::Image));
         // The collision mask blocks the painted pixel via the bitmap path.
-        let map = store.get("pure").unwrap();
         let mask_layer = info.layers.iter().find(|l| !l.visible).unwrap();
         assert!(
-            layer_collides_flags(&[], Vec2::new(0, 0), mask_layer, map),
+            layer_collides(Vec2::new(0, 0), mask_layer),
             "the painted pixel at (0,0) collides"
         );
         // A point well outside the mask doesn't.
-        assert!(!layer_collides_flags(
-            &[],
-            Vec2::new(7, 0),
-            mask_layer,
-            map
-        ));
+        assert!(!layer_collides(Vec2::new(7, 0), mask_layer));
     }
 
     /// A collision mask placed at a non-tile-aligned offset still collides at the
@@ -1286,18 +1237,12 @@ mod tests {
             },
         );
         let info = map_by_name(&console.indexed_sprites, "offset", &store).unwrap();
-        let map = store.get("offset").unwrap();
         let layer = &info.layers[0];
         assert_eq!(layer.offset, Vec2::new(-36, -16));
         // The solid pixel is at the mask's top-left → world (−36, −16).
-        assert!(layer_collides_flags(
-            &[],
-            Vec2::new(-36, -16),
-            layer,
-            map
-        ));
+        assert!(layer_collides(Vec2::new(-36, -16), layer));
         // World (0, 0) is 36px right / 16px down into transparent mask area.
-        assert!(!layer_collides_flags(&[], Vec2::new(0, 0), layer, map));
+        assert!(!layer_collides(Vec2::new(0, 0), layer));
     }
 
     /// A collision image layer whose pixels never arrived derives **empty**
@@ -1337,8 +1282,7 @@ mod tests {
         assert_eq!(layer.size, Vec2::new(0, 0));
         assert!(layer.colliders.is_empty());
         // Collision is a clean no-op (the layer hitbox is empty).
-        let map = store.get("broken").unwrap();
-        assert!(!layer_collides_flags(&[], Vec2::new(0, 0), layer, map));
+        assert!(!layer_collides(Vec2::new(0, 0), layer));
     }
 
     /// The real bedroom1 builds a `MapInfo` without panicking now that image

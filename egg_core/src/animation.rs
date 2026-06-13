@@ -22,8 +22,8 @@ use crate::system::SpriteOptions;
 /// One frame of an object's animated sprite. Serde-serialisable so an object's
 /// full sprite (multi-frame, per-frame offsets/durations, palette rotation,
 /// outline, multi-tile [`SpriteOptions`]) can round-trip through a map file's
-/// `anim` object property — the legacy builders carry sprites richer than a
-/// single static tile id, and the `.tmj` export must preserve every one. The
+/// `anim` object property — some maps carry sprites richer than a single static
+/// tile id, and the `.tmj` codec must preserve every one. The
 /// `#[serde(default)]`s let a partial frame (just a `spr_id`, say) still parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnimFrame {

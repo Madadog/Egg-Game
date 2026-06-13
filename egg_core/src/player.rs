@@ -321,14 +321,13 @@ impl Shell {
     pub fn walk(
         &mut self,
         system: &mut impl ConsoleApi,
-        sprite_flags: &[u8],
         mut dx: i16,
         mut dy: i16,
         noclip: bool,
         current_map: &MapInfo,
         tiles: Option<&TiledMap>,
     ) -> (i16, i16) {
-        use crate::map::layer_collides_flags;
+        use crate::map::layer_collides;
 
         if dx == 0 && dy == 0 {
             return (dx, dy);
@@ -345,8 +344,10 @@ impl Shell {
         }
 
         // No tile source loaded for this map (e.g. the empty default map):
-        // nothing to collide with, so walk freely.
-        let Some(tiles) = tiles else {
+        // nothing to collide with, so walk freely. (Collision reads the layers'
+        // own colliders, not the tile data, so the handle itself is unused —
+        // its presence is the "this map has a tile source" signal.)
+        let Some(_tiles) = tiles else {
             return (dx, dy);
         };
 
@@ -373,21 +374,17 @@ impl Shell {
                 continue;
             }
             [dx_collision_x, dx_collision_up, dx_collision_down] = test_many_points(
-                sprite_flags,
                 layer,
-                tiles,
                 [points_dx, points_dx_up, points_dx_down],
                 [dx_collision_x, dx_collision_up, dx_collision_down],
             );
             [dy_collision_y, dy_collision_left, dy_collision_right] = test_many_points(
-                sprite_flags,
                 layer,
-                tiles,
                 [points_dy, points_dy_left, points_dy_right],
                 [dy_collision_y, dy_collision_left, dy_collision_right],
             );
             if let Some(point_diag) = point_diag
-                && layer_collides_flags(sprite_flags, point_diag, layer, tiles)
+                && layer_collides(point_diag, layer)
             {
                 diagonal_collision = true;
             }
@@ -475,17 +472,15 @@ impl Shell {
 }
 
 fn test_many_points(
-    sprite_flags: &[u8],
     layer: &LayerInfo,
-    tiles: &TiledMap,
     points: [Option<[Vec2; 2]>; 3],
     mut side_flags: [bool; 3],
 ) -> [bool; 3] {
-    use crate::map::layer_collides_flags;
+    use crate::map::layer_collides;
     for (i, points) in points.iter().enumerate() {
         if let Some(points) = points {
             points.iter().for_each(|point| {
-                if layer_collides_flags(sprite_flags, *point, layer, tiles) {
+                if layer_collides(*point, layer) {
                     side_flags[i] = true;
                 }
             });

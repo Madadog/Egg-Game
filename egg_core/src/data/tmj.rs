@@ -30,86 +30,6 @@ pub fn from_json(bytes: &[u8]) -> Result<TiledMap, serde_json::Error> {
     Ok(map)
 }
 
-/// Parse a Tiled tileset file (`.tsj`) into a [`TilesetFile`]. The host reads
-/// the bytes (its asset pipeline) and calls this, mirroring [`from_json`] for
-/// maps — the byte-level loading stays host-side, the codec stays here.
-pub fn tileset_from_json(bytes: &[u8]) -> Result<TilesetFile, serde_json::Error> {
-    serde_json::from_slice(bytes)
-}
-
-/// A Tiled tileset file (`.tsj`), parsed for exactly what the engine needs from
-/// it: its geometry (`tilecount`, `columns`) and the per-tile custom properties
-/// that carry our gameplay data — today only the collision `flags` int. Every
-/// other tileset field (image path, margins, version…) is ignored on load, so
-/// Tiled stays free to add or reorder them. This is the data form of what used
-/// to be the hardcoded blob in [`crate::data::sprite_flags`]; see
-/// [`flag_table`](Self::flag_table).
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct TilesetFile {
-    /// Number of tiles in the sheet (sheet width × height in tiles).
-    pub tilecount: usize,
-    /// Tiles per row — the sheet's width in tiles (32 for the egg sheet). This
-    /// is the stride the flag table is indexed by, matching the `x + y * 32`
-    /// layout the [`crate::map::layer_collides_flags`] reader expects.
-    pub columns: usize,
-    /// Only the tiles that carry custom properties. Tiled omits the rest, so an
-    /// absent tile id means "no properties" (flags 0).
-    #[serde(default)]
-    pub tiles: Vec<TilesetTile>,
-}
-impl TilesetFile {
-    /// Build the flat per-tile collision-flag table the runtime consults, sized
-    /// `tilecount` and indexed by **plain sheet position** (`id`, i.e. column +
-    /// row × `columns`) — exactly the index [`crate::map::layer_collides_flags`]
-    /// derives from `tiles.get(0, x, y)` and the index the output of the legacy
-    /// `parse_sprite_flags` lands at. Each tile's `flags` int property (absent =
-    /// 0) becomes `table[id]`. No byte-swap and no 16-wide/32-wide split: that
-    /// TIC-80 quirk is now baked into the exported `.tsj` data once and for all,
-    /// so the ids here are honest sheet positions and the lookup is a direct
-    /// index. The 256-offset `shift_sprite_flags` the reader applies is a
-    /// *read-side* window into this same table, not part of its construction.
-    pub fn flag_table(&self) -> Vec<u8> {
-        let mut flags = vec![0u8; self.tilecount];
-        for tile in &self.tiles {
-            if let Some(slot) = flags.get_mut(tile.id) {
-                *slot = tile.flags();
-            }
-        }
-        flags
-    }
-}
-
-/// One tile's per-tile data in a [`TilesetFile`]: its sheet id and the custom
-/// properties Tiled stored on it. Only tiles with properties are present.
-#[derive(Clone, Debug, Deserialize)]
-pub struct TilesetTile {
-    /// Sheet-local tile id (column + row × `columns`).
-    pub id: usize,
-    #[serde(default)]
-    pub properties: Vec<TileProperty>,
-}
-impl TilesetTile {
-    /// This tile's collision `flags` (the `flags` int property), clamped into a
-    /// `u8` to match the runtime table; absent or out-of-range = 0.
-    fn flags(&self) -> u8 {
-        self.properties
-            .iter()
-            .find(|p| p.name == "flags")
-            .and_then(|p| u8::try_from(p.value).ok())
-            .unwrap_or(0)
-    }
-}
-
-/// A Tiled integer custom property (`{ name, type: "int", value }`) as stored on
-/// a tileset tile. Distinct from the object layer's string [`ObjectProperties`]:
-/// Tiled serialises an `int` property's `value` as a JSON number, so this reads
-/// it as one (and the only tile property we consume today, `flags`, is an int).
-#[derive(Clone, Debug, Deserialize)]
-pub struct TileProperty {
-    pub name: String,
-    pub value: i64,
-}
-
 /// Parse the game asset manifest (`assets/game.manifest`) into a [`GameManifest`].
 /// JSON content, but a bespoke extension so it doesn't collide with the script
 /// loader (which owns `.json`); the host reads the bytes and calls this, just
@@ -120,15 +40,15 @@ pub fn manifest_from_json(bytes: &[u8]) -> Result<GameManifest, serde_json::Erro
 
 /// The game's asset manifest: the data-driven list of what to load at boot,
 /// replacing a hardcoded set of map paths in the host. Each entry is a **base
-/// name** (file stem), not a path — the host expands `maps/<name>.tmj` and
-/// `maps/<name>.tsj`, and stores each loaded map in the [`crate::map::MapStore`]
-/// under that same stem (which is also the name the in-game editor saves back
-/// to). Shaped to grow: new asset categories become new fields, and both lists
-/// default to empty so a partial manifest still parses.
+/// name** (file stem), not a path — the host expands `maps/<name>.tmj`, and
+/// stores each loaded map in the [`crate::map::MapStore`] under that same stem
+/// (which is also the name the in-game editor saves back to). Shaped to grow:
+/// new asset categories become new fields, and the list defaults to empty so a
+/// partial manifest still parses.
 ///
 /// Serialised as JSON in `assets/game.manifest`:
 /// ```json
-/// { "maps": ["bank1", "office", ...], "tilesets": ["tiles"] }
+/// { "maps": ["office", "town", ...] }
 /// ```
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GameManifest {
@@ -136,17 +56,13 @@ pub struct GameManifest {
     /// the names become the [`crate::map::MapStore`] keys.
     #[serde(default)]
     pub maps: Vec<String>,
-    /// Tileset file stems to load (`maps/<name>.tsj`) for their per-tile data
-    /// (today: the collision flag table). Usually just `"tiles"`.
-    #[serde(default)]
-    pub tilesets: Vec<String>,
 }
 
 /// A typed Tiled custom property (`{ name, type, value }`) read for round-trip
-/// fidelity. Unlike the kind-specific [`TileProperty`] (int), [`ObjectProperties`]
-/// (string) and [`ImageLayerProperty`] (bool), this keeps the raw `value` as a
-/// JSON [`Value`] and carries the Tiled `type` tag, so any property — the
-/// int-valued `palette_rotate` on a tile layer, the int `bg_colour` or string
+/// fidelity. Unlike the kind-specific [`ObjectProperties`] (string) and
+/// [`ImageLayerProperty`] (bool), this keeps the raw `value` as a JSON
+/// [`Value`] and carries the Tiled `type` tag, so any property — the int-valued
+/// `palette_rotate` on a tile layer, the int `bg_colour` or string
 /// `camera_stick` at map level — parses and re-serialises unchanged. The engine
 /// only consumes a handful by name; the rest survive an in-game save verbatim.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -233,8 +149,7 @@ pub struct TileLayer {
     #[serde(default)]
     pub offsety: f64,
     /// Custom properties — read only for the int `palette_rotate` (a per-layer
-    /// palette rotation, the modern spelling of the legacy `rotate_and_shift_flags`
-    /// first field). Round-tripped verbatim.
+    /// palette rotation). Round-tripped verbatim.
     #[serde(default)]
     pub properties: Vec<Property>,
 }
@@ -243,7 +158,8 @@ impl TileLayer {
         self.data.get(y.checked_mul(self.width)? + x).copied()
     }
     /// This layer's `palette_rotate` property (the per-layer palette rotation
-    /// fed into [`LayerInfo`]'s `rotate_and_shift_flags.0`), or 0 if absent.
+    /// fed into [`LayerInfo::palette_rotate`](crate::map::LayerInfo::palette_rotate)),
+    /// or 0 if absent.
     pub fn palette_rotate(&self) -> u8 {
         property_int(&self.properties, "palette_rotate")
             .and_then(|v| u8::try_from(v).ok())
@@ -367,9 +283,8 @@ impl ImageLayer {
 
 /// A Tiled boolean custom property (`{ name, type: "bool", value }`) as carried
 /// on an image layer. Distinct from the object layer's string
-/// [`ObjectProperties`] and the tileset's int [`TileProperty`]: a `bool`
-/// property's `value` is a JSON boolean, and the only one the engine reads is
-/// the collision-mask marker.
+/// [`ObjectProperties`]: a `bool` property's `value` is a JSON boolean, and the
+/// only one the engine reads is the collision-mask marker.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ImageLayerProperty {
     pub name: String,
@@ -525,9 +440,9 @@ impl TiledObject {
         )])
     }
     /// Build a warp effect if this object is one (`type == "warp"`, or it carries
-    /// warp properties): `to_map` (a map name, taken verbatim — numeric values
-    /// from old files resolve through `map_by_name`'s fallback; absent = same
-    /// map), `to_x`/`to_y` (destination pixels, default = the object's own
+    /// warp properties): `to_map` (a map name, taken verbatim and resolved
+    /// against the map store when the warp fires; absent = same map),
+    /// `to_x`/`to_y` (destination pixels, default = the object's own
     /// position), `flip`, `mode` (`auto`/`interact`), `sound`, and `narration`
     /// (a pre-warp dialogue key; absent/empty = none). The trigger hitbox lives
     /// on the owning [`MapObject`], and the `trigger` axis is applied there too
@@ -1039,9 +954,7 @@ impl TiledMap {
 // Tests for map serialization/deserialization:
 #[cfg(test)]
 mod tests {
-    use super::{
-        GameManifest, TiledMap, TiledMapLayer, from_json, manifest_from_json, tileset_from_json,
-    };
+    use super::{GameManifest, TiledMap, TiledMapLayer, from_json, manifest_from_json};
     use crate::interact::{InteractFn, Interaction};
     use crate::map::{MapObject, ObjectEffect, Trigger, WarpMode};
     use crate::system::drawing::image::RgbaImage;
@@ -1058,61 +971,18 @@ mod tests {
             .expect("map has an image layer")
     }
 
-    /// A small inline `.tsj` snippet parses and its `flag_table` indexes by
-    /// plain sheet id: tile 1 → flags 1, tile 35 → flags 8, every absent tile
-    /// (including a clamped out-of-range value) → 0.
-    #[test]
-    fn tileset_parses_inline_snippet() {
-        let json = r#"{
-            "columns": 32, "tilecount": 64, "type": "tileset",
-            "tiles": [
-                { "id": 1, "properties": [{ "name": "flags", "type": "int", "value": 1 }] },
-                { "id": 35, "properties": [{ "name": "flags", "type": "int", "value": 8 }] },
-                { "id": 40, "properties": [{ "name": "other", "type": "int", "value": 9 }] }
-            ]
-        }"#;
-        let tileset = tileset_from_json(json.as_bytes()).unwrap();
-        assert_eq!(tileset.tilecount, 64);
-        assert_eq!(tileset.columns, 32);
-        let table = tileset.flag_table();
-        assert_eq!(table.len(), 64, "table is sized by tilecount");
-        assert_eq!(table[1], 1);
-        assert_eq!(table[35], 8);
-        assert_eq!(table[40], 0, "a non-`flags` property contributes nothing");
-        assert_eq!(table[0], 0, "absent tiles are 0");
-    }
-
-    /// The real `assets/maps/tiles.tsj` parses and is the full 2048-tile sheet
-    /// with exactly the tiles that carry nonzero flags.
-    #[test]
-    fn tileset_parses_real_tiles_tsj() {
-        let bytes = std::fs::read("../assets/maps/tiles.tsj").unwrap();
-        let tileset = tileset_from_json(&bytes).unwrap();
-        assert_eq!(tileset.tilecount, 2048);
-        assert_eq!(tileset.columns, 32);
-        let table = tileset.flag_table();
-        assert_eq!(table.len(), 2048);
-        // Spot-check a couple of known entries (see the exported tsj).
-        assert_eq!(table[1], 1);
-        assert_eq!(table[490], 10);
-        // Exactly the nonzero tiles the export carries.
-        assert_eq!(table.iter().filter(|&&f| f != 0).count(), 149);
-    }
-
-    /// The manifest parses and lists the maps/tilesets to load.
+    /// The manifest parses and lists the maps to load.
     #[test]
     fn manifest_parses() {
         let json = r#"{
-            "maps": ["bank1", "office"],
-            "tilesets": ["tiles"]
+            "maps": ["office", "town"]
         }"#;
         let manifest: GameManifest = manifest_from_json(json.as_bytes()).unwrap();
-        assert_eq!(manifest.maps, vec!["bank1", "office"]);
-        assert_eq!(manifest.tilesets, vec!["tiles"]);
+        assert_eq!(manifest.maps, vec!["office", "town"]);
     }
 
-    /// The real `assets/game.manifest` parses and names every shipping map plus
-    /// the tileset, and deliberately excludes the backup map.
+    /// The real `assets/game.manifest` parses and names every shipping map, and
+    /// deliberately excludes the backup map.
     #[test]
     fn real_manifest_parses() {
         let bytes = std::fs::read("../assets/game.manifest").unwrap();
@@ -1123,7 +993,6 @@ mod tests {
             !manifest.maps.iter().any(|m| m.contains("backup")),
             "the backup map is not shipped"
         );
-        assert_eq!(manifest.tilesets, vec!["tiles"]);
     }
 
     /// The destination-map name of an object's warp effect, or `None` if it
@@ -1152,10 +1021,10 @@ mod tests {
     }
     #[test]
     fn test_map_deserialization() {
-        let json = std::fs::read_to_string("../assets/maps/bank1.tmj").unwrap();
+        let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
-        assert_eq!(map.width, 240);
-        assert_eq!(map.height, 136);
+        assert_eq!(map.width, 28);
+        assert_eq!(map.height, 16);
     }
 
     #[test]
@@ -1210,8 +1079,9 @@ mod tests {
             panic!("the parsed object is a warp");
         };
         assert_eq!((warp.to.x, warp.to.y), (120, 40));
-        // The numeric id is kept verbatim — resolution to a legacy map happens
-        // in `map_by_name`, not here.
+        // The `to_map` string is kept verbatim — resolution against the map
+        // store happens in `map_by_name`, not here (a stale numeric like this
+        // simply won't resolve there).
         assert_eq!(warp.map.as_deref(), Some("4"));
         assert!(matches!(warp.mode, WarpMode::Auto));
         assert!(warp.sound.is_some());
@@ -1340,8 +1210,7 @@ mod tests {
     }
 
     /// A warp whose `to_map` is a map *name* survives serialise → reparse with
-    /// the name intact (names are the canonical map identity; numbers are only
-    /// a legacy fallback).
+    /// the name intact (names are the only map identity now).
     #[test]
     fn tmj_round_trips_named_warp() {
         let json = r#"{

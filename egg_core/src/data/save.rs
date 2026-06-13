@@ -56,12 +56,11 @@ pub struct SaveData {
     /// TODO: Convert between item and id.
     pub inventory: [u8; 8],
 
-    /// Legacy numeric map id (a `MapIndex`), retained so saves written here
-    /// stay readable by old binaries and old saves keep loading. When both
-    /// are present, `current_map_name` wins.
-    pub current_map: u8,
     /// Name of the map the player saved on. `None` in saves written before
-    /// maps were named — loading then falls back to the numeric `current_map`.
+    /// maps were named — loading then falls back to the bedroom (see
+    /// [`WalkaroundState::load_pmem`](crate::gamestate::walkaround::WalkaroundState::load_pmem)).
+    /// Old saves carrying the long-removed numeric `current_map` field still
+    /// load: that key is simply ignored (no `deny_unknown_fields`).
     #[serde(default)]
     pub current_map_name: Option<String>,
     pub player_x: i16,
@@ -95,25 +94,22 @@ impl SaveData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::map_data::MapIndex;
 
-    /// Saves written before maps were named carry only the numeric map id and
-    /// no `current_map_name` key at all; they must still deserialise, and the
-    /// numeric id must resolve to the right legacy name.
+    /// A pre-name save carries the long-removed numeric `current_map` field and
+    /// no `current_map_name` key at all; it must still deserialise (the unknown
+    /// numeric field is ignored), with the name defaulting cleanly to `None` so
+    /// the loader falls back to the bedroom.
     #[test]
-    fn old_numeric_save_resolves_to_legacy_name() {
-        // Serialise a current save, then strip the name field to reproduce the
-        // exact shape an old binary wrote (all fields present except the name).
-        let mut value = serde_json::to_value(SaveData {
-            current_map: 4,
-            ..SaveData::default()
-        })
-        .unwrap();
-        value.as_object_mut().unwrap().remove("current_map_name");
+    fn old_numeric_save_still_loads_ignoring_numeric_field() {
+        // Reproduce the exact shape an old binary wrote: a current save plus the
+        // numeric `current_map` field, with no `current_map_name` key.
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        obj.insert("current_map".to_string(), serde_json::json!(4));
+        obj.remove("current_map_name");
 
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert_eq!(save.current_map_name, None);
-        assert_eq!(MapIndex(save.current_map.into()).name(), "bedroom");
     }
 
     /// A populated save survives a pretty-print/parse round trip unchanged —
@@ -125,7 +121,7 @@ mod tests {
             instructions_read: true,
             egg_count: 1234,
             inventory: [1, 2, 3, 4, 5, 6, 7, 8],
-            current_map: 9,
+            current_map_name: Some("town".to_string()),
             player_x: -42,
             player_y: 300,
             ..SaveData::default()
