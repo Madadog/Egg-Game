@@ -153,31 +153,35 @@ pub const FOOTSTEP_PLAIN: SfxData = SfxData::new(
 );
 
 pub mod music {
+    use std::borrow::Cow;
+
+    /// A music track, identified by name — its file stem under `assets/music/`,
+    /// which the host loads as `music/<id>.ogg`. The set of *real* tracks is
+    /// discovered from that directory at runtime (see
+    /// [`ConsoleApi::music_tracks`](crate::system::ConsoleApi::music_tracks)),
+    /// not hardcoded; a map stores a track by name in its `music` property.
     #[derive(Debug, Clone)]
     pub struct MusicTrack {
-        pub id: &'static str,
+        pub id: Cow<'static, str>,
         pub speed: f32,
     }
     impl MusicTrack {
+        /// A track with a static name — for an engine-fixed track like the intro.
         pub const fn new(id: &'static str) -> Self {
             Self {
-                id,
+                id: Cow::Borrowed(id),
                 speed: 1.0,
             }
         }
-        pub const INTRO: MusicTrack = MusicTrack::new("intro");
-        pub const MENU: MusicTrack = MusicTrack::new("menu");
-        pub const SUPERMARKET: MusicTrack = MusicTrack::new("supermarket");
-
-        /// Every track addressable by name — the set a map's `music` property is
-        /// resolved against (and the set the editor's Setup picker cycles).
-        pub const ALL: [MusicTrack; 3] = [Self::INTRO, Self::MENU, Self::SUPERMARKET];
-
-        /// Resolve a track *name* (a map's stored `music` string) to a track, or
-        /// `None` if no track has that id — mirroring how a warp's `to_map` name
-        /// resolves against the map store (an unknown name simply no-ops).
-        pub fn by_name(name: &str) -> Option<MusicTrack> {
-            Self::ALL.iter().find(|t| t.id == name).cloned()
+        /// A track named at runtime — from a map's `music` property or a filename
+        /// in the music directory.
+        pub fn named(name: impl Into<String>) -> Self {
+            Self {
+                id: Cow::Owned(name.into()),
+                speed: 1.0,
+            }
         }
+        /// The intro theme, played by the title sequence.
+        pub const INTRO: MusicTrack = MusicTrack::new("intro");
     }
 }

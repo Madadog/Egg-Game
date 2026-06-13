@@ -31,6 +31,11 @@ pub struct FantasyConsole {
     pub output_screen: RgbaImage,
     pub font: Font,
     music: Option<(MusicTrack, bool)>,
+    /// Available music tracks, keyed by name (file stem), discovered from
+    /// `assets/music/` at construction. Drives the editor's track picker and
+    /// validates a map's requested track. Empty where the dir can't be scanned
+    /// (web), in which case any requested track plays as-is.
+    music_registry: HashMap<String, MusicTrack>,
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
     /// Set by [`ConsoleApi::exit`]; a host system polls
@@ -45,6 +50,7 @@ impl FantasyConsole {
             output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             font: Font::blank(),
             music: None,
+            music_registry: scan_music_dir(),
             sounds: HashMap::new(),
             input: EggInput::new(),
             exit_requested: false,
@@ -161,11 +167,28 @@ impl ConsoleApi for FantasyConsole {
 
     fn music(&mut self, track: Option<&MusicTrack>) {
         info!("Playing track \"{:?}\"", track);
-        if let Some(track) = track {
-            self.music = Some((track.clone(), false));
-        } else {
-            self.music = None;
+        match track {
+            // Only play a track the music dir actually has (an unknown name — a
+            // typo or removed file — is a silent no-op, like a dangling warp).
+            // Where the dir can't be scanned the registry is empty, so play as-is.
+            Some(track)
+                if self.music_registry.is_empty()
+                    || self.music_registry.contains_key(&*track.id) =>
+            {
+                self.music = Some((track.clone(), false));
+            }
+            Some(track) => {
+                info!("music: no track named {:?} in assets/music", track.id);
+                self.music = None;
+            }
+            None => self.music = None,
         }
+    }
+
+    fn music_tracks(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.music_registry.keys().cloned().collect();
+        names.sort();
+        names
     }
 
     fn sfx(&mut self, sfx_id: &str, opts: egg_core::system::SfxOptions) {
@@ -289,6 +312,33 @@ impl ConsoleApi for FantasyConsole {
 /// authoring/asset data under the `assets/` tree.
 fn is_user_data(path: &str) -> bool {
     path == egg_core::data::save::SAVE_PATH || path.starts_with("save/")
+}
+
+/// Discover the music tracks under `assets/music/` — one [`MusicTrack`] per
+/// `.ogg`, keyed by file stem (the name a map's `music` property stores and the
+/// host loads as `music/<stem>.ogg`). Native scans the directory; web has no
+/// filesystem to scan, so it reports none (the editor's picker is a native
+/// authoring tool, and a map plays its stored name regardless).
+#[cfg(not(target_arch = "wasm32"))]
+fn scan_music_dir() -> HashMap<String, MusicTrack> {
+    let mut tracks = HashMap::new();
+    let Ok(entries) = std::fs::read_dir("assets/music") else {
+        return tracks;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("ogg")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            tracks.insert(stem.to_string(), MusicTrack::named(stem));
+        }
+    }
+    tracks
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scan_music_dir() -> HashMap<String, MusicTrack> {
+    HashMap::new()
 }
 
 /// Validate an asset-namespace `path` and resolve it under `assets/`. The

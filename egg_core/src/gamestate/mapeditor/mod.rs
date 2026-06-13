@@ -9,7 +9,7 @@
 
 use crate::{
     data::{
-        sound::{self, SfxData, music::MusicTrack},
+        sound::{self, SfxData},
         tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
     },
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate},
@@ -2735,25 +2735,28 @@ impl MapViewer {
             }
             EditorKey::MusicCycle => {
                 if click {
-                    self.cycle_music(map, maps);
+                    // The available tracks are discovered from the music dir by
+                    // the host (engine-agnostic); the map stores the chosen name.
+                    let tracks = system.music_tracks();
+                    self.cycle_music(map, maps, &tracks);
                 }
             }
         }
     }
 
-    /// Step the map's `music` property through `[none] + the known tracks`, by
-    /// name — the same string-indexed model as a warp's `to_map`. Stored on the
+    /// Step the map's `music` property through `[none] + tracks`, by name — the
+    /// same string-indexed model as a warp's `to_map`. `tracks` are the music
+    /// directory's file stems (from [`ConsoleApi::music_tracks`]). Stored on the
     /// map (saved + resolved at load); not on the undo stack, like the panel's
     /// other map settings, and it takes effect on the next map load.
-    fn cycle_music(&mut self, map: &MapInfo, maps: &mut MapStore) {
-        let names: Vec<&'static str> = MusicTrack::ALL.iter().map(|t| t.id).collect();
+    fn cycle_music(&mut self, map: &MapInfo, maps: &mut MapStore, tracks: &[String]) {
         let Some(tm) = maps.get_mut(&map.source) else { return };
         let current = match tm.music() {
             None => 0,
-            Some(c) => names.iter().position(|n| *n == c).map_or(0, |i| i + 1),
+            Some(c) => tracks.iter().position(|n| n == c).map_or(0, |i| i + 1),
         };
-        let next = (current + 1) % (names.len() + 1);
-        tm.set_music((next > 0).then(|| names[next - 1]));
+        let next = (current + 1) % (tracks.len() + 1);
+        tm.set_music((next > 0).then(|| tracks[next - 1].as_str()));
         self.status.edited();
     }
 
@@ -5134,7 +5137,8 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((0.0, 0.0)));
     }
 
-    /// The Setup music picker steps through `[none] + the known tracks` and wraps.
+    /// The Setup music picker steps through `[none] + the available tracks` (the
+    /// host's music-dir listing) and wraps.
     #[test]
     fn music_picker_cycles_tracks() {
         use crate::data::tmj::TiledMap;
@@ -5142,16 +5146,18 @@ mod tests {
         maps.insert("m", TiledMap::blank_modern(2, 2));
         let map = MapInfo { source: "m".to_string(), ..MapInfo::default() };
         let mut v = MapViewer::default();
+        let tracks = vec!["filler".to_string(), "intro".to_string()];
         let music = |maps: &MapStore| maps.get("m").unwrap().music().map(str::to_string);
 
         assert_eq!(music(&maps), None);
-        v.cycle_music(&map, &mut maps);
+        v.cycle_music(&map, &mut maps, &tracks);
+        assert_eq!(music(&maps).as_deref(), Some("filler"));
+        v.cycle_music(&map, &mut maps, &tracks);
         assert_eq!(music(&maps).as_deref(), Some("intro"));
-        v.cycle_music(&map, &mut maps);
-        assert_eq!(music(&maps).as_deref(), Some("menu"));
-        v.cycle_music(&map, &mut maps);
-        assert_eq!(music(&maps).as_deref(), Some("supermarket"));
-        v.cycle_music(&map, &mut maps); // wraps back to none
+        v.cycle_music(&map, &mut maps, &tracks); // wraps back to none
+        assert_eq!(music(&maps), None);
+        // An empty track list keeps it at none (no host music dir).
+        v.cycle_music(&map, &mut maps, &[]);
         assert_eq!(music(&maps), None);
     }
 

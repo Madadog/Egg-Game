@@ -39,6 +39,13 @@ pub trait ConsoleApi {
     // Audio
     fn music(&mut self, track: Option<&MusicTrack>);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
+    /// The names of every available music track (file stems under
+    /// `assets/music/`), for the editor's track picker. Default: none — a host
+    /// without a scannable music directory (e.g. headless/web) reports an empty
+    /// set, which is fine since the map stores the chosen track by name anyway.
+    fn music_tracks(&self) -> Vec<String> {
+        Vec::new()
+    }
 
     // Asset access.
     /// Persist `bytes` to the host's string-named file store. `path` is a

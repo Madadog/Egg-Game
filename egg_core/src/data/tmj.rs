@@ -1963,15 +1963,12 @@ mod tests {
     /// `palette_rotate` set/clear correctly (rotate 0 drops the property).
     #[test]
     fn music_and_layer_props_round_trip() {
-        use crate::data::sound::music::MusicTrack;
         let mut m = TiledMap::blank_modern(2, 2);
 
         assert_eq!(m.music(), None);
         m.set_music(Some("supermarket"));
         let reloaded: TiledMap = serde_json::from_str(&m.to_tmj(&[])).unwrap();
         assert_eq!(reloaded.music(), Some("supermarket"));
-        assert!(MusicTrack::by_name("supermarket").is_some());
-        assert!(MusicTrack::by_name("nope").is_none());
         m.set_music(None);
         assert_eq!(m.music(), None);
 
