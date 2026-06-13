@@ -168,5 +168,16 @@ pub mod music {
         pub const INTRO: MusicTrack = MusicTrack::new("intro");
         pub const MENU: MusicTrack = MusicTrack::new("menu");
         pub const SUPERMARKET: MusicTrack = MusicTrack::new("supermarket");
+
+        /// Every track addressable by name — the set a map's `music` property is
+        /// resolved against (and the set the editor's Setup picker cycles).
+        pub const ALL: [MusicTrack; 3] = [Self::INTRO, Self::MENU, Self::SUPERMARKET];
+
+        /// Resolve a track *name* (a map's stored `music` string) to a track, or
+        /// `None` if no track has that id — mirroring how a warp's `to_map` name
+        /// resolves against the map store (an unknown name simply no-ops).
+        pub fn by_name(name: &str) -> Option<MusicTrack> {
+            Self::ALL.iter().find(|t| t.id == name).cloned()
+        }
     }
 }

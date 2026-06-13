@@ -9,7 +9,7 @@
 
 use crate::{
     data::{
-        sound::{self, SfxData},
+        sound::{self, SfxData, music::MusicTrack},
         tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
     },
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate},
@@ -76,6 +76,20 @@ enum EditField {
     /// The selected layer's name (lives on the store's `TiledMap`, not an object;
     /// see [`MapViewer::rename_target`]).
     LayerName,
+    /// The selected tile layer's pixel offset / palette rotation (also stored on
+    /// the `TiledMap`, targeted via [`MapViewer::rename_target`]).
+    LayerOffX,
+    LayerOffY,
+    LayerRotate,
+}
+
+/// A numeric, undoable property of a tile layer (the unit of [`EditAction::LayerSetProp`]).
+/// All three are carried as `f64` for one uniform revert/reapply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerProp {
+    OffsetX,
+    OffsetY,
+    Rotate,
 }
 
 /// An enum-field the editor advances with a click. [`Flip`](Self::Flip)/
@@ -171,6 +185,14 @@ enum EditAction {
         index: usize,
         before: String,
         after: String,
+    },
+    /// A tile layer's numeric property (offset / palette rotation) changed.
+    LayerSetProp {
+        source: String,
+        index: usize,
+        prop: LayerProp,
+        before: f64,
+        after: f64,
     },
 }
 
@@ -329,6 +351,8 @@ enum EditorKey {
     CamAuto,
     /// Setup panel: open the resize-map dialog.
     MapResize,
+    /// Setup panel: cycle the map's music track.
+    MusicCycle,
 }
 
 /// Fallback sprite-sheet dimensions in tiles (32×128, the current
@@ -1080,6 +1104,28 @@ impl MapViewer {
                 .key(EditorKey::MapResize)
                 .id(),
         );
+
+        // Music: a track name (string-indexed, resolved at load like a warp);
+        // `pick` cycles through `[none] + the known tracks`.
+        let music = tm.and_then(|t| t.music()).unwrap_or("-");
+        rows.push(
+            b.text(format!("MUSIC: {}", truncate(music, 8)))
+                .small(true)
+                .color(13)
+                .full_width(8.0)
+                .id(),
+        );
+        rows.push(
+            b.text("pick")
+                .small(true)
+                .center()
+                .color(12)
+                .full_width(7.0)
+                .grow(1.0)
+                .outlined(0, 12)
+                .key(EditorKey::MusicCycle)
+                .id(),
+        );
     }
 
     /// The sorted modern-map names — the Maps browser's contents.
@@ -1365,6 +1411,19 @@ impl MapViewer {
                 .key(EditorKey::Layer(i))
                 .id();
             rows.push(b.row(1.0, [eye, name]).id());
+        }
+
+        // The selected tile layer's pixel offset + palette rotation (tile layers
+        // only — `layer_offset` is `None` for image/object layers). Click a value
+        // to edit it; each edit is one undo step.
+        if let Some(src) = self.selected_source_layer(map)
+            && let Some((ox, oy)) = store.and_then(|tm| tm.layer_offset(src))
+        {
+            let rot = store.map(|tm| tm.layer_palette_rotate(src)).unwrap_or(0);
+            rows.push(b.spacer(2.0).id());
+            self.field_row(b, rows, EditField::LayerOffX, "offx", &ox.to_string());
+            self.field_row(b, rows, EditField::LayerOffY, "offy", &oy.to_string());
+            self.field_row(b, rows, EditField::LayerRotate, "rot", &rot.to_string());
         }
     }
 
@@ -1663,6 +1722,27 @@ impl MapViewer {
         self.field = Some(TextField::new(name));
     }
 
+    /// Open a numeric text field on the selected tile layer's offset / palette
+    /// rotation, seeded from the store and targeting `index` (via `rename_target`,
+    /// the captured layer for store-backed text edits).
+    fn begin_layer_field(&mut self, maps: &MapStore, source: &str, index: usize, field: EditField) {
+        let tm = maps.get(source);
+        let value = match field {
+            EditField::LayerOffX => {
+                tm.and_then(|t| t.layer_offset(index)).map(|(x, _)| x.to_string()).unwrap_or_default()
+            }
+            EditField::LayerOffY => {
+                tm.and_then(|t| t.layer_offset(index)).map(|(_, y)| y.to_string()).unwrap_or_default()
+            }
+            EditField::LayerRotate => tm.map(|t| t.layer_palette_rotate(index)).unwrap_or(0).to_string(),
+            _ => String::new(),
+        };
+        self.stop_editing();
+        self.rename_target = Some(index);
+        self.editing = Some(field);
+        self.field = Some(TextField::new(value));
+    }
+
     /// Flip the layer at store `index` between the bg and fg draw lists by
     /// toggling its `fg` name prefix (the one convention that decides it),
     /// recorded as a rename so it undoes like any other.
@@ -1827,6 +1907,10 @@ impl MapViewer {
                 }
                 self.pending_reload = true;
             }
+            EditAction::LayerSetProp { source, index, prop, before, .. } => {
+                apply_layer_prop(maps, source, *index, *prop, *before);
+                self.pending_reload = true;
+            }
         }
     }
 
@@ -1874,6 +1958,10 @@ impl MapViewer {
                 if let Some(tm) = maps.get_mut(source) {
                     tm.set_layer_name(*index, after);
                 }
+                self.pending_reload = true;
+            }
+            EditAction::LayerSetProp { source, index, prop, after, .. } => {
+                apply_layer_prop(maps, source, *index, *prop, *after);
                 self.pending_reload = true;
             }
         }
@@ -2469,7 +2557,18 @@ impl MapViewer {
             }
             EditorKey::Field(field) => {
                 if click {
-                    self.begin_edit(field, map);
+                    // Layer offset/rotation fields read from the store and target
+                    // the selected layer; object fields read from the object.
+                    if matches!(
+                        field,
+                        EditField::LayerOffX | EditField::LayerOffY | EditField::LayerRotate
+                    ) {
+                        if let Some(src) = self.selected_source_layer(map) {
+                            self.begin_layer_field(maps, &map.source, src, field);
+                        }
+                    } else {
+                        self.begin_edit(field, map);
+                    }
                 }
             }
             EditorKey::Cycle(field) => {
@@ -2634,7 +2733,28 @@ impl MapViewer {
                     };
                 }
             }
+            EditorKey::MusicCycle => {
+                if click {
+                    self.cycle_music(map, maps);
+                }
+            }
         }
+    }
+
+    /// Step the map's `music` property through `[none] + the known tracks`, by
+    /// name — the same string-indexed model as a warp's `to_map`. Stored on the
+    /// map (saved + resolved at load); not on the undo stack, like the panel's
+    /// other map settings, and it takes effect on the next map load.
+    fn cycle_music(&mut self, map: &MapInfo, maps: &mut MapStore) {
+        let names: Vec<&'static str> = MusicTrack::ALL.iter().map(|t| t.id).collect();
+        let Some(tm) = maps.get_mut(&map.source) else { return };
+        let current = match tm.music() {
+            None => 0,
+            Some(c) => names.iter().position(|n| *n == c).map_or(0, |i| i + 1),
+        };
+        let next = (current + 1) % (names.len() + 1);
+        tm.set_music((next > 0).then(|| names[next - 1]));
+        self.status.edited();
     }
 
     fn handle_canvas(
@@ -3167,10 +3287,32 @@ impl MapViewer {
             .as_ref()
             .map(|f| f.text().trim().to_string())
             .unwrap_or_default();
-        // A layer rename targets the store, not the selected object.
-        if field == EditField::LayerName {
-            self.commit_layer_rename(map, maps, &buffer);
-            return;
+        // Layer text edits target the store, not the selected object — handle
+        // them up front (no object selection required).
+        match field {
+            EditField::LayerName => {
+                self.commit_layer_rename(map, maps, &buffer);
+                return;
+            }
+            EditField::LayerOffX => {
+                if let Ok(v) = buffer.parse::<f64>() {
+                    self.commit_layer_prop(map, maps, LayerProp::OffsetX, v);
+                }
+                return;
+            }
+            EditField::LayerOffY => {
+                if let Ok(v) = buffer.parse::<f64>() {
+                    self.commit_layer_prop(map, maps, LayerProp::OffsetY, v);
+                }
+                return;
+            }
+            EditField::LayerRotate => {
+                if let Ok(v) = buffer.parse::<u8>() {
+                    self.commit_layer_prop(map, maps, LayerProp::Rotate, f64::from(v % 16));
+                }
+                return;
+            }
+            _ => {}
         }
         if self.selected.is_none() {
             return;
@@ -3262,8 +3404,12 @@ impl MapViewer {
                     });
                 }
             }
-            // Handled by the early return above (it targets the store, not an object).
-            EditField::LayerName => {}
+            // Layer fields are handled by the early return above (they target the
+            // store, not an object).
+            EditField::LayerName
+            | EditField::LayerOffX
+            | EditField::LayerOffY
+            | EditField::LayerRotate => {}
         }
     }
 
@@ -3290,6 +3436,30 @@ impl MapViewer {
             index,
             before,
             after: name.to_string(),
+        });
+        self.pending_reload = true;
+    }
+
+    /// Apply a finished tile-layer offset / rotation edit to the store and record
+    /// it for undo (a no-op if the value is unchanged or the layer is gone).
+    fn commit_layer_prop(&mut self, map: &MapInfo, maps: &mut MapStore, prop: LayerProp, value: f64) {
+        let Some(index) = self.rename_target else { return };
+        let before = maps.get(&map.source).and_then(|tm| match prop {
+            LayerProp::OffsetX => tm.layer_offset(index).map(|(x, _)| x),
+            LayerProp::OffsetY => tm.layer_offset(index).map(|(_, y)| y),
+            LayerProp::Rotate => Some(f64::from(tm.layer_palette_rotate(index))),
+        });
+        let Some(before) = before else { return };
+        if before == value {
+            return;
+        }
+        apply_layer_prop(maps, &map.source, index, prop, value);
+        self.record(EditAction::LayerSetProp {
+            source: map.source.clone(),
+            index,
+            prop,
+            before,
+            after: value,
         });
         self.pending_reload = true;
     }
@@ -4214,6 +4384,19 @@ fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
     (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
 }
 
+/// Write a tile layer's numeric property in the store — the shared apply step
+/// for [`EditAction::LayerSetProp`]'s commit / revert / reapply.
+fn apply_layer_prop(maps: &mut MapStore, source: &str, index: usize, prop: LayerProp, value: f64) {
+    let Some(tm) = maps.get_mut(source) else {
+        return;
+    };
+    match prop {
+        LayerProp::OffsetX => tm.set_layer_offset_x(index, value),
+        LayerProp::OffsetY => tm.set_layer_offset_y(index, value),
+        LayerProp::Rotate => tm.set_layer_palette_rotate(index, value.clamp(0.0, 15.0) as u8),
+    }
+}
+
 /// Toggle a layer name's foreground `fg` prefix (the marker `push_bg_or_fg` keys
 /// on). A leading `fg` counts as the marker only when it stands alone or is
 /// followed by a separator — so `fg water` toggles back to `water`, while a
@@ -4858,6 +5041,64 @@ mod tests {
         v.cycle_warp_target(&mut map, &maps); // wraps back to same-map
         assert_eq!(target(&map), None);
         assert!(v.history.can_undo(), "each pick is an undo step");
+    }
+
+    /// A tile layer's offset / palette-rotation fields edit the store and are
+    /// undoable, one step each.
+    #[test]
+    fn layer_offset_and_rotate_edit_and_undo() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("m", TiledMap::blank_modern(4, 4));
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo { source_layer: 0, ..LayerInfo::DEFAULT_LAYER },
+                LayerInfo { source_layer: 1, ..LayerInfo::DEFAULT_LAYER },
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { layer_index: 1, ..Default::default() };
+        let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
+            v.rename_target = Some(1);
+            v.editing = Some(field);
+            v.field = Some(TextField::new(text));
+            v.commit_edit(map, maps);
+            v.stop_editing();
+        };
+        edit(&mut v, &mut map, &mut maps, EditField::LayerOffX, "3");
+        edit(&mut v, &mut map, &mut maps, EditField::LayerOffY, "-2");
+        edit(&mut v, &mut map, &mut maps, EditField::LayerRotate, "5");
+        assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, -2.0)));
+        assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 5);
+
+        v.undo(&mut map, &mut maps); // rotation
+        assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 0);
+        v.undo(&mut map, &mut maps); // y offset
+        assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, 0.0)));
+        v.redo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, -2.0)));
+    }
+
+    /// The Setup music picker steps through `[none] + the known tracks` and wraps.
+    #[test]
+    fn music_picker_cycles_tracks() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("m", TiledMap::blank_modern(2, 2));
+        let map = MapInfo { source: "m".to_string(), ..MapInfo::default() };
+        let mut v = MapViewer::default();
+        let music = |maps: &MapStore| maps.get("m").unwrap().music().map(str::to_string);
+
+        assert_eq!(music(&maps), None);
+        v.cycle_music(&map, &mut maps);
+        assert_eq!(music(&maps).as_deref(), Some("intro"));
+        v.cycle_music(&map, &mut maps);
+        assert_eq!(music(&maps).as_deref(), Some("menu"));
+        v.cycle_music(&map, &mut maps);
+        assert_eq!(music(&maps).as_deref(), Some("supermarket"));
+        v.cycle_music(&map, &mut maps); // wraps back to none
+        assert_eq!(music(&maps), None);
     }
 
     /// The fg-prefix toggle round-trips a separated marker, leaves a glued word

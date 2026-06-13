@@ -210,8 +210,10 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
         camera_bounds: map
             .camera_stick()
             .map(|(x, y)| CameraBounds::stick(x, y)),
+        // The `music` property names a track; an unknown name resolves to None
+        // (no track), just as a dangling warp `to_map` resolves to no map.
+        music_track: map.music().and_then(MusicTrack::by_name),
         source: name.to_string(),
-        ..Default::default()
     }
 }
 

@@ -175,6 +175,18 @@ impl TileLayer {
             .and_then(|v| u8::try_from(v).ok())
             .unwrap_or(0)
     }
+    /// Set the per-layer `palette_rotate`. `0` drops the property (Tiled omits a
+    /// default), so a plain layer round-trips without an empty property list.
+    pub fn set_palette_rotate(&mut self, rotate: u8) {
+        self.properties.retain(|p| p.name != "palette_rotate");
+        if rotate != 0 {
+            self.properties.push(Property {
+                name: "palette_rotate".to_string(),
+                r#type: "int".to_string(),
+                value: Value::from(rotate),
+            });
+        }
+    }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
         if x >= self.width {
             return None; // guard the row wraparound past the right edge
@@ -968,6 +980,53 @@ impl TiledMap {
         match point {
             Some((x, y)) => self.set_property("camera_stick", "string", Value::from(format!("{x},{y}"))),
             None => self.remove_property("camera_stick"),
+        }
+    }
+
+    /// This map's `music` property — a track *name* resolved against the known
+    /// tracks at derive time (an unknown name no-ops, like a dangling warp).
+    pub fn music(&self) -> Option<&str> {
+        property_str(&self.properties, "music")
+    }
+
+    /// Set the map's music track by name, or clear it (`None`).
+    pub fn set_music(&mut self, track: Option<&str>) {
+        match track {
+            Some(name) => self.set_property("music", "string", Value::from(name)),
+            None => self.remove_property("music"),
+        }
+    }
+
+    /// The tile layer at `idx`'s `(offsetx, offsety)` pixel offset, or `None` if
+    /// it isn't a tile layer (image/object layers carry no editable tile offset
+    /// in this editor).
+    pub fn layer_offset(&self, idx: usize) -> Option<(f64, f64)> {
+        match self.layers.get(idx) {
+            Some(TiledMapLayer::TileLayer(t)) => Some((t.offsetx, t.offsety)),
+            _ => None,
+        }
+    }
+    pub fn set_layer_offset_x(&mut self, idx: usize, v: f64) {
+        if let Some(TiledMapLayer::TileLayer(t)) = self.layers.get_mut(idx) {
+            t.offsetx = v;
+        }
+    }
+    pub fn set_layer_offset_y(&mut self, idx: usize, v: f64) {
+        if let Some(TiledMapLayer::TileLayer(t)) = self.layers.get_mut(idx) {
+            t.offsety = v;
+        }
+    }
+
+    /// The tile layer at `idx`'s `palette_rotate` (0 if absent / not a tile layer).
+    pub fn layer_palette_rotate(&self, idx: usize) -> u8 {
+        match self.layers.get(idx) {
+            Some(TiledMapLayer::TileLayer(t)) => t.palette_rotate(),
+            _ => 0,
+        }
+    }
+    pub fn set_layer_palette_rotate(&mut self, idx: usize, v: u8) {
+        if let Some(TiledMapLayer::TileLayer(t)) = self.layers.get_mut(idx) {
+            t.set_palette_rotate(v);
         }
     }
 
@@ -1892,6 +1951,37 @@ mod tests {
         assert_eq!((m.width, m.height), (2, 2));
         assert_eq!(m.get(1, 0, 0), Some(5));
         assert_eq!(m.get(1, 1, 1), Some(0));
+    }
+
+    /// A map's `music` name round-trips and resolves to a track by name (unknown
+    /// names resolve to `None`, like a dangling warp); a tile layer's offset and
+    /// `palette_rotate` set/clear correctly (rotate 0 drops the property).
+    #[test]
+    fn music_and_layer_props_round_trip() {
+        use crate::data::sound::music::MusicTrack;
+        let mut m = TiledMap::blank_modern(2, 2);
+
+        assert_eq!(m.music(), None);
+        m.set_music(Some("supermarket"));
+        let reloaded: TiledMap = serde_json::from_str(&m.to_tmj(&[])).unwrap();
+        assert_eq!(reloaded.music(), Some("supermarket"));
+        assert!(MusicTrack::by_name("supermarket").is_some());
+        assert!(MusicTrack::by_name("nope").is_none());
+        m.set_music(None);
+        assert_eq!(m.music(), None);
+
+        // Layer 1 offset + palette rotation.
+        m.set_layer_offset_x(1, 3.0);
+        m.set_layer_offset_y(1, -2.0);
+        m.set_layer_palette_rotate(1, 5);
+        let reloaded: TiledMap = serde_json::from_str(&m.to_tmj(&[])).unwrap();
+        assert_eq!(reloaded.layer_offset(1), Some((3.0, -2.0)));
+        assert_eq!(reloaded.layer_palette_rotate(1), 5);
+        // Rotate 0 drops the property (no empty round-trip noise).
+        m.set_layer_palette_rotate(1, 0);
+        if let TiledMapLayer::TileLayer(t) = &m.layers[1] {
+            assert!(t.properties.iter().all(|p| p.name != "palette_rotate"));
+        }
     }
 
     /// The real `assets/maps/bedroom1.tmj` now parses (it has an image layer,
