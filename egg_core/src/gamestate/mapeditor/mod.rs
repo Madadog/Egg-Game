@@ -267,11 +267,13 @@ enum EditorKey {
     MapDelete,
 }
 
-/// The sprite sheet is 32 tiles wide; the Paint palette mirrors that layout (so
-/// a tile's grid position matches the sheet) and scrolls when the panel is
-/// smaller, rather than reflowing to the panel width.
+/// The sprite sheet (`assets/sprites/sheet.png`) is 256×1024 px = 32×128 = 4096
+/// tiles. The Paint palette shows every tile (so collision-marker sprites in the
+/// lower rows are reachable) in the sheet's 32-wide layout — a tile's grid
+/// position matches the sheet — scrolling when the panel is smaller. Update these
+/// if the sheet is resized.
 const SHEET_COLS: usize = 32;
-const SHEET_TILES: usize = 2048;
+const SHEET_TILES: usize = 4096;
 /// Grab width (px) of a palette scroll bar at the viewport's edge.
 const PALETTE_BAR_GRAB: i16 = 4;
 /// The global undo/redo/save + panel-toggle toolbar's size, px.
@@ -3561,8 +3563,8 @@ mod tests {
         assert_eq!(v.brush_size(), (3, 2));
         // A point off the viewport clamps to the last visible tile, not wraps.
         assert_eq!(v.palette_tile_at(Vec2::new(500, 500)), (5 + 10 - 1, 2 + 8 - 1));
-        // Scroll bounds: 10 of 32 cols, 8 of 64 rows visible.
-        assert_eq!(v.palette_scroll_max(), (32 - 10, 64 - 8));
+        // Scroll bounds: 10 of 32 cols, 8 of the sheet's 128 rows visible.
+        assert_eq!(v.palette_scroll_max(), (32 - 10, 128 - 8));
     }
 
     /// Cycling an interaction reaches every authorable kind — the GUI's way to
