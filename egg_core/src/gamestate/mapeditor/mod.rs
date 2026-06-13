@@ -269,8 +269,6 @@ enum EditorKey {
 /// smaller, rather than reflowing to the panel width.
 const SHEET_COLS: usize = 32;
 const SHEET_TILES: usize = 2048;
-/// Manhattan px a palette press must move before it pans rather than picks.
-const PALETTE_PAN_THRESHOLD: i16 = 2;
 /// Grab width (px) of a palette scroll bar at the viewport's edge.
 const PALETTE_BAR_GRAB: i16 = 4;
 /// The global undo/redo/save + panel-toggle toolbar's size, px.
@@ -478,16 +476,13 @@ impl MapsDialog {
     }
 }
 
-/// An in-progress palette drag. `Pan` moves the content (or, if barely moved,
-/// picks the tile on release); `ScrollV`/`ScrollH` drag a scroll bar.
+/// An in-progress palette drag. `Select` drags out the brush box from its
+/// `anchor` tile (a 1×1 box if you just click); `ScrollV`/`ScrollH` drag a
+/// scroll bar. (Navigation is the scroll bars + wheel, so a body drag is free to
+/// mean box-select.)
 #[derive(Debug, Clone, Copy)]
 enum PalDrag {
-    Pan {
-        press: Vec2,
-        col0: usize,
-        row0: usize,
-        moved: bool,
-    },
+    Select { anchor_col: usize, anchor_row: usize },
     ScrollV,
     ScrollH,
 }
@@ -508,7 +503,12 @@ pub struct MapViewer {
     pub fg: bool,
     pub layer_index: usize,
     tool: EditorTool,
+    /// The brush's top-left sheet tile. The brush spans `brush_w`×`brush_h` tiles
+    /// from here (a box selected in the palette); 1×1 is a single tile.
     selected_tile: usize,
+    /// Brush size in tiles (`0` is treated as `1` — see [`brush_size`](Self::brush_size)).
+    brush_w: usize,
+    brush_h: usize,
     /// Top-left visible tile of the Paint palette (column, row) — the palette is
     /// a fixed [`SHEET_COLS`]-wide grid that scrolls rather than reflows.
     pal_col: usize,
@@ -947,20 +947,12 @@ impl MapViewer {
         let p = mouse.pos();
         let up = released(mouse.left);
         match drag {
-            PalDrag::Pan { press, col0, row0, moved } => {
-                let (dx, dy) = (p.x - press.x, p.y - press.y);
+            // Extend the brush box from the anchor to the tile under the cursor.
+            PalDrag::Select { anchor_col, anchor_row } => {
+                let (c, r) = self.palette_tile_at(p);
+                self.set_brush_box(anchor_col, anchor_row, c, r);
                 if up {
-                    if !moved && dx.abs() + dy.abs() <= PALETTE_PAN_THRESHOLD {
-                        self.select_palette_tile(press);
-                    }
                     self.pal_drag = None;
-                    return;
-                }
-                if moved || dx.abs() + dy.abs() > PALETTE_PAN_THRESHOLD {
-                    let (max_c, max_r) = self.palette_scroll_max();
-                    self.pal_col = (col0 as i32 - (dx / 8) as i32).clamp(0, max_c as i32) as usize;
-                    self.pal_row = (row0 as i32 - (dy / 8) as i32).clamp(0, max_r as i32) as usize;
-                    self.pal_drag = Some(PalDrag::Pan { press, col0, row0, moved: true });
                 }
             }
             PalDrag::ScrollV => {
@@ -1003,20 +995,32 @@ impl MapViewer {
         self.pal_col = (self.pal_col as i32 - sx as i32).clamp(0, max_c as i32) as usize;
     }
 
-    /// Pick the tile under `point` (screen px) in the palette viewport, if any.
-    fn select_palette_tile(&mut self, point: Vec2) {
+    /// The brush size in tiles, treating an unset `0` as `1`.
+    fn brush_size(&self) -> (usize, usize) {
+        (self.brush_w.max(1), self.brush_h.max(1))
+    }
+
+    /// The sheet `(col, row)` under `point`, clamped into the visible viewport and
+    /// the sheet bounds — so a drag that runs off the edge sticks to the last
+    /// visible tile rather than wrapping.
+    fn palette_tile_at(&self, point: Vec2) -> (usize, usize) {
         let v = self.pal_rect;
-        if v.w <= 0 || !v.contains(point) {
-            return;
-        }
-        let col = self.pal_col + ((point.x - v.x) as usize / 8);
-        let row = self.pal_row + ((point.y - v.y) as usize / 8);
-        if col < SHEET_COLS {
-            let id = row * SHEET_COLS + col;
-            if id < SHEET_TILES {
-                self.selected_tile = id;
-            }
-        }
+        let (vc, vr) = self.palette_visible();
+        let cx = (point.x - v.x).clamp(0, (v.w - 1).max(0)) as usize / 8;
+        let cy = (point.y - v.y).clamp(0, (v.h - 1).max(0)) as usize / 8;
+        let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
+        let col = (self.pal_col + cx.min(vc - 1)).min(SHEET_COLS - 1);
+        let row = (self.pal_row + cy.min(vr - 1)).min(total_rows - 1);
+        (col, row)
+    }
+
+    /// Set the brush to the box spanning the anchor and current `(col, row)`.
+    fn set_brush_box(&mut self, ac: usize, ar: usize, cc: usize, cr: usize) {
+        let (c0, c1) = (ac.min(cc), ac.max(cc));
+        let (r0, r1) = (ar.min(cr), ar.max(cr));
+        self.selected_tile = r0 * SHEET_COLS + c0;
+        self.brush_w = c1 - c0 + 1;
+        self.brush_h = r1 - r0 + 1;
     }
 
     fn build_layers(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -1073,8 +1077,14 @@ impl MapViewer {
     /// handling), so it just reserves a box here.
     fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         let target = if self.fg { "FG" } else { "BG" };
+        let (bw, bh) = self.brush_size();
+        let info = if bw > 1 || bh > 1 {
+            format!("T{} {bw}x{bh} {target}{}", self.selected_tile, self.layer_index)
+        } else {
+            format!("Tile {} {target}{}", self.selected_tile, self.layer_index)
+        };
         rows.push(
-            b.text(format!("Tile {} {target}{}", self.selected_tile, self.layer_index))
+            b.text(info)
                 .small(true)
                 .color(13)
                 .full_width(8.0)
@@ -1856,12 +1866,10 @@ impl MapViewer {
                         self.pal_drag = Some(PalDrag::ScrollH);
                         self.scroll_palette_bar(false, p);
                     } else {
-                        self.pal_drag = Some(PalDrag::Pan {
-                            press: p,
-                            col0: self.pal_col,
-                            row0: self.pal_row,
-                            moved: false,
-                        });
+                        // Start a brush box-select (a click stays 1×1).
+                        let (c, r) = self.palette_tile_at(p);
+                        self.set_brush_box(c, r, c, r);
+                        self.pal_drag = Some(PalDrag::Select { anchor_col: c, anchor_row: r });
                     }
                 }
             }
@@ -1899,6 +1907,8 @@ impl MapViewer {
             EditorKey::Eraser => {
                 if click {
                     self.selected_tile = 0;
+                    self.brush_w = 1;
+                    self.brush_h = 1;
                 }
             }
             EditorKey::Undo => {
@@ -2048,12 +2058,14 @@ impl MapViewer {
         };
         let (tx, ty) = world_tile(mouse, camera_pos);
 
-        // Middle-click eyedropper: lift the existing tile into the brush.
+        // Middle-click eyedropper: lift the existing tile into a 1×1 brush.
         if just_pressed(mouse.middle) && tx >= 0 && ty >= 0 {
             self.selected_tile = maps
                 .get(&source)
                 .and_then(|m| m.get(layer, tx as usize, ty as usize))
                 .unwrap_or(0);
+            self.brush_w = 1;
+            self.brush_h = 1;
             return;
         }
 
@@ -2089,16 +2101,36 @@ impl MapViewer {
                 });
             }
             if tx >= 0 && ty >= 0 {
-                let value = if pressed(mouse.right) {
-                    0
-                } else {
-                    self.selected_tile
-                };
-                self.paint_cell(maps, &source, layer, tx, ty, value);
+                self.paint_brush(maps, &source, layer, tx, ty, pressed(mouse.right));
             }
         }
         if released(mouse.left) || released(mouse.right) {
             self.flush_stroke();
+        }
+    }
+
+    /// Stamp the brush (its `brush_w`×`brush_h` tile block) at world tile
+    /// `(tx, ty)`, or erase that footprint to the empty tile. Each cell records
+    /// into the in-progress stroke, so the whole stamp undoes together.
+    fn paint_brush(
+        &mut self,
+        maps: &mut MapStore,
+        source: &str,
+        layer: usize,
+        tx: i32,
+        ty: i32,
+        erase: bool,
+    ) {
+        let (bw, bh) = self.brush_size();
+        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+        for dy in 0..bh {
+            for dx in 0..bw {
+                if bc + dx >= SHEET_COLS {
+                    continue; // don't wrap past the sheet's right edge
+                }
+                let value = if erase { 0 } else { (br + dy) * SHEET_COLS + (bc + dx) };
+                self.paint_cell(maps, source, layer, tx + dx as i32, ty + dy as i32, value);
+            }
         }
     }
 
@@ -2143,10 +2175,12 @@ impl MapViewer {
         }
     }
 
-    /// Fill the tile rectangle between two world points with the current brush,
-    /// as a single undo step.
+    /// Fill the tile rectangle between two world points, tiling the brush across
+    /// it, as a single undo step.
     fn fill_rect(&mut self, maps: &mut MapStore, source: &str, layer: usize, a: Vec2, b: Vec2) {
         let (x0, y0, x1, y1) = tile_bounds(a, b);
+        let (bw, bh) = self.brush_size();
+        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
         self.stroke = Some(EditAction::Tiles {
             source: source.to_string(),
             layer,
@@ -2154,9 +2188,18 @@ impl MapViewer {
         });
         for ty in y0..=y1 {
             for tx in x0..=x1 {
-                if tx >= 0 && ty >= 0 {
-                    self.paint_cell(maps, source, layer, tx, ty, self.selected_tile);
+                if tx < 0 || ty < 0 {
+                    continue;
                 }
+                // Repeat the brush pattern across the fill region.
+                let ox = (tx - x0) as usize % bw;
+                let oy = (ty - y0) as usize % bh;
+                let value = if bc + ox < SHEET_COLS {
+                    (br + oy) * SHEET_COLS + (bc + ox)
+                } else {
+                    0
+                };
+                self.paint_cell(maps, source, layer, tx, ty, value);
             }
         }
         self.flush_stroke();
@@ -2691,6 +2734,8 @@ impl MapViewer {
             return;
         }
         let (vc, vr) = self.palette_visible();
+        let (bw, bh) = self.brush_size();
+        let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
         for r in 0..vr {
             for c in 0..vc {
                 let (col, row) = (self.pal_col + c, self.pal_row + r);
@@ -2704,7 +2749,8 @@ impl MapViewer {
                 let x = v.x as i32 + c as i32 * 8;
                 let y = v.y as i32 + r as i32 * 8;
                 let opts = SpriteOptions { transparent: Some(0), ..Default::default() };
-                if id == self.selected_tile {
+                let in_brush = col >= bc && col < bc + bw && row >= br && row < br + bh;
+                if in_brush {
                     draw_state.spr_with_outline(
                         LayerId::BG,
                         &PALETTE_MAP_IDENTITY,
@@ -3450,11 +3496,11 @@ mod tests {
         assert_eq!(parse_dim("9999", 30), 30); // above max
     }
 
-    /// The fixed-32 palette maps a cursor to the right sheet tile given its
-    /// scroll position, ignores clicks outside the viewport, and bounds scroll so
-    /// the last column/row can reach the edge.
+    /// The fixed-32 palette maps a cursor to the right sheet tile, box-selects a
+    /// brush, clamps a drag that runs off the viewport, and bounds scroll so the
+    /// last column/row can reach the edge.
     #[test]
-    fn palette_picks_and_bounds_scroll() {
+    fn palette_box_select_and_scroll_bounds() {
         let mut v = MapViewer {
             pal_rect: Rect { x: 4, y: 20, w: 80, h: 64 }, // 10 cols x 8 rows visible
             pal_col: 5,
@@ -3462,12 +3508,17 @@ mod tests {
             ..Default::default()
         };
         // 3rd visible column, 1st visible row -> sheet (col 7, row 2).
-        v.select_palette_tile(Vec2::new(4 + 2 * 8 + 1, 20 + 1));
+        let (c, r) = v.palette_tile_at(Vec2::new(4 + 2 * 8 + 1, 20 + 1));
+        assert_eq!((c, r), (7, 2));
+        v.set_brush_box(c, r, c, r); // a click is a 1x1 brush
         assert_eq!(v.selected_tile, 2 * SHEET_COLS + 7);
-        // A click outside the viewport changes nothing.
-        let before = v.selected_tile;
-        v.select_palette_tile(Vec2::new(200, 200));
-        assert_eq!(v.selected_tile, before);
+        assert_eq!(v.brush_size(), (1, 1));
+        // Drag a 3x2 box from (7,2) to (9,3): top-left tile + size.
+        v.set_brush_box(7, 2, 9, 3);
+        assert_eq!(v.selected_tile, 2 * SHEET_COLS + 7);
+        assert_eq!(v.brush_size(), (3, 2));
+        // A point off the viewport clamps to the last visible tile, not wraps.
+        assert_eq!(v.palette_tile_at(Vec2::new(500, 500)), (5 + 10 - 1, 2 + 8 - 1));
         // Scroll bounds: 10 of 32 cols, 8 of 64 rows visible.
         assert_eq!(v.palette_scroll_max(), (32 - 10, 64 - 8));
     }
