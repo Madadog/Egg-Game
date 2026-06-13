@@ -12,7 +12,7 @@ use crate::{
         sound::{self, SfxData},
         tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
     },
-    drawstate::{DrawState, LayerId, palette_map_rotate},
+    drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate},
     interact::{InteractFn, Interaction},
     map::{
         Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp,
@@ -20,7 +20,7 @@ use crate::{
     },
     position::{Hitbox, Vec2},
     system::{
-        ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode,
+        ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode, SpriteOptions,
         drawing::{Canvas, EdgePolicy, Transform, image::RgbaImage},
         just_pressed, pressed,
     },
@@ -235,9 +235,8 @@ enum EditorKey {
     LayerDel,
     LayerUp,
     LayerDown,
-    Tile(usize),
-    PaletteUp,
-    PaletteDown,
+    /// The scrollable tile palette viewport (drag to pan, click to pick a tile).
+    PaletteView,
     Object(usize),
     NewObject,
     DeleteObject,
@@ -265,11 +264,13 @@ enum EditorKey {
     MapDelete,
 }
 
-/// Fallback palette grid when no Paint panel is placed (the grid otherwise
-/// reflows to the panel size; see [`MapViewer::paint_grid_for`]).
-const PALETTE_COLS: usize = 9;
-const PALETTE_ROWS: usize = 7;
+/// The sprite sheet is 32 tiles wide; the Paint palette mirrors that layout (so
+/// a tile's grid position matches the sheet) and scrolls when the panel is
+/// smaller, rather than reflowing to the panel width.
+const SHEET_COLS: usize = 32;
 const SHEET_TILES: usize = 2048;
+/// Manhattan px a palette press must move before it pans rather than picks.
+const PALETTE_PAN_THRESHOLD: i16 = 2;
 /// The global undo/redo/save + panel-toggle toolbar's size, px.
 const GLOBAL_BAR_W: f32 = 72.0;
 const GLOBAL_BAR_H: f32 = 11.0;
@@ -492,7 +493,16 @@ pub struct MapViewer {
     pub layer_index: usize,
     tool: EditorTool,
     selected_tile: usize,
-    palette_scroll: usize,
+    /// Top-left visible tile of the Paint palette (column, row) — the palette is
+    /// a fixed [`SHEET_COLS`]-wide grid that scrolls rather than reflows.
+    pal_col: usize,
+    pal_row: usize,
+    /// The palette viewport's screen rect, cached each frame (the palette is
+    /// drawn/hit manually, not as flex nodes).
+    pal_rect: Rect,
+    /// An in-progress palette drag: (press point, scroll col/row at press, moved
+    /// past the click threshold). A small move is a tile pick; a larger one pans.
+    pal_pan: Option<(Vec2, usize, usize, bool)>,
     selected: Option<usize>,
     drag: Option<Vec2>,
     /// While dragging an existing object: the grab offset (cursor − hitbox origin).
@@ -617,10 +627,7 @@ impl MapViewer {
 
         match kind {
             PanelKind::Layers => self.build_layers(&mut b, &mut rows, map),
-            PanelKind::Paint => {
-                let (cols, prows) = self.paint_grid_for(rect);
-                self.build_paint(&mut b, &mut rows, cols, prows);
-            }
+            PanelKind::Paint => self.build_paint(&mut b, &mut rows),
             PanelKind::Objects => {
                 self.build_obj_tabs(&mut b, &mut rows);
                 self.build_objects(&mut b, &mut rows, map);
@@ -898,21 +905,59 @@ impl MapViewer {
         }
     }
 
-    /// The palette grid `(cols, rows)` that fills the Paint panel `rect` — the
-    /// palette reflows to the panel size instead of a fixed 9×7.
-    fn paint_grid_for(&self, rect: Rect) -> (usize, usize) {
-        let cols = (((rect.w as i32) - 1) / 8).max(1) as usize;
-        // Body height left after the title bar, tile-info line, up/dn and eraser.
-        let rows = (((rect.h as i32) - 40) / 8).max(1) as usize;
-        (cols, rows)
+    /// Visible palette dimensions `(cols, rows)` in tiles, from the cached
+    /// viewport rect.
+    fn palette_visible(&self) -> (usize, usize) {
+        (
+            (self.pal_rect.w as usize / 8).max(1),
+            (self.pal_rect.h as usize / 8).max(1),
+        )
     }
 
-    /// As [`paint_grid_for`](Self::paint_grid_for) but for the currently-placed
-    /// Paint panel — used by the scroll handlers so paging matches the layout.
-    fn paint_grid(&self) -> (usize, usize) {
-        match self.dock.open_panel(PanelKind::Paint) {
-            Some((_, rect)) => self.paint_grid_for(rect),
-            None => (PALETTE_COLS, PALETTE_ROWS),
+    /// The maximum scroll `(col, row)` so the last column/row can reach the edge.
+    fn palette_scroll_max(&self) -> (usize, usize) {
+        let (vc, vr) = self.palette_visible();
+        let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
+        (SHEET_COLS.saturating_sub(vc), total_rows.saturating_sub(vr))
+    }
+
+    /// Advance an in-progress palette drag: a still click (on release) picks the
+    /// tile under the press; a larger drag pans the viewport (content follows the
+    /// cursor). Started by a `PaletteView` press in `handle_panel`.
+    fn step_palette_pan(&mut self, mouse: &MouseInput) {
+        let Some((press, col0, row0, moved)) = self.pal_pan else {
+            return;
+        };
+        let p = mouse.pos();
+        let (dx, dy) = (p.x - press.x, p.y - press.y);
+        if released(mouse.left) {
+            if !moved && dx.abs() + dy.abs() <= PALETTE_PAN_THRESHOLD {
+                self.select_palette_tile(press);
+            }
+            self.pal_pan = None;
+            return;
+        }
+        if moved || dx.abs() + dy.abs() > PALETTE_PAN_THRESHOLD {
+            let (max_c, max_r) = self.palette_scroll_max();
+            self.pal_col = (col0 as i32 - (dx / 8) as i32).clamp(0, max_c as i32) as usize;
+            self.pal_row = (row0 as i32 - (dy / 8) as i32).clamp(0, max_r as i32) as usize;
+            self.pal_pan = Some((press, col0, row0, true));
+        }
+    }
+
+    /// Pick the tile under `point` (screen px) in the palette viewport, if any.
+    fn select_palette_tile(&mut self, point: Vec2) {
+        let v = self.pal_rect;
+        if v.w <= 0 || !v.contains(point) {
+            return;
+        }
+        let col = self.pal_col + ((point.x - v.x) as usize / 8);
+        let row = self.pal_row + ((point.y - v.y) as usize / 8);
+        if col < SHEET_COLS {
+            let id = row * SHEET_COLS + col;
+            if id < SHEET_TILES {
+                self.selected_tile = id;
+            }
         }
     }
 
@@ -964,16 +1009,11 @@ impl MapViewer {
         }
     }
 
-    /// `cols`/`rows` are the palette grid that fits the panel (see
-    /// [`paint_grid_for`](Self::paint_grid_for)); the split buttons stretch to
-    /// the panel width.
-    fn build_paint(
-        &self,
-        b: &mut UiBuilder<EditorKey>,
-        rows: &mut Vec<NodeId>,
-        cols: usize,
-        prows: usize,
-    ) {
+    /// The Paint tool: a tile-info line, the eraser, then a scrollable palette
+    /// viewport. The palette mirrors the sheet's 32-wide layout and is drawn/hit
+    /// manually (see [`draw_palette`](Self::draw_palette) / the `PaletteView`
+    /// handling), so it just reserves a box here.
+    fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         let target = if self.fg { "FG" } else { "BG" };
         rows.push(
             b.text(format!("Tile {} {target}{}", self.selected_tile, self.layer_index))
@@ -982,25 +1022,6 @@ impl MapViewer {
                 .full_width(8.0)
                 .id(),
         );
-        let up = b
-            .text("-up")
-            .small(true)
-            .center()
-            .full_width(7.0)
-            .grow(1.0)
-            .outlined(0, 12)
-            .key(EditorKey::PaletteUp)
-            .id();
-        let down = b
-            .text("dn+")
-            .small(true)
-            .center()
-            .full_width(7.0)
-            .grow(1.0)
-            .outlined(0, 12)
-            .key(EditorKey::PaletteDown)
-            .id();
-        rows.push(b.row(2.0, [up, down]).id());
 
         // Eraser: paints the empty tile (0). Highlights when it's the brush.
         let erasing = self.selected_tile == 0;
@@ -1014,22 +1035,16 @@ impl MapViewer {
         let eraser = if erasing { eraser.fill(8) } else { eraser.outlined(0, 8) };
         rows.push(eraser.id());
 
-        let start = self.palette_scroll * cols;
-        let mut tiles = Vec::with_capacity(cols * prows);
-        for n in 0..(cols * prows) {
-            let id = start + n;
-            if id >= SHEET_TILES {
-                break;
-            }
-            tiles.push(
-                b.sprite(id as i32, 1, 1)
-                    .size(8.0, 8.0)
-                    .sprite_outline((id == self.selected_tile).then_some(11))
-                    .key(EditorKey::Tile(id))
-                    .id(),
-            );
-        }
-        rows.push(b.wrap_row(0.0, tiles).width(cols as f32 * 8.0).fill(0).id());
+        // The palette viewport fills the rest of the panel; its tiles + scroll
+        // bars are blitted in `draw_palette`, and it captures clicks/drags.
+        rows.push(
+            b.boxed([])
+                .full_width(8.0)
+                .grow(1.0)
+                .fill(0)
+                .key(EditorKey::PaletteView)
+                .id(),
+        );
     }
 
     fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
@@ -1417,12 +1432,21 @@ impl MapViewer {
         // Tile the panels once; both this hit pass and the later draw pass read
         // the same `self.dock.solved`, so they can't disagree about geometry.
         self.dock.recompute(screen);
+        // Cache the Paint palette's viewport rect for the pan/pick + draw math.
+        let pal_rect = self.dock.open_panel(PanelKind::Paint).and_then(|(idx, rect)| {
+            self.build_panel(idx, rect, map, maps)
+                .rect_at(rect.x, rect.y, EditorKey::PaletteView)
+        });
+        self.pal_rect = pal_rect.unwrap_or_default();
         let mouse = system.mouse();
         let cursor = mouse.pos();
 
         // A modal dialog swallows mouse interaction with the panels/world.
         if self.maps_dialog.is_active() {
             // nothing
+        } else if self.pal_pan.is_some() {
+            // A palette drag (pan / tile-pick) owns the mouse this frame.
+            self.step_palette_pan(&mouse);
         } else if self.step_drag(&mouse, screen) {
             // A panel drag (move / tear-off / resize) owns the mouse this frame —
             // suppress panel and canvas input so it can't paint or re-select.
@@ -1757,22 +1781,11 @@ impl MapViewer {
                     self.after_layer_edit();
                 }
             }
-            EditorKey::Tile(id) => {
-                if click {
-                    self.selected_tile = id;
-                }
-            }
-            EditorKey::PaletteUp => {
-                if click {
-                    let (_, prows) = self.paint_grid();
-                    self.palette_scroll = self.palette_scroll.saturating_sub(prows);
-                }
-            }
-            EditorKey::PaletteDown => {
-                if click {
-                    let (cols, prows) = self.paint_grid();
-                    let max = SHEET_TILES.div_ceil(cols).saturating_sub(prows);
-                    self.palette_scroll = (self.palette_scroll + prows).min(max);
+            // Press in the palette: begin a drag (a small move picks a tile, a
+            // larger one pans). Advanced/finished in `step_palette_pan`.
+            EditorKey::PaletteView => {
+                if just_pressed(mouse.left) {
+                    self.pal_pan = Some((mouse.pos(), self.pal_col, self.pal_row, false));
                 }
             }
             EditorKey::Object(i) => {
@@ -2540,8 +2553,10 @@ impl MapViewer {
         for &(idx, rect) in &self.dock.solved.rects {
             let ui = self.build_panel(idx, rect, map, maps);
             ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
-            if self.dock.panels[idx].kind == PanelKind::Maps {
-                self.draw_map_thumbnails(&ui, rect, maps, draw_state);
+            match self.dock.panels[idx].kind {
+                PanelKind::Maps => self.draw_map_thumbnails(&ui, rect, maps, draw_state),
+                PanelKind::Paint => self.draw_palette(draw_state),
+                _ => {}
             }
             if self.dock.is_float(idx) {
                 let s = dock::FLOAT_HANDLE as i32;
@@ -2583,6 +2598,65 @@ impl MapViewer {
         if self.maps_dialog.is_active() {
             self.build_dialog()
                 .draw_at(0, 0, draw_state, system, LayerId::BG);
+        }
+    }
+
+    /// Blit the Paint palette into its viewport: the sheet's 32-wide tile grid,
+    /// scrolled to `(pal_col, pal_row)`, the selected tile outlined, plus thin
+    /// scroll bars on the overflowing edges.
+    fn draw_palette(&self, draw_state: &mut DrawState) {
+        let v = self.pal_rect;
+        if v.w <= 0 || v.h <= 0 {
+            return;
+        }
+        let (vc, vr) = self.palette_visible();
+        for r in 0..vr {
+            for c in 0..vc {
+                let (col, row) = (self.pal_col + c, self.pal_row + r);
+                if col >= SHEET_COLS {
+                    continue;
+                }
+                let id = row * SHEET_COLS + col;
+                if id >= SHEET_TILES {
+                    continue;
+                }
+                let x = v.x as i32 + c as i32 * 8;
+                let y = v.y as i32 + r as i32 * 8;
+                let opts = SpriteOptions { transparent: Some(0), ..Default::default() };
+                if id == self.selected_tile {
+                    draw_state.spr_with_outline(
+                        LayerId::BG,
+                        &PALETTE_MAP_IDENTITY,
+                        id as i32,
+                        x,
+                        y,
+                        opts,
+                        11,
+                    );
+                } else {
+                    draw_state.spr(LayerId::BG, &PALETTE_MAP_IDENTITY, id as i32, x, y, opts);
+                }
+            }
+        }
+
+        // Scroll bars (2px) on the right / bottom when the grid overflows.
+        let (max_c, max_r) = self.palette_scroll_max();
+        let track = draw_state.colour(0);
+        let thumb = draw_state.colour(13);
+        if max_r > 0 {
+            let total_rows = SHEET_TILES.div_ceil(SHEET_COLS);
+            let bx = (v.x + v.w - 2) as i32;
+            draw_state.rgba(LayerId::BG).fill_rect(bx, v.y as i32, 2, v.h as i32, track);
+            let th = ((v.h as usize * vr) / total_rows).max(2) as i32;
+            let ty = v.y as i32 + (v.h as i32 - th) * self.pal_row as i32 / max_r as i32;
+            draw_state.rgba(LayerId::BG).fill_rect(bx, ty, 2, th, thumb);
+        }
+        if max_c > 0 {
+            let by = (v.y + v.h - 2) as i32;
+            draw_state.rgba(LayerId::BG).fill_rect(v.x as i32, by, v.w as i32, 2, track);
+            let tw = ((v.w as usize * vc) / SHEET_COLS).max(2) as i32;
+            let tx = v.x as i32 + (v.w as i32 - tw) * self.pal_col as i32 / max_c as i32;
+            draw_state.rgba(LayerId::BG).fill_rect(tx, by, tw, 2, thumb);
         }
     }
 
@@ -3293,6 +3367,28 @@ mod tests {
         assert_eq!(parse_dim("nope", 30), 30);
         assert_eq!(parse_dim("0", 30), 30); // below min
         assert_eq!(parse_dim("9999", 30), 30); // above max
+    }
+
+    /// The fixed-32 palette maps a cursor to the right sheet tile given its
+    /// scroll position, ignores clicks outside the viewport, and bounds scroll so
+    /// the last column/row can reach the edge.
+    #[test]
+    fn palette_picks_and_bounds_scroll() {
+        let mut v = MapViewer {
+            pal_rect: Rect { x: 4, y: 20, w: 80, h: 64 }, // 10 cols x 8 rows visible
+            pal_col: 5,
+            pal_row: 2,
+            ..Default::default()
+        };
+        // 3rd visible column, 1st visible row -> sheet (col 7, row 2).
+        v.select_palette_tile(Vec2::new(4 + 2 * 8 + 1, 20 + 1));
+        assert_eq!(v.selected_tile, 2 * SHEET_COLS + 7);
+        // A click outside the viewport changes nothing.
+        let before = v.selected_tile;
+        v.select_palette_tile(Vec2::new(200, 200));
+        assert_eq!(v.selected_tile, before);
+        // Scroll bounds: 10 of 32 cols, 8 of 64 rows visible.
+        assert_eq!(v.palette_scroll_max(), (32 - 10, 64 - 8));
     }
 
     /// Cycling an interaction reaches every authorable kind — the GUI's way to
