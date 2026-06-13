@@ -1544,10 +1544,11 @@ impl MapViewer {
 
     /// Persist the map and start the save-confirmation toast. Only modern maps
     /// have a `.tmj` to write back to; legacy windows just log.
-    fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo, maps: &MapStore) {
+    fn save(&mut self, system: &mut impl ConsoleApi, map: &MapInfo, maps: &mut MapStore) {
         if maps.is_modern(&map.source) {
             let json = maps.get(&map.source).unwrap().to_tmj(&map.objects);
             system.write_file(&format!("maps/{}.tmj", map.source), json.as_bytes());
+            sync_store(maps, &map.source, &json);
         } else {
             log::info!("save: {:?} is not a modern map; not saving", map.source);
         }
@@ -1851,6 +1852,40 @@ fn cycle_sound(sound: &Option<SfxData>) -> Option<SfxData> {
     }
 }
 
+/// Re-parse the just-written map JSON back into the store, so re-entering the
+/// map rebuilds from the saved state. Tile paints edit the store's `TiledMap` in
+/// place, but object edits live only on the running [`MapInfo`] until a save —
+/// without this write-back, leaving and re-entering the map would parse the
+/// stale pre-edit object layer (the disk file is right, the memory copy isn't).
+/// Runtime image pixels aren't serialised, so they're carried over from the old
+/// entry by path before the swap; a parse failure leaves the store untouched
+/// (the written file is still good — it round-trips by construction).
+fn sync_store(maps: &mut MapStore, name: &str, json: &str) {
+    use crate::data::tmj::{TiledMapLayer, from_json};
+    match from_json(json.as_bytes()) {
+        Ok(mut fresh) => {
+            if let Some(old) = maps.get(name) {
+                let pixels: Vec<(String, _)> = old
+                    .layers
+                    .iter()
+                    .filter_map(|layer| match layer {
+                        TiledMapLayer::ImageLayer(image) => Some((
+                            image.image.clone(),
+                            image.pixels.clone()?,
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                for (path, pixels) in pixels {
+                    fresh.attach_image(&path, pixels);
+                }
+            }
+            maps.insert(name, fresh);
+        }
+        Err(e) => log::warn!("save: re-parsing {name}.tmj for the store failed: {e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2118,5 +2153,82 @@ mod tests {
         let extra = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "c");
         insert_object(&mut map, 99, extra);
         assert_eq!(map.objects.len(), 3);
+    }
+
+    /// Saving writes the `.tmj` *and* re-syncs the store, so leaving and
+    /// re-entering the map sees the edited objects — without the sync, the disk
+    /// file was right but `map_by_name` rebuilt from the stale pre-edit object
+    /// layer until a restart. Attached image pixels survive the swap (they
+    /// aren't serialised, so the sync carries them over by path).
+    #[test]
+    fn save_syncs_the_store() {
+        use crate::data::tmj::{
+            ImageLayer, ObjectLayer, TileLayer, TiledMap, TiledMapLayer, Tileset,
+        };
+        use crate::system::drawing::image::RgbaImage;
+        use crate::system::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut store = MapStore::default();
+        let mut map = TiledMap {
+            width: 2,
+            height: 2,
+            layers: vec![
+                TiledMapLayer::TileLayer(TileLayer {
+                    width: 2,
+                    height: 2,
+                    data: vec![0; 4],
+                    name: "collision".to_string(),
+                    ..Default::default()
+                }),
+                TiledMapLayer::ImageLayer(ImageLayer {
+                    name: "bg".to_string(),
+                    image: "images/bg.png".to_string(),
+                    offsetx: 0.0,
+                    offsety: 0.0,
+                    visible: true,
+                    opacity: 1.0,
+                    properties: Vec::new(),
+                    pixels: None,
+                }),
+                TiledMapLayer::ObjectLayer(ObjectLayer {
+                    name: "objects".to_string(),
+                    objects: Vec::new(),
+                }),
+            ],
+            tilesets: vec![Tileset {
+                firstgid: 1,
+                source: "tiles.tsj".to_string(),
+            }],
+            properties: Vec::new(),
+        };
+        map.attach_image("images/bg.png", RgbaImage::new(8, 8));
+        store.insert("m", map);
+
+        // The running MapInfo carries an object edit the store doesn't have yet.
+        let info = MapInfo {
+            source: "m".to_string(),
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "hello")],
+            ..MapInfo::default()
+        };
+        let mut viewer = MapViewer::default();
+        viewer.save(&mut console, &info, &mut store);
+
+        // The file was written, and the store now parses to the edited objects.
+        assert!(console.files.contains_key("maps/m.tmj"));
+        let synced = store.get("m").unwrap();
+        let objects = synced.parse_objects();
+        assert_eq!(objects.len(), 1, "the edited object reached the store");
+        assert!(matches!(
+            &objects[0].effect,
+            ObjectEffect::Interact(Interaction::Dialogue(key)) if key == "hello"
+        ));
+        // The runtime pixels survive the swap.
+        assert!(
+            synced.layers.iter().any(
+                |l| matches!(l, TiledMapLayer::ImageLayer(i) if i.pixels.is_some())
+            ),
+            "attached pixels survive the sync"
+        );
     }
 }

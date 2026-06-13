@@ -1631,7 +1631,8 @@ mod tests {
         assert_eq!(image.name, "walls");
         assert_eq!(image.image, "images/bedroom1_walls.png");
         assert_eq!((image.offsetx, image.offsety), (14.0, 15.0));
-        assert!(image.visible);
+        // (`visible` deliberately unasserted — it's live authoring state the
+        // user toggles in Tiled, not parse behaviour.)
         // Pixels are runtime-only: never filled by the parser.
         assert!(image.pixels.is_none());
         // "walls" is painted *art*, not a collision mask — collision stays on

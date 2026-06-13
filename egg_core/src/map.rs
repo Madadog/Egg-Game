@@ -1343,12 +1343,14 @@ mod tests {
 
     /// The real bedroom1 builds a `MapInfo` without panicking now that image
     /// layers parse: its tile collision layer stays invisible, and its painted
-    /// walls — drawn art, not a collision mask — join the bg list as a visible
-    /// image layer. (Its office-style collision tile ids sit high in the real
-    /// sheet, past the blank test sheet's end, so [`Collider::from_sprite`]'s
-    /// bounds guard derives them empty here; the real sheet covers them in-game.
-    /// house_stairwell's *parse* is covered in `tmj.rs`, and `is_modern` over an
-    /// image-only map is checked below.)
+    /// walls — drawn art, not a collision mask — join the bg list as an image
+    /// layer (whether it *draws* is the file's `visible`, live authoring state
+    /// the user toggles in Tiled, so it isn't asserted). (Its office-style
+    /// collision tile ids sit high in the real sheet, past the blank test
+    /// sheet's end, so [`Collider::from_sprite`]'s bounds guard derives them
+    /// empty here; the real sheet covers them in-game. house_stairwell's *parse*
+    /// is covered in `tmj.rs`, and `is_modern` over an image-only map is checked
+    /// below.)
     #[test]
     fn real_bedroom1_builds_map_info_with_image_layer() {
         let console = TestConsole::new();
@@ -1358,8 +1360,8 @@ mod tests {
         let bedroom = map_by_name(&console.indexed_sprites, "bedroom1", &store).unwrap();
         assert!(!bedroom.layers[0].visible, "tile layer 0 is the collision layer");
         assert!(
-            bedroom.layers.iter().any(|l| l.kind == LayerKind::Image && l.visible),
-            "the painted walls are a visible image bg layer"
+            bedroom.layers.iter().any(|l| l.kind == LayerKind::Image),
+            "the painted walls are an image bg layer"
         );
     }
 

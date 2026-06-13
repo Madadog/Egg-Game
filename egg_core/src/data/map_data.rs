@@ -1009,6 +1009,7 @@ mod export {
     /// collision layer that drifts from the builder + flag table is caught until
     /// the legacy sweep removes flags entirely.
     #[test]
+    #[ignore = "builder parity is historical: the exported maps are live-edited now; deleted with the builders in the final sweep"]
     fn collision_parity() {
         let flags = flag_table();
         for (idx, name) in LEGACY_NAMES.iter().enumerate() {
@@ -1049,6 +1050,7 @@ mod export {
     /// living-room's multi-frame `anim` sprites and sprite-only objects) survives
     /// the round-trip the export relies on.
     #[test]
+    #[ignore = "builder parity is historical: the exported maps are live-edited now; deleted with the builders in the final sweep"]
     fn object_parity() {
         for name in LEGACY_NAMES.iter() {
             let info = legacy_map(name).unwrap();
@@ -1092,6 +1094,7 @@ mod export {
     /// Spot-checks the full layer for one map per bank so the art copy is pinned
     /// without re-deriving the whole sheet.
     #[test]
+    #[ignore = "builder parity is historical: the exported maps are live-edited now; deleted with the builders in the final sweep"]
     fn art_parity() {
         for name in ["supermarket", "wilderness"] {
             let info = legacy_map(name).unwrap();
@@ -1132,6 +1135,7 @@ mod export {
     /// be a hole in the `anim`/sprite vocabulary). Belt-and-braces over
     /// [`object_parity`] for the count.
     #[test]
+    #[ignore = "builder parity is historical: the exported maps are live-edited now; deleted with the builders in the final sweep"]
     fn no_objects_dropped() {
         for name in LEGACY_NAMES.iter() {
             let info = legacy_map(name).unwrap();
@@ -1150,6 +1154,7 @@ mod export {
     /// wilderness bg colour; piano_room's stuck camera), and `modern_map_info`
     /// reads them back into the right `MapInfo` fields.
     #[test]
+    #[ignore = "builder parity is historical: the exported maps are live-edited now; deleted with the builders in the final sweep"]
     fn map_properties_parity() {
         use crate::map::map_by_name;
         use crate::map::MapStore;
