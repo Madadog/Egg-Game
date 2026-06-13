@@ -1109,7 +1109,7 @@ impl MapViewer {
         // `pick` cycles through `[none] + the known tracks`.
         let music = tm.and_then(|t| t.music()).unwrap_or("-");
         rows.push(
-            b.text(format!("MUSIC: {}", truncate(music, 8)))
+            b.text(format!("MUSIC: {}", truncate(music, 11)))
                 .small(true)
                 .color(13)
                 .full_width(8.0)
@@ -3294,14 +3294,20 @@ impl MapViewer {
                 self.commit_layer_rename(map, maps, &buffer);
                 return;
             }
+            // `f64::parse` accepts "NaN"/"inf"; reject them — a non-finite offset
+            // serialises to `null` and breaks the next reload.
             EditField::LayerOffX => {
-                if let Ok(v) = buffer.parse::<f64>() {
+                if let Ok(v) = buffer.parse::<f64>()
+                    && v.is_finite()
+                {
                     self.commit_layer_prop(map, maps, LayerProp::OffsetX, v);
                 }
                 return;
             }
             EditField::LayerOffY => {
-                if let Ok(v) = buffer.parse::<f64>() {
+                if let Ok(v) = buffer.parse::<f64>()
+                    && v.is_finite()
+                {
                     self.commit_layer_prop(map, maps, LayerProp::OffsetY, v);
                 }
                 return;
@@ -3447,7 +3453,9 @@ impl MapViewer {
         let before = maps.get(&map.source).and_then(|tm| match prop {
             LayerProp::OffsetX => tm.layer_offset(index).map(|(x, _)| x),
             LayerProp::OffsetY => tm.layer_offset(index).map(|(_, y)| y),
-            LayerProp::Rotate => Some(f64::from(tm.layer_palette_rotate(index))),
+            // Normalise to the 0..=15 the writer produces, so revert restores an
+            // exact value even for a hand-authored palette_rotate > 15.
+            LayerProp::Rotate => Some(f64::from(tm.layer_palette_rotate(index) % 16)),
         });
         let Some(before) = before else { return };
         if before == value {
@@ -3803,7 +3811,9 @@ impl MapViewer {
             }
             gy += 8;
         }
-        // Cursor tile-coordinate readout (top-right, clear of the global bar).
+        // Cursor tile-coordinate readout, bottom-right — clear of the global
+        // undo/redo/save bar at the world's top-left (which draws on top), even
+        // when the world is only a little wider than that bar.
         if world.contains(system.mouse().pos()) {
             let (tx, ty) = world_tile(&system.mouse(), camera_pos);
             let mut b = UiBuilder::<EditorKey>::new();
@@ -3815,8 +3825,13 @@ impl MapViewer {
                 .fill(11)
                 .size(30.0, 7.0)
                 .id();
-            b.finish(t, (30.0, 7.0))
-                .draw_at(world.x + world.w - 31, world.y + 1, draw_state, system, LayerId::BG);
+            b.finish(t, (30.0, 7.0)).draw_at(
+                world.x + world.w - 31,
+                world.y + world.h - 8,
+                draw_state,
+                system,
+                LayerId::BG,
+            );
         }
     }
 
@@ -4393,7 +4408,9 @@ fn apply_layer_prop(maps: &mut MapStore, source: &str, index: usize, prop: Layer
     match prop {
         LayerProp::OffsetX => tm.set_layer_offset_x(index, value),
         LayerProp::OffsetY => tm.set_layer_offset_y(index, value),
-        LayerProp::Rotate => tm.set_layer_palette_rotate(index, value.clamp(0.0, 15.0) as u8),
+        // Palette rotation is mod-16; normalise here (the single write site) so
+        // every path agrees and revert/reapply are exact inverses.
+        LayerProp::Rotate => tm.set_layer_palette_rotate(index, value.rem_euclid(16.0) as u8),
     }
 }
 
@@ -5078,6 +5095,43 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, 0.0)));
         v.redo(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, -2.0)));
+    }
+
+    /// Rotation edits normalise mod-16 (so revert is exact even for a
+    /// hand-authored value > 15), and a non-finite offset is rejected.
+    #[test]
+    fn layer_prop_edits_normalise_and_reject_bad_input() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("m", TiledMap::blank_modern(4, 4));
+        maps.get_mut("m").unwrap().set_layer_palette_rotate(1, 20); // out of range, as if hand-authored
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo { source_layer: 0, ..LayerInfo::DEFAULT_LAYER },
+                LayerInfo { source_layer: 1, ..LayerInfo::DEFAULT_LAYER },
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { layer_index: 1, ..Default::default() };
+        let commit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
+            v.rename_target = Some(1);
+            v.editing = Some(field);
+            v.field = Some(TextField::new(text));
+            v.commit_edit(map, maps);
+            v.stop_editing();
+        };
+
+        commit(&mut v, &mut map, &mut maps, EditField::LayerRotate, "5");
+        assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 5);
+        v.undo(&mut map, &mut maps);
+        // Restores 20 mod 16 = 4 (the normalised prior), not clamp(20)=15.
+        assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 4);
+
+        // NaN / inf typed into an offset are rejected — the offset stays put.
+        commit(&mut v, &mut map, &mut maps, EditField::LayerOffX, "NaN");
+        commit(&mut v, &mut map, &mut maps, EditField::LayerOffX, "inf");
+        assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((0.0, 0.0)));
     }
 
     /// The Setup music picker steps through `[none] + the known tracks` and wraps.
