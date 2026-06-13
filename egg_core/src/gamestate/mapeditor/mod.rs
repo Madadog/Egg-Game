@@ -21,7 +21,10 @@ use crate::{
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode, SpriteOptions,
-        drawing::{Canvas, EdgePolicy, Transform, image::RgbaImage},
+        drawing::{
+            Canvas, EdgePolicy, Transform,
+            image::{Rgba, RgbaImage},
+        },
         just_pressed, pressed,
     },
     ui::{NodeId, Rect, Ui, UiBuilder},
@@ -2851,12 +2854,51 @@ impl MapViewer {
                         colour,
                     );
                 } else {
+                    // Soft brush preview: a dithered ghost of the tiles the brush
+                    // would stamp here, under a footprint outline.
                     let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+                    let (px, py) = (tx * 8 - cx, ty * 8 - cy);
+                    let (bw, bh) = self.brush_size();
+                    let (bc, br) = (self.selected_tile % SHEET_COLS, self.selected_tile / SHEET_COLS);
+                    let mut ghost = RgbaImage::new((bw * 8) as u32, (bh * 8) as u32);
+                    for dy in 0..bh {
+                        for dx in 0..bw {
+                            if bc + dx >= SHEET_COLS {
+                                continue;
+                            }
+                            let id = ((br + dy) * SHEET_COLS + (bc + dx)) as i32;
+                            ghost.spr_indexed(
+                                &draw_state.indexed_sprites,
+                                &draw_state.palettes[0],
+                                &PALETTE_MAP_IDENTITY,
+                                id,
+                                (dx * 8) as i32,
+                                (dy * 8) as i32,
+                                SpriteOptions { transparent: Some(0), ..Default::default() },
+                            );
+                        }
+                    }
+                    // Knock out a checkerboard so it reads as a preview, not paint.
+                    for gy in 0..ghost.height() {
+                        for gx in 0..ghost.width() {
+                            if (gx + gy) % 2 == 1 {
+                                ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
+                            }
+                        }
+                    }
+                    draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+                        px,
+                        py,
+                        &ghost,
+                        EdgePolicy::Transparent,
+                        Transform::default(),
+                        |p| p.a() == 0,
+                    );
                     draw_state.rgba(LayerId::BG).stroke_rect(
-                        tx * 8 - cx,
-                        ty * 8 - cy,
-                        8,
-                        8,
+                        px,
+                        py,
+                        (bw * 8) as i32,
+                        (bh * 8) as i32,
                         colour,
                     );
                 }
