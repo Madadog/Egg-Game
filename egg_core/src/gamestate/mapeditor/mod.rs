@@ -91,6 +91,9 @@ enum CycleField {
     /// The interaction kind (none / dialogue / the named Func behaviours) — only
     /// on the Interacts tab. Cycling rebuilds the effect, keeping a usable param.
     IntKind,
+    /// A warp's destination map: steps through `[same-map] + existing maps`, so a
+    /// target can be picked without typing (and can't be a typo'd dangling name).
+    WarpTarget,
 }
 
 /// Which kind of object a tool creates / filters its view to. The object lists
@@ -676,6 +679,9 @@ pub struct MapViewer {
     /// does (`MapViewer::primary`); extra views are session-only so they don't
     /// race the one layout file. Default `false`.
     persist: bool,
+    /// Whether the tile grid + cursor tile-coordinate readout overlay is shown
+    /// over the world (toggled with `G`).
+    show_grid: bool,
 }
 
 impl MapViewer {
@@ -1531,7 +1537,10 @@ impl MapViewer {
             match &object.effect {
                 ObjectEffect::Warp(w) => {
                     let dest = w.map.as_deref().unwrap_or("-");
+                    // `map` is free text (for a not-yet-created target); `pick`
+                    // cycles through existing maps so a target can't be a typo.
                     self.field_row(b, rows, EditField::ToMap, "map", dest);
+                    self.cycle_row(b, rows, CycleField::WarpTarget, "pick", dest);
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
@@ -1895,6 +1904,12 @@ impl MapViewer {
                 | ScanCode::X
                 | ScanCode::V
                 | ScanCode::Delete
+                // Grid toggle + arrow-key object nudge.
+                | ScanCode::G
+                | ScanCode::Up
+                | ScanCode::Down
+                | ScanCode::Left
+                | ScanCode::Right
                 | ScanCode::Digit1
                 | ScanCode::Digit2
                 | ScanCode::Digit3
@@ -2199,6 +2214,28 @@ impl MapViewer {
         if system.keyp(ScanCode::Escape) && self.tool == EditorTool::Select {
             self.selection = None;
         }
+        // G toggles the tile-grid + coordinate overlay.
+        if system.keyp(ScanCode::G) {
+            self.show_grid = !self.show_grid;
+        }
+        // Arrow keys nudge the selected object's hitbox (8px with Shift), each
+        // press one undo step — the keyboard companion to the x/y/w/h fields.
+        if matches!(self.tool, EditorTool::Interactables | EditorTool::Warps) {
+            let step = if shift { 8 } else { 1 };
+            let (mut dx, mut dy) = (0i16, 0i16);
+            if system.keyp(ScanCode::Left) { dx -= step; }
+            if system.keyp(ScanCode::Right) { dx += step; }
+            if system.keyp(ScanCode::Up) { dy -= step; }
+            if system.keyp(ScanCode::Down) { dy += step; }
+            if (dx != 0 || dy != 0) && self.selected.is_some() {
+                self.modify_object(map, |map, i| {
+                    if let Some(o) = map.objects.get_mut(i) {
+                        o.hitbox.x += dx;
+                        o.hitbox.y += dy;
+                    }
+                });
+            }
+        }
 
         // Number-row tool switching, mirroring the tab order (5 = Select, the
         // Paint panel's sub-mode).
@@ -2437,7 +2474,13 @@ impl MapViewer {
             }
             EditorKey::Cycle(field) => {
                 if click {
-                    self.cycle(map, field);
+                    // WarpTarget steps through the map store, so it needs `maps`;
+                    // the rest only touch the object.
+                    if field == CycleField::WarpTarget {
+                        self.cycle_warp_target(map, maps);
+                    } else {
+                        self.cycle(map, field);
+                    }
                 }
             }
             EditorKey::Eraser => {
@@ -3274,7 +3317,26 @@ impl MapViewer {
                     object.effect = ObjectEffect::Interact(next);
                 }
             }),
+            // Handled in `handle_panel` (it needs the map store) — see
+            // [`cycle_warp_target`](Self::cycle_warp_target).
+            CycleField::WarpTarget => {}
         }
+    }
+
+    /// Step the selected warp's destination through `[same-map] + the existing
+    /// modern maps`, so a target is picked from real maps rather than typed (and
+    /// can't become a dangling name). Recorded as one undo step.
+    fn cycle_warp_target(&mut self, map: &mut MapInfo, maps: &MapStore) {
+        let names = self.modern_names(maps);
+        self.modify_warp(map, move |w| {
+            // Options are indexed 0 = same-map (None), then each name at +1.
+            let current = match w.map.as_deref() {
+                None => 0,
+                Some(c) => names.iter().position(|n| n == c).map_or(0, |i| i + 1),
+            };
+            let next = (current + 1) % (names.len() + 1);
+            w.map = (next > 0).then(|| names[next - 1].clone());
+        });
     }
 
     /// Persist the map and start the save-confirmation toast. A map only writes
@@ -3545,6 +3607,49 @@ impl MapViewer {
         }
     }
 
+    /// When toggled on (`G`), dot the 8px tile grid over the world and show the
+    /// cursor's tile coordinate in the world's top-right corner. Clipped to the
+    /// world rect so it never bleeds under a docked panel.
+    fn draw_grid(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi, camera_pos: Vec2) {
+        if !self.show_grid {
+            return;
+        }
+        let world = self.dock.solved.world;
+        if world.w <= 0 || world.h <= 0 {
+            return;
+        }
+        let dot = draw_state.colour(13);
+        let (cx, cy) = (i32::from(camera_pos.x), i32::from(camera_pos.y));
+        let (wx0, wy0) = (i32::from(world.x), i32::from(world.y));
+        let (wx1, wy1) = (wx0 + i32::from(world.w), wy0 + i32::from(world.h));
+        // First grid line at/after edge `w0` such that `(line + c)` is a multiple of 8.
+        let first = |w0: i32, c: i32| w0 + (-c - w0).rem_euclid(8);
+        let mut gy = first(wy0, cy);
+        while gy < wy1 {
+            let mut gx = first(wx0, cx);
+            while gx < wx1 {
+                draw_state.rgba(LayerId::BG).fill_rect(gx, gy, 1, 1, dot);
+                gx += 8;
+            }
+            gy += 8;
+        }
+        // Cursor tile-coordinate readout (top-right, clear of the global bar).
+        if world.contains(system.mouse().pos()) {
+            let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+            let mut b = UiBuilder::<EditorKey>::new();
+            let t = b
+                .text(format!("{tx},{ty}"))
+                .small(true)
+                .center()
+                .color(0)
+                .fill(11)
+                .size(30.0, 7.0)
+                .id();
+            b.finish(t, (30.0, 7.0))
+                .draw_at(world.x + world.w - 31, world.y + 1, draw_state, system, LayerId::BG);
+        }
+    }
+
     /// Draw the editor overlay + panels for `map` from an explicit `camera_pos`.
     /// Generalises [`draw_map_viewer`](Self::draw_map_viewer) so an extra view
     /// can run its own editor against its own free camera, rather than the live
@@ -3561,6 +3666,7 @@ impl MapViewer {
             return;
         }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
+        self.draw_grid(draw_state, system, camera_pos);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
         // Draw each panel back-to-front from the geometry `step` already solved
         // (not a fresh layout against the live canvas) — so a framebuffer resize
@@ -4491,7 +4597,7 @@ mod tests {
         let screen = (240.0, 136.0);
         let mut map = MapInfo::default();
 
-        let mut viewer = MapViewer { focused: true, ..Default::default() };
+        let mut viewer = MapViewer { focused: true, show_grid: true, ..Default::default() };
         viewer.dock.toggle_panel(PanelKind::Maps); // open the Maps panel too
         viewer.dock.toggle_panel(PanelKind::Map); // and the Setup panel
         viewer.dock.set_float(1, Vec2::new(100, 30), 80, 60); // float the Paint panel
@@ -4721,6 +4827,37 @@ mod tests {
         v.field = Some(TextField::new("   "));
         v.commit_edit(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+    }
+
+    /// The warp-target picker steps through `[same-map] + existing maps` and
+    /// wraps, recording each step for undo.
+    #[test]
+    fn warp_target_cycles_through_maps() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        maps.insert("a", TiledMap::blank_modern(4, 4));
+        maps.insert("b", TiledMap::blank_modern(4, 4));
+        let mut map = MapInfo {
+            objects: vec![MapObject::warp(
+                Hitbox::new(0, 0, 8, 8),
+                Warp::new(None, Vec2::new(0, 0)),
+            )],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { selected: Some(0), ..Default::default() };
+        let target = |map: &MapInfo| match &map.objects[0].effect {
+            ObjectEffect::Warp(w) => w.map.clone(),
+            _ => panic!("the object is a warp"),
+        };
+
+        assert_eq!(target(&map), None); // same-map
+        v.cycle_warp_target(&mut map, &maps);
+        assert_eq!(target(&map).as_deref(), Some("a"));
+        v.cycle_warp_target(&mut map, &maps);
+        assert_eq!(target(&map).as_deref(), Some("b"));
+        v.cycle_warp_target(&mut map, &maps); // wraps back to same-map
+        assert_eq!(target(&map), None);
+        assert!(v.history.can_undo(), "each pick is an undo step");
     }
 
     /// The fg-prefix toggle round-trips a separated marker, leaves a glued word
