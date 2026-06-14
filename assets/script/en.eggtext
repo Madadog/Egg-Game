@@ -246,6 +246,9 @@ menu_music_test = "Music Test"
 #dialogue sm_storeroom_shelf
     They're all out of Keratin Krunch.
 
+#dialogue sm_bathroom_sink
+    There's no water.
+
 // --- misc / debug ---
 
 #dialogue construction_1

@@ -69,6 +69,39 @@
           "width": 8,
           "x": 8,
           "y": 87
+        },
+        {
+          "height": 8,
+          "id": 2,
+          "name": "",
+          "properties": [
+            {
+              "name": "to_map",
+              "type": "string",
+              "value": "town"
+            },
+            {
+              "name": "to_x",
+              "type": "string",
+              "value": "80"
+            },
+            {
+              "name": "to_y",
+              "type": "string",
+              "value": "256"
+            },
+            {
+              "name": "sound",
+              "type": "string",
+              "value": "door"
+            }
+          ],
+          "rotation": 0,
+          "type": "warp",
+          "visible": true,
+          "width": 8,
+          "x": 423,
+          "y": 462
         }
       ],
       "opacity": 1,
@@ -79,7 +112,7 @@
     }
   ],
   "nextlayerid": 4,
-  "nextobjectid": 2,
+  "nextobjectid": 3,
   "orientation": "orthogonal",
   "renderorder": "right-down",
   "tiledversion": "1.11.2",

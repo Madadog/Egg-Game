@@ -90,7 +90,7 @@
             {
               "name": "description",
               "type": "string",
-              "value": "bathroom_sink"
+              "value": "sm_bathroom_sink"
             }
           ],
           "rotation": 0,
@@ -111,6 +111,13 @@
   "nextlayerid": 5,
   "nextobjectid": 3,
   "orientation": "orthogonal",
+  "properties": [
+    {
+      "name": "bg_colour",
+      "type": "int",
+      "value": 0
+    }
+  ],
   "renderorder": "right-down",
   "tiledversion": "1.11.2",
   "tileheight": 8,
