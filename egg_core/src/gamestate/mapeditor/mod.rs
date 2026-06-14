@@ -18,6 +18,7 @@ use crate::{
         Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp,
         WarpMode, map_by_name,
     },
+    player::Shell,
     position::{Hitbox, Vec2},
     system::{
         ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode, SpriteOptions,
@@ -316,6 +317,9 @@ enum EditorKey {
     NewObject,
     DupObject,
     DeleteObject,
+    /// The selected warp's destination-map preview: a rendered, click-to-place
+    /// map of the warp target with the player shown at the landing point.
+    WarpPreview,
     Field(EditField),
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
@@ -353,7 +357,12 @@ enum EditorKey {
     MapResize,
     /// Setup panel: cycle the map's music track.
     MusicCycle,
+    /// Setup panel: cycle the map's music playback speed.
+    MusicSpeedCycle,
 }
+
+/// The music playback-speed presets the Setup panel cycles through (1.0 = normal).
+const MUSIC_SPEEDS: [f32; 6] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
 /// Fallback sprite-sheet dimensions in tiles (32×128, the current
 /// `assets/sprites/sheet.png`), used only until the first draw caches the real
@@ -369,6 +378,9 @@ const GLOBAL_BAR_H: f32 = 11.0;
 /// A Maps-browser cell's thumbnail box size, px (a name label sits below it).
 const THUMB_W: f32 = 40.0;
 const THUMB_H: f32 = 22.0;
+/// The selected warp's destination preview box height, px. Its width fills the
+/// Objects panel, so floating/widening that panel grows the click target.
+const WARP_PREVIEW_H: f32 = 64.0;
 /// Default dimensions (tiles) of a newly-created blank map — roughly one screen.
 const NEW_MAP_W: usize = 30;
 const NEW_MAP_H: usize = 17;
@@ -799,7 +811,7 @@ impl MapViewer {
             }
             PanelKind::Objects => {
                 self.build_obj_tabs(&mut b, &mut rows);
-                self.build_objects(&mut b, &mut rows, map);
+                self.build_objects(&mut b, &mut rows, map, rect);
             }
             PanelKind::Maps => self.build_maps(&mut b, &mut rows, rect, maps),
             PanelKind::Map => self.build_setup(&mut b, &mut rows, map, maps),
@@ -1115,17 +1127,29 @@ impl MapViewer {
                 .full_width(8.0)
                 .id(),
         );
-        rows.push(
-            b.text("pick")
-                .small(true)
-                .center()
-                .color(12)
-                .full_width(7.0)
-                .grow(1.0)
-                .outlined(0, 12)
-                .key(EditorKey::MusicCycle)
-                .id(),
-        );
+        let speed = tm.map(|t| t.music_speed()).unwrap_or(1.0);
+        let pick = b
+            .text("pick")
+            .small(true)
+            .center()
+            .color(12)
+            .full_width(7.0)
+            .grow(1.0)
+            .outlined(0, 12)
+            .key(EditorKey::MusicCycle)
+            .id();
+        // Playback speed sits beside the track picker (it only bites with a track).
+        let spd = b
+            .text(format!("{speed}x"))
+            .small(true)
+            .center()
+            .color(12)
+            .full_width(7.0)
+            .grow(1.0)
+            .outlined(0, 12)
+            .key(EditorKey::MusicSpeedCycle)
+            .id();
+        rows.push(b.row(1.0, [pick, spd]).id());
     }
 
     /// The sorted modern-map names — the Maps browser's contents.
@@ -1528,7 +1552,13 @@ impl MapViewer {
         rows.push(b.row(1.0, [clear]).id());
     }
 
-    fn build_objects(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
+    fn build_objects(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        map: &MapInfo,
+        rect: Rect,
+    ) {
         let warps = self.tool == EditorTool::Warps;
         rows.push(
             b.text(if warps { "WARPS:" } else { "INTERACTS:" })
@@ -1608,6 +1638,19 @@ impl MapViewer {
                     self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
                     let narr = w.narration.as_deref().unwrap_or("-");
                     self.field_row(b, rows, EditField::Narration, "narr", narr);
+                    // Click-to-place destination preview: a rendered map of the
+                    // warp target with the player at the landing point. Drawn over
+                    // this box (see `draw_warp_preview`); clicks land here. Last so
+                    // it (not the essential fields) is what overflows a short panel.
+                    rows.push(b.text("land:").small(true).color(13).full_width(7.0).id());
+                    rows.push(
+                        b.boxed([])
+                            .size((rect.w as f32 - 2.0).max(THUMB_W), WARP_PREVIEW_H)
+                            .fill(0)
+                            .outline(13)
+                            .key(EditorKey::WarpPreview)
+                            .id(),
+                    );
                 }
                 ObjectEffect::Interact(interaction) => {
                     // Interaction kind (click to cycle) + its one editable param.
@@ -2555,6 +2598,18 @@ impl MapViewer {
                     self.delete_object(map);
                 }
             }
+            // A click in the warp destination preview sets the landing point to
+            // the clicked map pixel (clamped to the target's bounds).
+            EditorKey::WarpPreview => {
+                if click
+                    && let Some(rect) = self.dock.solved.rect_of(idx)
+                    && let Some(box_rect) = self
+                        .build_panel(idx, rect, map, maps)
+                        .rect_at(rect.x, rect.y, EditorKey::WarpPreview)
+                {
+                    self.place_warp_from_preview(map, maps, box_rect, mouse.pos());
+                }
+            }
             EditorKey::Field(field) => {
                 if click {
                     // Layer offset/rotation fields read from the store and target
@@ -2741,6 +2796,11 @@ impl MapViewer {
                     self.cycle_music(map, maps, &tracks);
                 }
             }
+            EditorKey::MusicSpeedCycle => {
+                if click {
+                    self.cycle_music_speed(map, maps);
+                }
+            }
         }
     }
 
@@ -2757,6 +2817,24 @@ impl MapViewer {
         };
         let next = (current + 1) % (tracks.len() + 1);
         tm.set_music((next > 0).then(|| tracks[next - 1].as_str()));
+        self.status.edited();
+    }
+
+    /// Step the map's `music_speed` through [`MUSIC_SPEEDS`], wrapping. Stored on
+    /// the map and applied on the next load, like the track itself.
+    fn cycle_music_speed(&mut self, map: &MapInfo, maps: &mut MapStore) {
+        let Some(tm) = maps.get_mut(&map.source) else { return };
+        let speed = tm.music_speed();
+        // Snap to the nearest preset, then advance one (wrapping).
+        let current = MUSIC_SPEEDS
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                (*a - speed).abs().total_cmp(&(*b - speed).abs())
+            })
+            .map_or(0, |(i, _)| i);
+        let next = (current + 1) % MUSIC_SPEEDS.len();
+        tm.set_music_speed(MUSIC_SPEEDS[next]);
         self.status.edited();
     }
 
@@ -3877,6 +3955,7 @@ impl MapViewer {
             match self.dock.panels[idx].kind {
                 PanelKind::Maps => self.draw_map_thumbnails(&ui, rect, maps, draw_state),
                 PanelKind::Paint => self.draw_palette(draw_state),
+                PanelKind::Objects => self.draw_warp_preview(&ui, rect, map, maps, draw_state),
                 _ => {}
             }
             if self.dock.is_float(idx) {
@@ -4063,6 +4142,103 @@ impl MapViewer {
                 |p| p.a() == 0,
             );
         }
+    }
+
+    /// Set the selected warp's landing point from a click in its destination
+    /// preview box: invert the same letterbox fit the draw used to recover the
+    /// clicked map pixel, clamped to the target's bounds. A click in the
+    /// letterbox margin (outside the rendered map) is ignored. One undo step.
+    fn place_warp_from_preview(
+        &mut self,
+        map: &mut MapInfo,
+        maps: &MapStore,
+        box_rect: Rect,
+        cursor: Vec2,
+    ) {
+        let dest = match self.selected.and_then(|i| map.objects.get(i)).map(|o| &o.effect) {
+            Some(ObjectEffect::Warp(w)) => w.map.clone().unwrap_or_else(|| map.source.clone()),
+            _ => return,
+        };
+        let Some(tiled) = maps.get(&dest) else {
+            return;
+        };
+        let (fw, fh) = ((tiled.width as u32 * 8).max(1), (tiled.height as u32 * 8).max(1));
+        let (inner, s) = fit_preview(box_rect, fw, fh);
+        if s <= 0.0 || !inner.contains(cursor) {
+            return;
+        }
+        let mx = (((cursor.x - inner.x) as f32) / s).clamp(0.0, fw as f32 - 1.0) as i16;
+        let my = (((cursor.y - inner.y) as f32) / s).clamp(0.0, fh as f32 - 1.0) as i16;
+        self.modify_warp(map, |w| {
+            w.to.x = mx;
+            w.to.y = my;
+        });
+    }
+
+    /// Blit a rendered preview of the selected warp's destination map over its
+    /// preview box (after the panel UI, so it lands on top of the box outline),
+    /// with the player drawn at the landing point and a crosshair pinpointing it.
+    /// A no-op unless a warp is selected (the box is only emitted then). An
+    /// unknown target (a free-typed name with no map) gets an `X` instead.
+    fn draw_warp_preview(
+        &self,
+        ui: &Ui<EditorKey>,
+        rect: Rect,
+        map: &MapInfo,
+        maps: &MapStore,
+        draw_state: &mut DrawState,
+    ) {
+        let (dest, landing) = match self.selected.and_then(|i| map.objects.get(i)).map(|o| &o.effect)
+        {
+            Some(ObjectEffect::Warp(w)) => (w.map.clone().unwrap_or_else(|| map.source.clone()), w.to),
+            _ => return,
+        };
+        let Some(box_rect) = ui.rect_at(rect.x, rect.y, EditorKey::WarpPreview) else {
+            return;
+        };
+        let Some((mut full, fw, fh)) = render_map_full(&dest, maps, draw_state) else {
+            // Unknown target: cross the box out so the dangling name is obvious.
+            let bad = draw_state.colour(8);
+            let (x0, y0) = (box_rect.x as i32, box_rect.y as i32);
+            let (x1, y1) = ((box_rect.x + box_rect.w) as i32 - 1, (box_rect.y + box_rect.h) as i32 - 1);
+            let layer = draw_state.rgba(LayerId::BG);
+            layer.line(x0, y0, x1, y1, bad);
+            layer.line(x0, y1, x1, y0, bad);
+            return;
+        };
+
+        // Draw the player at the spawn point (its feet on the landing pixel, as in
+        // the live game), outlined so it reads even once downscaled.
+        let (sprite, _) = Shell::default().sprite_options();
+        let opts = SpriteOptions { transparent: Some(0), ..sprite };
+        let (px, py) = (landing.x as i32 - opts.x_offset, landing.y as i32 - opts.y_offset);
+        let (sprites, palette) = (&draw_state.indexed_sprites, &draw_state.palettes[0]);
+        full.spr_outline(sprites, palette, opts.id, px, py, opts.clone(), 0);
+        full.spr_indexed(sprites, palette, &PALETTE_MAP_IDENTITY, opts.id, px, py, opts);
+
+        // Letterbox the rendered map into the box and blit it.
+        let (inner, s) = fit_preview(box_rect, fw, fh);
+        let thumb = downscale(&full, fw, fh, inner.w as u32, inner.h as u32);
+        draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+            inner.x as i32,
+            inner.y as i32,
+            &thumb,
+            EdgePolicy::Transparent,
+            Transform::default(),
+            |p| p.a() == 0,
+        );
+
+        // A bright crosshair marks the exact landing pixel, clamped to the box so
+        // a near-edge landing can't draw outside the preview.
+        let mark = draw_state.colour(11);
+        let (x0, y0) = (box_rect.x as i32, box_rect.y as i32);
+        let (x1, y1) = ((box_rect.x + box_rect.w) as i32 - 1, (box_rect.y + box_rect.h) as i32 - 1);
+        let cx = (inner.x as i32 + (landing.x as f32 * s) as i32).clamp(x0, x1);
+        let cy = (inner.y as i32 + (landing.y as f32 * s) as i32).clamp(y0, y1);
+        let arm = 4;
+        let layer = draw_state.rgba(LayerId::BG);
+        layer.line((cx - arm).max(x0), cy, (cx + arm).min(x1), cy, mark);
+        layer.line(cx, (cy - arm).max(y0), cx, (cy + arm).min(y1), mark);
     }
 
     /// Draw tool overlays onto the live world: a tile cursor (paint) or object
@@ -4317,25 +4493,17 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-/// Render a downscaled preview of map `name` to fit `(max_w, max_h)` px, using
-/// the live sprite sheet from `draw_state`. Reuses the same per-layer render as
-/// the world (tile layers via the sheet, image layers blitted), at the map
-/// origin (no camera), then nearest-neighbour downscales. `None` if the map is
-/// unknown or degenerate.
-fn render_map_thumbnail(
-    name: &str,
-    maps: &MapStore,
-    draw_state: &DrawState,
-    max_w: u32,
-    max_h: u32,
-) -> Option<RgbaImage> {
+/// Render map `name` 1:1 at the map origin (no camera) into a fresh image, using
+/// the live sprite sheet from `draw_state`. The same per-layer render as the
+/// world: tile layers via the sheet, image layers blitted. Returns the image and
+/// its `(width, height)` px. `None` if the map is unknown.
+fn render_map_full(name: &str, maps: &MapStore, draw_state: &DrawState) -> Option<(RgbaImage, u32, u32)> {
     let info = map_by_name(&draw_state.indexed_sprites, name, maps)?;
     let tiled = maps.get(name)?;
     let (fw, fh) = ((tiled.width as u32 * 8).max(1), (tiled.height as u32 * 8).max(1));
     let sprites = &draw_state.indexed_sprites;
     let palette = draw_state.palettes[0].as_slice();
 
-    // Render every visible bg then fg layer 1:1 at the map origin.
     let mut full = RgbaImage::new(fw, fh);
     for layer in info.layers.iter().chain(info.fg_layers.iter()) {
         if !layer.visible {
@@ -4362,24 +4530,53 @@ fn render_map_thumbnail(
             _ => {}
         }
     }
+    Some((full, fw, fh))
+}
 
-    // Fit within the cell (downscale only), nearest-neighbour.
-    if max_w == 0 || max_h == 0 {
-        return None;
-    }
-    let s = (max_w as f32 / fw as f32)
-        .min(max_h as f32 / fh as f32)
-        .min(1.0);
-    let (tw, th) = (((fw as f32 * s) as u32).max(1), ((fh as f32 * s) as u32).max(1));
-    let mut thumb = RgbaImage::new(tw, th);
+/// Nearest-neighbour resample of `full` (`fw`×`fh`) to `(tw, th)` px.
+fn downscale(full: &RgbaImage, fw: u32, fh: u32, tw: u32, th: u32) -> RgbaImage {
+    let (tw, th) = (tw.max(1), th.max(1));
+    let mut out = RgbaImage::new(tw, th);
     for y in 0..th {
         for x in 0..tw {
             let sx = (x * fw / tw).min(fw - 1);
             let sy = (y * fh / th).min(fh - 1);
-            thumb.set_pixel(x, y, full.get_pixel(sx, sy));
+            out.set_pixel(x, y, full.get_pixel(sx, sy));
         }
     }
-    Some(thumb)
+    out
+}
+
+/// Render a downscaled preview of map `name` to fit `(max_w, max_h)` px,
+/// nearest-neighbour (downscale only). `None` if the map is unknown or `max_*`
+/// is zero.
+fn render_map_thumbnail(
+    name: &str,
+    maps: &MapStore,
+    draw_state: &DrawState,
+    max_w: u32,
+    max_h: u32,
+) -> Option<RgbaImage> {
+    if max_w == 0 || max_h == 0 {
+        return None;
+    }
+    let (full, fw, fh) = render_map_full(name, maps, draw_state)?;
+    let s = (max_w as f32 / fw as f32).min(max_h as f32 / fh as f32).min(1.0);
+    Some(downscale(&full, fw, fh, (fw as f32 * s) as u32, (fh as f32 * s) as u32))
+}
+
+/// Letterbox a `(fw, fh)`-px image inside `outer`, downscale-only, centred.
+/// Returns the inner rect the image occupies and the scale (preview px per source
+/// px). Shared by the warp preview's draw (where to blit) and click handling
+/// (how to invert a click back to a map coordinate) so they can't disagree.
+fn fit_preview(outer: Rect, fw: u32, fh: u32) -> (Rect, f32) {
+    let s = (outer.w as f32 / fw as f32)
+        .min(outer.h as f32 / fh as f32)
+        .clamp(0.0, 1.0);
+    let (iw, ih) = (((fw as f32 * s) as i16).max(1), ((fh as f32 * s) as i16).max(1));
+    let ix = outer.x + (outer.w - iw) / 2;
+    let iy = outer.y + (outer.h - ih) / 2;
+    (Rect { x: ix, y: iy, w: iw, h: ih }, s)
 }
 
 /// A hitbox spanning the rectangle between two world points (min size 1px).
@@ -5061,6 +5258,40 @@ mod tests {
         v.cycle_warp_target(&mut map, &maps); // wraps back to same-map
         assert_eq!(target(&map), None);
         assert!(v.history.can_undo(), "each pick is an undo step");
+    }
+
+    /// The warp preview's letterbox fit and its inverse agree: a click at the
+    /// centre of a placed map pixel round-trips back to that pixel. This is the
+    /// contract the draw (where to blit / mark) and the click handler (how to
+    /// invert a click to a coordinate) both depend on.
+    #[test]
+    fn warp_preview_fit_inverts() {
+        // A 240×136 map letterboxed into an 82×64 box: downscales, centres.
+        let outer = Rect { x: 10, y: 20, w: 82, h: 64 };
+        let (fw, fh) = (240u32, 136u32);
+        let (inner, s) = fit_preview(outer, fw, fh);
+        assert!(s > 0.0 && s < 1.0, "a large map downscales: {s}");
+        // The inner map sits inside the box, centred (letterboxed).
+        assert!(inner.w <= outer.w && inner.h <= outer.h);
+        assert!(inner.x >= outer.x && inner.y >= outer.y);
+
+        // Click the middle of where map pixel (100, 50) renders → recover (100,50).
+        let (mx, my) = (100i16, 50i16);
+        let cursor = Vec2::new(
+            inner.x + (mx as f32 * s) as i16,
+            inner.y + (my as f32 * s) as i16,
+        );
+        let inv_x = (((cursor.x - inner.x) as f32) / s) as i16;
+        let inv_y = (((cursor.y - inner.y) as f32) / s) as i16;
+        // Within one source pixel (the scale's quantisation).
+        assert!((inv_x - mx).abs() <= 1, "x round-trips: {inv_x} vs {mx}");
+        assert!((inv_y - my).abs() <= 1, "y round-trips: {inv_y} vs {my}");
+
+        // A tiny map (smaller than the box) is shown 1:1, not upscaled, and centred.
+        let (inner, s) = fit_preview(outer, 16, 16);
+        assert_eq!(s, 1.0, "downscale only — a small map stays 1:1");
+        assert_eq!((inner.w, inner.h), (16, 16));
+        assert_eq!(inner.x, outer.x + (outer.w - 16) / 2);
     }
 
     /// A tile layer's offset / palette-rotation fields edit the store and are

@@ -89,6 +89,10 @@ impl Property {
     pub fn as_str(&self) -> Option<&str> {
         self.value.as_str()
     }
+    /// This property's floating-point value, if it is numeric (Tiled `float`).
+    pub fn as_float(&self) -> Option<f64> {
+        self.value.as_f64()
+    }
     /// An `int` property.
     pub fn int(name: &str, value: i64) -> Self {
         Self {
@@ -121,6 +125,14 @@ fn property_str<'a>(properties: &'a [Property], name: &str) -> Option<&'a str> {
         .iter()
         .find(|p| p.name == name)
         .and_then(Property::as_str)
+}
+
+/// Look up `name` in a property list and read it as a float.
+fn property_float(properties: &[Property], name: &str) -> Option<f64> {
+    properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(Property::as_float)
 }
 
 /// Serialise a property list to Tiled's `[{ name, type, value }, …]` array, for
@@ -994,6 +1006,22 @@ impl TiledMap {
         match track {
             Some(name) => self.set_property("music", "string", Value::from(name)),
             None => self.remove_property("music"),
+        }
+    }
+
+    /// This map's `music_speed` property — the playback-rate multiplier for the
+    /// track (1.0 = normal). Absent ⇒ 1.0.
+    pub fn music_speed(&self) -> f32 {
+        property_float(&self.properties, "music_speed").map_or(1.0, |v| v as f32)
+    }
+
+    /// Set the map's music playback speed. The default (1.0) drops the property
+    /// so unchanged maps keep a clean `.tmj`.
+    pub fn set_music_speed(&mut self, speed: f32) {
+        if (speed - 1.0).abs() < f32::EPSILON {
+            self.remove_property("music_speed");
+        } else {
+            self.set_property("music_speed", "float", Value::from(speed));
         }
     }
 

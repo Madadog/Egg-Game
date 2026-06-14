@@ -482,7 +482,7 @@ pub fn play_music(
             let music: Handle<AudioSource> = assets.load(format!("music/{}.ogg", x.id));
             commands.spawn((
                 AudioPlayer(music.clone()),
-                playback_settings(bevy::audio::PlaybackMode::Loop, 1.0),
+                playback_settings(bevy::audio::PlaybackMode::Loop, x.speed),
                 MusicPlayer,
             ));
             *playing = true;

@@ -174,5 +174,10 @@ pub mod music {
                 speed: 1.0,
             }
         }
+
+        /// The same track at a given playback-rate multiplier (1.0 = normal).
+        pub fn with_speed(self, speed: f32) -> Self {
+            Self { speed, ..self }
+        }
     }
 }
