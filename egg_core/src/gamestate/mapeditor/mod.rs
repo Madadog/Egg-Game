@@ -462,10 +462,18 @@ impl SaveStatus {
 /// field's behaviour be unit-tested without a live console.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TextOp {
-    /// Append a character (a typed, non-control key).
+    /// Insert a character at the cursor (a typed, non-control key).
     Push(char),
-    /// Delete the last character (Backspace).
+    /// Delete the character before the cursor (Backspace).
     Pop,
+    /// Empty the whole buffer (Ctrl+Backspace).
+    Clear,
+    /// Move the cursor one character left / right (Arrow keys).
+    Left,
+    Right,
+    /// Move the cursor one word left / right (Ctrl+Arrow).
+    WordLeft,
+    WordRight,
     /// Finish editing, keeping the buffer (Return).
     Commit,
     /// Finish editing, discarding the buffer (Escape).
@@ -498,56 +506,140 @@ enum TextEvent {
 #[derive(Debug, Clone, Default)]
 struct TextField {
     buffer: String,
+    /// Caret position as a byte index into `buffer`, always on a char boundary.
+    /// Inserts/deletes happen here, and the arrow keys move it.
+    cursor: usize,
 }
 
 impl TextField {
     /// A field primed with `initial` as its starting contents (e.g. the existing
-    /// value of the property being edited).
+    /// value of the property being edited), with the caret at the end.
     fn new(initial: impl Into<String>) -> Self {
-        Self {
-            buffer: initial.into(),
-        }
+        let buffer = initial.into();
+        let cursor = buffer.len();
+        Self { buffer, cursor }
     }
 
-    /// The current buffer contents (for rendering the in-progress `value_`).
+    /// The current buffer contents (the committed/parsed value).
     fn text(&self) -> &str {
         &self.buffer
     }
 
-    /// Apply one character-level op, returning how the field resolved. Push/pop
-    /// mutate the buffer and stay [`Active`](TextEvent::Active); commit/cancel
-    /// leave the buffer untouched and report the terminal event for the caller.
+    /// The buffer with a caret marker inserted at the cursor — what a focused
+    /// field renders, so the arrow keys' position is visible.
+    fn display(&self) -> String {
+        let mut s = self.buffer.clone();
+        s.insert(self.cursor, '_');
+        s
+    }
+
+    /// The byte index of the char boundary just before `cursor`.
+    fn prev_boundary(&self) -> usize {
+        self.buffer[..self.cursor]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(i, _)| i)
+    }
+
+    /// The byte index of the char boundary just after `cursor`.
+    fn next_boundary(&self) -> usize {
+        self.buffer[self.cursor..]
+            .chars()
+            .next()
+            .map_or(self.cursor, |c| self.cursor + c.len_utf8())
+    }
+
+    /// Step left over a run of whitespace then a run of word characters — the
+    /// start of the word before the cursor.
+    fn word_left(&self) -> usize {
+        let s = &self.buffer;
+        let mut i = self.cursor;
+        let is_ws = |i: usize| s[..i].chars().next_back().is_some_and(char::is_whitespace);
+        while i > 0 && is_ws(i) {
+            i = s[..i].char_indices().next_back().map_or(0, |(j, _)| j);
+        }
+        while i > 0 && !is_ws(i) {
+            i = s[..i].char_indices().next_back().map_or(0, |(j, _)| j);
+        }
+        i
+    }
+
+    /// Step right over a run of whitespace then a run of word characters — the
+    /// end of the word after the cursor.
+    fn word_right(&self) -> usize {
+        let s = &self.buffer;
+        let mut i = self.cursor;
+        let next = |i: usize| s[i..].chars().next();
+        while let Some(c) = next(i).filter(|c| c.is_whitespace()) {
+            i += c.len_utf8();
+        }
+        while let Some(c) = next(i).filter(|c| !c.is_whitespace()) {
+            i += c.len_utf8();
+        }
+        i
+    }
+
+    /// Apply one editing op, returning how the field resolved. Edits mutate the
+    /// buffer/cursor and stay [`Active`](TextEvent::Active); commit/cancel leave
+    /// the buffer untouched and report the terminal event for the caller.
     fn apply(&mut self, op: TextOp) -> TextEvent {
         match op {
             TextOp::Push(c) => {
-                self.buffer.push(c);
-                TextEvent::Active
+                self.buffer.insert(self.cursor, c);
+                self.cursor += c.len_utf8();
             }
             TextOp::Pop => {
-                self.buffer.pop();
-                TextEvent::Active
+                if self.cursor > 0 {
+                    let prev = self.prev_boundary();
+                    self.buffer.replace_range(prev..self.cursor, "");
+                    self.cursor = prev;
+                }
             }
-            TextOp::Commit => TextEvent::Commit,
-            TextOp::Cancel => TextEvent::Cancel,
+            TextOp::Clear => {
+                self.buffer.clear();
+                self.cursor = 0;
+            }
+            TextOp::Left => self.cursor = self.prev_boundary(),
+            TextOp::Right => self.cursor = self.next_boundary(),
+            TextOp::WordLeft => self.cursor = self.word_left(),
+            TextOp::WordRight => self.cursor = self.word_right(),
+            TextOp::Commit => return TextEvent::Commit,
+            TextOp::Cancel => return TextEvent::Cancel,
+        }
+        TextEvent::Active
+    }
+
+    /// Apply this frame's cursor-editing keys: Backspace (Ctrl ⇒ clear all), and
+    /// Left/Right caret motion (Ctrl ⇒ by word). Shared by [`step`](Self::step)
+    /// and the map dialogs, which read typed characters themselves (to filter to
+    /// digits) but want the same caret behaviour.
+    fn edit_keys(&mut self, system: &impl ConsoleApi) {
+        let ctrl = system.key(ScanCode::Ctrl);
+        if system.keyp(ScanCode::Backspace) {
+            self.apply(if ctrl { TextOp::Clear } else { TextOp::Pop });
+        }
+        if system.keyp(ScanCode::Left) {
+            self.apply(if ctrl { TextOp::WordLeft } else { TextOp::Left });
+        }
+        if system.keyp(ScanCode::Right) {
+            self.apply(if ctrl { TextOp::WordRight } else { TextOp::Right });
         }
     }
 
     /// Consume this frame's keyboard input from `system` and fold it into the
     /// buffer, returning whether the field is still active or finished.
     ///
-    /// Mirrors the editor's original inline handling exactly: typed non-control
-    /// characters append, Backspace deletes one, Escape cancels and Return
-    /// commits. Escape takes priority over Return when (improbably) both fire in
-    /// the same frame, matching the original `if Escape … else if Return` order.
+    /// Typed non-control characters insert at the caret; the arrow keys (and
+    /// Ctrl+arrow / Ctrl+Backspace) edit via [`edit_keys`](Self::edit_keys);
+    /// Escape cancels and Return commits. Escape takes priority over Return when
+    /// (improbably) both fire in one frame.
     fn step(&mut self, system: &impl ConsoleApi) -> TextEvent {
         for c in system.key_chars() {
             if !c.is_control() {
                 self.apply(TextOp::Push(*c));
             }
         }
-        if system.keyp(ScanCode::Backspace) {
-            self.apply(TextOp::Pop);
-        }
+        self.edit_keys(system);
         if system.keyp(ScanCode::Escape) {
             self.apply(TextOp::Cancel)
         } else if system.keyp(ScanCode::Return) {
@@ -1055,24 +1147,25 @@ impl MapViewer {
         let mut b = UiBuilder::new();
         let (title, body, hint) = match &self.maps_dialog {
             MapsDialog::New { name, w, h, focus } => {
-                let cur = |i: u8| if *focus == i { "_" } else { "" };
+                // The focused field shows the caret at the cursor; the others show
+                // their plain text.
+                let shown = |field: &TextField, i: u8| {
+                    if *focus == i { field.display() } else { field.text().to_string() }
+                };
                 (
                     "New map".to_string(),
                     format!(
-                        "name: {}{}\nw: {}{}  h: {}{}",
-                        name.text(),
-                        cur(0),
-                        w.text(),
-                        cur(1),
-                        h.text(),
-                        cur(2),
+                        "name: {}\nw: {}  h: {}",
+                        shown(name, 0),
+                        shown(w, 1),
+                        shown(h, 2),
                     ),
                     "Enter=next/ok  Esc=cancel",
                 )
             }
             MapsDialog::Rename { name, .. } => (
                 "Rename map".to_string(),
-                format!("name: {}_", name.text()),
+                format!("name: {}", name.display()),
                 "Enter=ok  Esc=cancel",
             ),
             MapsDialog::ConfirmDelete(n) => (
@@ -1081,10 +1174,12 @@ impl MapViewer {
                 "Enter=yes  Esc=no",
             ),
             MapsDialog::Resize { w, h, focus, .. } => {
-                let cur = |i: u8| if *focus == i { "_" } else { "" };
+                let shown = |field: &TextField, i: u8| {
+                    if *focus == i { field.display() } else { field.text().to_string() }
+                };
                 (
                     "Resize map".to_string(),
-                    format!("w: {}{}  h: {}{}", w.text(), cur(0), h.text(), cur(1)),
+                    format!("w: {}  h: {}", shown(w, 0), shown(h, 1)),
                     "Enter=next/ok  Esc=cancel",
                 )
             }
@@ -1856,7 +1951,7 @@ impl MapViewer {
     ) {
         let editing = self.editing == Some(field);
         let text = match (editing, &self.field) {
-            (true, Some(f)) => format!("{label}:{}_", f.text()),
+            (true, Some(f)) => format!("{label}:{}", f.display()),
             _ => format!("{label}:{value}"),
         };
         rows.push(
@@ -3834,9 +3929,7 @@ impl MapViewer {
                             field.apply(TextOp::Push(*c));
                         }
                     }
-                    if system.keyp(ScanCode::Backspace) {
-                        field.apply(TextOp::Pop);
-                    }
+                    field.edit_keys(system);
                     DialogAction::Keep
                 }
             }
@@ -3884,9 +3977,7 @@ impl MapViewer {
                             field.apply(TextOp::Push(*c));
                         }
                     }
-                    if system.keyp(ScanCode::Backspace) {
-                        field.apply(TextOp::Pop);
-                    }
+                    field.edit_keys(system);
                     DialogAction::Keep
                 }
             }
@@ -5558,6 +5649,36 @@ mod tests {
         assert_eq!(v.panel_scroll(1, rect, 100), (0, false));
         v.dock.set_scroll(3, 500);
         assert_eq!(v.panel_scroll(3, rect, 100), (0, false));
+    }
+
+    /// The text field's caret: arrow motion, insert/delete at the cursor, word
+    /// motion over whitespace, and ctrl-backspace clearing the buffer. `display`
+    /// shows the caret as `_` at its position.
+    #[test]
+    fn text_field_cursor_editing() {
+        let mut f = TextField::new("cat");
+        assert_eq!(f.display(), "cat_", "caret starts at the end");
+        f.apply(TextOp::Left);
+        f.apply(TextOp::Left);
+        assert_eq!(f.display(), "c_at");
+        f.apply(TextOp::Push('X'));
+        assert_eq!(f.text(), "cXat");
+        assert_eq!(f.display(), "cX_at", "insert lands at the caret");
+        f.apply(TextOp::Pop);
+        assert_eq!(f.text(), "cat", "backspace deletes before the caret");
+        assert_eq!(f.display(), "c_at");
+
+        // Word motion skips a run of whitespace then a run of word characters.
+        let mut g = TextField::new("foo bar baz");
+        g.apply(TextOp::WordLeft);
+        assert_eq!(g.display(), "foo bar _baz");
+        g.apply(TextOp::WordLeft);
+        assert_eq!(g.display(), "foo _bar baz");
+        g.apply(TextOp::WordRight);
+        assert_eq!(g.display(), "foo bar_ baz");
+        // Ctrl+Backspace empties the field.
+        g.apply(TextOp::Clear);
+        assert_eq!((g.text(), g.display().as_str()), ("", "_"));
     }
 
     /// A tile layer's offset / palette-rotation fields edit the store and are
