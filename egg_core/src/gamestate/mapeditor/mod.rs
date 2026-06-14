@@ -359,6 +359,8 @@ enum EditorKey {
     MusicCycle,
     /// Setup panel: cycle the map's music playback speed.
     MusicSpeedCycle,
+    /// A scrollable panel's scroll bar (carries the panel index): press to drag it.
+    PanelScroll(usize),
 }
 
 /// The music playback-speed presets the Setup panel cycles through (1.0 = normal).
@@ -381,6 +383,14 @@ const THUMB_H: f32 = 22.0;
 /// The selected warp's destination preview box height, px. Its width fills the
 /// Objects panel, so floating/widening that panel grows the click target.
 const WARP_PREVIEW_H: f32 = 64.0;
+/// Height (px) of a panel's pinned title bar — the `full_width(7.0)` title row.
+/// A scrolled panel's body begins below this, and the title stays put.
+const PANEL_TITLE_H: i16 = 7;
+/// A panel scroll bar's width and its edge grab zone, px.
+const SCROLLBAR_W: i16 = 3;
+const SCROLLBAR_GRAB: i16 = 4;
+/// Px a panel body scrolls per mouse-wheel notch.
+const SCROLL_STEP: i16 = 10;
 /// Default dimensions (tiles) of a newly-created blank map — roughly one screen.
 const NEW_MAP_W: usize = 30;
 const NEW_MAP_H: usize = 17;
@@ -718,6 +728,9 @@ pub struct MapViewer {
     /// Whether the tile grid + cursor tile-coordinate readout overlay is shown
     /// over the world (toggled with `G`).
     show_grid: bool,
+    /// An in-progress panel scroll-bar drag: `(panel index, grab offset within the
+    /// thumb)`, so the thumb tracks the cursor rather than snapping under it.
+    scroll_drag: Option<(usize, i16)>,
 }
 
 impl MapViewer {
@@ -786,18 +799,19 @@ impl MapViewer {
         let kind = self.dock.panels[idx].kind;
         let active = self.active_kind() == Some(kind);
 
-        // Title bar: the panel name — a focus/drag handle filling the width.
-        rows.push(
-            b.text(kind.title())
-                .small(true)
-                .center()
-                .color(if active { 0 } else { 12 })
-                .full_width(7.0)
-                .fill_if(active, 11)
-                .outline(13)
-                .key(EditorKey::Dock(idx, Chrome::TitleBar))
-                .id(),
-        );
+        // Title bar: the panel name — a focus/drag handle filling the width. It
+        // never shrinks (and on a scrollable panel it stays pinned above the body).
+        let title = b
+            .text(kind.title())
+            .small(true)
+            .center()
+            .color(if active { 0 } else { 12 })
+            .full_width(7.0)
+            .no_shrink()
+            .fill_if(active, 11)
+            .outline(13)
+            .key(EditorKey::Dock(idx, Chrome::TitleBar))
+            .id();
 
         match kind {
             PanelKind::Layers => self.build_layers(&mut b, &mut rows, map, maps),
@@ -818,8 +832,160 @@ impl MapViewer {
         }
 
         let size = (rect.w as f32, rect.h as f32);
-        let root = b.column(0.0, rows).size(size.0, size.1).fill(0).id();
+        // A scrollable kind keeps its body at natural height (no_shrink) so it
+        // overflows the panel and can be scrolled+clipped; other kinds stay in one
+        // column that shrinks to fit, exactly as before.
+        let root = if Self::is_scroll_kind(kind) {
+            let body = b.column(0.0, rows).no_shrink().id();
+            b.column(0.0, [title, body]).size(size.0, size.1).fill(0).id()
+        } else {
+            let mut all = Vec::with_capacity(rows.len() + 1);
+            all.push(title);
+            all.extend(rows);
+            b.column(0.0, all).size(size.0, size.1).fill(0).id()
+        };
         b.finish(root, size)
+    }
+
+    /// Whether a panel of `kind` scrolls when its content overflows. The Maps
+    /// browser pages instead, and the Paint palette scrolls its own viewport, so
+    /// both opt out.
+    fn is_scroll_kind(kind: PanelKind) -> bool {
+        !matches!(kind, PanelKind::Maps | PanelKind::Paint)
+    }
+
+    /// This panel's scroll state for the frame: the clamped scroll offset and
+    /// whether it is actually scrolling (a scroll-kind whose content overflows
+    /// `rect`). `content_h` comes from the built [`Ui::content_height`].
+    fn panel_scroll(&self, idx: usize, rect: Rect, content_h: i16) -> (i16, bool) {
+        let kind = self.dock.panels[idx].kind;
+        let overflow = content_h - rect.h;
+        if !Self::is_scroll_kind(kind) || overflow <= 0 {
+            return (0, false);
+        }
+        (self.dock.scroll(idx).clamp(0, overflow), true)
+    }
+
+    /// The body region of a scrolling panel (below the pinned title), where the
+    /// scrolled content is clipped to.
+    fn panel_body(rect: Rect) -> Rect {
+        Rect {
+            x: rect.x,
+            y: rect.y + PANEL_TITLE_H,
+            w: rect.w,
+            h: (rect.h - PANEL_TITLE_H).max(0),
+        }
+    }
+
+    /// The scroll bar's grab band — a thin strip down the body's right edge.
+    fn scrollbar_zone(rect: Rect) -> Rect {
+        let body = Self::panel_body(rect);
+        Rect {
+            x: body.x + body.w - SCROLLBAR_GRAB,
+            y: body.y,
+            w: SCROLLBAR_GRAB,
+            h: body.h,
+        }
+    }
+
+    /// The scroll thumb's `(top y, height)` px within the body track, for a given
+    /// scroll offset and content height.
+    fn scroll_thumb(body: Rect, scroll: i16, content_h: i16) -> (i16, i16) {
+        let track = body.h.max(1);
+        let body_content = (content_h - PANEL_TITLE_H).max(1);
+        // Thumb ∝ visible fraction, at least 4px where the track allows, never
+        // taller than the track (the `min` keeps `clamp`'s bounds well-ordered on
+        // a very short panel).
+        let thumb_h = ((i32::from(track) * i32::from(track) / i32::from(body_content)) as i16)
+            .clamp(track.min(4), track);
+        let travel = (track - thumb_h).max(0);
+        let max_scroll = (content_h - body.h - PANEL_TITLE_H).max(1);
+        let top = body.y + (i32::from(travel) * i32::from(scroll) / i32::from(max_scroll)) as i16;
+        (top, thumb_h)
+    }
+
+    /// Draw a panel's vertical scroll bar down the right edge of its body: a dim
+    /// track with a brighter thumb sized/positioned by the scroll fraction.
+    fn draw_panel_scrollbar(&self, rect: Rect, scroll: i16, content_h: i16, draw_state: &mut DrawState) {
+        let body = Self::panel_body(rect);
+        if body.h <= 0 {
+            return;
+        }
+        let bx = (body.x + body.w - SCROLLBAR_W) as i32;
+        let track = draw_state.colour(0);
+        draw_state.rgba(LayerId::BG).fill_rect(bx, body.y as i32, SCROLLBAR_W as i32, body.h as i32, track);
+        let (top, thumb_h) = Self::scroll_thumb(body, scroll, content_h);
+        let thumb = draw_state.colour(13);
+        draw_state.rgba(LayerId::BG).fill_rect(bx, top as i32, SCROLLBAR_W as i32, thumb_h as i32, thumb);
+    }
+
+    /// Front-to-back pick across one panel, scroll-aware: a non-scrolling panel
+    /// hits normally; a scrolling one hits its scroll-bar grab band, then its
+    /// pinned title, then its scrolled (clipped) body.
+    fn hit_panel(&self, idx: usize, rect: Rect, ui: &Ui<EditorKey>, cursor: Vec2) -> Option<EditorKey> {
+        let (scroll, scrolling) = self.panel_scroll(idx, rect, ui.content_height());
+        if !scrolling {
+            return ui.hit_at(rect.x, rect.y, cursor);
+        }
+        if Self::scrollbar_zone(rect).contains(cursor) {
+            return Some(EditorKey::PanelScroll(idx));
+        }
+        let title_clip = Rect { x: rect.x, y: rect.y, w: rect.w, h: PANEL_TITLE_H };
+        let body = Self::panel_body(rect);
+        ui.hit_at_clipped(rect.x, rect.y, title_clip, cursor)
+            .or_else(|| ui.hit_at_clipped(rect.x, rect.y - scroll, body, cursor))
+    }
+
+    /// A mouse-wheel notch over a scrollable panel scrolls its body (independent
+    /// of any keyed row beneath the cursor). Topmost panel under the cursor wins.
+    fn handle_panel_wheel(&mut self, mouse: &MouseInput, map: &MapInfo, maps: &MapStore) {
+        let sy = mouse.scroll_y[0];
+        if sy == 0 {
+            return;
+        }
+        let cursor = mouse.pos();
+        let Some(&(idx, rect)) = self.dock.solved.rects.iter().rev().find(|(_, r)| r.contains(cursor))
+        else {
+            return;
+        };
+        if !Self::is_scroll_kind(self.dock.panels[idx].kind) {
+            return;
+        }
+        let content_h = self.build_panel(idx, rect, map, maps).content_height();
+        let overflow = content_h - rect.h;
+        if overflow <= 0 {
+            return;
+        }
+        // Wheel up (positive) scrolls toward the top, matching the palette.
+        let cur = self.dock.scroll(idx).clamp(0, overflow);
+        self.dock
+            .set_scroll(idx, (cur - sy.signum() as i16 * SCROLL_STEP).clamp(0, overflow));
+    }
+
+    /// Advance an active scroll-bar drag: map the cursor (less the grab offset)
+    /// onto the panel's scroll range. Release ends it. Returns `true` while it
+    /// owns the mouse, so the caller suppresses other panel/canvas input.
+    fn step_scroll_drag(&mut self, mouse: &MouseInput, map: &MapInfo, maps: &MapStore) -> bool {
+        let Some((idx, grab)) = self.scroll_drag else {
+            return false;
+        };
+        if released(mouse.left) {
+            self.scroll_drag = None;
+            return true;
+        }
+        let Some(rect) = self.dock.solved.rect_of(idx) else {
+            self.scroll_drag = None;
+            return true;
+        };
+        let content_h = self.build_panel(idx, rect, map, maps).content_height();
+        let body = Self::panel_body(rect);
+        let overflow = (content_h - rect.h).max(1);
+        let (_, thumb_h) = Self::scroll_thumb(body, 0, content_h);
+        let travel = (body.h - thumb_h).max(1);
+        let desired_top = mouse.pos().y - grab - body.y;
+        let scroll = (i32::from(desired_top) * i32::from(overflow) / i32::from(travel)) as i16;
+        self.dock.set_scroll(idx, scroll.clamp(0, overflow));
+        true
     }
 
     /// A small always-on toolbar — undo / redo / save — pinned to the world's
@@ -2120,6 +2286,9 @@ impl MapViewer {
         // A modal dialog swallows mouse interaction with the panels/world.
         if self.maps_dialog.is_active() {
             // nothing
+        } else if self.scroll_drag.is_some() {
+            // A panel scroll-bar drag owns the mouse.
+            self.step_scroll_drag(&mouse, map, maps);
         } else if self.pal_drag.is_some() {
             // A palette drag (pan / tile-pick / scroll bar) owns the mouse.
             self.step_palette_drag(&mouse);
@@ -2130,15 +2299,15 @@ impl MapViewer {
             // The always-on undo/redo/save bar wins over the world beneath it.
             self.handle_panel(system, map, maps, usize::MAX, key, camera_pos);
         } else {
+            // A wheel notch scrolls the panel under the cursor (any region of it).
+            self.handle_panel_wheel(&mouse, map, maps);
             // Front-to-back pick across panels (reverse draw order); first keyed
-            // node under the cursor wins. Each panel is laid out at the origin
-            // and translated to its placed rect for the hit test.
+            // node under the cursor wins. Each panel is laid out at the origin and
+            // translated to its placed rect, scroll-aware, for the hit test.
             let mut panel_hit = None;
             for &(idx, rect) in self.dock.solved.rects.iter().rev() {
-                if let Some(key) = self
-                    .build_panel(idx, rect, map, maps)
-                    .hit_at(rect.x, rect.y, cursor)
-                {
+                let ui = self.build_panel(idx, rect, map, maps);
+                if let Some(key) = self.hit_panel(idx, rect, &ui, cursor) {
                     panel_hit = Some((idx, key));
                     break;
                 }
@@ -2603,11 +2772,28 @@ impl MapViewer {
             EditorKey::WarpPreview => {
                 if click
                     && let Some(rect) = self.dock.solved.rect_of(idx)
-                    && let Some(box_rect) = self
-                        .build_panel(idx, rect, map, maps)
-                        .rect_at(rect.x, rect.y, EditorKey::WarpPreview)
                 {
-                    self.place_warp_from_preview(map, maps, box_rect, mouse.pos());
+                    let ui = self.build_panel(idx, rect, map, maps);
+                    let (scroll, _) = self.panel_scroll(idx, rect, ui.content_height());
+                    if let Some(box_rect) =
+                        ui.rect_at(rect.x, rect.y - scroll, EditorKey::WarpPreview)
+                    {
+                        self.place_warp_from_preview(map, maps, box_rect, mouse.pos());
+                    }
+                }
+            }
+            // Press on a panel's scroll bar: begin a thumb drag, capturing the grab
+            // offset so the thumb tracks the cursor rather than snapping under it.
+            EditorKey::PanelScroll(pidx) => {
+                if click
+                    && let Some(rect) = self.dock.solved.rect_of(pidx)
+                {
+                    let content_h = self.build_panel(pidx, rect, map, maps).content_height();
+                    let body = Self::panel_body(rect);
+                    let (scroll, _) = self.panel_scroll(pidx, rect, content_h);
+                    let (top, th) = Self::scroll_thumb(body, scroll, content_h);
+                    let grab = (mouse.pos().y - top).clamp(0, th);
+                    self.scroll_drag = Some((pidx, grab));
                 }
             }
             EditorKey::Field(field) => {
@@ -3951,11 +4137,21 @@ impl MapViewer {
                 splitters_drawn = true;
             }
             let ui = self.build_panel(idx, rect, map, maps);
-            ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
+            let (scroll, scrolling) = self.panel_scroll(idx, rect, ui.content_height());
+            if scrolling {
+                // Pinned title above a scrolled, clipped body, plus a scroll bar.
+                let body = Self::panel_body(rect);
+                let title_clip = Rect { x: rect.x, y: rect.y, w: rect.w, h: PANEL_TITLE_H };
+                ui.draw_at_clipped(rect.x, rect.y - scroll, body, draw_state, system, LayerId::BG);
+                ui.draw_at_clipped(rect.x, rect.y, title_clip, draw_state, system, LayerId::BG);
+                self.draw_panel_scrollbar(rect, scroll, ui.content_height(), draw_state);
+            } else {
+                ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
+            }
             match self.dock.panels[idx].kind {
                 PanelKind::Maps => self.draw_map_thumbnails(&ui, rect, maps, draw_state),
                 PanelKind::Paint => self.draw_palette(draw_state),
-                PanelKind::Objects => self.draw_warp_preview(&ui, rect, map, maps, draw_state),
+                PanelKind::Objects => self.draw_warp_preview(&ui, rect, idx, map, maps, draw_state),
                 _ => {}
             }
             if self.dock.is_float(idx) {
@@ -4180,22 +4376,33 @@ impl MapViewer {
     /// with the player drawn at the landing point and a crosshair pinpointing it.
     /// A no-op unless a warp is selected (the box is only emitted then). An
     /// unknown target (a free-typed name with no map) gets an `X` instead.
+    ///
+    /// `scroll` shifts the box with the panel body and `clip` (the body region,
+    /// when the panel scrolls) crops the blit/marks so a half-scrolled preview
+    /// stays inside the panel.
     fn draw_warp_preview(
         &self,
         ui: &Ui<EditorKey>,
         rect: Rect,
+        idx: usize,
         map: &MapInfo,
         maps: &MapStore,
         draw_state: &mut DrawState,
     ) {
+        let (scroll, scrolling) = self.panel_scroll(idx, rect, ui.content_height());
+        let clip = scrolling.then(|| Self::panel_body(rect));
         let (dest, landing) = match self.selected.and_then(|i| map.objects.get(i)).map(|o| &o.effect)
         {
             Some(ObjectEffect::Warp(w)) => (w.map.clone().unwrap_or_else(|| map.source.clone()), w.to),
             _ => return,
         };
-        let Some(box_rect) = ui.rect_at(rect.x, rect.y, EditorKey::WarpPreview) else {
+        let Some(box_rect) = ui.rect_at(rect.x, rect.y - scroll, EditorKey::WarpPreview) else {
             return;
         };
+        // Nothing to draw if the box scrolled entirely out of the body.
+        if clip.is_some_and(|c| clamp_to(box_rect, c).is_none()) {
+            return;
+        }
         let Some((mut full, fw, fh)) = render_map_full(&dest, maps, draw_state) else {
             // Unknown target: cross the box out so the dangling name is obvious.
             let bad = draw_state.colour(8);
@@ -4216,29 +4423,29 @@ impl MapViewer {
         full.spr_outline(sprites, palette, opts.id, px, py, opts.clone(), 0);
         full.spr_indexed(sprites, palette, &PALETTE_MAP_IDENTITY, opts.id, px, py, opts);
 
-        // Letterbox the rendered map into the box and blit it.
+        // Letterbox the rendered map into the box, then blit it — cropping to the
+        // clip (body) region when the panel scrolls so it can't spill out.
         let (inner, s) = fit_preview(box_rect, fw, fh);
         let thumb = downscale(&full, fw, fh, inner.w as u32, inner.h as u32);
-        draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
-            inner.x as i32,
-            inner.y as i32,
-            &thumb,
-            EdgePolicy::Transparent,
-            Transform::default(),
-            |p| p.a() == 0,
-        );
+        blit_clipped(draw_state, inner, &thumb, clip);
 
-        // A bright crosshair marks the exact landing pixel, clamped to the box so
-        // a near-edge landing can't draw outside the preview.
-        let mark = draw_state.colour(11);
-        let (x0, y0) = (box_rect.x as i32, box_rect.y as i32);
-        let (x1, y1) = ((box_rect.x + box_rect.w) as i32 - 1, (box_rect.y + box_rect.h) as i32 - 1);
-        let cx = (inner.x as i32 + (landing.x as f32 * s) as i32).clamp(x0, x1);
-        let cy = (inner.y as i32 + (landing.y as f32 * s) as i32).clamp(y0, y1);
-        let arm = 4;
-        let layer = draw_state.rgba(LayerId::BG);
-        layer.line((cx - arm).max(x0), cy, (cx + arm).min(x1), cy, mark);
-        layer.line(cx, (cy - arm).max(y0), cx, (cy + arm).min(y1), mark);
+        // A bright crosshair marks the exact landing pixel, clamped to the box (and
+        // the clip) so a near-edge or half-scrolled landing can't draw outside.
+        let bound = match clip {
+            Some(c) => clamp_to(box_rect, c),
+            None => Some(box_rect),
+        };
+        if let Some(bound) = bound {
+            let mark = draw_state.colour(11);
+            let (x0, y0) = (bound.x as i32, bound.y as i32);
+            let (x1, y1) = ((bound.x + bound.w) as i32 - 1, (bound.y + bound.h) as i32 - 1);
+            let cx = (inner.x as i32 + (landing.x as f32 * s) as i32).clamp(x0, x1);
+            let cy = (inner.y as i32 + (landing.y as f32 * s) as i32).clamp(y0, y1);
+            let arm = 4;
+            let layer = draw_state.rgba(LayerId::BG);
+            layer.line((cx - arm).max(x0), cy, (cx + arm).min(x1), cy, mark);
+            layer.line(cx, (cy - arm).max(y0), cx, (cy + arm).min(y1), mark);
+        }
     }
 
     /// Draw tool overlays onto the live world: a tile cursor (paint) or object
@@ -4577,6 +4784,45 @@ fn fit_preview(outer: Rect, fw: u32, fh: u32) -> (Rect, f32) {
     let ix = outer.x + (outer.w - iw) / 2;
     let iy = outer.y + (outer.h - ih) / 2;
     (Rect { x: ix, y: iy, w: iw, h: ih }, s)
+}
+
+/// `rect` ∩ `clip`, or `None` if they don't overlap — for cropping a preview to a
+/// scrolling panel's visible body.
+fn clamp_to(rect: Rect, clip: Rect) -> Option<Rect> {
+    let x0 = rect.x.max(clip.x);
+    let y0 = rect.y.max(clip.y);
+    let x1 = (rect.x + rect.w).min(clip.x + clip.w);
+    let y1 = (rect.y + rect.h).min(clip.y + clip.h);
+    (x1 > x0 && y1 > y0).then_some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+}
+
+/// Blit `img` at `at` (its top-left), optionally cropped to `clip`: only the
+/// sub-image inside the clip is copied, so a half-scrolled preview stays within
+/// its panel's body.
+fn blit_clipped(draw_state: &mut DrawState, at: Rect, img: &RgbaImage, clip: Option<Rect>) {
+    let region = match clip {
+        Some(c) => match clamp_to(at, c) {
+            Some(r) => r,
+            None => return,
+        },
+        None => at,
+    };
+    // Sub-rectangle of `img` that lands in `region`.
+    let (sx0, sy0) = ((region.x - at.x) as u32, (region.y - at.y) as u32);
+    let canvas = draw_state.rgba(LayerId::BG);
+    for dy in 0..region.h as u32 {
+        for dx in 0..region.w as u32 {
+            let (sx, sy) = (sx0 + dx, sy0 + dy);
+            if sx >= img.width() || sy >= img.height() {
+                continue;
+            }
+            let p = img.get_pixel(sx, sy);
+            if p.a() == 0 {
+                continue;
+            }
+            canvas.set_pixel((region.x as u32) + dx, (region.y as u32) + dy, p);
+        }
+    }
 }
 
 /// A hitbox spanning the rectangle between two world points (min size 1px).
@@ -5292,6 +5538,26 @@ mod tests {
         assert_eq!(s, 1.0, "downscale only — a small map stays 1:1");
         assert_eq!((inner.w, inner.h), (16, 16));
         assert_eq!(inner.x, outer.x + (outer.w - 16) / 2);
+    }
+
+    /// A scroll-kind panel whose content overflows scrolls, with the offset
+    /// clamped to the overflow; panels that page/scroll their own viewport (Maps,
+    /// Paint) never panel-scroll.
+    #[test]
+    fn panel_scroll_clamps_and_skips_non_scroll_kinds() {
+        let mut v = MapViewer::default();
+        let rect = Rect { x: 0, y: 0, w: 84, h: 40 };
+        // Layers (idx 0) is a scroll kind: a 100px content over a 40px panel
+        // overflows 60px, and an over-large stored scroll clamps to it.
+        v.dock.set_scroll(0, 500);
+        assert_eq!(v.panel_scroll(0, rect, 100), (60, true));
+        // Content that fits doesn't scroll.
+        assert_eq!(v.panel_scroll(0, rect, 30), (0, false));
+        // Paint (idx 1) and Maps (idx 3) opt out — their own widgets handle size.
+        v.dock.set_scroll(1, 500);
+        assert_eq!(v.panel_scroll(1, rect, 100), (0, false));
+        v.dock.set_scroll(3, 500);
+        assert_eq!(v.panel_scroll(3, rect, 100), (0, false));
     }
 
     /// A tile layer's offset / palette-rotation fields edit the store and are

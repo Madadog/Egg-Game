@@ -320,6 +320,13 @@ impl<K: Copy + PartialEq> Node<'_, K> {
         self.style.flex_basis = length(0.0);
         self
     }
+    /// Don't let a flex parent shrink this child below its size — so an
+    /// over-tall column overflows (to be scrolled/clipped) instead of squashing
+    /// its rows to fit.
+    pub fn no_shrink(mut self) -> Self {
+        self.style.flex_shrink = 0.0;
+        self
+    }
     /// Uniform padding on all four sides.
     pub fn pad(mut self, p: f32) -> Self {
         self.style.padding = pad(p);
@@ -467,6 +474,30 @@ impl<K: Copy + PartialEq> Ui<K> {
         })
     }
 
+    /// Like [`hit_at`](Self::hit_at) but only inside `clip` (screen space): a
+    /// point outside the clip rect hits nothing. With the tree translated so a
+    /// node sits under the cursor only when it is within the visible clip region,
+    /// this is all a scroll viewport needs — the translate handles position, the
+    /// clip gates the active area.
+    pub fn hit_at_clipped(&self, dx: i16, dy: i16, clip: Rect, point: Vec2) -> Option<K> {
+        if !clip.contains(point) {
+            return None;
+        }
+        self.hit_at(dx, dy, point)
+    }
+
+    /// The natural content extent (px) — the lowest `y + h` over every node, in
+    /// the tree's own (origin) coordinates. For a panel whose body is built
+    /// [`no_shrink`](Node::no_shrink), this exceeds the panel height exactly when
+    /// the content overflows and wants scrolling.
+    pub fn content_height(&self) -> i16 {
+        self.resolved
+            .iter()
+            .map(|r| r.rect.y + r.rect.h)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The absolute rect of the first node carrying `key`.
     pub fn rect(&self, key: K) -> Option<Rect> {
         self.rect_at(0, 0, key)
@@ -503,6 +534,36 @@ impl<K: Copy + PartialEq> Ui<K> {
         system: &mut impl ConsoleApi,
         layer: LayerId,
     ) {
+        self.draw_clipped(dx, dy, None, draw_state, system, layer);
+    }
+
+    /// Like [`draw_at`](Self::draw_at) but pixel-clipped to `clip` (screen space):
+    /// decorations are clamped to the clip rect, and a node's text/sprite renders
+    /// only when the node is fully inside it (partial rows are culled, not
+    /// half-drawn). A panel's bg fill — larger than the clip — clamps to fill it.
+    /// This is what lets a scrolled panel body draw without spilling over the
+    /// pinned title or the panels beneath.
+    pub fn draw_at_clipped(
+        &self,
+        dx: i16,
+        dy: i16,
+        clip: Rect,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        layer: LayerId,
+    ) {
+        self.draw_clipped(dx, dy, Some(clip), draw_state, system, layer);
+    }
+
+    fn draw_clipped(
+        &self,
+        dx: i16,
+        dy: i16,
+        clip: Option<Rect>,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        layer: LayerId,
+    ) {
         for r in &self.resolved {
             let Some(data) = self.tree.get_node_context(r.node) else {
                 continue;
@@ -512,7 +573,34 @@ impl<K: Copy + PartialEq> Ui<K> {
                 y: r.rect.y + dy,
                 ..r.rect
             };
-            draw_deco(draw_state, layer, rect, data.deco);
+            // Outside the clip entirely: skip. Straddling it: draw only a clamped
+            // fill (no outline, no glyphs). Fully inside (or unclipped): draw all.
+            let fully = match clip {
+                None => true,
+                Some(c) => {
+                    if !intersects(rect, c) {
+                        continue;
+                    }
+                    within(rect, c)
+                }
+            };
+            if fully {
+                draw_deco(draw_state, layer, rect, data.deco);
+            } else if let (Some(f), Some(cr)) =
+                (data.deco.fill, clip.and_then(|c| clamp_rect(rect, c)))
+            {
+                let cf = draw_state.colour(f);
+                draw_state.rgba(layer).fill_rect(
+                    cr.x as i32,
+                    cr.y as i32,
+                    cr.w as i32,
+                    cr.h as i32,
+                    cf,
+                );
+            }
+            if !fully {
+                continue;
+            }
             match &data.content {
                 Content::None => {}
                 Content::Text {
@@ -575,6 +663,31 @@ impl<K: Copy + PartialEq> Ui<K> {
             }
         }
     }
+}
+
+/// Whether `rect` overlaps `clip` at all (shares any pixel).
+fn intersects(rect: Rect, clip: Rect) -> bool {
+    rect.x < clip.x + clip.w
+        && rect.x + rect.w > clip.x
+        && rect.y < clip.y + clip.h
+        && rect.y + rect.h > clip.y
+}
+
+/// Whether `rect` lies wholly inside `clip`.
+fn within(rect: Rect, clip: Rect) -> bool {
+    rect.x >= clip.x
+        && rect.y >= clip.y
+        && rect.x + rect.w <= clip.x + clip.w
+        && rect.y + rect.h <= clip.y + clip.h
+}
+
+/// `rect` ∩ `clip`, or `None` if they don't overlap.
+fn clamp_rect(rect: Rect, clip: Rect) -> Option<Rect> {
+    let x0 = rect.x.max(clip.x);
+    let y0 = rect.y.max(clip.y);
+    let x1 = (rect.x + rect.w).min(clip.x + clip.w);
+    let y1 = (rect.y + rect.h).min(clip.y + clip.h);
+    (x1 > x0 && y1 > y0).then_some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
 }
 
 /// Paint a [`Decoration`] (fill and/or 1px outline) over `rect`.
@@ -794,6 +907,45 @@ mod tests {
             ui.rect_at(100, 50, 1),
             Some(Rect { x: 100, y: 58, w: 40, h: 8 })
         );
+    }
+
+    /// A `no_shrink` column overflows its fixed-height parent (instead of
+    /// squashing its rows), `content_height` reports the true extent, and a
+    /// clipped hit only answers inside the clip — the primitives a scroll
+    /// viewport is built from.
+    #[test]
+    fn overflow_content_height_and_clipped_hit() {
+        let mut b: UiBuilder<usize> = UiBuilder::new();
+        // Six 10px rows (=60px) inside a body that won't shrink, in a 30px panel.
+        let rows: Vec<_> = (0..6)
+            .map(|i| {
+                b.leaf(
+                    Style { size: full_width(10.0), flex_shrink: 0.0, ..Default::default() },
+                    Content::None,
+                    Decoration::default(),
+                    Some(i),
+                )
+            })
+            .collect();
+        let body = b.container(Style { ..column(0.0) }, Decoration::default(), None, &rows);
+        let root = b.container(
+            Style { size: size(40.0, 30.0), ..column(0.0) },
+            Decoration::default(),
+            None,
+            &[body],
+        );
+        let ui = b.finish(root, (40.0, 30.0));
+
+        // Content runs the full 60px even though the panel is 30px tall.
+        assert_eq!(ui.content_height(), 60);
+        // Row 0 sits at the top; a clip covering only the top 20px lets it hit...
+        let top_clip = Rect { x: 0, y: 0, w: 40, h: 20 };
+        assert_eq!(ui.hit_at_clipped(0, 0, top_clip, Vec2::new(5, 5)), Some(0));
+        // ...but the same point is dead once the clip starts below it.
+        let lower_clip = Rect { x: 0, y: 20, w: 40, h: 20 };
+        assert_eq!(ui.hit_at_clipped(0, 0, lower_clip, Vec2::new(5, 5)), None);
+        // Scrolling the body up by 20px brings row 2 (local y=20) under the point.
+        assert_eq!(ui.hit_at_clipped(0, -20, top_clip, Vec2::new(5, 5)), Some(2));
     }
 
     /// `centered()` places a fixed-size panel in the middle of the viewport,

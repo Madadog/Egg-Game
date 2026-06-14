@@ -15,6 +15,8 @@
 //! which sidesteps the resolver's `Position::Absolute` double-offset.
 #![allow(dead_code)] // fields/variants fill in across the editor's build phases.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::position::Vec2;
@@ -177,6 +179,21 @@ pub struct DockManager {
     pub loaded: bool,
     /// Set when the layout changed and should be re-saved (debounce flag).
     pub dirty: bool,
+    /// Per-panel vertical scroll offset (px), keyed by panel index. A transient —
+    /// not part of the saved layout. Clamped against content height each frame at
+    /// its use site, so a stale value can't strand content off-view.
+    pub scrolls: HashMap<usize, i16>,
+}
+
+impl DockManager {
+    /// This panel's stored scroll offset (0 if never scrolled).
+    pub fn scroll(&self, idx: usize) -> i16 {
+        self.scrolls.get(&idx).copied().unwrap_or(0)
+    }
+    /// Set this panel's scroll offset.
+    pub fn set_scroll(&mut self, idx: usize, value: i16) {
+        self.scrolls.insert(idx, value);
+    }
 }
 
 impl Default for DockManager {
@@ -216,6 +233,7 @@ impl Default for DockManager {
             solved: Solved::default(),
             loaded: false,
             dirty: false,
+            scrolls: HashMap::new(),
         }
     }
 }
