@@ -1003,7 +1003,11 @@ impl MapViewer {
         // overflows the panel and can be scrolled+clipped; other kinds stay in one
         // column that shrinks to fit, exactly as before.
         let root = if Self::is_scroll_kind(kind) {
-            let body = b.column(0.0, rows).no_shrink().id();
+            // The body keeps natural (content) height so it overflows + scrolls.
+            // It carries its own bg fill spanning that full height: the root's
+            // fill is only panel-tall, so once scrolled it stops short of the
+            // body's bottom — the body's own fill keeps the scrolled region opaque.
+            let body = b.column(0.0, rows).no_shrink().fill(0).id();
             b.column(0.0, [title, body]).size(size.0, size.1).fill(0).id()
         } else {
             let mut all = Vec::with_capacity(rows.len() + 1);
