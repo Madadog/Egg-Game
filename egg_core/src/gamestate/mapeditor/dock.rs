@@ -104,16 +104,6 @@ pub struct Panel {
 #[derive(Clone, Default, Serialize, Deserialize, Debug)]
 pub struct DockLayout {
     pub panels: Vec<Panel>,
-    pub version: u8,
-}
-
-/// A draggable chrome surface on a panel frame, used as a hit-test key bit.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Chrome {
-    TitleBar,
-    Close,
-    ResizeHandle,
-    Splitter,
 }
 
 /// The only interaction state that persists across frames (the UI tree retains
@@ -256,10 +246,11 @@ impl DockManager {
             .collect()
     }
 
-    /// The thickness (px along its perpendicular) a `side`'s dock wants — the max
+    /// The thickness (px along its perpendicular) a side's dock wants — the max
     /// of its panels' stored sizes, so resizing the side moves them together.
-    fn side_thickness(&self, side: Side) -> i16 {
-        self.members(side)
+    /// Takes the side's already-resolved `members` so `solve` doesn't re-scan.
+    fn side_thickness(&self, members: &[usize]) -> i16 {
+        members
             .iter()
             .filter_map(|&i| match self.panels[i].place {
                 Placement::Dock { size, .. } => Some(size),
@@ -274,8 +265,9 @@ impl DockManager {
     /// rect — Left/Right first (full height), then Top/Bottom (between them);
     /// panels sharing a side stack and split it equally. The leftover centre is
     /// the world view. Floating panels are then placed (clamped on screen)
-    /// ascending by z. Does not touch `self`, so draw can reuse the result.
-    pub fn solve(&self, screen: (f32, f32)) -> Solved {
+    /// ascending by z. Pure (takes only `&self`); [`recompute`](Self::recompute)
+    /// stores the result into `self.solved` for the frame.
+    fn solve(&self, screen: (f32, f32)) -> Solved {
         let sw = screen.0 as i16;
         let sh = screen.1 as i16;
         let mut world = Rect { x: 0, y: 0, w: sw, h: sh };
@@ -288,53 +280,47 @@ impl DockManager {
                 continue;
             }
             let n = members.len() as i16;
-            match side {
-                Side::Left | Side::Right => {
-                    let thick = self.side_thickness(side).min((world.w - MIN_WORLD).max(0));
-                    for (k, &i) in members.iter().enumerate() {
-                        let y0 = world.y + (world.h * k as i16) / n;
-                        let y1 = world.y + (world.h * (k as i16 + 1)) / n;
-                        let x = if side == Side::Left {
-                            world.x
-                        } else {
-                            world.x + world.w - thick
-                        };
-                        rects.push((i, Rect { x, y: y0, w: thick, h: y1 - y0 }));
-                    }
-                    let bx = if side == Side::Left {
-                        world.x + thick - 1
+            let horizontal = matches!(side, Side::Left | Side::Right);
+            let near = matches!(side, Side::Left | Side::Top);
+            // `main` is the strip's thickness axis (claimed off the world rect);
+            // `cross` is the shared axis the side's panels stack along and split
+            // equally. Reading/writing both axes through these keeps Left/Right
+            // and Top/Bottom one algorithm, so a seam/clamp fix can't land on one
+            // axis and miss the other.
+            let (main_pos, main_len) = if horizontal { (world.x, world.w) } else { (world.y, world.h) };
+            let (cross_pos, cross_len) = if horizontal { (world.y, world.h) } else { (world.x, world.w) };
+            let thick = self.side_thickness(&members).min((main_len - MIN_WORLD).max(0));
+            for (k, &i) in members.iter().enumerate() {
+                let c0 = cross_pos + (cross_len * k as i16) / n;
+                let c1 = cross_pos + (cross_len * (k as i16 + 1)) / n;
+                let main_start = if near { main_pos } else { main_pos + main_len - thick };
+                rects.push((
+                    i,
+                    if horizontal {
+                        Rect { x: main_start, y: c0, w: thick, h: c1 - c0 }
                     } else {
-                        world.x + world.w - thick - 1
-                    };
-                    splitters.push((side, Rect { x: bx, y: world.y, w: 2, h: world.h }));
-                    if side == Side::Left {
-                        world.x += thick;
-                    }
-                    world.w -= thick;
-                }
-                Side::Top | Side::Bottom => {
-                    let thick = self.side_thickness(side).min((world.h - MIN_WORLD).max(0));
-                    for (k, &i) in members.iter().enumerate() {
-                        let x0 = world.x + (world.w * k as i16) / n;
-                        let x1 = world.x + (world.w * (k as i16 + 1)) / n;
-                        let y = if side == Side::Top {
-                            world.y
-                        } else {
-                            world.y + world.h - thick
-                        };
-                        rects.push((i, Rect { x: x0, y, w: x1 - x0, h: thick }));
-                    }
-                    let by = if side == Side::Top {
-                        world.y + thick - 1
-                    } else {
-                        world.y + world.h - thick - 1
-                    };
-                    splitters.push((side, Rect { x: world.x, y: by, w: world.w, h: 2 }));
-                    if side == Side::Top {
-                        world.y += thick;
-                    }
-                    world.h -= thick;
-                }
+                        Rect { x: c0, y: main_start, w: c1 - c0, h: thick }
+                    },
+                ));
+            }
+            let seam = if near { main_pos + thick - 1 } else { main_pos + main_len - thick - 1 };
+            splitters.push((
+                side,
+                if horizontal {
+                    Rect { x: seam, y: world.y, w: 2, h: world.h }
+                } else {
+                    Rect { x: world.x, y: seam, w: world.w, h: 2 }
+                },
+            ));
+            if near && horizontal {
+                world.x += thick;
+            } else if near {
+                world.y += thick;
+            }
+            if horizontal {
+                world.w -= thick;
+            } else {
+                world.h -= thick;
             }
         }
 

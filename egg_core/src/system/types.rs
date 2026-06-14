@@ -117,7 +117,7 @@ impl Default for MapOptions {
     }
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Flip {
     #[default]
     None,
@@ -145,7 +145,7 @@ pub use super::drawing::Rotate;
 /// describe a sprite *frame* (used by the animation/player code to position
 /// frames); the raster core ignores them. A single colour key suffices for
 /// every call site, so `transparent` is one optional index rather than a slice.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpriteOptions {
     #[serde(default)]
     pub id: i32,

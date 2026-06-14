@@ -466,6 +466,15 @@ pub fn update_views(
         }
     }
 
+    // An extra view's editor mutates the shared map but never runs through
+    // `WalkaroundState::step` (which only syncs the cached object animations
+    // while the *primary* editor is focused). Refresh them here too, so a frame
+    // edit made in an extra "map preview" window updates its in-world sprite
+    // live. Cheap and idempotent — gated to when an extra editor is actually open.
+    if views.views.iter().any(|v| v.editor.focused) {
+        game.state.walkaround.sync_map_animations();
+    }
+
     // Render + present every extra view from its own free camera.
     let g = &mut *game;
     for view in views.views.iter_mut() {

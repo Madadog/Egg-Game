@@ -25,7 +25,7 @@ use crate::system::SpriteOptions;
 /// `anim` object property — some maps carry sprites richer than a single static
 /// tile id, and the `.tmj` codec must preserve every one. The
 /// `#[serde(default)]`s let a partial frame (just a `spr_id`, say) still parse.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnimFrame {
     #[serde(default = "Vec2::zero")]
     pub pos: Vec2,

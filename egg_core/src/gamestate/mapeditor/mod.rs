@@ -8,6 +8,7 @@
 //! indices — so the UX is unchanged while the data model is unified.
 
 use crate::{
+    animation::AnimFrame,
     data::{
         sound::{self, SfxData},
         tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
@@ -21,9 +22,9 @@ use crate::{
     player::Shell,
     position::{Hitbox, Vec2},
     system::{
-        ConsoleApi, ConsoleHelper, MapOptions, MouseInput, ScanCode, SpriteOptions,
+        ConsoleApi, ConsoleHelper, Flip, MapOptions, MouseInput, ScanCode, SpriteOptions,
         drawing::{
-            Canvas, EdgePolicy, Transform,
+            Canvas, EdgePolicy, Rotate, Transform,
             image::{Rgba, RgbaImage},
         },
         just_pressed, pressed,
@@ -34,7 +35,7 @@ use crate::{
 use super::walkaround::WalkaroundState;
 
 mod dock;
-use dock::{Chrome, DockLayout, DockManager, DragState, PanelKind, Placement, Side};
+use dock::{DockLayout, DockManager, DragState, PanelKind, Placement, Side};
 
 /// Where the editor persists its dock arrangement (native only; on web the
 /// asset writes are silent no-ops, so the layout is session-only there).
@@ -74,11 +75,27 @@ enum EditField {
     HitY,
     HitW,
     HitH,
+    /// The selected animation frame's editable fields — the object's
+    /// [`sprite`](crate::map::MapObject::sprite) frame indexed by
+    /// [`MapViewer::sprite_frame`]. Tile id / duration, the draw offset from the
+    /// hitbox (`pos`), the multi-tile span and pixel scale, the palette rotation,
+    /// and the transparent / outline palette indices (an empty buffer clears the
+    /// latter two to `None`).
+    FrameTile,
+    FrameDuration,
+    FrameOffX,
+    FrameOffY,
+    FrameW,
+    FrameH,
+    FrameScale,
+    FramePaletteRot,
+    FrameTransparent,
+    FrameOutline,
     /// The selected layer's name (lives on the store's `TiledMap`, not an object;
-    /// see [`MapViewer::rename_target`]).
+    /// the layer is captured in [`TextEdit::target`]).
     LayerName,
     /// The selected tile layer's pixel offset / palette rotation (also stored on
-    /// the `TiledMap`, targeted via [`MapViewer::rename_target`]).
+    /// the `TiledMap`, targeted via [`TextEdit::target`]).
     LayerOffX,
     LayerOffY,
     LayerRotate,
@@ -103,6 +120,10 @@ enum CycleField {
     Mode,
     Sound,
     Trigger,
+    /// The selected sprite frame's mirror ([`Flip`]) and 90° rotation
+    /// ([`Rotate`]), cycled in place.
+    FrameFlip,
+    FrameRotate,
     /// The interaction kind (none / dialogue / the named Func behaviours) — only
     /// on the Interacts tab. Cycling rebuilds the effect, keeping a usable param.
     IntKind,
@@ -317,6 +338,15 @@ enum EditorKey {
     NewObject,
     DupObject,
     DeleteObject,
+    /// Select animation frame `n` of the selected object's sprite for editing.
+    SpriteFrame(usize),
+    /// Append / remove a frame, or set the selected frame's tile from the palette
+    /// brush — the object's animated-sprite controls.
+    SpriteAddFrame,
+    SpriteDelFrame,
+    SpriteFromBrush,
+    /// The live animated preview box of the selected object's sprite.
+    SpritePreview,
     /// The selected warp's destination-map preview: a rendered, click-to-place
     /// map of the warp target with the player shown at the landing point.
     WarpPreview,
@@ -333,9 +363,10 @@ enum EditorKey {
     Undo,
     Redo,
     Save,
-    /// A panel's frame chrome (title bar / close / resize handle), carrying the
-    /// panel's index so the dock can act on the right one.
-    Dock(usize, Chrome),
+    /// A panel's title bar (press to focus / begin a move), carrying the panel's
+    /// index. Close is a global-bar [`TogglePanel`](Self::TogglePanel); resize
+    /// handles are picked geometrically in `step_drag` — neither routes here.
+    Dock(usize),
     /// A global-bar button that shows/hides a panel.
     TogglePanel(PanelKind),
     /// A map cell in the Maps browser grid (index into the modern-map list).
@@ -383,6 +414,8 @@ const THUMB_H: f32 = 22.0;
 /// The selected warp's destination preview box height, px. Its width fills the
 /// Objects panel, so floating/widening that panel grows the click target.
 const WARP_PREVIEW_H: f32 = 64.0;
+/// Side (px) of the square animated-sprite preview box in the Objects panel.
+const SPRITE_PREVIEW_PX: f32 = 40.0;
 /// Height (px) of a panel's pinned title bar — the `full_width(7.0)` title row.
 /// A scrolled panel's body begins below this, and the title stays put.
 const PANEL_TITLE_H: i16 = 7;
@@ -706,6 +739,21 @@ enum PalDrag {
     ScrollH { grab: i16 },
 }
 
+/// A manual press-drag the editor's hit-testing owns across frames (distinct from
+/// the dock's own [`DragState`]). The palette and a panel scroll bar are never
+/// grabbed at once — only one keyed surface is hit per frame — so they share one
+/// slot instead of two `Option`s that must stay mutually exclusive by convention.
+#[derive(Debug, Clone, Copy, Default)]
+enum CanvasDrag {
+    #[default]
+    None,
+    /// A palette drag: a brush box-select or one of the two palette scroll bars.
+    Palette(PalDrag),
+    /// A panel scroll-bar drag: the panel index plus the grab offset within the
+    /// thumb, so the thumb tracks the cursor rather than snapping under it.
+    Scrollbar { idx: usize, grab: i16 },
+}
+
 /// The Select tool's marquee: a rectangle of tiles on the active layer, in tile
 /// coordinates (`x`/`y` may sit off the layer's left/top before a copy clamps
 /// them). Copy / Cut / Delete operate on the cells it covers.
@@ -739,6 +787,31 @@ enum DialogAction {
     Resize(String, usize, usize),
 }
 
+/// An in-progress drag of an existing map object. One session: set at grab,
+/// cleared at drop — so the half-set state the two former `Option`s allowed
+/// (and the box-drag branch's clear-one-but-not-the-other) can't happen.
+#[derive(Clone, Copy, Debug)]
+struct ObjectDrag {
+    /// Cursor − hitbox origin at grab time, so the object tracks the cursor.
+    grab_offset: Vec2,
+    /// The object's origin at grab time, so a completed drag records one
+    /// [`EditAction::Modify`] (start → drop), not one per moved frame.
+    from: Vec2,
+}
+
+/// An open text-entry session: which field has focus, its live line buffer, and
+/// — for the store-backed layer edits ([`EditField::LayerName`] / offsets /
+/// rotate) — the captured *source* layer index the commit targets (those edits
+/// live on the store's `TiledMap`, not on an object). `target` is `0` and unused
+/// for object-field edits. The three were once separate `Option`s kept in lockstep
+/// by hand; bundling them makes a half-open session or a stale target unrepresentable.
+#[derive(Clone, Debug)]
+struct TextEdit {
+    field: EditField,
+    buffer: TextField,
+    target: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
     pub focused: bool,
@@ -758,8 +831,9 @@ pub struct MapViewer {
     /// The palette viewport's screen rect, cached each frame (the palette is
     /// drawn/hit manually, not as flex nodes).
     pal_rect: Rect,
-    /// An in-progress palette drag (box-select or a scroll-bar drag).
-    pal_drag: Option<PalDrag>,
+    /// The active manual press-drag (palette or panel scroll bar), or
+    /// [`CanvasDrag::None`].
+    canvas_drag: CanvasDrag,
     /// The live sprite sheet's `(cols, rows)` in tiles, passed into `step` by the
     /// host each frame so the palette/brush math adapts as the sheet grows. `(0,
     /// 0)` until the first step (see the `*_DEFAULT` fallback).
@@ -771,22 +845,22 @@ pub struct MapViewer {
     selection: Option<TileSelection>,
     /// The last Copy / Cut buffer, stamped at the selection origin by Paste.
     clipboard: Option<Clipboard>,
-    /// While dragging an existing object: the grab offset (cursor − hitbox origin).
-    moving: Option<Vec2>,
-    /// Origin of the object being dragged, captured at grab time so a completed
-    /// drag records a single [`EditAction::Modify`] from there to the drop point.
-    move_from: Option<Vec2>,
-    /// Which object field, if any, currently has keyboard focus for text entry.
-    /// `Some` exactly when a [`TextField`] is open in `field`; the two are set
-    /// and cleared together (see [`begin_edit`](Self::begin_edit)).
-    editing: Option<EditField>,
-    /// The line-editing buffer for the focused `editing` field, or `None` when no
-    /// field is being typed into.
-    field: Option<TextField>,
-    /// While renaming a layer ([`EditField::LayerName`]): the *source* layer index
-    /// being renamed, captured at the start so the commit targets the right layer
-    /// even though the name lives in the store, not on an object.
-    rename_target: Option<usize>,
+    /// The in-progress drag of an existing object ([`ObjectDrag`]), or `None`.
+    moving: Option<ObjectDrag>,
+    /// Which animation frame of the selected object's sprite the panel edits.
+    /// Reset to `0` when the selection or map changes; clamped to the frame count
+    /// at every use so it can't dangle past a shorter sprite.
+    sprite_frame: usize,
+    /// Playback cursor for the live preview box — independent of `sprite_frame`
+    /// (which frame is *edited*) so the preview cycles every frame while you edit
+    /// one. Advanced each step against the selected object's live frames.
+    preview_frame: usize,
+    preview_tick: u16,
+    /// The active text-entry session ([`TextEdit`]), or `None` when no field is
+    /// being typed into. Bundles the focused field, its line buffer, and the
+    /// store-backed layer target so they can only move together (see
+    /// [`begin_edit`](Self::begin_edit) / [`stop_editing`](Self::stop_editing)).
+    editing: Option<TextEdit>,
     /// In-progress paint stroke: the cells touched since the mouse went down,
     /// flushed into one history entry on release so a stroke undoes atomically.
     stroke: Option<EditAction>,
@@ -820,9 +894,6 @@ pub struct MapViewer {
     /// Whether the tile grid + cursor tile-coordinate readout overlay is shown
     /// over the world (toggled with `G`).
     show_grid: bool,
-    /// An in-progress panel scroll-bar drag: `(panel index, grab offset within the
-    /// thumb)`, so the thumb tracks the cursor rather than snapping under it.
-    scroll_drag: Option<(usize, i16)>,
 }
 
 impl MapViewer {
@@ -830,6 +901,11 @@ impl MapViewer {
     /// its global debug hotkeys so typed dialogue keys don't trigger them.
     pub fn is_typing(&self) -> bool {
         self.editing.is_some() || self.maps_dialog.is_typing()
+    }
+
+    /// The field currently focused for text entry, if any.
+    fn editing_field(&self) -> Option<EditField> {
+        self.editing.as_ref().map(|e| e.field)
     }
 
     /// The primary editor: like [`default`](Default::default) but it persists its
@@ -872,7 +948,6 @@ impl MapViewer {
         self.dock.dirty = false;
         let layout = DockLayout {
             panels: self.dock.panels.clone(),
-            version: 1,
         };
         if let Ok(json) = serde_json::to_string_pretty(&layout) {
             system.write_file(LAYOUT_PATH, json.as_bytes());
@@ -902,7 +977,7 @@ impl MapViewer {
             .no_shrink()
             .fill_if(active, 11)
             .outline(13)
-            .key(EditorKey::Dock(idx, Chrome::TitleBar))
+            .key(EditorKey::Dock(idx))
             .id();
 
         match kind {
@@ -996,6 +1071,19 @@ impl MapViewer {
         (top, thumb_h)
     }
 
+    /// Fill a scroll bar: the `track` rect in dim colour 0, the `thumb` rect in
+    /// the brighter colour 13. Shared by the panel scroll bar and both palette bars.
+    fn draw_scrollbar(&self, draw_state: &mut DrawState, track: Rect, thumb: Rect) {
+        let track_c = draw_state.colour(0);
+        draw_state
+            .rgba(LayerId::BG)
+            .fill_rect(track.x.into(), track.y.into(), track.w.into(), track.h.into(), track_c);
+        let thumb_c = draw_state.colour(13);
+        draw_state
+            .rgba(LayerId::BG)
+            .fill_rect(thumb.x.into(), thumb.y.into(), thumb.w.into(), thumb.h.into(), thumb_c);
+    }
+
     /// Draw a panel's vertical scroll bar down the right edge of its body: a dim
     /// track with a brighter thumb sized/positioned by the scroll fraction.
     fn draw_panel_scrollbar(&self, rect: Rect, scroll: i16, content_h: i16, draw_state: &mut DrawState) {
@@ -1003,12 +1091,13 @@ impl MapViewer {
         if body.h <= 0 {
             return;
         }
-        let bx = (body.x + body.w - SCROLLBAR_W) as i32;
-        let track = draw_state.colour(0);
-        draw_state.rgba(LayerId::BG).fill_rect(bx, body.y as i32, SCROLLBAR_W as i32, body.h as i32, track);
+        let bx = body.x + body.w - SCROLLBAR_W;
         let (top, thumb_h) = Self::scroll_thumb(body, scroll, content_h);
-        let thumb = draw_state.colour(13);
-        draw_state.rgba(LayerId::BG).fill_rect(bx, top as i32, SCROLLBAR_W as i32, thumb_h as i32, thumb);
+        self.draw_scrollbar(
+            draw_state,
+            Rect { x: bx, y: body.y, w: SCROLLBAR_W, h: body.h },
+            Rect { x: bx, y: top, w: SCROLLBAR_W, h: thumb_h },
+        );
     }
 
     /// Front-to-back pick across one panel, scroll-aware: a non-scrolling panel
@@ -1058,15 +1147,15 @@ impl MapViewer {
     /// onto the panel's scroll range. Release ends it. Returns `true` while it
     /// owns the mouse, so the caller suppresses other panel/canvas input.
     fn step_scroll_drag(&mut self, mouse: &MouseInput, map: &MapInfo, maps: &MapStore) -> bool {
-        let Some((idx, grab)) = self.scroll_drag else {
+        let CanvasDrag::Scrollbar { idx, grab } = self.canvas_drag else {
             return false;
         };
         if released(mouse.left) {
-            self.scroll_drag = None;
+            self.canvas_drag = CanvasDrag::None;
             return true;
         }
         let Some(rect) = self.dock.solved.rect_of(idx) else {
-            self.scroll_drag = None;
+            self.canvas_drag = CanvasDrag::None;
             return true;
         };
         let content_h = self.build_panel(idx, rect, map, maps).content_height();
@@ -1074,8 +1163,13 @@ impl MapViewer {
         let overflow = (content_h - rect.h).max(1);
         let (_, thumb_h) = Self::scroll_thumb(body, 0, content_h);
         let travel = (body.h - thumb_h).max(1);
-        let desired_top = mouse.pos().y - grab - body.y;
-        let scroll = (i32::from(desired_top) * i32::from(overflow) / i32::from(travel)) as i16;
+        let scroll = scroll_from_drag(
+            i32::from(mouse.pos().y),
+            i32::from(grab),
+            i32::from(body.y),
+            i32::from(travel),
+            i32::from(overflow),
+        ) as i16;
         self.dock.set_scroll(idx, scroll.clamp(0, overflow));
         true
     }
@@ -1200,17 +1294,9 @@ impl MapViewer {
 
     /// The Objects panel's sub-tabs: Interactables vs Warps, each a tool switch.
     fn build_obj_tabs(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        // A tool tab is just a toggle button keyed by the tool it selects.
         let mk = |b: &mut UiBuilder<EditorKey>, tool: EditorTool, label: &str, sel: bool| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if sel { 0 } else { 12 })
-                .full_width(7.0)
-                .grow(1.0)
-                .fill_if(sel, 11)
-                .outlined(0, 12)
-                .key(EditorKey::Tool(tool))
-                .id()
+            Self::toggle_button(b, label, sel, EditorKey::Tool(tool))
         };
         let it = mk(b, EditorTool::Interactables, "Intr", self.tool == EditorTool::Interactables);
         let wp = mk(b, EditorTool::Warps, "Warp", self.tool == EditorTool::Warps);
@@ -1267,21 +1353,10 @@ impl MapViewer {
 
         // CRUD toolbar: new is always live; dup/rename/delete need a selection.
         let has_sel = self.maps_selected.is_some();
-        let tool = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if on { colour } else { 13 })
-                .full_width(7.0)
-                .grow(1.0)
-                .outlined(0, if on { colour } else { 13 })
-                .key(key)
-                .id()
-        };
-        let new = tool(b, "+", 11, true, EditorKey::MapNew);
-        let dup = tool(b, "dup", 12, has_sel, EditorKey::MapDup);
-        let ren = tool(b, "ren", 12, has_sel, EditorKey::MapRename);
-        let del = tool(b, "del", 8, has_sel, EditorKey::MapDelete);
+        let new = Self::action_button(b, "+", 11, true, EditorKey::MapNew);
+        let dup = Self::action_button(b, "dup", 12, has_sel, EditorKey::MapDup);
+        let ren = Self::action_button(b, "ren", 12, has_sel, EditorKey::MapRename);
+        let del = Self::action_button(b, "del", 8, has_sel, EditorKey::MapDelete);
         rows.push(b.row(1.0, [new, dup, ren, del]).id());
 
         // Grid cells: an outlined box (the thumbnail target) over a name label.
@@ -1327,30 +1402,18 @@ impl MapViewer {
         let (w, h) = tm.map(|t| (t.width, t.height)).unwrap_or((0, 0));
 
         // Camera: auto-frame vs. a fixed pin at the current view centre.
-        rows.push(b.text("CAMERA:").small(true).color(13).full_width(8.0).id());
+        self.header_row(b, rows, "CAMERA:", 8.0);
         let cam = match stick {
             Some((x, y)) => format!("stick {x},{y}"),
             None => "auto".to_string(),
         };
         rows.push(b.text(cam).small(true).color(12).full_width(7.0).id());
-        let toggle = |b: &mut UiBuilder<EditorKey>, label: &str, on: bool, key: EditorKey| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if on { 0 } else { 12 })
-                .full_width(7.0)
-                .grow(1.0)
-                .fill_if(on, 11)
-                .outlined(0, 12)
-                .key(key)
-                .id()
-        };
-        let auto = toggle(b, "auto", stick.is_none(), EditorKey::CamAuto);
-        let pin = toggle(b, "pin", stick.is_some(), EditorKey::CamPin);
+        let auto = Self::toggle_button(b, "auto", stick.is_none(), EditorKey::CamAuto);
+        let pin = Self::toggle_button(b, "pin", stick.is_some(), EditorKey::CamPin);
         rows.push(b.row(1.0, [auto, pin]).id());
 
         // Background colour: 16 palette swatches, the current one ringed.
-        rows.push(b.text(format!("BG: {bg}")).small(true).color(13).full_width(8.0).id());
+        self.header_row(b, rows, format!("BG: {bg}"), 8.0);
         let mut swatches = Vec::new();
         for c in 0..16u8 {
             swatches.push(
@@ -1365,7 +1428,7 @@ impl MapViewer {
         rows.push(b.wrap_row(1.0, swatches).width(64.0).id());
 
         // Size + resize.
-        rows.push(b.text(format!("SIZE: {w}x{h}")).small(true).color(13).full_width(8.0).id());
+        self.header_row(b, rows, format!("SIZE: {w}x{h}"), 8.0);
         rows.push(
             b.text("resize")
                 .small(true)
@@ -1381,13 +1444,7 @@ impl MapViewer {
         // Music: a track name (string-indexed, resolved at load like a warp);
         // `pick` cycles through `[none] + the known tracks`.
         let music = tm.and_then(|t| t.music()).unwrap_or("-");
-        rows.push(
-            b.text(format!("MUSIC: {}", truncate(music, 11)))
-                .small(true)
-                .color(13)
-                .full_width(8.0)
-                .id(),
-        );
+        self.header_row(b, rows, format!("MUSIC: {}", truncate(music, 11)), 8.0);
         let speed = tm.map(|t| t.music_speed()).unwrap_or(1.0);
         let pick = b
             .text("pick")
@@ -1510,7 +1567,7 @@ impl MapViewer {
     /// cursor). A scroll-bar drag maps the cursor to the scroll position. Started
     /// by a `PaletteView` press in `handle_panel`.
     fn step_palette_drag(&mut self, mouse: &MouseInput) {
-        let Some(drag) = self.pal_drag else {
+        let CanvasDrag::Palette(drag) = self.canvas_drag else {
             return;
         };
         let p = mouse.pos();
@@ -1521,19 +1578,19 @@ impl MapViewer {
                 let (c, r) = self.palette_tile_at(p);
                 self.set_brush_box(anchor_col, anchor_row, c, r);
                 if up {
-                    self.pal_drag = None;
+                    self.canvas_drag = CanvasDrag::None;
                 }
             }
             PalDrag::ScrollV { grab } => {
                 if up {
-                    self.pal_drag = None;
+                    self.canvas_drag = CanvasDrag::None;
                 } else {
                     self.scroll_palette_bar(true, p, grab);
                 }
             }
             PalDrag::ScrollH { grab } => {
                 if up {
-                    self.pal_drag = None;
+                    self.canvas_drag = CanvasDrag::None;
                 } else {
                     self.scroll_palette_bar(false, p, grab);
                 }
@@ -1549,12 +1606,12 @@ impl MapViewer {
         let (max_c, max_r) = self.palette_scroll_max();
         if vertical && max_r > 0 {
             let (_, travel) = self.palette_thumb_v();
-            let top = (i32::from(p.y) - i32::from(grab) - i32::from(self.pal_rect.y)).clamp(0, travel);
-            self.pal_row = (top * max_r as i32 / travel) as usize;
+            self.pal_row =
+                scroll_from_drag(i32::from(p.y), i32::from(grab), i32::from(self.pal_rect.y), travel, max_r as i32) as usize;
         } else if !vertical && max_c > 0 {
             let (_, travel) = self.palette_thumb_h();
-            let left = (i32::from(p.x) - i32::from(grab) - i32::from(self.pal_rect.x)).clamp(0, travel);
-            self.pal_col = (left * max_c as i32 / travel) as usize;
+            self.pal_col =
+                scroll_from_drag(i32::from(p.x), i32::from(grab), i32::from(self.pal_rect.x), travel, max_c as i32) as usize;
         }
     }
 
@@ -1629,26 +1686,15 @@ impl MapViewer {
         // from delete / move / rename / fg-flip — its identity is "first tile
         // layer" and an fg-prefix would move it out and break collision.
         let collision = !self.fg && self.layer_index == 0;
-        let lt = |b: &mut UiBuilder<EditorKey>, label: &str, c: u8, on: bool, key: EditorKey| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if on { c } else { 13 })
-                .full_width(7.0)
-                .grow(1.0)
-                .outlined(0, if on { c } else { 13 })
-                .key(key)
-                .id()
-        };
-        let add = lt(b, "+L", 11, true, EditorKey::LayerAdd);
-        let dup = lt(b, "dup", 12, !collision, EditorKey::LayerDup);
-        let del = lt(b, "del", 8, !collision, EditorKey::LayerDel);
+        let add = Self::action_button(b, "+L", 11, true, EditorKey::LayerAdd);
+        let dup = Self::action_button(b, "dup", 12, !collision, EditorKey::LayerDup);
+        let del = Self::action_button(b, "del", 8, !collision, EditorKey::LayerDel);
         rows.push(b.row(1.0, [add, dup, del]).id());
-        let up = lt(b, "^", 12, !collision, EditorKey::LayerUp);
-        let dn = lt(b, "v", 12, !collision, EditorKey::LayerDown);
-        let ren = lt(b, "ren", 12, !collision, EditorKey::LayerRename);
+        let up = Self::action_button(b, "^", 12, !collision, EditorKey::LayerUp);
+        let dn = Self::action_button(b, "v", 12, !collision, EditorKey::LayerDown);
+        let ren = Self::action_button(b, "ren", 12, !collision, EditorKey::LayerRename);
         // `fg` highlights when the current view is the foreground list.
-        let fg = lt(b, "fg", if self.fg { 11 } else { 12 }, !collision, EditorKey::LayerFg);
+        let fg = Self::action_button(b, "fg", if self.fg { 11 } else { 12 }, !collision, EditorKey::LayerFg);
         rows.push(b.row(1.0, [up, dn, ren, fg]).id());
 
         let store = maps.get(&map.source);
@@ -1666,11 +1712,13 @@ impl MapViewer {
                 .key(EditorKey::LayerVis(i))
                 .id();
             let is_collision = !self.fg && i == 0;
-            let renaming = self.editing == Some(EditField::LayerName)
-                && self.rename_target == Some(layer.source_layer);
+            let renaming = matches!(
+                &self.editing,
+                Some(e) if e.field == EditField::LayerName && e.target == layer.source_layer
+            );
             let src_name = store.and_then(|tm| tm.layer_name(layer.source_layer)).unwrap_or("");
             let label = if renaming {
-                format!("{}_", self.field.as_ref().map(|f| f.text()).unwrap_or(""))
+                format!("{}_", self.editing.as_ref().map(|e| e.buffer.text()).unwrap_or(""))
             } else if is_collision {
                 "collision".to_string()
             } else if src_name.is_empty() {
@@ -1759,17 +1807,9 @@ impl MapViewer {
     /// The Paint panel's sub-tabs: freehand Paint vs. the marquee Select tool
     /// (mirrors [`build_obj_tabs`](Self::build_obj_tabs)).
     fn build_paint_tabs(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        // A tool tab is just a toggle button keyed by the tool it selects.
         let mk = |b: &mut UiBuilder<EditorKey>, tool: EditorTool, label: &str, sel: bool| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if sel { 0 } else { 12 })
-                .full_width(7.0)
-                .grow(1.0)
-                .fill_if(sel, 11)
-                .outlined(0, 12)
-                .key(EditorKey::Tool(tool))
-                .id()
+            Self::toggle_button(b, label, sel, EditorKey::Tool(tool))
         };
         let pt = mk(b, EditorTool::Paint, "Paint", self.tool == EditorTool::Paint);
         let sl = mk(b, EditorTool::Select, "Sel", self.tool == EditorTool::Select);
@@ -1787,29 +1827,18 @@ impl MapViewer {
             Some(c) => format!("clip {}x{}", c.w, c.h),
             None => "clip -".to_string(),
         };
-        rows.push(b.text(sel).small(true).color(13).full_width(8.0).id());
-        rows.push(b.text(clip).small(true).color(13).full_width(8.0).id());
+        self.header_row(b, rows, sel, 8.0);
+        self.header_row(b, rows, clip, 8.0);
 
         let has_sel = self.selection.is_some();
         let has_clip = self.clipboard.is_some();
-        let op = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if on { colour } else { 13 })
-                .full_width(7.0)
-                .grow(1.0)
-                .outlined(0, if on { colour } else { 13 })
-                .key(key)
-                .id()
-        };
-        let copy = op(b, "copy", 12, has_sel, EditorKey::SelCopy);
-        let cut = op(b, "cut", 12, has_sel, EditorKey::SelCut);
+        let copy = Self::action_button(b, "copy", 12, has_sel, EditorKey::SelCopy);
+        let cut = Self::action_button(b, "cut", 12, has_sel, EditorKey::SelCut);
         rows.push(b.row(1.0, [copy, cut]).id());
-        let paste = op(b, "paste", 11, has_sel && has_clip, EditorKey::SelPaste);
-        let del = op(b, "del", 8, has_sel, EditorKey::SelDelete);
+        let paste = Self::action_button(b, "paste", 11, has_sel && has_clip, EditorKey::SelPaste);
+        let del = Self::action_button(b, "del", 8, has_sel, EditorKey::SelDelete);
         rows.push(b.row(1.0, [paste, del]).id());
-        let clear = op(b, "clear", 12, has_sel, EditorKey::SelClear);
+        let clear = Self::action_button(b, "clear", 12, has_sel, EditorKey::SelClear);
         rows.push(b.row(1.0, [clear]).id());
     }
 
@@ -1828,20 +1857,9 @@ impl MapViewer {
                 .id(),
         );
         let has_sel = self.selected.is_some();
-        let obj_btn = |b: &mut UiBuilder<EditorKey>, label: &str, colour: u8, on: bool, key: EditorKey| {
-            b.text(label)
-                .small(true)
-                .center()
-                .color(if on { colour } else { 13 })
-                .full_width(7.0)
-                .grow(1.0)
-                .outlined(0, if on { colour } else { 13 })
-                .key(key)
-                .id()
-        };
-        let new = obj_btn(b, "+new", 11, true, EditorKey::NewObject);
-        let dup = obj_btn(b, "dup", 12, has_sel, EditorKey::DupObject);
-        let del = obj_btn(b, "-del", 8, has_sel, EditorKey::DeleteObject);
+        let new = Self::action_button(b, "+new", 11, true, EditorKey::NewObject);
+        let dup = Self::action_button(b, "dup", 12, has_sel, EditorKey::DupObject);
+        let del = Self::action_button(b, "-del", 8, has_sel, EditorKey::DeleteObject);
         rows.push(b.row(2.0, [new, dup, del]).id());
 
         // Filtered view: list only this tab's kind, numbering rows by their
@@ -1878,7 +1896,7 @@ impl MapViewer {
             rows.push(b.spacer(2.0).id());
             // Hitbox geometry — numeric pos/size for every object, alongside drag.
             let hb = object.hitbox;
-            rows.push(b.text("box:").small(true).color(13).full_width(7.0).id());
+            self.header_row(b, rows, "box:", 7.0);
             self.field_row(b, rows, EditField::HitX, "x", &hb.x.to_string());
             self.field_row(b, rows, EditField::HitY, "y", &hb.y.to_string());
             self.field_row(b, rows, EditField::HitW, "w", &hb.w.to_string());
@@ -1896,14 +1914,14 @@ impl MapViewer {
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
                     self.cycle_row(b, rows, CycleField::Mode, "mode", mode_label(&w.mode));
                     self.cycle_row(b, rows, CycleField::Sound, "snd", sound_label(&w.sound));
-                    self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
+                    self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
                     let narr = w.narration.as_deref().unwrap_or("-");
                     self.field_row(b, rows, EditField::Narration, "narr", narr);
                     // Click-to-place destination preview: a rendered map of the
                     // warp target with the player at the landing point. Drawn over
                     // this box (see `draw_warp_preview`); clicks land here. Last so
                     // it (not the essential fields) is what overflows a short panel.
-                    rows.push(b.text("land:").small(true).color(13).full_width(7.0).id());
+                    self.header_row(b, rows, "land:", 7.0);
                     rows.push(
                         b.boxed([])
                             .size((rect.w as f32 - 2.0).max(THUMB_W), WARP_PREVIEW_H)
@@ -1935,10 +1953,101 @@ impl MapViewer {
                         // None / toggle_dog / piano have no editable param.
                         _ => {}
                     }
-                    self.cycle_row(b, rows, CycleField::Trigger, "trig", trigger_label(object.trigger));
+                    self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
                 }
             }
+            self.build_sprite_frames(b, rows, object);
         }
+    }
+
+    /// The selected object's animated-sprite controls: a row per frame (tile id +
+    /// duration, the active one highlighted), add / remove buttons, and — when a
+    /// frame is selected — its editable tile / duration fields plus a button that
+    /// stamps the current palette brush tile into it.
+    fn build_sprite_frames(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, object: &MapObject) {
+        rows.push(b.spacer(2.0).id());
+        self.header_row(b, rows, "sprite:", 7.0);
+        let frames = object.sprite.as_deref().unwrap_or(&[]);
+        // A live animated preview of the frames (painted over in `draw_at`).
+        if !frames.is_empty() {
+            rows.push(
+                b.boxed([])
+                    .size(SPRITE_PREVIEW_PX, SPRITE_PREVIEW_PX)
+                    .fill(0)
+                    .outline(13)
+                    .key(EditorKey::SpritePreview)
+                    .id(),
+            );
+        }
+        let sel = self.sprite_frame.min(frames.len().saturating_sub(1));
+        for (fi, frame) in frames.iter().enumerate() {
+            rows.push(
+                b.text(format!("{fi}: t{} d{}", frame.spr_id, frame.duration))
+                    .small(true)
+                    .full_width(7.0)
+                    .fill_if(fi == sel, 15)
+                    .key(EditorKey::SpriteFrame(fi))
+                    .id(),
+            );
+        }
+        let add = Self::action_button(b, "+frm", 11, true, EditorKey::SpriteAddFrame);
+        let del = Self::action_button(b, "-frm", 8, !frames.is_empty(), EditorKey::SpriteDelFrame);
+        rows.push(b.row(1.0, [add, del]).id());
+        if let Some(frame) = frames.get(sel) {
+            self.field_row(b, rows, EditField::FrameTile, "tile", &frame.spr_id.to_string());
+            self.field_row(b, rows, EditField::FrameDuration, "dur", &frame.duration.to_string());
+            self.field_row(b, rows, EditField::FrameOffX, "offx", &frame.pos.x.to_string());
+            self.field_row(b, rows, EditField::FrameOffY, "offy", &frame.pos.y.to_string());
+            self.field_row(b, rows, EditField::FrameW, "w", &frame.options.w.to_string());
+            self.field_row(b, rows, EditField::FrameH, "h", &frame.options.h.to_string());
+            self.field_row(b, rows, EditField::FrameScale, "scale", &frame.options.scale.to_string());
+            self.cycle_row(b, rows, CycleField::FrameFlip, "flip", flip_label(&frame.options.flip));
+            self.cycle_row(b, rows, CycleField::FrameRotate, "rot", rotate_label(&frame.options.rotate));
+            self.field_row(b, rows, EditField::FramePaletteRot, "pal", &frame.palette_rotate.to_string());
+            // `Option<u8>`: `-` is the absent state (cleared by an empty buffer).
+            let trans = frame.options.transparent.map_or_else(|| "-".to_string(), |t| t.to_string());
+            let outline = frame.outline_colour.map_or_else(|| "-".to_string(), |o| o.to_string());
+            self.field_row(b, rows, EditField::FrameTransparent, "trans", &trans);
+            self.field_row(b, rows, EditField::FrameOutline, "outl", &outline);
+            let grab = Self::action_button(b, "set from brush", 12, true, EditorKey::SpriteFromBrush);
+            rows.push(b.row(1.0, [grab]).id());
+        }
+    }
+
+    /// A toolbar action button: shows `colour` when `on`, dim grey (13) when
+    /// disabled; outlined, full-width and growing to share its row evenly. The
+    /// one body behind the Maps / Layers / Select / Objects toolbars.
+    fn action_button(
+        b: &mut UiBuilder<EditorKey>,
+        label: &str,
+        colour: u8,
+        on: bool,
+        key: EditorKey,
+    ) -> NodeId {
+        b.text(label)
+            .small(true)
+            .center()
+            .color(if on { colour } else { 13 })
+            .full_width(7.0)
+            .grow(1.0)
+            .outlined(0, if on { colour } else { 13 })
+            .key(key)
+            .id()
+    }
+
+    /// A toggle/tab button: a filled (11) highlight with dark text (0) when `on`,
+    /// grey (12) when off. Shared by the tool tabs and the Setup camera toggles.
+    fn toggle_button(b: &mut UiBuilder<EditorKey>, label: &str, on: bool, key: EditorKey) -> NodeId {
+        b.text(label)
+            .small(true)
+            .center()
+            .color(if on { 0 } else { 12 })
+            .full_width(7.0)
+            .grow(1.0)
+            .fill_if(on, 11)
+            .outlined(0, 12)
+            .key(key)
+            .id()
     }
 
     fn field_row(
@@ -1949,9 +2058,9 @@ impl MapViewer {
         label: &str,
         value: &str,
     ) {
-        let editing = self.editing == Some(field);
-        let text = match (editing, &self.field) {
-            (true, Some(f)) => format!("{label}:{}", f.display()),
+        let editing = self.editing_field() == Some(field);
+        let text = match &self.editing {
+            Some(e) if e.field == field => format!("{label}:{}", e.buffer.display()),
             _ => format!("{label}:{value}"),
         };
         rows.push(
@@ -1980,6 +2089,13 @@ impl MapViewer {
                 .key(EditorKey::Cycle(field))
                 .id(),
         );
+    }
+
+    /// A static, non-interactive panel label row in the dim (13) small font —
+    /// section headers and read-only readouts. `h` is the row height (the panels
+    /// mix 8px header rows with 7px readouts).
+    fn header_row(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, text: impl Into<String>, h: f32) {
+        rows.push(b.text(text).small(true).color(13).full_width(h).id());
     }
 
     // --- Helpers --------------------------------------------------------------
@@ -2021,14 +2137,16 @@ impl MapViewer {
             .unwrap_or("")
             .to_string();
         self.stop_editing();
-        self.rename_target = Some(index);
-        self.editing = Some(EditField::LayerName);
-        self.field = Some(TextField::new(name));
+        self.editing = Some(TextEdit {
+            field: EditField::LayerName,
+            buffer: TextField::new(name),
+            target: index,
+        });
     }
 
     /// Open a numeric text field on the selected tile layer's offset / palette
-    /// rotation, seeded from the store and targeting `index` (via `rename_target`,
-    /// the captured layer for store-backed text edits).
+    /// rotation, seeded from the store and targeting `index` (the captured layer
+    /// for store-backed text edits, held in [`TextEdit::target`]).
     fn begin_layer_field(&mut self, maps: &MapStore, source: &str, index: usize, field: EditField) {
         let tm = maps.get(source);
         let value = match field {
@@ -2042,9 +2160,11 @@ impl MapViewer {
             _ => String::new(),
         };
         self.stop_editing();
-        self.rename_target = Some(index);
-        self.editing = Some(field);
-        self.field = Some(TextField::new(value));
+        self.editing = Some(TextEdit {
+            field,
+            buffer: TextField::new(value),
+            target: index,
+        });
     }
 
     /// Flip the layer at store `index` between the bg and fg draw lists by
@@ -2349,6 +2469,7 @@ impl MapViewer {
         }
 
         self.status.tick();
+        self.advance_sprite_preview(map);
 
         // Restore the saved dock layout once, lazily, on first focus (primary).
         if self.persist && !self.dock.loaded {
@@ -2375,16 +2496,56 @@ impl MapViewer {
                 .rect_at(rect.x, rect.y, EditorKey::PaletteView)
         });
         self.pal_rect = pal_rect.unwrap_or_default();
+        // A modal map dialog (new / rename / delete) swallows all mouse
+        // interaction with the panels and world; otherwise hit-test it.
+        if !self.maps_dialog.is_active() {
+            self.step_mouse_input(system, map, maps, camera_pos, screen);
+        }
+
+        // Controller fallback for the Layers tool (matches the old viewer).
+        if self.tool == EditorTool::Layers {
+            let pad = system.controller();
+            if just_pressed(pad.up) {
+                self.layer_index = self.layer_index.saturating_sub(1);
+            }
+            if just_pressed(pad.down) {
+                let len = self.layer_list_len(map);
+                self.layer_index = (self.layer_index + 1).min(len.saturating_sub(1));
+            }
+            if just_pressed(pad.a) {
+                self.toggle_layer(map);
+            }
+            if just_pressed(pad.b) {
+                self.fg = !self.fg;
+            }
+        }
+
+        // Debounced layout save: only after a committed dock change (the drag/
+        // resize/toggle handlers set `dirty`), and only the primary editor.
+        if self.persist && self.dock.dirty {
+            self.save_layout(system);
+        }
+    }
+
+    /// Hit-test and dispatch one frame of mouse input across the panels and the
+    /// world view, in priority order: an in-progress drag (scroll bar / palette /
+    /// panel) owns the mouse, then the global bar, then a front-to-back panel
+    /// pick, then the leftover world view. Gated out by the caller while a modal
+    /// map dialog owns input.
+    fn step_mouse_input(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        camera_pos: Vec2,
+        screen: (f32, f32),
+    ) {
         let mouse = system.mouse();
         let cursor = mouse.pos();
-
-        // A modal dialog swallows mouse interaction with the panels/world.
-        if self.maps_dialog.is_active() {
-            // nothing
-        } else if self.scroll_drag.is_some() {
+        if matches!(self.canvas_drag, CanvasDrag::Scrollbar { .. }) {
             // A panel scroll-bar drag owns the mouse.
             self.step_scroll_drag(&mouse, map, maps);
-        } else if self.pal_drag.is_some() {
+        } else if matches!(self.canvas_drag, CanvasDrag::Palette(_)) {
             // A palette drag (pan / tile-pick / scroll bar) owns the mouse.
             self.step_palette_drag(&mouse);
         } else if self.step_drag(&mouse, screen) {
@@ -2418,30 +2579,6 @@ impl MapViewer {
                 }
                 None => {}
             }
-        }
-
-        // Controller fallback for the Layers tool (matches the old viewer).
-        if self.tool == EditorTool::Layers {
-            let pad = system.controller();
-            if just_pressed(pad.up) {
-                self.layer_index = self.layer_index.saturating_sub(1);
-            }
-            if just_pressed(pad.down) {
-                let len = self.layer_list_len(map);
-                self.layer_index = (self.layer_index + 1).min(len.saturating_sub(1));
-            }
-            if just_pressed(pad.a) {
-                self.toggle_layer(map);
-            }
-            if just_pressed(pad.b) {
-                self.fg = !self.fg;
-            }
-        }
-
-        // Debounced layout save: only after a committed dock change (the drag/
-        // resize/toggle handlers set `dirty`), and only the primary editor.
-        if self.persist && self.dock.dirty {
-            self.save_layout(system);
         }
     }
 
@@ -2661,7 +2798,6 @@ impl MapViewer {
         self.drag = None;
         self.stroke = None;
         self.moving = None;
-        self.move_from = None;
     }
 
     fn handle_panel(
@@ -2683,8 +2819,9 @@ impl MapViewer {
         match key {
             // Title-bar press begins a move: a float follows the cursor at once;
             // a docked panel arms a tear-off (a still click just focuses, via
-            // `activate_panel` above).
-            EditorKey::Dock(pidx, Chrome::TitleBar) => {
+            // `activate_panel` above). Resize handles are picked geometrically
+            // (see `step_drag`), so they never arrive here as a key.
+            EditorKey::Dock(pidx) => {
                 if click {
                     let rect = self.dock.solved.rect_of(pidx).unwrap_or_default();
                     let cur = mouse.pos();
@@ -2696,8 +2833,6 @@ impl MapViewer {
                     };
                 }
             }
-            // Resize handles are picked geometrically (see `step_drag`).
-            EditorKey::Dock(..) => {}
             EditorKey::TogglePanel(kind) => {
                 if click {
                     self.dock.toggle_panel(kind);
@@ -2818,27 +2953,28 @@ impl MapViewer {
                         // Grab offset within the thumb (clamped to its height, so
                         // a click off the thumb snaps the near edge under the cursor).
                         let (th, travel) = self.palette_thumb_v();
-                        let thumb_top = i32::from(v.y) + travel * self.pal_row as i32 / max_r as i32;
-                        let grab = (i32::from(p.y) - thumb_top).clamp(0, th) as i16;
-                        self.pal_drag = Some(PalDrag::ScrollV { grab });
+                        let thumb_top = thumb_pos(i32::from(v.y), travel, self.pal_row as i32, max_r as i32);
+                        let grab = grab_offset(i32::from(p.y), thumb_top, th) as i16;
+                        self.canvas_drag = CanvasDrag::Palette(PalDrag::ScrollV { grab });
                         self.scroll_palette_bar(true, p, grab);
                     } else if max_c > 0 && p.y >= v.y + v.h - PALETTE_BAR_GRAB {
                         let (tw, travel) = self.palette_thumb_h();
-                        let thumb_left = i32::from(v.x) + travel * self.pal_col as i32 / max_c as i32;
-                        let grab = (i32::from(p.x) - thumb_left).clamp(0, tw) as i16;
-                        self.pal_drag = Some(PalDrag::ScrollH { grab });
+                        let thumb_left = thumb_pos(i32::from(v.x), travel, self.pal_col as i32, max_c as i32);
+                        let grab = grab_offset(i32::from(p.x), thumb_left, tw) as i16;
+                        self.canvas_drag = CanvasDrag::Palette(PalDrag::ScrollH { grab });
                         self.scroll_palette_bar(false, p, grab);
                     } else {
                         // Start a brush box-select (a click stays 1×1).
                         let (c, r) = self.palette_tile_at(p);
                         self.set_brush_box(c, r, c, r);
-                        self.pal_drag = Some(PalDrag::Select { anchor_col: c, anchor_row: r });
+                        self.canvas_drag = CanvasDrag::Palette(PalDrag::Select { anchor_col: c, anchor_row: r });
                     }
                 }
             }
             EditorKey::Object(i) => {
                 if click {
                     self.selected = Some(i);
+                    self.sprite_frame = 0;
                     self.stop_editing();
                 }
             }
@@ -2862,6 +2998,29 @@ impl MapViewer {
                     self.delete_object(map);
                 }
             }
+            EditorKey::SpriteFrame(fi) => {
+                if click {
+                    self.sprite_frame = fi;
+                    self.stop_editing();
+                }
+            }
+            EditorKey::SpriteAddFrame => {
+                if click {
+                    self.add_sprite_frame(map);
+                }
+            }
+            EditorKey::SpriteDelFrame => {
+                if click {
+                    self.del_sprite_frame(map);
+                }
+            }
+            EditorKey::SpriteFromBrush => {
+                if click {
+                    self.set_frame_from_brush(map);
+                }
+            }
+            // A display-only box; the live frame is painted over it in `draw_at`.
+            EditorKey::SpritePreview => {}
             // A click in the warp destination preview sets the landing point to
             // the clicked map pixel (clamped to the target's bounds).
             EditorKey::WarpPreview => {
@@ -2887,8 +3046,8 @@ impl MapViewer {
                     let body = Self::panel_body(rect);
                     let (scroll, _) = self.panel_scroll(pidx, rect, content_h);
                     let (top, th) = Self::scroll_thumb(body, scroll, content_h);
-                    let grab = (mouse.pos().y - top).clamp(0, th);
-                    self.scroll_drag = Some((pidx, grab));
+                    let grab = grab_offset(i32::from(mouse.pos().y), i32::from(top), i32::from(th)) as i16;
+                    self.canvas_drag = CanvasDrag::Scrollbar { idx: pidx, grab };
                 }
             }
             EditorKey::Field(field) => {
@@ -3138,10 +3297,14 @@ impl MapViewer {
                         // the start origin so a completed drag records one undo
                         // step (start → drop), not a step per moved frame.
                         self.selected = Some(i);
+                        self.sprite_frame = 0;
                         self.stop_editing();
                         self.drag = None;
-                        self.moving = Some(world - self.object_origin(map, i));
-                        self.move_from = Some(self.object_origin(map, i));
+                        let origin = self.object_origin(map, i);
+                        self.moving = Some(ObjectDrag {
+                            grab_offset: world - origin,
+                            from: origin,
+                        });
                     } else {
                         // Empty space: drag out a box for a new object.
                         self.drag = Some(world);
@@ -3150,9 +3313,9 @@ impl MapViewer {
                 }
                 // Drag the grabbed object's hitbox to follow the cursor.
                 if pressed(mouse.left)
-                    && let (Some(i), Some(offset)) = (self.selected, self.moving)
+                    && let (Some(i), Some(drag)) = (self.selected, self.moving)
                 {
-                    self.set_object_origin(map, i, world - offset);
+                    self.set_object_origin(map, i, world - drag.grab_offset);
                 }
                 if released(mouse.left) {
                     self.finish_move(map);
@@ -3466,11 +3629,9 @@ impl MapViewer {
     /// Settle a finished object drag: if the origin actually changed, record a
     /// single move as one undo step.
     fn finish_move(&mut self, map: &mut MapInfo) {
-        let (Some(i), Some(from)) = (self.selected, self.move_from.take()) else {
-            self.moving = None;
-            return;
-        };
-        self.moving = None;
+        let Some(drag) = self.moving.take() else { return };
+        let Some(i) = self.selected else { return };
+        let from = drag.from;
         let to = self.object_origin(map, i);
         if to != from
             && let Some(after) = Self::snapshot(map, i)
@@ -3532,19 +3693,123 @@ impl MapViewer {
         map.objects.push(copy);
         let index = map.objects.len() - 1;
         self.selected = Some(index);
+        self.sprite_frame = 0;
         self.stop_editing();
         if let Some(after) = Self::snapshot(map, index) {
             self.record(EditAction::Add { index, after });
         }
     }
 
-    /// Clear text-entry focus: forget which field was being edited and drop its
-    /// buffer. `editing` and `field` are always set/cleared together so
-    /// [`is_typing`](Self::is_typing) stays in step with the live buffer.
+    /// The selected object's sprite frame count, or `0` if it has no sprite.
+    fn sprite_frame_count(&self, map: &MapInfo) -> usize {
+        self.selected
+            .and_then(|i| map.objects.get(i))
+            .and_then(|o| o.sprite.as_ref())
+            .map_or(0, Vec::len)
+    }
+
+    /// The selected frame's index, clamped to the selected object's frame count,
+    /// or `None` if it has no sprite — heals a [`sprite_frame`](Self::sprite_frame)
+    /// left stale by an undo/redo or a selection change.
+    fn current_frame(&self, map: &MapInfo) -> Option<usize> {
+        let count = self.sprite_frame_count(map);
+        (count > 0).then(|| self.sprite_frame.min(count - 1))
+    }
+
+    /// The frame [`sprite_frame`](Self::sprite_frame) points at within `object`'s
+    /// sprite (clamped to the frame count), or `None` if it has no sprite.
+    fn selected_frame<'a>(&self, object: Option<&'a MapObject>) -> Option<&'a AnimFrame> {
+        let frames = object.and_then(|o| o.sprite.as_ref())?;
+        frames.get(self.sprite_frame.min(frames.len().saturating_sub(1)))
+    }
+
+    /// Advance the live-preview playback cursor one tick against the selected
+    /// object's frames (mirrors [`Animation::advance`]). A no-op without a sprite.
+    fn advance_sprite_preview(&mut self, map: &MapInfo) {
+        let count = self.sprite_frame_count(map);
+        if count == 0 {
+            self.preview_frame = 0;
+            self.preview_tick = 0;
+            return;
+        }
+        self.preview_frame %= count;
+        let dur = self
+            .selected
+            .and_then(|i| map.objects.get(i))
+            .and_then(|o| o.sprite.as_ref())
+            .and_then(|frames| frames.get(self.preview_frame))
+            .map_or(1, |frame| frame.duration.max(1));
+        if self.preview_tick >= dur {
+            self.preview_frame = (self.preview_frame + 1) % count;
+            self.preview_tick = 0;
+        } else {
+            self.preview_tick += 1;
+        }
+    }
+
+    /// Append a frame to the selected object's sprite (creating the sprite if it
+    /// had none), seeded with the current palette brush tile, and select it. One
+    /// undo step.
+    fn add_sprite_frame(&mut self, map: &mut MapInfo) {
+        let tile = self.selected_tile as u16;
+        let (bw, bh) = self.brush_size();
+        self.modify_object(map, |map, i| {
+            if let Some(o) = map.objects.get_mut(i) {
+                // A multi-tile brush seeds a multi-tile frame: its top-left tile is
+                // the `spr_id`, its box the sprite's `w`×`h` footprint.
+                let mut frame = AnimFrame { spr_id: tile, ..AnimFrame::default() };
+                frame.options.w = bw as i32;
+                frame.options.h = bh as i32;
+                match &mut o.sprite {
+                    Some(frames) => frames.push(frame),
+                    None => o.sprite = Some(vec![frame]),
+                }
+            }
+        });
+        self.sprite_frame = self.sprite_frame_count(map).saturating_sub(1);
+    }
+
+    /// Remove the selected frame from the selected object's sprite (dropping the
+    /// whole sprite if it was the last frame), then clamp the selection. One undo
+    /// step.
+    fn del_sprite_frame(&mut self, map: &mut MapInfo) {
+        let Some(frame) = self.current_frame(map) else { return };
+        self.sprite_frame = frame;
+        self.modify_object(map, |map, i| {
+            if let Some(o) = map.objects.get_mut(i)
+                && let Some(frames) = &mut o.sprite
+            {
+                frames.remove(frame);
+                if frames.is_empty() {
+                    o.sprite = None;
+                }
+            }
+        });
+        self.sprite_frame = self.sprite_frame.min(self.sprite_frame_count(map).saturating_sub(1));
+    }
+
+    /// Stamp the current palette brush into the selected frame: its top-left tile
+    /// becomes the frame's `spr_id`, and the brush's `w`×`h` box becomes the
+    /// sprite's multi-tile footprint — so a box-selected brush grabs the whole
+    /// block in one click. Leaves the frame's other render settings (scale, flip,
+    /// transparent, …) untouched. One undo step.
+    fn set_frame_from_brush(&mut self, map: &mut MapInfo) {
+        let Some(frame) = self.current_frame(map) else { return };
+        let tile = self.selected_tile as u16;
+        let (bw, bh) = self.brush_size();
+        self.modify_object(map, |map, i| {
+            if let Some(f) = frame_mut(map, i, frame) {
+                f.spr_id = tile;
+                f.options.w = bw as i32;
+                f.options.h = bh as i32;
+            }
+        });
+    }
+
+    /// Clear text-entry focus: drop the whole [`TextEdit`] session (field, buffer
+    /// and layer target together) so [`is_typing`](Self::is_typing) stays in step.
     fn stop_editing(&mut self) {
         self.editing = None;
-        self.field = None;
-        self.rename_target = None;
     }
 
     /// Forget all per-map editor state: undo/redo history, text-entry focus,
@@ -3557,10 +3822,15 @@ impl MapViewer {
         self.history.clear();
         self.stop_editing();
         self.selected = None;
+        self.sprite_frame = 0;
+        self.preview_frame = 0;
+        self.preview_tick = 0;
         self.drag = None;
         self.stroke = None;
         self.moving = None;
-        self.move_from = None;
+        // The new map may have fewer layers; a stale index would dangle past its
+        // layer list, leaving `active_layer` `None` (Paint silently no-ops).
+        self.layer_index = 0;
         // The marquee indexes the old map's tiles; drop it. (The clipboard
         // survives, so a block can be pasted into a different map.)
         self.selection = None;
@@ -3589,17 +3859,47 @@ impl MapViewer {
             (_, EditField::HitY) => object.map(|o| o.hitbox.y.to_string()).unwrap_or_default(),
             (_, EditField::HitW) => object.map(|o| o.hitbox.w.to_string()).unwrap_or_default(),
             (_, EditField::HitH) => object.map(|o| o.hitbox.h.to_string()).unwrap_or_default(),
+            // Sprite frame fields read the selected frame of the object's sprite.
+            // The two `Option` fields seed empty when absent (an empty buffer
+            // commits back to `None`).
+            (_, EditField::FrameTile) => self.selected_frame(object).map(|f| f.spr_id.to_string()).unwrap_or_default(),
+            (_, EditField::FrameDuration) => {
+                self.selected_frame(object).map(|f| f.duration.to_string()).unwrap_or_default()
+            }
+            (_, EditField::FrameOffX) => self.selected_frame(object).map(|f| f.pos.x.to_string()).unwrap_or_default(),
+            (_, EditField::FrameOffY) => self.selected_frame(object).map(|f| f.pos.y.to_string()).unwrap_or_default(),
+            (_, EditField::FrameW) => self.selected_frame(object).map(|f| f.options.w.to_string()).unwrap_or_default(),
+            (_, EditField::FrameH) => self.selected_frame(object).map(|f| f.options.h.to_string()).unwrap_or_default(),
+            (_, EditField::FrameScale) => {
+                self.selected_frame(object).map(|f| f.options.scale.to_string()).unwrap_or_default()
+            }
+            (_, EditField::FramePaletteRot) => {
+                self.selected_frame(object).map(|f| f.palette_rotate.to_string()).unwrap_or_default()
+            }
+            (_, EditField::FrameTransparent) => self
+                .selected_frame(object)
+                .and_then(|f| f.options.transparent)
+                .map(|t| t.to_string())
+                .unwrap_or_default(),
+            (_, EditField::FrameOutline) => self
+                .selected_frame(object)
+                .and_then(|f| f.outline_colour)
+                .map(|o| o.to_string())
+                .unwrap_or_default(),
             _ => String::new(),
         };
-        self.editing = Some(field);
-        self.field = Some(TextField::new(value));
+        self.editing = Some(TextEdit {
+            field,
+            buffer: TextField::new(value),
+            target: 0,
+        });
     }
 
     fn step_text_entry(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, maps: &mut MapStore) {
-        let Some(field) = self.field.as_mut() else {
+        let Some(edit) = self.editing.as_mut() else {
             return;
         };
-        match field.step(system) {
+        match edit.buffer.step(system) {
             TextEvent::Active => {}
             TextEvent::Commit => {
                 self.commit_edit(map, maps);
@@ -3641,14 +3941,11 @@ impl MapViewer {
     }
 
     fn commit_edit(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
-        let Some(field) = self.editing else {
+        let Some(edit) = self.editing.as_ref() else {
             return;
         };
-        let buffer = self
-            .field
-            .as_ref()
-            .map(|f| f.text().trim().to_string())
-            .unwrap_or_default();
+        let field = edit.field;
+        let buffer = edit.buffer.text().trim().to_string();
         // Layer text edits target the store, not the selected object — handle
         // them up front (no object selection required).
         match field {
@@ -3736,38 +4033,115 @@ impl MapViewer {
                 }
             }
             // Hitbox geometry: width/height keep a 1px floor so a box stays usable.
-            EditField::HitX => {
-                if let Ok(x) = buffer.parse() {
+            // (X/Y deliberately have no floor — an object may sit at a negative
+            // offset.) The field is selected inside the closure, where `o` exists.
+            EditField::HitX | EditField::HitY | EditField::HitW | EditField::HitH => {
+                if let Ok(v) = buffer.parse::<i16>() {
                     self.modify_object(map, |map, i| {
                         if let Some(o) = map.objects.get_mut(i) {
-                            o.hitbox.x = x;
+                            match field {
+                                EditField::HitX => o.hitbox.x = v,
+                                EditField::HitY => o.hitbox.y = v,
+                                EditField::HitW => o.hitbox.w = v.max(1),
+                                EditField::HitH => o.hitbox.h = v.max(1),
+                                _ => unreachable!("outer arm guards the four hitbox fields"),
+                            }
                         }
                     });
                 }
             }
-            EditField::HitY => {
-                if let Ok(y) = buffer.parse() {
+            // Sprite frame fields: write the parsed value into the selected frame
+            // (duration floored to 1, never zero). `sprite_frame` is the editor's
+            // current frame; `get_mut` clamps a stale index to a no-op.
+            EditField::FrameTile => {
+                if let (Ok(id), Some(frame)) = (buffer.parse::<u16>(), self.current_frame(map)) {
                     self.modify_object(map, |map, i| {
-                        if let Some(o) = map.objects.get_mut(i) {
-                            o.hitbox.y = y;
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.spr_id = id;
                         }
                     });
                 }
             }
-            EditField::HitW => {
-                if let Ok(w) = buffer.parse::<i16>() {
+            EditField::FrameDuration => {
+                if let (Ok(d), Some(frame)) = (buffer.parse::<u16>(), self.current_frame(map)) {
                     self.modify_object(map, |map, i| {
-                        if let Some(o) = map.objects.get_mut(i) {
-                            o.hitbox.w = w.max(1);
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.duration = d.max(1);
                         }
                     });
                 }
             }
-            EditField::HitH => {
-                if let Ok(h) = buffer.parse::<i16>() {
+            EditField::FrameOffX => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<i16>(), self.current_frame(map)) {
                     self.modify_object(map, |map, i| {
-                        if let Some(o) = map.objects.get_mut(i) {
-                            o.hitbox.h = h.max(1);
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.pos.x = v;
+                        }
+                    });
+                }
+            }
+            EditField::FrameOffY => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<i16>(), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.pos.y = v;
+                        }
+                    });
+                }
+            }
+            // Multi-tile span and pixel scale keep a 1 floor (a 0 draws nothing).
+            EditField::FrameW => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<i32>(), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.w = v.max(1);
+                        }
+                    });
+                }
+            }
+            EditField::FrameH => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<i32>(), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.h = v.max(1);
+                        }
+                    });
+                }
+            }
+            EditField::FrameScale => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<i32>(), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.scale = v.max(1);
+                        }
+                    });
+                }
+            }
+            EditField::FramePaletteRot => {
+                if let (Ok(v), Some(frame)) = (buffer.parse::<u8>(), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.palette_rotate = v % 16;
+                        }
+                    });
+                }
+            }
+            // Transparent / outline are `Option<u8>`: an empty buffer clears them,
+            // a valid index sets them, a malformed non-empty buffer is ignored.
+            EditField::FrameTransparent => {
+                if let (Some(value), Some(frame)) = (parse_optional_index(&buffer), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.transparent = value;
+                        }
+                    });
+                }
+            }
+            EditField::FrameOutline => {
+                if let (Some(value), Some(frame)) = (parse_optional_index(&buffer), self.current_frame(map)) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.outline_colour = value;
                         }
                     });
                 }
@@ -3785,7 +4159,7 @@ impl MapViewer {
     /// names are ignored (a layer must stay identifiable). A rename can move the
     /// layer between the bg/fg draw lists, so it flags a re-derive.
     fn commit_layer_rename(&mut self, map: &mut MapInfo, maps: &mut MapStore, name: &str) {
-        let Some(index) = self.rename_target else { return };
+        let Some(index) = self.editing.as_ref().map(|e| e.target) else { return };
         if name.is_empty() {
             return;
         }
@@ -3811,7 +4185,7 @@ impl MapViewer {
     /// Apply a finished tile-layer offset / rotation edit to the store and record
     /// it for undo (a no-op if the value is unchanged or the layer is gone).
     fn commit_layer_prop(&mut self, map: &MapInfo, maps: &mut MapStore, prop: LayerProp, value: f64) {
-        let Some(index) = self.rename_target else { return };
+        let Some(index) = self.editing.as_ref().map(|e| e.target) else { return };
         let before = maps.get(&map.source).and_then(|tm| match prop {
             LayerProp::OffsetX => tm.layer_offset(index).map(|(x, _)| x),
             LayerProp::OffsetY => tm.layer_offset(index).map(|(_, y)| y),
@@ -3857,6 +4231,25 @@ impl MapViewer {
                     object.effect = ObjectEffect::Interact(next);
                 }
             }),
+            // The selected sprite frame's mirror / rotation, cycled in place.
+            CycleField::FrameFlip => {
+                if let Some(frame) = self.current_frame(map) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.flip = cycle_anim_flip(&f.options.flip);
+                        }
+                    });
+                }
+            }
+            CycleField::FrameRotate => {
+                if let Some(frame) = self.current_frame(map) {
+                    self.modify_object(map, |map, i| {
+                        if let Some(f) = frame_mut(map, i, frame) {
+                            f.options.rotate = cycle_rotate(&f.options.rotate);
+                        }
+                    });
+                }
+            }
             // Handled in `handle_panel` (it needs the map store) — see
             // [`cycle_warp_target`](Self::cycle_warp_target).
             CycleField::WarpTarget => {}
@@ -4242,7 +4635,10 @@ impl MapViewer {
             match self.dock.panels[idx].kind {
                 PanelKind::Maps => self.draw_map_thumbnails(&ui, rect, maps, draw_state),
                 PanelKind::Paint => self.draw_palette(draw_state),
-                PanelKind::Objects => self.draw_warp_preview(&ui, rect, idx, map, maps, draw_state),
+                PanelKind::Objects => {
+                    self.draw_warp_preview(&ui, rect, idx, map, maps, draw_state);
+                    self.draw_sprite_preview(&ui, rect, idx, map, draw_state);
+                }
                 _ => {}
             }
             if self.dock.is_float(idx) {
@@ -4316,20 +4712,12 @@ impl MapViewer {
         opts.sy = 0;
         let pmap = palette_map_rotate(active.palette_rotate() as usize);
         ghost.map_draw_indexed(tl, &draw_state.indexed_sprites, &draw_state.palettes[0], &pmap, opts);
-        for gy in 0..fh {
-            for gx in 0..fw {
-                if (gx + gy) % 2 == 1 {
-                    ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
-                }
-            }
-        }
-        draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
+        knockout_checker(&mut ghost);
+        blit_ghost(
+            draw_state.rgba(LayerId::BG),
             -(camera_pos.x as i32),
             -(camera_pos.y as i32),
             &ghost,
-            EdgePolicy::Transparent,
-            Transform::default(),
-            |p| p.a() == 0,
         );
     }
 
@@ -4376,21 +4764,25 @@ impl MapViewer {
 
         // Scroll bars (2px) on the right / bottom when the grid overflows.
         let (max_c, max_r) = self.palette_scroll_max();
-        let track = draw_state.colour(0);
-        let thumb = draw_state.colour(13);
         if max_r > 0 {
-            let bx = (v.x + v.w - 2) as i32;
-            draw_state.rgba(LayerId::BG).fill_rect(bx, v.y as i32, 2, v.h as i32, track);
+            let bx = v.x + v.w - 2;
             let (th, travel) = self.palette_thumb_v();
-            let ty = v.y as i32 + travel * self.pal_row as i32 / max_r as i32;
-            draw_state.rgba(LayerId::BG).fill_rect(bx, ty, 2, th, thumb);
+            let ty = thumb_pos(i32::from(v.y), travel, self.pal_row as i32, max_r as i32);
+            self.draw_scrollbar(
+                draw_state,
+                Rect { x: bx, y: v.y, w: 2, h: v.h },
+                Rect { x: bx, y: ty as i16, w: 2, h: th as i16 },
+            );
         }
         if max_c > 0 {
-            let by = (v.y + v.h - 2) as i32;
-            draw_state.rgba(LayerId::BG).fill_rect(v.x as i32, by, v.w as i32, 2, track);
+            let by = v.y + v.h - 2;
             let (tw, travel) = self.palette_thumb_h();
-            let tx = v.x as i32 + travel * self.pal_col as i32 / max_c as i32;
-            draw_state.rgba(LayerId::BG).fill_rect(tx, by, tw, 2, thumb);
+            let tx = thumb_pos(i32::from(v.x), travel, self.pal_col as i32, max_c as i32);
+            self.draw_scrollbar(
+                draw_state,
+                Rect { x: v.x, y: by, w: v.w, h: 2 },
+                Rect { x: tx as i16, y: by, w: tw as i16, h: 2 },
+            );
         }
     }
 
@@ -4471,6 +4863,53 @@ impl MapViewer {
     /// `scroll` shifts the box with the panel body and `clip` (the body region,
     /// when the panel scrolls) crops the blit/marks so a half-scrolled preview
     /// stays inside the panel.
+    /// Paint the selected object's current animation frame (the live-preview
+    /// cursor) into its [`SpritePreview`](EditorKey::SpritePreview) box — centred,
+    /// clipped to the panel body — so the sprite animates as you edit its frames.
+    fn draw_sprite_preview(
+        &self,
+        ui: &Ui<EditorKey>,
+        rect: Rect,
+        idx: usize,
+        map: &MapInfo,
+        draw_state: &mut DrawState,
+    ) {
+        let Some(frames) = self
+            .selected
+            .and_then(|i| map.objects.get(i))
+            .and_then(|o| o.sprite.as_deref())
+            .filter(|frames| !frames.is_empty())
+        else {
+            return;
+        };
+        let frame = &frames[self.preview_frame % frames.len()];
+        let (scroll, scrolling) = self.panel_scroll(idx, rect, ui.content_height());
+        let clip = scrolling.then(|| Self::panel_body(rect));
+        let Some(box_rect) = ui.rect_at(rect.x, rect.y - scroll, EditorKey::SpritePreview) else {
+            return;
+        };
+        // Skip if the box scrolled entirely out of the panel body.
+        if clip.is_some_and(|c| clamp_to(box_rect, c).is_none()) {
+            return;
+        }
+        // Render the frame centred into a box-sized image, so it clips to the box
+        // (the sprite may be larger than the box), then blit clipped to the body.
+        let mut img = RgbaImage::new(box_rect.w as u32, box_rect.h as u32);
+        let scale = frame.options.scale.max(1);
+        let sw = frame.options.w.max(1) * 8 * scale;
+        let sh = frame.options.h.max(1) * 8 * scale;
+        let ox = (box_rect.w as i32 - sw) / 2;
+        let oy = (box_rect.h as i32 - sh) / 2;
+        let (sprites, palette) = (&draw_state.indexed_sprites, &draw_state.palettes[0]);
+        let pal_map = palette_map_rotate(frame.palette_rotate as usize);
+        let id = i32::from(frame.spr_id);
+        if let Some(outline) = frame.outline_colour {
+            img.spr_outline(sprites, palette, id, ox, oy, frame.options.clone(), outline);
+        }
+        img.spr_indexed(sprites, palette, &pal_map, id, ox, oy, frame.options.clone());
+        blit_clipped(draw_state, box_rect, &img, clip);
+    }
+
     fn draw_warp_preview(
         &self,
         ui: &Ui<EditorKey>,
@@ -4548,150 +4987,145 @@ impl MapViewer {
         map: &MapInfo,
         camera_pos: Vec2,
     ) {
-        let cx = i32::from(camera_pos.x);
-        let cy = i32::from(camera_pos.y);
         match self.tool {
-            EditorTool::Paint => {
-                let colour = draw_state.colour(11);
-                if let Some(start) = self.drag {
-                    // Shift+drag rectangle fill: outline the tile-snapped region.
-                    let m = system.mouse();
-                    let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
-                    let (x0, y0, x1, y1) = tile_bounds(start, world);
-                    draw_state.rgba(LayerId::BG).stroke_rect(
-                        x0 * 8 - cx,
-                        y0 * 8 - cy,
-                        (x1 - x0 + 1) * 8,
-                        (y1 - y0 + 1) * 8,
-                        colour,
-                    );
-                } else {
-                    // Soft brush preview: a dithered ghost of the tiles the brush
-                    // would stamp here, under a footprint outline.
-                    let (tx, ty) = world_tile(&system.mouse(), camera_pos);
-                    let (px, py) = (tx * 8 - cx, ty * 8 - cy);
-                    let (bw, bh) = self.brush_size();
-                    let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
-                    let mut ghost = RgbaImage::new((bw * 8) as u32, (bh * 8) as u32);
-                    for dy in 0..bh {
-                        for dx in 0..bw {
-                            if bc + dx >= self.sheet_cols() {
-                                continue;
-                            }
-                            let id = ((br + dy) * self.sheet_cols() + (bc + dx)) as i32;
-                            ghost.spr_indexed(
-                                &draw_state.indexed_sprites,
-                                &draw_state.palettes[0],
-                                &PALETTE_MAP_IDENTITY,
-                                id,
-                                (dx * 8) as i32,
-                                (dy * 8) as i32,
-                                SpriteOptions { transparent: Some(0), ..Default::default() },
-                            );
-                        }
-                    }
-                    // Knock out a checkerboard so it reads as a preview, not paint.
-                    for gy in 0..ghost.height() {
-                        for gx in 0..ghost.width() {
-                            if (gx + gy) % 2 == 1 {
-                                ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
-                            }
-                        }
-                    }
-                    draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
-                        px,
-                        py,
-                        &ghost,
-                        EdgePolicy::Transparent,
-                        Transform::default(),
-                        |p| p.a() == 0,
-                    );
-                    draw_state.rgba(LayerId::BG).stroke_rect(
-                        px,
-                        py,
-                        (bw * 8) as i32,
-                        (bh * 8) as i32,
-                        colour,
-                    );
-                }
-            }
-            EditorTool::Select => {
-                let Some(sel) = self.selection else {
-                    return;
-                };
-                let outline = draw_state.colour(11);
-                let (px, py) = (sel.x * 8 - cx, sel.y * 8 - cy);
-                // Paste preview: a dithered ghost of the clipboard at the marquee
-                // origin, exactly where `SelPaste` would stamp it.
-                if let Some(clip) = &self.clipboard {
-                    let mut ghost = RgbaImage::new((clip.w * 8) as u32, (clip.h * 8) as u32);
-                    for dy in 0..clip.h {
-                        for dx in 0..clip.w {
-                            let id = clip.tiles[dy * clip.w + dx];
-                            if id == 0 {
-                                continue;
-                            }
-                            ghost.spr_indexed(
-                                &draw_state.indexed_sprites,
-                                &draw_state.palettes[0],
-                                &PALETTE_MAP_IDENTITY,
-                                id as i32,
-                                (dx * 8) as i32,
-                                (dy * 8) as i32,
-                                SpriteOptions { transparent: Some(0), ..Default::default() },
-                            );
-                        }
-                    }
-                    for gy in 0..ghost.height() {
-                        for gx in 0..ghost.width() {
-                            if (gx + gy) % 2 == 1 {
-                                ghost.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
-                            }
-                        }
-                    }
-                    draw_state.rgba(LayerId::BG).blit::<RgbaImage>(
-                        px,
-                        py,
-                        &ghost,
-                        EdgePolicy::Transparent,
-                        Transform::default(),
-                        |p| p.a() == 0,
-                    );
-                }
-                // The marquee outline on top.
-                draw_state.rgba(LayerId::BG).stroke_rect(
-                    px,
-                    py,
-                    (sel.w * 8) as i32,
-                    (sel.h * 8) as i32,
-                    outline,
-                );
-            }
+            EditorTool::Paint => self.draw_paint_overlay(draw_state, system, camera_pos),
+            EditorTool::Select => self.draw_select_overlay(draw_state, camera_pos),
             EditorTool::Interactables | EditorTool::Warps => {
-                // Filtered overlay: only the active tab's kind, warps in colour
-                // 12 and interactions in 14, the selected object highlighted.
-                let kind = self.obj_kind();
-                let base = draw_state.colour(if kind == ObjKind::Warp { 12 } else { 14 });
-                let sel = draw_state.colour(11);
-                let canvas = draw_state.rgba(LayerId::BG);
-                for (i, object) in map.objects.iter().enumerate() {
-                    if !kind.matches(object) {
-                        continue;
-                    }
-                    let colour = if Some(i) == self.selected { sel } else { base };
-                    let h = object.hitbox;
-                    canvas.stroke_rect(
-                        i32::from(h.x) - cx,
-                        i32::from(h.y) - cy,
-                        i32::from(h.w),
-                        i32::from(h.h),
-                        colour,
-                    );
-                }
-                self.draw_drag_preview(draw_state, system, camera_pos);
+                self.draw_object_overlay(draw_state, system, map, camera_pos)
             }
             EditorTool::Layers => {}
         }
+    }
+
+    /// Paint tool overlay: a Shift+drag rectangle-fill outline, or a dithered
+    /// ghost of the brush footprint under the cursor with its outline.
+    fn draw_paint_overlay(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi, camera_pos: Vec2) {
+        let cx = i32::from(camera_pos.x);
+        let cy = i32::from(camera_pos.y);
+        let colour = draw_state.colour(11);
+        if let Some(start) = self.drag {
+            // Shift+drag rectangle fill: outline the tile-snapped region.
+            let m = system.mouse();
+            let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
+            let (x0, y0, x1, y1) = tile_bounds(start, world);
+            draw_state.rgba(LayerId::BG).stroke_rect(
+                x0 * 8 - cx,
+                y0 * 8 - cy,
+                (x1 - x0 + 1) * 8,
+                (y1 - y0 + 1) * 8,
+                colour,
+            );
+        } else {
+            // Soft brush preview: a dithered ghost of the tiles the brush
+            // would stamp here, under a footprint outline.
+            let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+            let (px, py) = (tx * 8 - cx, ty * 8 - cy);
+            let (bw, bh) = self.brush_size();
+            let (bc, br) = (self.selected_tile % self.sheet_cols(), self.selected_tile / self.sheet_cols());
+            let mut ghost = RgbaImage::new((bw * 8) as u32, (bh * 8) as u32);
+            for dy in 0..bh {
+                for dx in 0..bw {
+                    if bc + dx >= self.sheet_cols() {
+                        continue;
+                    }
+                    let id = ((br + dy) * self.sheet_cols() + (bc + dx)) as i32;
+                    ghost.spr_indexed(
+                        &draw_state.indexed_sprites,
+                        &draw_state.palettes[0],
+                        &PALETTE_MAP_IDENTITY,
+                        id,
+                        (dx * 8) as i32,
+                        (dy * 8) as i32,
+                        SpriteOptions { transparent: Some(0), ..Default::default() },
+                    );
+                }
+            }
+            // Knock out a checkerboard so it reads as a preview, not paint.
+            knockout_checker(&mut ghost);
+            blit_ghost(draw_state.rgba(LayerId::BG), px, py, &ghost);
+            draw_state.rgba(LayerId::BG).stroke_rect(
+                px,
+                py,
+                (bw * 8) as i32,
+                (bh * 8) as i32,
+                colour,
+            );
+        }
+    }
+
+    /// Select tool overlay: the marquee outline, plus a paste preview ghost of
+    /// the clipboard at the marquee origin where `SelPaste` would stamp it.
+    fn draw_select_overlay(&self, draw_state: &mut DrawState, camera_pos: Vec2) {
+        let cx = i32::from(camera_pos.x);
+        let cy = i32::from(camera_pos.y);
+        let Some(sel) = self.selection else {
+            return;
+        };
+        let outline = draw_state.colour(11);
+        let (px, py) = (sel.x * 8 - cx, sel.y * 8 - cy);
+        if let Some(clip) = &self.clipboard {
+            let mut ghost = RgbaImage::new((clip.w * 8) as u32, (clip.h * 8) as u32);
+            for dy in 0..clip.h {
+                for dx in 0..clip.w {
+                    let id = clip.tiles[dy * clip.w + dx];
+                    if id == 0 {
+                        continue;
+                    }
+                    ghost.spr_indexed(
+                        &draw_state.indexed_sprites,
+                        &draw_state.palettes[0],
+                        &PALETTE_MAP_IDENTITY,
+                        id as i32,
+                        (dx * 8) as i32,
+                        (dy * 8) as i32,
+                        SpriteOptions { transparent: Some(0), ..Default::default() },
+                    );
+                }
+            }
+            knockout_checker(&mut ghost);
+            blit_ghost(draw_state.rgba(LayerId::BG), px, py, &ghost);
+        }
+        // The marquee outline on top.
+        draw_state.rgba(LayerId::BG).stroke_rect(
+            px,
+            py,
+            (sel.w * 8) as i32,
+            (sel.h * 8) as i32,
+            outline,
+        );
+    }
+
+    /// Object tools (Interactables / Warps) overlay: every object of the active
+    /// tab's kind outlined (warps 12, interactions 14, the selected one 11),
+    /// plus the in-progress new-object drag box.
+    fn draw_object_overlay(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        map: &MapInfo,
+        camera_pos: Vec2,
+    ) {
+        let cx = i32::from(camera_pos.x);
+        let cy = i32::from(camera_pos.y);
+        let kind = self.obj_kind();
+        let base = draw_state.colour(if kind == ObjKind::Warp { 12 } else { 14 });
+        let sel = draw_state.colour(11);
+        let canvas = draw_state.rgba(LayerId::BG);
+        for (i, object) in map.objects.iter().enumerate() {
+            if !kind.matches(object) {
+                continue;
+            }
+            let colour = if Some(i) == self.selected { sel } else { base };
+            let h = object.hitbox;
+            canvas.stroke_rect(
+                i32::from(h.x) - cx,
+                i32::from(h.y) - cy,
+                i32::from(h.w),
+                i32::from(h.h),
+                colour,
+            );
+        }
+        self.draw_drag_preview(draw_state, system, camera_pos);
     }
 
     fn draw_drag_preview(
@@ -4716,12 +5150,39 @@ impl MapViewer {
     }
 }
 
+/// Floor-divide a world pixel coordinate to its tile index. Defined over `i32`
+/// (callers promote from `i16` first) so the conversion keeps overflow headroom.
+fn px_to_tile(v: i32) -> i32 {
+    v.div_euclid(8)
+}
+
+/// The grab offset captured when a scroll thumb is pressed: where on the thumb
+/// (clamped to its `extent`) the cursor landed, so the thumb tracks the cursor
+/// rather than snapping its near edge under it. Shared by the panel + palette bars.
+fn grab_offset(cursor: i32, thumb_edge: i32, extent: i32) -> i32 {
+    (cursor - thumb_edge).clamp(0, extent)
+}
+
+/// The near edge (top / left) of a scroll thumb at scroll position `scroll`:
+/// `travel` px of track from `origin`, mapped over `0..=max`.
+fn thumb_pos(origin: i32, travel: i32, scroll: i32, max: i32) -> i32 {
+    origin + travel * scroll / max
+}
+
+/// Invert a thumb drag back to a scroll position: the desired thumb edge
+/// (`cursor − grab`) relative to `track_origin`, clamped to the thumb's `travel`
+/// and mapped linearly onto `0..=max`. Caller still clamps the result to its own
+/// range (the panel's `set_scroll` does no clamping of its own).
+fn scroll_from_drag(cursor: i32, grab: i32, track_origin: i32, travel: i32, max: i32) -> i32 {
+    (cursor - grab - track_origin).clamp(0, travel) * max / travel
+}
+
 /// The map tile (8px grid) under the cursor, in world coordinates.
 fn world_tile(mouse: &MouseInput, camera_pos: Vec2) -> (i32, i32) {
     let p = mouse.pos();
     (
-        (i32::from(p.x) + i32::from(camera_pos.x)).div_euclid(8),
-        (i32::from(p.y) + i32::from(camera_pos.y)).div_euclid(8),
+        px_to_tile(i32::from(p.x) + i32::from(camera_pos.x)),
+        px_to_tile(i32::from(p.y) + i32::from(camera_pos.y)),
     )
 }
 
@@ -4755,6 +5216,18 @@ fn parse_dim(s: &str, default: usize) -> usize {
         .ok()
         .filter(|&n| (1..=512).contains(&n))
         .unwrap_or(default)
+}
+
+/// Parse an optional palette index from a trimmed buffer for the frame's
+/// transparent / outline fields: an empty buffer is `Some(None)` (clear it), a
+/// valid `u8` is `Some(Some(n))` (set it), and anything else is `None` — ignored,
+/// so a typo doesn't clobber the current value.
+fn parse_optional_index(buffer: &str) -> Option<Option<u8>> {
+    if buffer.is_empty() {
+        Some(None)
+    } else {
+        buffer.parse::<u8>().ok().map(Some)
+    }
 }
 
 /// The short label for an interaction kind shown in the Objects panel.
@@ -4916,6 +5389,24 @@ fn blit_clipped(draw_state: &mut DrawState, at: Rect, img: &RgbaImage, clip: Opt
     }
 }
 
+/// Punch a checkerboard of holes in `img` so a rendered preview reads as a
+/// translucent "ghost" over the world beneath it (every other pixel cleared).
+fn knockout_checker(img: &mut RgbaImage) {
+    for gy in 0..img.height() {
+        for gx in 0..img.width() {
+            if (gx + gy) % 2 == 1 {
+                img.set_pixel(gx, gy, Rgba([0, 0, 0, 0]));
+            }
+        }
+    }
+}
+
+/// Blit a (knocked-out) ghost onto `canvas` at `(x, y)`, skipping fully
+/// transparent pixels so only the surviving checker cells land.
+fn blit_ghost(canvas: &mut RgbaImage, x: i32, y: i32, ghost: &RgbaImage) {
+    canvas.blit::<RgbaImage>(x, y, ghost, EdgePolicy::Transparent, Transform::default(), |p| p.a() == 0);
+}
+
 /// A hitbox spanning the rectangle between two world points (min size 1px).
 fn hitbox_between(a: Vec2, b: Vec2) -> Hitbox {
     Hitbox::new(
@@ -4929,10 +5420,10 @@ fn hitbox_between(a: Vec2, b: Vec2) -> Hitbox {
 /// Inclusive `(x0, y0, x1, y1)` tile range (8px grid) covered by the rectangle
 /// between two world points — used by the rectangle-fill paint mode.
 fn tile_bounds(a: Vec2, b: Vec2) -> (i32, i32, i32, i32) {
-    let ax = i32::from(a.x).div_euclid(8);
-    let ay = i32::from(a.y).div_euclid(8);
-    let bx = i32::from(b.x).div_euclid(8);
-    let by = i32::from(b.y).div_euclid(8);
+    let ax = px_to_tile(i32::from(a.x));
+    let ay = px_to_tile(i32::from(a.y));
+    let bx = px_to_tile(i32::from(b.x));
+    let by = px_to_tile(i32::from(b.y));
     (ax.min(bx), ay.min(by), ax.max(bx), ay.max(by))
 }
 
@@ -4992,13 +5483,14 @@ fn move_snapshot(mut snapshot: ObjSnapshot, origin: Vec2) -> ObjSnapshot {
 /// `PartialEq` (its effect can hold a fn pointer), so compare the fields the
 /// editor can actually change — enough to skip recording no-op edits. The
 /// `trigger` axis lives on the object itself (editable on both tabs), so it's
-/// compared here alongside the hitbox and effect.
+/// compared here alongside the hitbox, effect and animated sprite (`AnimFrame`
+/// derives `PartialEq`), so frame edits record an undo step.
 fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
     let same_box = a.hitbox.x == b.hitbox.x
         && a.hitbox.y == b.hitbox.y
         && a.hitbox.w == b.hitbox.w
         && a.hitbox.h == b.hitbox.h;
-    same_box && a.trigger == b.trigger && effect_eq(&a.effect, &b.effect)
+    same_box && a.trigger == b.trigger && a.sprite == b.sprite && effect_eq(&a.effect, &b.effect)
 }
 
 /// Compare two object effects by their editable content (warp fields / dialogue
@@ -5023,7 +5515,7 @@ fn interaction_eq(a: &Interaction, b: &Interaction) -> bool {
     match (a, b) {
         (Interaction::Dialogue(x), Interaction::Dialogue(y)) => x == y,
         (Interaction::None, Interaction::None) => true,
-        (Interaction::Func(_), Interaction::Func(_)) => true,
+        (Interaction::Func(x), Interaction::Func(y)) => x == y,
         _ => false,
     }
 }
@@ -5033,6 +5525,12 @@ fn remove_object(map: &mut MapInfo, i: usize) {
     if i < map.objects.len() {
         map.objects.remove(i);
     }
+}
+
+/// The mutable [`AnimFrame`] at `frame` of object `i`'s sprite, if it exists.
+/// Returns `None` for a missing object, a spriteless object, or a stale index.
+fn frame_mut(map: &mut MapInfo, i: usize, frame: usize) -> Option<&mut AnimFrame> {
+    map.objects.get_mut(i).and_then(|o| o.sprite.as_mut()).and_then(|frames| frames.get_mut(frame))
 }
 
 /// Insert `snapshot` at index `i`, clamping past-the-end inserts to a push so
@@ -5059,19 +5557,50 @@ fn axis_label(axis: &Axis) -> &'static str {
     }
 }
 
+/// Terse label for a sprite frame's [`Flip`] cycle row.
+fn flip_label(flip: &Flip) -> &'static str {
+    match flip {
+        Flip::None => "none",
+        Flip::Horizontal => "horiz",
+        Flip::Vertical => "vert",
+        Flip::Both => "both",
+    }
+}
+
+/// Terse label for a sprite frame's [`Rotate`] cycle row (degrees clockwise).
+fn rotate_label(rotate: &Rotate) -> &'static str {
+    match rotate {
+        Rotate::None => "0",
+        Rotate::By90 => "90",
+        Rotate::By180 => "180",
+        Rotate::By270 => "270",
+    }
+}
+
+/// Advance a sprite frame's mirror: none → horiz → vert → both → none.
+fn cycle_anim_flip(flip: &Flip) -> Flip {
+    match flip {
+        Flip::None => Flip::Horizontal,
+        Flip::Horizontal => Flip::Vertical,
+        Flip::Vertical => Flip::Both,
+        Flip::Both => Flip::None,
+    }
+}
+
+/// Advance a sprite frame's rotation: 0 → 90 → 180 → 270 → 0.
+fn cycle_rotate(rotate: &Rotate) -> Rotate {
+    match rotate {
+        Rotate::None => Rotate::By90,
+        Rotate::By90 => Rotate::By180,
+        Rotate::By180 => Rotate::By270,
+        Rotate::By270 => Rotate::None,
+    }
+}
+
 fn mode_label(mode: &WarpMode) -> &'static str {
     match mode {
         WarpMode::Auto => "auto",
         WarpMode::Interact => "act",
-    }
-}
-
-/// Short label for the trigger cycle row (kept terse for the 84px column).
-fn trigger_label(trigger: Trigger) -> &'static str {
-    match trigger {
-        Trigger::Touch => "touch",
-        Trigger::Press => "press",
-        Trigger::Any => "any",
     }
 }
 
@@ -5301,8 +5830,8 @@ mod tests {
         // Seed per-map state on map "a".
         viewer.record(tiles(vec![(0, 0, 1, 2)]));
         viewer.selected = Some(0);
-        viewer.editing = Some(EditField::Key);
-        viewer.field = Some(TextField::new("x"));
+        viewer.editing = Some(TextEdit { field: EditField::Key, buffer: TextField::new("x"), target: 0 });
+        viewer.layer_index = 3;
 
         // Stepping the same map keeps it all.
         viewer.step_map_viewer_at(&mut console, &mut map_a, &mut store, Vec2::new(0, 0), screen, (0, 0));
@@ -5319,6 +5848,7 @@ mod tests {
         assert!(!viewer.history.can_undo(), "object undo entries went stale");
         assert!(!viewer.is_typing(), "text focus dropped");
         assert_eq!(viewer.selected, None, "selection index went stale");
+        assert_eq!(viewer.layer_index, 0, "layer index reset for the new (maybe shorter) map");
     }
 
     /// Stepping then drawing a layout that exercises docked panels, a floating
@@ -5461,8 +5991,7 @@ mod tests {
         let mut v = MapViewer { selected: Some(0), ..Default::default() };
 
         let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
-            v.editing = Some(field);
-            v.field = Some(TextField::new(text));
+            v.editing = Some(TextEdit { field, buffer: TextField::new(text), target: 0 });
             v.commit_edit(map, maps);
             v.stop_editing();
         };
@@ -5477,6 +6006,145 @@ mod tests {
         v.undo(&mut map, &mut maps);
         assert_eq!(map.objects[0].hitbox.h, 16);
         assert_eq!(map.objects[0].hitbox.w, 8);
+    }
+
+    /// The object panel's animated-sprite controls: add a frame from the brush,
+    /// edit its tile / duration (duration floored to 1), add and auto-select a
+    /// second frame, and undo/remove — each an undo step, with a stale frame
+    /// index healed on use.
+    #[test]
+    fn sprite_frames_add_edit_remove_and_undo() {
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { selected: Some(0), selected_tile: 12, ..Default::default() };
+        let frames = |map: &MapInfo| map.objects[0].sprite.clone().unwrap_or_default();
+
+        assert!(map.objects[0].sprite.is_none(), "starts spriteless");
+
+        // +frm seeds a frame from the brush tile (12) and selects it.
+        v.add_sprite_frame(&mut map);
+        assert_eq!(frames(&map).len(), 1);
+        assert_eq!(frames(&map)[0].spr_id, 12);
+        assert_eq!(v.sprite_frame, 0);
+
+        // Edit the frame's tile and duration via the text fields.
+        let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
+            v.editing = Some(TextEdit { field, buffer: TextField::new(text), target: 0 });
+            v.commit_edit(map, maps);
+            v.stop_editing();
+        };
+        edit(&mut v, &mut map, &mut maps, EditField::FrameTile, "30");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameDuration, "5");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameDuration, "0"); // floored to 1
+        assert_eq!(frames(&map)[0].spr_id, 30);
+        assert_eq!(frames(&map)[0].duration, 1, "duration floored to 1");
+
+        // A second frame from a different brush tile, auto-selected.
+        v.selected_tile = 7;
+        v.add_sprite_frame(&mut map);
+        assert_eq!(frames(&map).len(), 2);
+        assert_eq!(v.sprite_frame, 1);
+        assert_eq!(frames(&map)[1].spr_id, 7);
+
+        // Undo the second add (leaves `sprite_frame` stale at 1).
+        v.undo(&mut map, &mut maps);
+        assert_eq!(frames(&map).len(), 1, "second frame undone");
+
+        // -frm heals the stale index to the last frame and removes it; the whole
+        // sprite drops when the last frame goes.
+        v.del_sprite_frame(&mut map);
+        assert!(map.objects[0].sprite.is_none(), "removing the last frame drops the sprite");
+
+        // Undo the removal.
+        v.undo(&mut map, &mut maps);
+        assert_eq!(frames(&map).len(), 1, "removal undone");
+        assert_eq!(frames(&map)[0].spr_id, 30);
+    }
+
+    /// The feature-complete frame fields: offset / size / scale / palette-rotate
+    /// (size & scale floored to 1, palette mod-16), flip + rotate cycles, and the
+    /// `Option<u8>` transparent / outline (a number sets it, an empty buffer
+    /// clears it to `None`). Each routes through the undo machinery.
+    #[test]
+    fn sprite_frame_full_field_edits() {
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { selected: Some(0), selected_tile: 1, ..Default::default() };
+        v.add_sprite_frame(&mut map);
+        let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
+            v.editing = Some(TextEdit { field, buffer: TextField::new(text), target: 0 });
+            v.commit_edit(map, maps);
+            v.stop_editing();
+        };
+
+        edit(&mut v, &mut map, &mut maps, EditField::FrameOffX, "3");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameOffY, "-4");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameW, "2");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameH, "0"); // floored to 1
+        edit(&mut v, &mut map, &mut maps, EditField::FrameScale, "3");
+        edit(&mut v, &mut map, &mut maps, EditField::FramePaletteRot, "20"); // mod 16 -> 4
+        {
+            let f = &map.objects[0].sprite.as_ref().unwrap()[0];
+            assert_eq!((f.pos.x, f.pos.y), (3, -4));
+            assert_eq!((f.options.w, f.options.h), (2, 1));
+            assert_eq!(f.options.scale, 3);
+            assert_eq!(f.palette_rotate, 4);
+        }
+
+        // Flip cycles none -> horiz; rotate 0 -> 90.
+        v.cycle(&mut map, CycleField::FrameFlip);
+        v.cycle(&mut map, CycleField::FrameRotate);
+        {
+            let f = &map.objects[0].sprite.as_ref().unwrap()[0];
+            assert_eq!(f.options.flip, Flip::Horizontal);
+            assert_eq!(f.options.rotate, Rotate::By90);
+        }
+
+        // Outline / transparent: a number sets `Some`, an empty buffer clears to
+        // `None` (transparent starts at the default `Some(0)`).
+        edit(&mut v, &mut map, &mut maps, EditField::FrameOutline, "7");
+        edit(&mut v, &mut map, &mut maps, EditField::FrameTransparent, "");
+        {
+            let f = &map.objects[0].sprite.as_ref().unwrap()[0];
+            assert_eq!(f.outline_colour, Some(7));
+            assert_eq!(f.options.transparent, None);
+        }
+        // The clear is one undo step.
+        v.undo(&mut map, &mut maps);
+        assert_eq!(map.objects[0].sprite.as_ref().unwrap()[0].options.transparent, Some(0), "transparent restored");
+    }
+
+    /// A box-selected palette brush grabs a multi-tile block: its top-left tile is
+    /// the frame's `spr_id` and the box becomes the sprite's `w`×`h` footprint, on
+    /// both `+frm` (add) and `set from brush` (re-grab). A 1×1 brush grabs 1×1.
+    #[test]
+    fn sprite_frame_grabs_multi_tile_brush() {
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer { selected: Some(0), ..Default::default() };
+        let frame = |map: &MapInfo| map.objects[0].sprite.as_ref().unwrap()[0].clone();
+
+        // A 2-wide × 3-tall box (cols 7..=8, rows 2..=4) → top-left tile + 2×3.
+        v.set_brush_box(7, 2, 8, 4);
+        let top_left = v.selected_tile as u16;
+        v.add_sprite_frame(&mut map);
+        assert_eq!(frame(&map).spr_id, top_left, "+frm grabs the box's top-left tile");
+        assert_eq!((frame(&map).options.w, frame(&map).options.h), (2, 3), "+frm grabs the box size");
+
+        // Re-grab from a 1×1 brush: spr_id + footprint collapse back to one tile,
+        // leaving the rest of the frame's render settings alone.
+        v.set_brush_box(3, 1, 3, 1);
+        v.set_frame_from_brush(&mut map);
+        assert_eq!(frame(&map).spr_id, v.selected_tile as u16);
+        assert_eq!((frame(&map).options.w, frame(&map).options.h), (1, 1), "set-from-brush re-grabs 1×1");
     }
 
     /// Adding a layer is undoable (and redoable), and deleting a layer restores
@@ -5540,8 +6208,8 @@ mod tests {
 
         // Rename "Layer 1" -> "water" via the begin/commit flow.
         v.begin_layer_rename(&maps, "m", 1);
-        assert_eq!(v.editing, Some(EditField::LayerName));
-        v.field = Some(TextField::new("water"));
+        assert_eq!(v.editing_field(), Some(EditField::LayerName));
+        v.editing.as_mut().unwrap().buffer = TextField::new("water");
         v.commit_edit(&mut map, &mut maps);
         v.stop_editing();
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
@@ -5559,9 +6227,7 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
 
         // An empty rename is ignored (a layer stays identifiable).
-        v.rename_target = Some(1);
-        v.editing = Some(EditField::LayerName);
-        v.field = Some(TextField::new("   "));
+        v.editing = Some(TextEdit { field: EditField::LayerName, buffer: TextField::new("   "), target: 1 });
         v.commit_edit(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
     }
@@ -5698,9 +6364,7 @@ mod tests {
         };
         let mut v = MapViewer { layer_index: 1, ..Default::default() };
         let edit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
-            v.rename_target = Some(1);
-            v.editing = Some(field);
-            v.field = Some(TextField::new(text));
+            v.editing = Some(TextEdit { field, buffer: TextField::new(text), target: 1 });
             v.commit_edit(map, maps);
             v.stop_editing();
         };
@@ -5736,9 +6400,7 @@ mod tests {
         };
         let mut v = MapViewer { layer_index: 1, ..Default::default() };
         let commit = |v: &mut MapViewer, map: &mut MapInfo, maps: &mut MapStore, field: EditField, text: &str| {
-            v.rename_target = Some(1);
-            v.editing = Some(field);
-            v.field = Some(TextField::new(text));
+            v.editing = Some(TextEdit { field, buffer: TextField::new(text), target: 1 });
             v.commit_edit(map, maps);
             v.stop_editing();
         };
@@ -6037,6 +6699,37 @@ mod tests {
         let narrated2 =
             MapObject::warp(Hitbox::new(0, 0, 8, 8), Warp::new(None, Vec2::new(0, 0)).with_narration("creak"));
         assert!(snapshot_eq(&narrated, &narrated2));
+    }
+
+    /// A Note pitch / AddCreatures count edit changes only the `InteractFn`
+    /// payload (same kind, same box); `snapshot_eq` must still detect it, or the
+    /// editor never records the edit as an undo step (it would be unmancellable).
+    #[test]
+    fn snapshot_eq_detects_func_payload_edits() {
+        let note0 = MapObject::func(Hitbox::new(0, 0, 8, 8), InteractFn::Note(0));
+        let note7 = MapObject::func(Hitbox::new(0, 0, 8, 8), InteractFn::Note(7));
+        assert!(!snapshot_eq(&note0, &note7), "pitch edit detected");
+        // Identical payload compares equal (no spurious undo entry).
+        let note0_again = MapObject::func(Hitbox::new(0, 0, 8, 8), InteractFn::Note(0));
+        assert!(snapshot_eq(&note0, &note0_again));
+        // The same holds for the AddCreatures count.
+        let few = MapObject::func(Hitbox::new(0, 0, 8, 8), InteractFn::AddCreatures(0));
+        let many = MapObject::func(Hitbox::new(0, 0, 8, 8), InteractFn::AddCreatures(3));
+        assert!(!snapshot_eq(&few, &many), "count edit detected");
+    }
+
+    /// `snapshot_eq` compares the animated sprite, so adding a frame or changing a
+    /// frame's tile is recorded as an undo step (identical sprites stay equal).
+    #[test]
+    fn snapshot_eq_detects_sprite_edits() {
+        let base = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k");
+        let with = base.clone().with_sprite(vec![AnimFrame { spr_id: 5, ..AnimFrame::default() }]);
+        assert!(!snapshot_eq(&base, &with), "adding a sprite detected");
+        let with_b = base.clone().with_sprite(vec![AnimFrame { spr_id: 9, ..AnimFrame::default() }]);
+        assert!(!snapshot_eq(&with, &with_b), "frame tile edit detected");
+        // Identical sprites compare equal (no spurious undo entry).
+        let with_again = base.with_sprite(vec![AnimFrame { spr_id: 5, ..AnimFrame::default() }]);
+        assert!(snapshot_eq(&with, &with_again));
     }
 
     /// Object add/remove undo replays into the one list at the right index:

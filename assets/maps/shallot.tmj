@@ -140,6 +140,52 @@
           "width": 16,
           "x": 112,
           "y": 129
+        },
+        {
+          "height": 16,
+          "id": 4,
+          "name": "",
+          "properties": [
+            {
+              "name": "description",
+              "type": "string",
+              "value": "new_key"
+            },
+            {
+              "name": "anim",
+              "type": "string",
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":524,\"duration\":10,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":525,\"duration\":10,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0}]"
+            }
+          ],
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 16,
+          "x": 47,
+          "y": 86
+        },
+        {
+          "height": 8,
+          "id": 5,
+          "name": "",
+          "properties": [
+            {
+              "name": "description",
+              "type": "string",
+              "value": "new_key"
+            },
+            {
+              "name": "anim",
+              "type": "string",
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":663,\"duration\":20,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":695,\"duration\":20,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0}]"
+            }
+          ],
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 8,
+          "x": 98,
+          "y": 90
         }
       ],
       "opacity": 1,
@@ -150,7 +196,7 @@
     }
   ],
   "nextlayerid": 4,
-  "nextobjectid": 4,
+  "nextobjectid": 6,
   "orientation": "orthogonal",
   "properties": [
     {

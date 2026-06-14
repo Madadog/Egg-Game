@@ -575,17 +575,6 @@ fn parse_trigger(s: &str) -> Option<Trigger> {
     })
 }
 
-/// The `trigger` property name for a [`Trigger`]. Always `Some` (every variant
-/// has a spelling); the *caller* decides whether to emit it, serialising the
-/// property only when the trigger differs from the effect-kind default so files
-/// with no authored trigger round-trip byte-stable. Inverse of [`parse_trigger`].
-fn trigger_name(trigger: Trigger) -> &'static str {
-    match trigger {
-        Trigger::Touch => "touch",
-        Trigger::Press => "press",
-        Trigger::Any => "any",
-    }
-}
 
 /// Map a `sound` property name to a known sound effect.
 fn parse_sound(s: &str) -> Option<SfxData> {
@@ -650,7 +639,7 @@ fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
     if object.trigger != Trigger::default_for(&object.effect)
         && let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut)
     {
-        properties.push(prop_str("trigger", trigger_name(object.trigger)));
+        properties.push(prop_str("trigger", object.trigger.name()));
     }
     Some(value)
 }
@@ -1021,7 +1010,11 @@ impl TiledMap {
         if (speed - 1.0).abs() < f32::EPSILON {
             self.remove_property("music_speed");
         } else {
-            self.set_property("music_speed", "float", Value::from(speed));
+            // Store the f32's shortest round-tripping decimal rather than `speed as
+            // f64` (which would bake float noise into the file, e.g. 0.1 ->
+            // 0.10000000149011612), keeping the authored value readable in the `.tmj`.
+            let clean = speed.to_string().parse::<f64>().unwrap_or(f64::from(speed));
+            self.set_property("music_speed", "float", Value::from(clean));
         }
     }
 

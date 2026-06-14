@@ -45,7 +45,7 @@ pub enum Interaction {
 /// [`Companion::interact`](crate::player::Companion::interact) from live
 /// companion/player positions, never from a map object, so there is nothing for
 /// an editor to place and it has no `func` spelling.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InteractFn {
     /// Add or remove the dog companion. `func = "toggle_dog"` (no properties).
     ToggleDog,

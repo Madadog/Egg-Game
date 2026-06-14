@@ -362,11 +362,45 @@ impl WalkaroundState {
         }
     }
 
+    /// Re-sync the cached per-object [`Animation`]s to `current_map.objects` so
+    /// live edits from the map editor (retiled / added / removed frames) show
+    /// in-world at once. Patches each animation's frames in place — keeping its
+    /// playback cursor where the frames still fit — and only rebuilds when the
+    /// sprited-object count changes (a frame add/remove that creates or drops a
+    /// whole sprite). Called while any map editor is open: [`step`](Self::step)
+    /// drives it for the primary editor, and the host drives it for an extra
+    /// view's editor (which mutates the same shared map but never passes through
+    /// `step`), so an extra "map preview" window reflects its own edits too.
+    pub fn sync_map_animations(&mut self) {
+        let live: Vec<_> = self.current_map.objects.iter().filter_map(|o| o.sprite.clone()).collect();
+        if live.len() != self.map_animations.len() {
+            self.map_animations =
+                live.into_iter().map(|frames| Animation { frames, ..Animation::default() }).collect();
+            return;
+        }
+        for (anim, frames) in self.map_animations.iter_mut().zip(live) {
+            if anim.frames != frames {
+                anim.frames = frames;
+                if anim.index >= anim.frames.len() {
+                    anim.index = 0;
+                    anim.tick = 0;
+                }
+            }
+        }
+    }
+
     pub fn step<S: ConsoleApi>(
         &mut self,
         ctx: &mut Ctx<S>,
         inventory_ui: &mut InventoryUi,
     ) -> Option<GameMode> {
+        // While the primary map editor is open, mirror live frame edits into the
+        // cached animations before advancing them, so the in-world sprite updates
+        // too. (An extra view's editor is synced by the host — see
+        // `sync_map_animations` — since its edits never pass through here.)
+        if self.map_viewer.focused {
+            self.sync_map_animations();
+        }
         self.map_animations
             .iter_mut()
             .for_each(|anim| anim.advance());
@@ -416,7 +450,7 @@ impl WalkaroundState {
             return None;
         }
 
-        if ctx.system.keyp(ScanCode::Digit5) {
+        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.keyp(ScanCode::Ctrl)  {
             self.load_pmem(ctx);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
@@ -862,5 +896,40 @@ mod tests {
 
         assert_eq!(walk.inside_objects, vec![false, false], "latch sized + cleared");
         assert!(walk.pending_warp.is_none(), "pending warp dropped on map load");
+    }
+
+    /// `sync_map_animations` mirrors live editor edits into the cached object
+    /// animations: it patches frames in place (keeping the playback cursor) and
+    /// rebuilds only when the set of sprited objects changes.
+    #[test]
+    fn sync_map_animations_reflects_live_edits() {
+        use crate::animation::AnimFrame;
+        let frame = |id: u16| AnimFrame { spr_id: id, ..AnimFrame::default() };
+
+        let mut walk = WalkaroundState::new();
+        walk.current_map = map_with_objects(vec![
+            MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k").with_sprite(vec![frame(5)]),
+            MapObject::dialogue(Hitbox::new(8, 0, 8, 8), "j"), // no sprite
+        ]);
+
+        // Initial sync: one animation, matching the single sprited object.
+        walk.sync_map_animations();
+        assert_eq!(walk.map_animations.len(), 1);
+        assert_eq!(walk.map_animations[0].frames, vec![frame(5)]);
+
+        // Advance the cursor, then a live retile: frames update in place, the
+        // sprited-object count is unchanged so the cursor is preserved.
+        walk.map_animations[0].tick = 1;
+        walk.current_map.objects[0].sprite = Some(vec![frame(9)]);
+        walk.sync_map_animations();
+        assert_eq!(walk.map_animations.len(), 1, "same count: patched, not rebuilt");
+        assert_eq!(walk.map_animations[0].frames, vec![frame(9)], "frames synced");
+        assert_eq!(walk.map_animations[0].tick, 1, "playback cursor preserved");
+
+        // Giving the second object a sprite changes the count -> rebuild to two.
+        walk.current_map.objects[1].sprite = Some(vec![frame(2)]);
+        walk.sync_map_animations();
+        assert_eq!(walk.map_animations.len(), 2, "count change rebuilds");
+        assert_eq!(walk.map_animations[1].frames, vec![frame(2)]);
     }
 }

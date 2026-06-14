@@ -604,6 +604,15 @@ impl Trigger {
     pub fn allows_press(self) -> bool {
         matches!(self, Self::Press | Self::Any)
     }
+    /// The lowercase wire/UI spelling. The single source of truth shared by the
+    /// `.tmj` codec and the editor; the inverse is the codec's `parse_trigger`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Touch => "touch",
+            Self::Press => "press",
+            Self::Any => "any",
+        }
+    }
     /// The trigger an effect of `effect`'s kind defaults to when none is
     /// authored: warps to [`Any`](Self::Any), interactions to
     /// [`Press`](Self::Press). The single source of truth shared by
