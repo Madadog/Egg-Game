@@ -6,31 +6,70 @@ use crate::{
     ui::{NodeId, Ui, UiBuilder},
 };
 
+/// A persistent item identifier. Stored as a `u8` in [`SaveData::inventory`]
+/// (a fixed `[u8; 8]`), so the live inventory can be serialised to and rebuilt
+/// from a save. Id `0` is the reserved *empty-slot* sentinel — no real item
+/// ever uses it — so a zeroed save array reads back as an empty inventory.
+///
+/// [`SaveData::inventory`](crate::data::save::SaveData::inventory)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemID(pub u8);
+impl ItemID {
+    /// The empty-slot sentinel: the id a save stores for a slot holding no item.
+    pub const EMPTY: ItemID = ItemID(0);
+}
+
 static ITEM_FF: InventoryItem = InventoryItem {
+    id: ItemID(1),
     sprite: 513,
     name: "item_ff_name",
     desc: "item_ff_desc",
 };
 static ITEM_LM: InventoryItem = InventoryItem {
+    id: ItemID(2),
     sprite: 514,
     name: "item_lm_name",
     desc: "item_lm_desc",
 };
 static ITEM_CHEGG: InventoryItem = InventoryItem {
+    id: ItemID(3),
     sprite: 524,
     name: "item_chegg_name",
     desc: "item_chegg_desc",
 };
 
+/// Every item the game knows about, the single source of truth the registry
+/// lookups ([`by_id`], [`by_name`]) scan. Adding an item is a matter of writing
+/// one more `static InventoryItem` (with a fresh [`ItemID`]) and listing it here.
+static ALL_ITEMS: &[&InventoryItem] = &[&ITEM_FF, &ITEM_LM, &ITEM_CHEGG];
+
+/// Resolve an item by its persistent [`ItemID`] (the `u8` a save stores).
+/// `None` for the empty sentinel or an id no item claims — so an old/garbage
+/// save id leaves the slot empty rather than crashing. Mirrors
+/// [`sound::by_name`](crate::data::sound::by_name) /
+/// [`portraits::by_name`](crate::data::portraits::by_name).
+pub fn by_id(id: ItemID) -> Option<&'static InventoryItem> {
+    ALL_ITEMS.iter().copied().find(|item| item.id == id)
+}
+
+/// Resolve an item by its script name (the `name` label key, e.g.
+/// `"item_chegg_name"`), for an [`InteractFn`](crate::interact::InteractFn) that
+/// names the item it grants. `None` for an unknown name.
+pub fn by_name(name: &str) -> Option<&'static InventoryItem> {
+    ALL_ITEMS.iter().copied().find(|item| item.name == name)
+}
+
 #[derive(Debug)]
 pub struct InventoryItem {
+    /// This item's persistent id, the `u8` a save stores for it (see [`ItemID`]).
+    pub id: ItemID,
     pub sprite: i32,
     pub name: &'static str,
     pub desc: &'static str,
 }
 impl InventoryItem {
-    pub const fn new(sprite: i32, name: &'static str, desc: &'static str) -> Self {
-        Self { sprite, name, desc }
+    pub const fn new(id: ItemID, sprite: i32, name: &'static str, desc: &'static str) -> Self {
+        Self { id, sprite, name, desc }
     }
 }
 
@@ -68,6 +107,39 @@ impl Inventory {
             if slot.is_some() { slot.take() } else { None }
         } else {
             None
+        }
+    }
+    /// Place `item` in the first empty slot. Returns `true` if it fit, `false`
+    /// if the inventory is full — the caller decides what a full inventory means
+    /// (today: nothing happens), so this never panics or drops the player's
+    /// existing items.
+    pub fn add(&mut self, item: &'static InventoryItem) -> bool {
+        if let Some(slot) = self.items.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(item);
+            true
+        } else {
+            false
+        }
+    }
+    /// The slot contents as the persistent `[u8; 8]` a save stores: each slot's
+    /// [`ItemID`], or [`ItemID::EMPTY`] (`0`) for an empty slot. Inverse of
+    /// [`load_from_save_ids`](Self::load_from_save_ids).
+    pub fn to_save_ids(&self) -> [u8; 8] {
+        let mut ids = [ItemID::EMPTY.0; 8];
+        for (slot, out) in self.items.iter().zip(ids.iter_mut()) {
+            if let Some(item) = slot {
+                *out = item.id.0;
+            }
+        }
+        ids
+    }
+    /// Repopulate the slots from a save's `[u8; 8]` of [`ItemID`]s, resolving
+    /// each through [`by_id`]. The empty sentinel or an id no item claims (an
+    /// old/garbage save) leaves that slot empty. Inverse of
+    /// [`to_save_ids`](Self::to_save_ids).
+    pub fn load_from_save_ids(&mut self, ids: [u8; 8]) {
+        for (out, id) in self.items.iter_mut().zip(ids) {
+            *out = by_id(ItemID(id));
         }
     }
 }

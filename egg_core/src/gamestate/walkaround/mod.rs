@@ -17,7 +17,7 @@ use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
 use super::mapeditor::MapViewer;
-use super::inventory::InventoryUi;
+use super::inventory::{self, Inventory, InventoryUi};
 
 mod creatures;
 mod cutscene;
@@ -184,6 +184,7 @@ impl WalkaroundState {
         &mut self,
         interact: &InteractFn,
         system: &mut impl ConsoleApi,
+        inventory: &mut Inventory,
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
@@ -233,6 +234,15 @@ impl WalkaroundState {
                 let pos = self.player_ref().pos;
                 self.creatures
                     .extend((0..=*x).map(|_| Creature::default().with_offset(pos)));
+                None
+            }
+            InteractFn::GiveItem(id) => {
+                // Resolve the id to its item and slot it into the inventory. An
+                // unknown id or a full inventory is a no-op (no panic), so a bad
+                // map prop or a player with no free slot simply gains nothing.
+                if let Some(item) = inventory::by_id(*id) {
+                    inventory.add(item);
+                }
                 None
             }
             InteractFn::Pet(vec, flip) => {
@@ -319,14 +329,19 @@ impl WalkaroundState {
     /// (then maybe open the dialogue that function returns), or do nothing. The
     /// single place both the map-object and companion interact paths resolve to,
     /// so they stay identical.
-    fn fire_interaction<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, interaction: &Interaction) {
+    fn fire_interaction<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        interaction: &Interaction,
+        inventory: &mut Inventory,
+    ) {
         match interaction {
             Interaction::Dialogue(key) => {
                 let convo = ctx.get_dialogue(key);
                 self.dialogue.set_messages(ctx.system, ctx.save, &convo);
             }
             Interaction::Func(x) => {
-                if let Some(key) = self.execute_interact_fn(x, ctx.system) {
+                if let Some(key) = self.execute_interact_fn(x, ctx.system, inventory) {
                     let convo = ctx.get_dialogue(key);
                     self.dialogue.set_messages(ctx.system, ctx.save, &convo);
                 }
@@ -654,7 +669,7 @@ impl WalkaroundState {
             else {
                 unreachable!("interact_hit only records Interact effects");
             };
-            self.fire_interaction(ctx, &interaction);
+            self.fire_interaction(ctx, &interaction, &mut inventory_ui.inventory);
         } else if interact {
             // No map object matched: fall back to the companions, checked against
             // the facing hitbox in order (today's chain ordering — companions
@@ -662,7 +677,7 @@ impl WalkaroundState {
             for companion in self.companion_list.interact(&self.companion_trail) {
                 if interact_hitbox.touches(companion.hitbox) {
                     if let ObjectEffect::Interact(interaction) = companion.effect {
-                        self.fire_interaction(ctx, &interaction);
+                        self.fire_interaction(ctx, &interaction, &mut inventory_ui.inventory);
                     }
                     break;
                 }
@@ -951,5 +966,32 @@ mod tests {
         walk.sync_map_animations();
         assert_eq!(walk.map_animations.len(), 2, "count change rebuilds");
         assert_eq!(walk.map_animations[1].frames, vec![frame(2)]);
+    }
+
+    /// `execute_interact_fn(GiveItem)` resolves the id and slots the item into the
+    /// first free slot of the live inventory; an inventory with no free slot is a
+    /// graceful no-op (no panic, no items lost).
+    #[test]
+    fn give_item_adds_to_inventory_and_handles_full() {
+        use crate::gamestate::inventory::{ItemID, by_id};
+        use crate::interact::InteractFn;
+
+        let mut console = TestConsole::new();
+        let mut walk = WalkaroundState::new();
+
+        // Start empty so the grant lands in slot 0 deterministically.
+        let mut inventory = Inventory { items: [None; 8], unlocks: [false; 4] };
+        let give = InteractFn::GiveItem(ItemID(1));
+        assert!(walk.execute_interact_fn(&give, &mut console, &mut inventory).is_none());
+        assert_eq!(inventory.items[0].map(|i| i.id), Some(ItemID(1)), "item granted to first free slot");
+
+        // Fill the rest, then a further grant on a full inventory changes nothing.
+        let filler = by_id(ItemID(2)).unwrap();
+        for slot in inventory.items.iter_mut() {
+            *slot = Some(filler);
+        }
+        let before = inventory.to_save_ids();
+        walk.execute_interact_fn(&InteractFn::GiveItem(ItemID(3)), &mut console, &mut inventory);
+        assert_eq!(inventory.to_save_ids(), before, "full inventory: grant dropped, nothing lost");
     }
 }
