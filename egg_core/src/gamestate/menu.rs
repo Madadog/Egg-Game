@@ -405,7 +405,7 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
         scale: 1,
         ..Default::default()
     };
-    let title_width = system.print_to(canvas, game_title, 999, 999, title_colour, opts.clone());
+    let title_width = system.text_width(game_title, opts.clone());
     system.print_to_centered(canvas, game_title, cx, y + 23, title_colour, opts);
     system.print_to(
         canvas,

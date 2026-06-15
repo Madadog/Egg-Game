@@ -192,7 +192,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
         canvas.fill_rect(8, 17 + d, cw - 16, 96, colour_1);
         ctx.system.print_to_shadow(canvas, &title, 11, 20 + d, colour_12, colour_0, opts.clone());
         ctx.system.print_to_shadow(canvas, &instructions, 11, 36 + d, colour_12, colour_0, opts.clone());
-        let width = ctx.system.print_to(canvas, &title, 999, 999, colour_12, opts) - 1;
+        let width = ctx.system.text_width(&title, opts) - 1;
         let origin = 11;
         canvas.line(origin, 27 + d, origin + width, 27 + d, colour_12);
         canvas.line(origin + 1, 28 + d, origin + width + 1, 28 + d, colour_0);

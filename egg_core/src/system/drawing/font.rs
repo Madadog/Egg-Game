@@ -86,7 +86,8 @@ pub fn text_width(font: &Font, text: &str, opts: PrintOptions) -> i32 {
 /// Render `text` onto `target` using the supplied `font`. Free-function
 /// variant of [`ConsoleHelper::print_to`] for callers that already hold a
 /// `&Font` reference (e.g. when split-borrowing the console's font and
-/// output_image at the same time). Returns the maximum line width in pixels.
+/// output_image at the same time). To measure text without drawing it, use
+/// [`text_width`].
 ///
 /// [`ConsoleHelper::print_to`]: crate::system::ConsoleHelper::print_to
 pub fn print_to_with_font<C: Canvas>(
@@ -97,10 +98,10 @@ pub fn print_to_with_font<C: Canvas>(
     y: i32,
     colour: C::Pixel,
     opts: PrintOptions,
-) -> i32 {
+) {
     layout(font, text, x, y, &opts, |glyph, dx, dy| {
         draw_letter_to(font, target, glyph, dx, dy, colour);
-    })
+    });
 }
 
 /// Walk `text` one glyph at a time, advancing the pen and tracking the maximum

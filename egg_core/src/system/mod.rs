@@ -104,9 +104,10 @@ pub trait ConsoleHelper: ConsoleApi {
     }
 
     /// Render `text` onto `target` using the console's default font
-    /// (`self.font()`). Returns the maximum line width in pixels. `colour`
-    /// is the pixel value (RGBA, palette index, …) used for non-transparent
-    /// font pixels — the font itself is read as alpha-only.
+    /// (`self.font()`). `colour` is the pixel value (RGBA, palette index, …)
+    /// used for non-transparent font pixels — the font itself is read as
+    /// alpha-only. To measure text without drawing it, use
+    /// [`text_width`](Self::text_width).
     fn print_to<C: Canvas>(
         &self,
         target: &mut C,
@@ -115,10 +116,12 @@ pub trait ConsoleHelper: ConsoleApi {
         y: i32,
         colour: C::Pixel,
         opts: PrintOptions,
-    ) -> i32 {
-        print_to_with_font(self.font(), target, text, x, y, colour, opts)
+    ) {
+        print_to_with_font(self.font(), target, text, x, y, colour, opts);
     }
 
+    /// Render `text` horizontally centred on `x`. Measures with
+    /// [`text_width`](Self::text_width) rather than a throwaway off-screen draw.
     fn print_to_centered<C: Canvas>(
         &self,
         target: &mut C,
@@ -127,9 +130,9 @@ pub trait ConsoleHelper: ConsoleApi {
         y: i32,
         colour: C::Pixel,
         opts: PrintOptions,
-    ) -> i32 {
-        let width = self.print_to(target, text, 999, 999, colour, opts.clone());
-        self.print_to(target, text, x - width / 2, y, colour, opts)
+    ) {
+        let width = self.text_width(text, opts.clone());
+        self.print_to(target, text, x - width / 2, y, colour, opts);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -142,9 +145,9 @@ pub trait ConsoleHelper: ConsoleApi {
         colour: C::Pixel,
         shadow: C::Pixel,
         opts: PrintOptions,
-    ) -> i32 {
+    ) {
         self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
-        self.print_to(target, text, x, y, colour, opts)
+        self.print_to(target, text, x, y, colour, opts);
     }
 
     fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
