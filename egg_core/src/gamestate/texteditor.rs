@@ -611,9 +611,12 @@ title = Hello
         let mut draw = DrawState::default();
         draw.resize(240, 136);
 
+        // The content includes non-ASCII whose low byte is ≥ 128 (`→` U+2192,
+        // `é` U+00E9) — these used to overflow the small-text glyph map and panic
+        // when drawn (the Ctrl+O-to-`main.eggscene` crash).
         let mut ed = editor_with(
             "script/en.eggtext",
-            "#dialogue greet\n  Hello there!\n  A second line.\n\n#list names\n  one\n  two\n",
+            "#dialogue greet\n  Hello there! café\n  registry → build →\n\n#list names\n  one\n  two\n",
         );
         ed.rebuild_outline();
 

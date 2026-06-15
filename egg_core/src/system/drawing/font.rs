@@ -131,7 +131,11 @@ fn layout(
             }
             _ => {
                 let glyph = if opts.small_text {
-                    (char as u8 + 128) as char
+                    // Small glyphs live in the upper half of the atlas: set the
+                    // high bit rather than `+ 128`, which overflows (and panics in
+                    // debug) for any char whose low byte is already ≥ 128 — e.g. a
+                    // `→` (U+2192) in a script file the text editor renders small.
+                    (char as u8 | 0x80) as char
                 } else {
                     char
                 };
