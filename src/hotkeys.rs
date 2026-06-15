@@ -76,6 +76,22 @@ pub fn primary_hotkeys(
         }
     }
 
+    // Text-editor mode (F2 ↔ F1) for the primary window — the main-window peer of
+    // the per-view toggle. Function keys, so they fire even while text mode is
+    // capturing keys (F1 is the escape hatch out). The editor itself is stepped +
+    // drawn in `step_state`.
+    if keys.just_pressed(KeyCode::F2) {
+        game.text_mode = true;
+    }
+    if keys.just_pressed(KeyCode::F1) {
+        game.text_mode = false;
+    }
+    // In text mode every key feeds the buffer; skip the F8 view-spawn, pause and
+    // debug/cheat shortcuts so typed text can't fire them.
+    if game.text_mode {
+        return;
+    }
+
     // F8 spawns an extra walkaround window with its own free camera, starting at
     // the main camera's current position. Only in walkaround (where the camera
     // is meaningful and the editor lives).

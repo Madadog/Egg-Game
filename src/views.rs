@@ -29,6 +29,7 @@ use bevy::window::{WindowClosed, WindowRef};
 
 use egg_core::drawstate::DrawState;
 use egg_core::gamestate::mapeditor::MapViewer;
+use egg_core::gamestate::texteditor::{TextEditor, TextOpenReq};
 use egg_core::position::Vec2 as EggVec2;
 
 use crate::EggGame;
@@ -38,10 +39,11 @@ use crate::fantasy_console::{MIN_FB_H, MIN_FB_W, new_screen_image};
 /// view-management systems.
 ///
 /// Registers:
-/// * `Update`: [`view_hotkeys`] (edge-triggered per-view `L`),
+/// * `Update`: [`view_hotkeys`] (edge-triggered per-view `L`/`F1`/`F2`),
+///   [`poll_text_open`] (act on the Dialog panel's "edit in text editor" link),
 ///   [`resize_views`] (scale each view's sprite to its window), and
 ///   [`handle_closed_views`] (reap a view closed via its OS button) — registered
-///   unordered, exactly as in the original `main.rs` Update tuple.
+///   unordered.
 ///
 /// The per-fixed-step [`update_views`] is *not* added here: it is a member of
 /// the single ordered `FixedUpdate` chain assembled by `CorePlugin` in
@@ -52,8 +54,15 @@ pub struct ViewsPlugin;
 
 impl Plugin for ViewsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ViewWindows>()
-            .add_systems(Update, (view_hotkeys, resize_views, handle_closed_views));
+        app.init_resource::<ViewWindows>().add_systems(
+            Update,
+            (
+                view_hotkeys,
+                poll_text_open,
+                resize_views,
+                handle_closed_views,
+            ),
+        );
     }
 }
 
@@ -62,6 +71,16 @@ impl Plugin for ViewsPlugin {
 /// systems never blit the main framebuffer into (or rescale) an extra view.
 #[derive(Component)]
 pub struct ViewScreenSprite;
+
+/// What an extra view shows: the walkaround world + its map editor (the default),
+/// or a full-window raw text editor for the script files. Flipped per view with
+/// **F2** (→ text) and **F1** (→ walkaround).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    #[default]
+    Walkaround,
+    Text,
+}
 
 /// Internal resolution each extra view *starts* at (the base resolution). The
 /// framebuffer then follows the window — like the main window's Mirror mode —
@@ -106,8 +125,13 @@ pub struct ViewWindow {
     pub draw_state: DrawState,
     /// Independent free camera, panned by the arrow keys while focused.
     pub free_cam: EggVec2,
-    /// This view's own map editor (toggled with `L` while focused).
+    /// This view's own map editor (toggled with `L` while focused, in
+    /// [`ViewMode::Walkaround`]).
     pub editor: MapViewer,
+    /// Whether this view shows the walkaround/editor or the text editor (F1/F2).
+    pub mode: ViewMode,
+    /// This view's raw text editor for the script files ([`ViewMode::Text`]).
+    pub text_editor: TextEditor,
     /// Base window px per framebuffer px — the view's framebuffer is the window
     /// size divided by this (Mirror-style), so resizing the window resizes the
     /// view. Fixed at [`VIEW_SCALE`]; [`effective_scale`] bumps it higher when a
@@ -125,11 +149,14 @@ pub struct ViewWindows {
 }
 
 impl ViewWindows {
-    /// True while any extra window has its map editor focused — the host then
-    /// suppresses global debug hotkeys (same rule as the primary editor) so
-    /// typed dialogue keys don't fire them.
+    /// True while any extra window is capturing typed text — its map editor field
+    /// is focused, or it's in text-editor mode (where every key feeds the buffer).
+    /// The host then suppresses global debug hotkeys (same rule as the primary
+    /// editor) so typed dialogue/script text doesn't fire them.
     pub fn any_editor_typing(&self) -> bool {
-        self.views.iter().any(|v| v.editor.is_typing())
+        self.views
+            .iter()
+            .any(|v| v.mode == ViewMode::Text || v.editor.is_typing())
     }
 }
 
@@ -204,6 +231,8 @@ pub fn spawn_view(
         draw_state,
         free_cam: start_cam,
         editor: MapViewer::default(),
+        mode: ViewMode::Walkaround,
+        text_editor: TextEditor::default(),
         scale: VIEW_SCALE,
     });
     info!(
@@ -319,8 +348,9 @@ pub fn handle_closed_views(
     }
 }
 
-/// Edge-triggered hotkey for the focused extra view: `L` toggles its map
-/// editor. In the `Update` schedule (like [`hotkeys`](crate::hotkeys)) so
+/// Edge-triggered hotkeys for the focused extra view: `L` toggles its map
+/// editor; `F2` switches the view to the text editor and `F1` back to the
+/// walkaround. In the `Update` schedule (like [`hotkeys`](crate::hotkeys)) so
 /// `just_pressed` fires exactly once per tap — the held-key panning stays in the
 /// fixed step ([`update_views`]).
 pub fn view_hotkeys(
@@ -338,11 +368,55 @@ pub fn view_hotkeys(
     };
     let view = &mut views.views[i];
 
-    // While the editor captures text, leave the `L` toggle alone so a typed
-    // literal "l" doesn't close the editor.
-    if !view.editor.is_typing() && keys.just_pressed(KeyCode::KeyL) {
+    // Function keys flip the view mode. They're never typed, so they fire even
+    // while the text editor (or a map-editor field) is capturing keys — F1 is the
+    // escape hatch out of text mode.
+    if keys.just_pressed(KeyCode::F2) {
+        view.mode = ViewMode::Text;
+    }
+    if keys.just_pressed(KeyCode::F1) {
+        view.mode = ViewMode::Walkaround;
+    }
+
+    // While the map editor captures text, leave the `L` toggle alone so a typed
+    // literal "l" doesn't close the editor. (Only meaningful in walkaround.)
+    if view.mode == ViewMode::Walkaround
+        && !view.editor.is_typing()
+        && keys.just_pressed(KeyCode::KeyL)
+    {
         view.editor.focused = !view.editor.focused;
         view.editor.layer_index = 0;
+    }
+}
+
+/// Act on "edit in text editor" requests parked by the Dialog panel — on the
+/// primary map editor or any view's editor. Each routes *in place*: the primary
+/// panel's link switches the **primary** window to text mode; a view panel's link
+/// switches **that view**. Both open the requested file at the requested anchor
+/// (e.g. a dialogue key's `#dialogue` block). The text editor is the canonical
+/// route for editing dialogue, so the panel's link routes here.
+pub fn poll_text_open(mut views: ResMut<ViewWindows>, mut game: ResMut<EggGame>) {
+    if !game.loaded {
+        return;
+    }
+    // Primary panel's link → the primary window's text editor.
+    if let Some(TextOpenReq { path, anchor }) =
+        game.state.walkaround.map_viewer.pending_text_open.take()
+    {
+        game.text_mode = true;
+        let g = &mut *game;
+        g.text_editor.open(&mut g.system, &path, anchor);
+    }
+    // Each view panel's link → that view's own text editor (index-iterated so the
+    // `views` borrow doesn't overlap the `game` borrow for `open`).
+    for i in 0..views.views.len() {
+        if let Some(TextOpenReq { path, anchor }) = views.views[i].editor.pending_text_open.take() {
+            views.views[i].mode = ViewMode::Text;
+            let g = &mut *game;
+            views.views[i]
+                .text_editor
+                .open(&mut g.system, &path, anchor);
+        }
     }
 }
 
@@ -372,10 +446,34 @@ pub fn update_views(
     // to decide whether to drive the controller; the view's edge-triggered
     // hotkey (`L`) lives in `view_hotkeys` (Update schedule).
     if let Focus::Extra(i) = focus {
+        // Text-editor mode: every key feeds the buffer. Step the editor at this
+        // view's framebuffer size (so its click regions match `draw`), then drain
+        // its live-reload requests — eggtext → base script, eggscene → cutscenes.
+        if views.views[i].mode == ViewMode::Text {
+            let (fb_w, fb_h) = (
+                views.views[i].output.width() as i32,
+                views.views[i].output.height() as i32,
+            );
+            let g = &mut *game;
+            views.views[i].text_editor.step(&mut g.system, fb_w, fb_h);
+            if let Some(source) = views.views[i].text_editor.pending_script.take() {
+                match egg_core::data::eggtext::parse(&source) {
+                    Ok(file) => g.state.script.set_base(file),
+                    Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
+                }
+            }
+            if let Some(source) = views.views[i].text_editor.pending_scene.take() {
+                match egg_core::data::eggscene::parse(&source) {
+                    Ok(file) => g.state.set_scenes(file),
+                    Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
+                }
+            }
+        }
+
         let fast = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-        // While the editor captures text, leave panning alone so typed keys
-        // don't pan the camera.
-        if !views.views[i].editor.is_typing() {
+        // While the editor captures text (or this is text mode), leave panning
+        // alone so typed keys don't pan the camera.
+        if views.views[i].mode == ViewMode::Walkaround && !views.views[i].editor.is_typing() {
             let (dx, dy) = free_cam_delta(
                 keys.pressed(KeyCode::ArrowUp),
                 keys.pressed(KeyCode::ArrowDown),
@@ -392,7 +490,7 @@ pub fn update_views(
         // cursor in `step_state`. Step this view's editor against its own map +
         // free camera — at this view's framebuffer size, so the panel layout and
         // hit-testing match what `draw_at` renders below.
-        if views.views[i].editor.focused {
+        if views.views[i].mode == ViewMode::Walkaround && views.views[i].editor.focused {
             let cam = views.views[i].free_cam;
             let screen = (
                 views.views[i].output.width() as f32,
@@ -447,15 +545,6 @@ pub fn update_views(
                     g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
                 }
             }
-            // A dialogue edit saved from this view's editor: reinstall the new
-            // script so the change shows live in every window (same path the
-            // host's `poll_script_save` uses for the primary editor).
-            if let Some(source) = views.views[i].editor.pending_script.take() {
-                match egg_core::data::eggtext::parse(&source) {
-                    Ok(file) => g.state.script.set_base(file),
-                    Err(e) => warn!("In-editor dialogue save produced invalid eggtext: {e}"),
-                }
-            }
         }
     }
 
@@ -488,20 +577,29 @@ pub fn update_views(
     // Render + present every extra view from its own free camera.
     let g = &mut *game;
     for view in views.views.iter_mut() {
-        // Draw the world from this view's free camera + editor into its own
-        // DrawState/output — never the main framebuffer.
-        let mut ctx = egg_core::Ctx {
-            draw: &mut view.draw_state,
-            system: &mut g.system,
-            maps: &mut g.state.maps,
-            rng: &mut g.state.rng,
-            script: &g.state.script,
-            scenes: &g.state.scenes,
-            save: &mut g.state.save,
-        };
-        g.state
-            .walkaround
-            .draw_world(&mut ctx, view.free_cam, &view.editor, &g.state.debug_info);
+        // Draw this view into its own DrawState BG layer — never the main
+        // framebuffer — then composite that to its output. The world (+ editor)
+        // from the free camera, or the text editor, per the view's mode.
+        match view.mode {
+            ViewMode::Walkaround => {
+                let mut ctx = egg_core::Ctx {
+                    draw: &mut view.draw_state,
+                    system: &mut g.system,
+                    maps: &mut g.state.maps,
+                    rng: &mut g.state.rng,
+                    script: &g.state.script,
+                    scenes: &g.state.scenes,
+                    save: &mut g.state.save,
+                };
+                g.state.walkaround.draw_world(
+                    &mut ctx,
+                    view.free_cam,
+                    &view.editor,
+                    &g.state.debug_info,
+                );
+            }
+            ViewMode::Text => view.text_editor.draw(&mut view.draw_state, &g.system),
+        }
         egg_core::gamestate::walkaround::WalkaroundState::composite_into(
             &mut view.draw_state,
             &mut view.output,

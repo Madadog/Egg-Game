@@ -32,6 +32,12 @@ pub mod inventory;
 // (the in-game map editor) instance — see the frontend's multi-window views.
 pub mod mapeditor;
 mod menu;
+/// The reusable line-editing buffer ([`text_field::TextField`]) shared by the map
+/// editor's property fields and the multi-line [`texteditor`].
+mod text_field;
+/// A full-window raw text editor for the `.eggtext`/`.eggscene` script files,
+/// hosted per extra view — see the frontend's multi-window views.
+pub mod texteditor;
 pub mod walkaround;
 
 #[derive(Clone, Debug)]

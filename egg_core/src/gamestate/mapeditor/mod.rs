@@ -10,13 +10,12 @@
 use crate::{
     animation::AnimFrame,
     data::{
-        eggtext, portraits,
         save::SaveData,
-        script::{ContentDef, DialogueDef, Entry, MessageDef, Script},
+        script::Script,
         sound::{self, SfxData},
         tmj::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
     },
-    dialogue::{Dialogue, Message, TextContent},
+    dialogue::{Dialogue, Message},
     drawstate::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate},
     interact::{InteractFn, Interaction},
     map::{
@@ -40,6 +39,9 @@ use super::walkaround::WalkaroundState;
 
 mod dock;
 use dock::{DockLayout, DockManager, DragState, PanelKind, Placement, Side};
+
+use super::text_field::{TextEvent, TextField, TextOp};
+use super::texteditor::{TextAnchor, TextOpenReq};
 
 /// Where the editor persists its dock arrangement (native only; on web the
 /// asset writes are silent no-ops, so the layout is session-only there).
@@ -109,13 +111,6 @@ enum EditField {
     LayerOffX,
     LayerOffY,
     LayerRotate,
-    /// The Dialog panel's editable fields, acting on the loaded
-    /// [`DialogueDraft`]. `DlgKey` is the dialogue key (the save target);
-    /// `DlgPortrait`/`DlgText` edit the message at [`MapViewer::dialogue_msg`].
-    /// `DlgText` shows newlines as a literal `\n` so it stays one line.
-    DlgKey,
-    DlgPortrait,
-    DlgText,
 }
 
 /// A numeric, undoable property of a tile layer (the unit of [`EditAction::LayerSetProp`]).
@@ -147,8 +142,6 @@ enum CycleField {
     /// A warp's destination map: steps through `[same-map] + existing maps`, so a
     /// target can be picked without typing (and can't be a typo'd dangling name).
     WarpTarget,
-    /// Toggle the current Dialog message's portrait side (left / right).
-    DlgFlip,
 }
 
 /// Which kind of object a tool creates / filters its view to. The object lists
@@ -408,16 +401,14 @@ enum EditorKey {
     /// A scrollable panel's scroll bar (carries the panel index): press to drag it.
     PanelScroll(usize),
     /// Dialog panel: pick dialogue key `n` (index into [`MapViewer::dialogue_keys`])
-    /// — loads it and, if an object is selected, assigns it as that object's key.
+    /// — previews it and, if an object is selected, assigns it as that object's key.
     DlgPick(usize),
-    /// Dialog panel: page the previewed/edited message back / forward.
+    /// Dialog panel: page the previewed message back / forward.
     DlgMsgPrev,
     DlgMsgNext,
-    /// Dialog panel: append a blank message / delete the current one.
-    DlgMsgAdd,
-    DlgMsgDel,
-    /// Dialog panel: write the edited dialogue back to `script/en.eggtext`.
-    DlgSave,
+    /// Dialog panel: open the current dialogue in the text editor (the canonical
+    /// edit route) — parks a [`TextOpenReq`] for the host to act on.
+    DlgOpenText,
 }
 
 /// The music playback-speed presets the Setup panel cycles through (1.0 = normal).
@@ -511,204 +502,6 @@ impl SaveStatus {
             SaveButton::Dirty
         } else {
             SaveButton::Clean
-        }
-    }
-}
-
-/// A single character-level edit to a [`TextField`], the pure unit its console
-/// input decodes into. Splitting the keyboard read (which needs a
-/// [`ConsoleApi`]) from the buffer mutation (which doesn't) is what lets the
-/// field's behaviour be unit-tested without a live console.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextOp {
-    /// Insert a character at the cursor (a typed, non-control key).
-    Push(char),
-    /// Delete the character before the cursor (Backspace).
-    Pop,
-    /// Empty the whole buffer (Ctrl+Backspace).
-    Clear,
-    /// Move the cursor one character left / right (Arrow keys).
-    Left,
-    Right,
-    /// Move the cursor one word left / right (Ctrl+Arrow).
-    WordLeft,
-    WordRight,
-    /// Finish editing, keeping the buffer (Return).
-    Commit,
-    /// Finish editing, discarding the buffer (Escape).
-    Cancel,
-}
-
-/// How a [`TextField`] resolved this frame: still editing, or finished one way or
-/// the other. The caller maps [`Commit`](Self::Commit)/[`Cancel`](Self::Cancel)
-/// onto its own "apply the buffer" / "abandon" handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextEvent {
-    /// The field absorbed input but is still being edited.
-    Active,
-    /// Return was pressed — commit the (trimmed-by-the-caller) buffer.
-    Commit,
-    /// Escape was pressed — drop the edit.
-    Cancel,
-}
-
-/// A line-editing buffer: the string a focused field is accumulating plus the
-/// keystroke handling that grows and finishes it. Lifted out of [`MapViewer`]
-/// (which used to keep a bare `buffer: String` and hand-roll the per-frame key
-/// reads) so the editing logic is one reusable, testable widget-state type.
-///
-/// [`step`](Self::step) reads the shared console and decodes it into [`TextOp`]s;
-/// [`apply`](Self::apply) performs one op on the buffer. Tests drive `apply`
-/// directly to exercise push/backspace/commit/cancel without a console. The
-/// field tracks only the text — *which* field is being edited and what to do
-/// with a committed value stay with the caller.
-#[derive(Debug, Clone, Default)]
-struct TextField {
-    buffer: String,
-    /// Caret position as a byte index into `buffer`, always on a char boundary.
-    /// Inserts/deletes happen here, and the arrow keys move it.
-    cursor: usize,
-}
-
-impl TextField {
-    /// A field primed with `initial` as its starting contents (e.g. the existing
-    /// value of the property being edited), with the caret at the end.
-    fn new(initial: impl Into<String>) -> Self {
-        let buffer = initial.into();
-        let cursor = buffer.len();
-        Self { buffer, cursor }
-    }
-
-    /// The current buffer contents (the committed/parsed value).
-    fn text(&self) -> &str {
-        &self.buffer
-    }
-
-    /// The buffer with a caret marker inserted at the cursor — what a focused
-    /// field renders, so the arrow keys' position is visible.
-    fn display(&self) -> String {
-        let mut s = self.buffer.clone();
-        s.insert(self.cursor, '_');
-        s
-    }
-
-    /// The byte index of the char boundary just before `cursor`.
-    fn prev_boundary(&self) -> usize {
-        self.buffer[..self.cursor]
-            .char_indices()
-            .next_back()
-            .map_or(0, |(i, _)| i)
-    }
-
-    /// The byte index of the char boundary just after `cursor`.
-    fn next_boundary(&self) -> usize {
-        self.buffer[self.cursor..]
-            .chars()
-            .next()
-            .map_or(self.cursor, |c| self.cursor + c.len_utf8())
-    }
-
-    /// Step left over a run of whitespace then a run of word characters — the
-    /// start of the word before the cursor.
-    fn word_left(&self) -> usize {
-        let s = &self.buffer;
-        let mut i = self.cursor;
-        let is_ws = |i: usize| s[..i].chars().next_back().is_some_and(char::is_whitespace);
-        while i > 0 && is_ws(i) {
-            i = s[..i].char_indices().next_back().map_or(0, |(j, _)| j);
-        }
-        while i > 0 && !is_ws(i) {
-            i = s[..i].char_indices().next_back().map_or(0, |(j, _)| j);
-        }
-        i
-    }
-
-    /// Step right over a run of whitespace then a run of word characters — the
-    /// end of the word after the cursor.
-    fn word_right(&self) -> usize {
-        let s = &self.buffer;
-        let mut i = self.cursor;
-        let next = |i: usize| s[i..].chars().next();
-        while let Some(c) = next(i).filter(|c| c.is_whitespace()) {
-            i += c.len_utf8();
-        }
-        while let Some(c) = next(i).filter(|c| !c.is_whitespace()) {
-            i += c.len_utf8();
-        }
-        i
-    }
-
-    /// Apply one editing op, returning how the field resolved. Edits mutate the
-    /// buffer/cursor and stay [`Active`](TextEvent::Active); commit/cancel leave
-    /// the buffer untouched and report the terminal event for the caller.
-    fn apply(&mut self, op: TextOp) -> TextEvent {
-        match op {
-            TextOp::Push(c) => {
-                self.buffer.insert(self.cursor, c);
-                self.cursor += c.len_utf8();
-            }
-            TextOp::Pop => {
-                if self.cursor > 0 {
-                    let prev = self.prev_boundary();
-                    self.buffer.replace_range(prev..self.cursor, "");
-                    self.cursor = prev;
-                }
-            }
-            TextOp::Clear => {
-                self.buffer.clear();
-                self.cursor = 0;
-            }
-            TextOp::Left => self.cursor = self.prev_boundary(),
-            TextOp::Right => self.cursor = self.next_boundary(),
-            TextOp::WordLeft => self.cursor = self.word_left(),
-            TextOp::WordRight => self.cursor = self.word_right(),
-            TextOp::Commit => return TextEvent::Commit,
-            TextOp::Cancel => return TextEvent::Cancel,
-        }
-        TextEvent::Active
-    }
-
-    /// Apply this frame's cursor-editing keys: Backspace (Ctrl ⇒ clear all), and
-    /// Left/Right caret motion (Ctrl ⇒ by word). Shared by [`step`](Self::step)
-    /// and the map dialogs, which read typed characters themselves (to filter to
-    /// digits) but want the same caret behaviour.
-    fn edit_keys(&mut self, system: &impl ConsoleApi) {
-        let ctrl = system.key(ScanCode::Ctrl);
-        if system.keyp(ScanCode::Backspace) {
-            self.apply(if ctrl { TextOp::Clear } else { TextOp::Pop });
-        }
-        if system.keyp(ScanCode::Left) {
-            self.apply(if ctrl { TextOp::WordLeft } else { TextOp::Left });
-        }
-        if system.keyp(ScanCode::Right) {
-            self.apply(if ctrl {
-                TextOp::WordRight
-            } else {
-                TextOp::Right
-            });
-        }
-    }
-
-    /// Consume this frame's keyboard input from `system` and fold it into the
-    /// buffer, returning whether the field is still active or finished.
-    ///
-    /// Typed non-control characters insert at the caret; the arrow keys (and
-    /// Ctrl+arrow / Ctrl+Backspace) edit via [`edit_keys`](Self::edit_keys);
-    /// Escape cancels and Return commits. Escape takes priority over Return when
-    /// (improbably) both fire in one frame.
-    fn step(&mut self, system: &impl ConsoleApi) -> TextEvent {
-        for c in system.key_chars() {
-            if !c.is_control() {
-                self.apply(TextOp::Push(*c));
-            }
-        }
-        self.edit_keys(system);
-        if system.keyp(ScanCode::Escape) {
-            self.apply(TextOp::Cancel)
-        } else if system.keyp(ScanCode::Return) {
-            self.apply(TextOp::Commit)
-        } else {
-            TextEvent::Active
         }
     }
 }
@@ -931,150 +724,33 @@ pub struct MapViewer {
     /// Whether the tile grid + cursor tile-coordinate readout overlay is shown
     /// over the world (toggled with `G`).
     show_grid: bool,
-    /// The dialogue currently loaded in the Dialog panel — the selected object's
-    /// dialogue key (or a warp's narration key) followed live, or a key picked
-    /// from the browser. `None` until a key with dialogue is in view. Editable
-    /// only for "simple" dialogues (see [`DialogueDraft::editable`]).
-    dialogue_draft: Option<DialogueDraft>,
-    /// Which message of the loaded dialogue the panel edits + previews, paged by
-    /// ◂ ▸. Clamped to the preview length each step.
+    /// The dialogue key the Dialog panel currently previews — the selected
+    /// object's dialogue key (or a warp's narration key) followed live, or a key
+    /// picked from the browser. `None` until a key is in view. Editing happens in
+    /// the text editor, so the panel only tracks and previews the key.
+    dialogue_key: Option<String>,
+    /// Which previewed message is shown, paged by ◂ ▸. Clamped to the preview
+    /// length each step.
     dialogue_msg: usize,
-    /// Unsaved-changes flag + toast for the *dialogue* file, separate from the
-    /// map's `status` (they save to different files).
-    dialogue_status: SaveStatus,
     /// Every dialogue key the script defines, refreshed each step — the Dialog
     /// browser's pick list.
     dialogue_keys: Vec<String>,
-    /// The faithful preview, resolved each step: the loaded draft's edited
-    /// messages when it's being edited, else `script.get_dialogue` (so advanced
-    /// dialogues and `#if` branches preview exactly as in-game). Drawn as the
-    /// real dialogue box; `build_dialogue`/`draw` read it without needing the
+    /// The faithful preview, resolved each step from `script.get_dialogue` (so
+    /// advanced dialogues and `#if` branches preview exactly as in-game). Drawn as
+    /// the real dialogue box; `build_dialogue`/`draw` read it without needing the
     /// `Script`/`SaveData` again.
     dialogue_preview: Vec<Message>,
-    /// Set after a dialogue save: the full new `script/en.eggtext` source, drained
-    /// by the host (parse → `Script::set_base`) so the edit reloads live. Mirrors
-    /// [`pending_open`](Self::pending_open).
-    pub pending_script: Option<String>,
+    /// Set when the Dialog panel's "edit in text editor" link is clicked: a
+    /// request for the host to open the text editor at this dialogue's block,
+    /// drained by the frontend's `poll_text_open`. The text editor is the
+    /// canonical (lossless) route for editing dialogue.
+    pub pending_text_open: Option<TextOpenReq>,
     /// A dialogue key clicked in the browser, awaiting load by [`sync_dialogue`]
     /// (which holds the `Script` the input handlers don't). Loaded next step.
     dialogue_pick: Option<String>,
     /// The save's small-text setting, cached each step so the preview box wraps
     /// exactly as in-game without threading `SaveData` into the draw pass.
     dialogue_small_text: bool,
-}
-
-/// An in-editor, mutable copy of one dialogue, loaded from the script registry
-/// for the Dialog panel. Only "simple" dialogues — a plain run of single-line
-/// messages — are [`editable`](Self::editable); anything with conditionals,
-/// sounds, delays or mid-message content is loaded read-only (previewed
-/// faithfully but edited in `en.eggtext` directly), so saving can never drop a
-/// construct the UI doesn't model.
-#[derive(Debug, Clone, Default)]
-struct DialogueDraft {
-    key: String,
-    messages: Vec<DraftMessage>,
-    editable: bool,
-}
-
-/// One editable message: a portrait name (empty for narration), a flip side, and
-/// the line text. Newlines are kept verbatim here; the field shows them as `\n`.
-#[derive(Debug, Clone, Default)]
-struct DraftMessage {
-    portrait: Option<String>,
-    flip: bool,
-    text: String,
-}
-
-impl DialogueDraft {
-    /// Load `def` into a draft, editable when it's a "simple" dialogue (a plain
-    /// run of single-line, full-pause messages) and read-only otherwise.
-    fn from_def(key: &str, def: &DialogueDef) -> Self {
-        match Self::editable_messages(def) {
-            Some(messages) => Self {
-                key: key.to_string(),
-                messages,
-                editable: true,
-            },
-            None => Self {
-                key: key.to_string(),
-                messages: Vec::new(),
-                editable: false,
-            },
-        }
-    }
-
-    /// The editable messages if `def` is a shape this editor authors losslessly,
-    /// else `None` (so the caller marks it read-only). Anything with conditional
-    /// segments, `#nopause`, or non-text/multi-item content is rejected.
-    fn editable_messages(def: &DialogueDef) -> Option<Vec<DraftMessage>> {
-        let DialogueDef::Plain(entry) = def else {
-            return None;
-        };
-        match entry {
-            Entry::Line(text) => Some(vec![DraftMessage::narration(text)]),
-            Entry::Pages(pages) => Some(pages.iter().map(|t| DraftMessage::narration(t)).collect()),
-            Entry::Conversation { messages } => messages.iter().map(Self::simple_message).collect(),
-        }
-    }
-
-    /// One message as a draft, if it's a lone full-pause line of text.
-    fn simple_message(message: &MessageDef) -> Option<DraftMessage> {
-        match message.content.as_slice() {
-            [ContentDef::Text(text)] if message.pause => Some(DraftMessage {
-                portrait: message.portrait.clone(),
-                flip: message.flip,
-                text: text.clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Rebuild a [`DialogueDef`] from the edited messages, for emitting. A plain
-    /// conversation; `emit_dialogue` renders bare/`#pic`/`#flip` lines as needed
-    /// and the re-parse reduces it to its tightest shape.
-    fn to_def(&self) -> DialogueDef {
-        let messages = self
-            .messages
-            .iter()
-            .map(|m| MessageDef {
-                portrait: m.portrait.clone().filter(|p| !p.is_empty()),
-                flip: m.flip,
-                pause: true,
-                content: vec![ContentDef::Text(m.text.clone())],
-            })
-            .collect();
-        DialogueDef::Plain(Entry::Conversation { messages })
-    }
-}
-
-impl DraftMessage {
-    /// A portraitless, unflipped narration line.
-    fn narration(text: &str) -> Self {
-        Self {
-            portrait: None,
-            flip: false,
-            text: text.to_string(),
-        }
-    }
-
-    /// Resolve to a runtime [`Message`] for the faithful preview box: a single
-    /// fully-revealed text run, the portrait looked up by name.
-    fn to_message(&self) -> Message {
-        Message {
-            content: vec![TextContent::Text {
-                text: self.text.clone(),
-                pause: true,
-                delay: 0,
-            }],
-            portrait: self
-                .portrait
-                .as_deref()
-                .filter(|p| !p.is_empty())
-                .and_then(portraits::by_name),
-            flip_portrait: self.flip,
-            pause_when_done: true,
-        }
-    }
 }
 
 impl MapViewer {
@@ -2383,23 +2059,20 @@ impl MapViewer {
         }
     }
 
-    /// The Dialog panel: preview + author the dialogue an object triggers. Shows
-    /// the loaded draft's key, message navigation, the current message's
-    /// portrait/flip/text (when editable), a save button, and a browser of every
-    /// dialogue key. The faithful preview box is painted over in `draw_at`.
+    /// The Dialog panel: a faithful **preview** of the dialogue an object
+    /// triggers, a **browser** to assign a key, and a link to **edit** it in the
+    /// text editor. Editing moved to the text editor (F2) — the one canonical,
+    /// lossless route — so this panel previews and assigns only. The preview box
+    /// is painted over in `draw_at`.
     fn build_dialogue(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
         let msg_count = self.dialogue_preview.len();
-        match &self.dialogue_draft {
+        match &self.dialogue_key {
             None => {
                 self.header_row(b, rows, "pick a key below,", 7.0);
                 self.header_row(b, rows, "or select an object", 7.0);
             }
-            Some(draft) => {
-                self.field_row(b, rows, EditField::DlgKey, "key", &draft.key);
-                if !draft.editable {
-                    self.header_row(b, rows, "advanced: read-only", 7.0);
-                    self.header_row(b, rows, "(edit en.eggtext)", 7.0);
-                }
+            Some(key) => {
+                self.header_row(b, rows, format!("key: {}", truncate(key, 18)), 7.0);
                 let shown = if msg_count == 0 {
                     0
                 } else {
@@ -2415,50 +2088,16 @@ impl MapViewer {
                     self.dialogue_msg + 1 < msg_count,
                     EditorKey::DlgMsgNext,
                 );
-                if draft.editable {
-                    let add = Self::action_button(b, "+msg", 11, true, EditorKey::DlgMsgAdd);
-                    let del = Self::action_button(
-                        b,
-                        "-msg",
-                        8,
-                        draft.messages.len() > 1,
-                        EditorKey::DlgMsgDel,
-                    );
-                    rows.push(b.row(1.0, [prev, next, add, del]).id());
-                    let i = self
-                        .dialogue_msg
-                        .min(draft.messages.len().saturating_sub(1));
-                    if let Some(m) = draft.messages.get(i) {
-                        let pic = match m.portrait.as_deref() {
-                            Some(p) if !p.is_empty() => p.to_string(),
-                            _ => "-".to_string(),
-                        };
-                        self.field_row(b, rows, EditField::DlgPortrait, "pic", &pic);
-                        self.cycle_row(
-                            b,
-                            rows,
-                            CycleField::DlgFlip,
-                            "flip",
-                            if m.flip { "R" } else { "L" },
-                        );
-                        self.field_row(b, rows, EditField::DlgText, "text", &field_escape(&m.text));
-                    }
-                    let (label, oc) = match self.dialogue_status.button() {
-                        SaveButton::Toast => ("saved!", 11),
-                        SaveButton::Dirty => ("save *", 9),
-                        SaveButton::Clean => ("save", 6),
-                    };
-                    let save = Self::action_button(b, label, oc, true, EditorKey::DlgSave);
-                    rows.push(b.row(1.0, [save]).id());
-                } else {
-                    rows.push(b.row(1.0, [prev, next]).id());
-                }
+                rows.push(b.row(1.0, [prev, next]).id());
+                let edit =
+                    Self::action_button(b, "edit in text editor", 11, true, EditorKey::DlgOpenText);
+                rows.push(b.row(1.0, [edit]).id());
             }
         }
 
         rows.push(b.spacer(2.0).id());
         self.header_row(b, rows, "keys:", 7.0);
-        let current = self.dialogue_draft.as_ref().map(|d| d.key.as_str());
+        let current = self.dialogue_key.as_deref();
         for (i, key) in self.dialogue_keys.iter().enumerate() {
             let sel = current == Some(key.as_str());
             rows.push(
@@ -2991,7 +2630,6 @@ impl MapViewer {
         }
 
         self.status.tick();
-        self.dialogue_status.tick();
         self.advance_sprite_preview(map);
         // Follow the selection into the Dialog panel and resolve its faithful
         // preview, so both the hit pass and draw pass read cached state.
@@ -3060,9 +2698,10 @@ impl MapViewer {
     }
 
     /// Keep the Dialog panel current: refresh the pick list, follow the selected
-    /// object's dialogue (or warp-narration) key into the editable draft, and
-    /// resolve the faithful preview messages for this frame. Caches everything on
-    /// `self` so the hit pass, panel build and draw all read the same state.
+    /// object's dialogue (or warp-narration) key, and resolve the faithful preview
+    /// for this frame. Caches everything on `self` so the hit pass, panel build
+    /// and draw all read the same state. Editing happens in the text editor, so
+    /// this only tracks and previews the key.
     fn sync_dialogue(&mut self, map: &MapInfo, script: &Script, save: &SaveData) {
         self.dialogue_keys = script.dialogue_keys();
         self.dialogue_small_text = save.small_text_on;
@@ -3076,47 +2715,32 @@ impl MapViewer {
                 _ => None,
             });
 
-        // A browser pick loads immediately (the input handler can't — it lacks the
-        // `Script`). Otherwise auto-follow the selection when its key differs from
-        // the loaded draft, so clicking an object shows its dialogue; editing the
-        // loaded selection's own dialogue isn't clobbered.
+        // A browser pick wins (the input handler can't load it — it lacks the
+        // `Script`). Otherwise auto-follow the selection when its key changes, so
+        // clicking an object shows its dialogue.
         if let Some(key) = self.dialogue_pick.take() {
-            self.load_dialogue_draft(&key, script);
+            self.set_dialogue_key(key);
         } else if let Some(key) = selected_key
-            && self.dialogue_draft.as_ref().map(|d| d.key.as_str()) != Some(key.as_str())
+            && self.dialogue_key.as_deref() != Some(key.as_str())
         {
-            self.load_dialogue_draft(&key, script);
+            self.set_dialogue_key(key);
         }
 
-        // An editable draft mid-edit previews its unsaved text; otherwise the live
-        // script resolved against the save (so advanced dialogue and `#if`
-        // branches preview exactly as they'd play).
-        let preview = match &self.dialogue_draft {
-            Some(draft) if draft.editable && self.dialogue_status.dirty => draft
-                .messages
-                .iter()
-                .map(DraftMessage::to_message)
-                .collect(),
-            Some(draft) => script.get_dialogue(&draft.key, save),
+        // Resolve the live script against the save, so advanced dialogue and `#if`
+        // branches preview exactly as they'd play.
+        let preview = match &self.dialogue_key {
+            Some(key) => script.get_dialogue(key, save),
             None => Vec::new(),
         };
         self.dialogue_msg = self.dialogue_msg.min(preview.len().saturating_sub(1));
         self.dialogue_preview = preview;
     }
 
-    /// Load `key`'s dialogue into the draft. A key with no entry yet becomes a
-    /// fresh, editable one-message draft so a brand-new dialogue can be authored.
-    fn load_dialogue_draft(&mut self, key: &str, script: &Script) {
+    /// Point the panel at `key` (preview + browser highlight + the text-editor
+    /// link target), resetting to the first message.
+    fn set_dialogue_key(&mut self, key: String) {
         self.dialogue_msg = 0;
-        self.dialogue_status = SaveStatus::default();
-        self.dialogue_draft = Some(match script.raw_dialogue(key) {
-            Some(def) => DialogueDraft::from_def(key, def),
-            None => DialogueDraft {
-                key: key.to_string(),
-                messages: vec![DraftMessage::default()],
-                editable: true,
-            },
-        });
+        self.dialogue_key = Some(key);
     }
 
     /// Hit-test and dispatch one frame of mouse input across the panels and the
@@ -3890,37 +3514,15 @@ impl MapViewer {
                     self.dialogue_msg = (self.dialogue_msg + 1).min(max);
                 }
             }
-            EditorKey::DlgMsgAdd => {
-                if click && self.dialogue_draft.as_ref().is_some_and(|d| d.editable) {
-                    if let Some(draft) = self.dialogue_draft.as_mut() {
-                        draft.messages.push(DraftMessage::default());
-                    }
-                    if let Some(len) = self.dialogue_draft.as_ref().map(|d| d.messages.len()) {
-                        self.dialogue_msg = len.saturating_sub(1);
-                    }
-                    self.dialogue_status.edited();
-                }
-            }
-            EditorKey::DlgMsgDel => {
-                let removable = self
-                    .dialogue_draft
-                    .as_ref()
-                    .is_some_and(|d| d.editable && d.messages.len() > 1);
-                if click && removable {
-                    let i = self.dialogue_msg;
-                    if let Some(draft) = self.dialogue_draft.as_mut() {
-                        let i = i.min(draft.messages.len() - 1);
-                        draft.messages.remove(i);
-                    }
-                    if let Some(len) = self.dialogue_draft.as_ref().map(|d| d.messages.len()) {
-                        self.dialogue_msg = self.dialogue_msg.min(len.saturating_sub(1));
-                    }
-                    self.dialogue_status.edited();
-                }
-            }
-            EditorKey::DlgSave => {
-                if click {
-                    self.save_dialogue(system);
+            // Hand the current dialogue off to the text editor (the canonical edit
+            // route): park a request the host drains to open `en.eggtext` at this
+            // `#dialogue` block. Editing the source there reloads live on save.
+            EditorKey::DlgOpenText => {
+                if click && let Some(key) = self.dialogue_key.clone() {
+                    self.pending_text_open = Some(TextOpenReq {
+                        path: SCRIPT_PATH.to_string(),
+                        anchor: TextAnchor::Tag(key),
+                    });
                 }
             }
         }
@@ -3946,39 +3548,6 @@ impl MapViewer {
                 }
             });
         }
-    }
-
-    /// Write the edited dialogue back to `script/en.eggtext`: emit just this
-    /// `#dialogue` block, splice it into the file read off disk (leaving every
-    /// other byte untouched), write it, and park the new source in
-    /// [`pending_script`](Self::pending_script) for the host to reload live.
-    /// No-op for a read-only (advanced) or empty-keyed draft.
-    fn save_dialogue(&mut self, system: &mut impl ConsoleApi) {
-        let (key, def) = match self.dialogue_draft.as_ref() {
-            Some(d) if d.editable && !d.key.trim().is_empty() => {
-                (d.key.trim().to_string(), d.to_def())
-            }
-            _ => return,
-        };
-        let block = match eggtext::emit_dialogue(&key, &def) {
-            Ok(block) => block,
-            Err(e) => {
-                log::warn!("dialogue save: emit failed: {e}");
-                return;
-            }
-        };
-        let Some(bytes) = system.read_file(SCRIPT_PATH) else {
-            log::warn!("dialogue save: can't read {SCRIPT_PATH}");
-            return;
-        };
-        let Ok(source) = String::from_utf8(bytes) else {
-            log::warn!("dialogue save: {SCRIPT_PATH} is not valid UTF-8");
-            return;
-        };
-        let updated = eggtext::replace_dialogue_block(&source, &key, &block);
-        system.write_file(SCRIPT_PATH, updated.as_bytes());
-        self.pending_script = Some(updated);
-        self.dialogue_status.saved();
     }
 
     /// Step the map's `music` property through `[none] + tracks`, by name — the
@@ -4686,21 +4255,6 @@ impl MapViewer {
                 .and_then(|f| f.outline_colour)
                 .map(|o| o.to_string())
                 .unwrap_or_default(),
-            // Dialogue fields read the loaded draft, not the object/effect. Text
-            // shows newlines as a literal `\n` so it edits on one line.
-            (_, EditField::DlgKey) => self
-                .dialogue_draft
-                .as_ref()
-                .map(|d| d.key.clone())
-                .unwrap_or_default(),
-            (_, EditField::DlgPortrait) => self
-                .current_draft_message()
-                .and_then(|m| m.portrait.clone())
-                .unwrap_or_default(),
-            (_, EditField::DlgText) => self
-                .current_draft_message()
-                .map(|m| field_escape(&m.text))
-                .unwrap_or_default(),
             _ => String::new(),
         };
         self.editing = Some(TextEdit {
@@ -4708,16 +4262,6 @@ impl MapViewer {
             buffer: TextField::new(value),
             target: 0,
         });
-    }
-
-    /// The draft message the Dialog panel is editing (clamped to range), if a
-    /// draft is loaded.
-    fn current_draft_message(&self) -> Option<&DraftMessage> {
-        let draft = self.dialogue_draft.as_ref()?;
-        draft.messages.get(
-            self.dialogue_msg
-                .min(draft.messages.len().saturating_sub(1)),
-        )
     }
 
     fn step_text_entry(
@@ -4805,30 +4349,6 @@ impl MapViewer {
                 if let Ok(v) = buffer.parse::<u8>() {
                     self.commit_layer_prop(map, maps, LayerProp::Rotate, f64::from(v % 16));
                 }
-                return;
-            }
-            // Dialogue fields edit the loaded draft (and, for the key, repoint the
-            // selected object) — no object selection needed, so handle them here.
-            EditField::DlgKey => {
-                if !buffer.is_empty() {
-                    if let Some(draft) = self.dialogue_draft.as_mut() {
-                        draft.key = buffer.clone();
-                    }
-                    // Keep the selected object pointing at the renamed key, so the
-                    // selection-follow in `sync_dialogue` doesn't reload the old one.
-                    self.assign_dialogue_key(map, &buffer);
-                    self.dialogue_status.edited();
-                }
-                return;
-            }
-            EditField::DlgPortrait => {
-                let portrait = (!buffer.is_empty()).then(|| buffer.clone());
-                self.commit_dialogue_field(|m| m.portrait = portrait);
-                return;
-            }
-            EditField::DlgText => {
-                let text = field_unescape(&buffer);
-                self.commit_dialogue_field(|m| m.text = text);
                 return;
             }
             _ => {}
@@ -5014,34 +4534,13 @@ impl MapViewer {
                     });
                 }
             }
-            // Layer and dialogue fields are handled by the early return above
-            // (they target the store / the dialogue draft, not an object).
+            // Layer fields are handled by the early return above (they target the
+            // store, not an object).
             EditField::LayerName
             | EditField::LayerOffX
             | EditField::LayerOffY
-            | EditField::LayerRotate
-            | EditField::DlgKey
-            | EditField::DlgPortrait
-            | EditField::DlgText => {}
+            | EditField::LayerRotate => {}
         }
-    }
-
-    /// Mutate the current Dialog draft message via `f` and mark the dialogue
-    /// dirty. No-op when no editable draft is loaded.
-    fn commit_dialogue_field(&mut self, f: impl FnOnce(&mut DraftMessage)) {
-        let i = self.dialogue_msg;
-        if let Some(draft) = self.dialogue_draft.as_mut().filter(|d| d.editable) {
-            let idx = i.min(draft.messages.len().saturating_sub(1));
-            if let Some(message) = draft.messages.get_mut(idx) {
-                f(message);
-            }
-        }
-        self.dialogue_status.edited();
-    }
-
-    /// Flip the current Dialog message's portrait side.
-    fn toggle_dialogue_flip(&mut self) {
-        self.commit_dialogue_field(|m| m.flip = !m.flip);
     }
 
     /// Apply a finished layer rename to the store and record it for undo. Empty
@@ -5155,8 +4654,6 @@ impl MapViewer {
             // Handled in `handle_panel` (it needs the map store) — see
             // [`cycle_warp_target`](Self::cycle_warp_target).
             CycleField::WarpTarget => {}
-            // Dialogue flip toggles the draft, not the map.
-            CycleField::DlgFlip => self.toggle_dialogue_flip(),
         }
     }
 
@@ -6349,18 +5846,6 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-/// Show a dialogue line's newlines as a literal `\n` so it edits on one field
-/// row; [`field_unescape`] is the inverse applied when the edit commits.
-fn field_escape(s: &str) -> String {
-    s.replace('\n', "\\n")
-}
-
-/// Turn the literal `\n` a user types in the dialogue text field back into a
-/// real newline (the inverse of [`field_escape`]).
-fn field_unescape(s: &str) -> String {
-    s.replace("\\n", "\n")
-}
-
 /// Render map `name` 1:1 at the map origin (no camera) into a fresh image, using
 /// the live sprite sheet from `draw_state`. The same per-layer render as the
 /// world: tile layers via the sheet, image layers blitted. Returns the image and
@@ -6827,6 +6312,7 @@ fn sync_store(maps: &mut MapStore, name: &str, json: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::eggtext;
 
     fn tiles(cells: Vec<(i32, i32, usize, usize)>) -> EditAction {
         EditAction::Tiles {
@@ -6893,30 +6379,6 @@ mod tests {
         // `clear` empties both stacks.
         h.clear();
         assert!(!h.can_undo() && !h.can_redo());
-    }
-
-    /// A [`TextField`] grows with `Push`, shrinks with `Pop`, and reports the
-    /// terminal `Commit`/`Cancel` without otherwise touching its buffer — the pure
-    /// char-level operations the console `step` decodes into.
-    #[test]
-    fn text_field_pure_ops() {
-        let mut f = TextField::new("ab");
-        assert_eq!(f.text(), "ab");
-        // Push appends and stays active.
-        assert_eq!(f.apply(TextOp::Push('c')), TextEvent::Active);
-        assert_eq!(f.text(), "abc");
-        // Pop deletes the last char.
-        assert_eq!(f.apply(TextOp::Pop), TextEvent::Active);
-        assert_eq!(f.text(), "ab");
-        // Pop past empty is harmless.
-        let mut empty = TextField::default();
-        assert_eq!(empty.apply(TextOp::Pop), TextEvent::Active);
-        assert_eq!(empty.text(), "");
-        // Commit/Cancel are terminal and leave the buffer for the caller to read.
-        assert_eq!(f.apply(TextOp::Commit), TextEvent::Commit);
-        assert_eq!(f.text(), "ab", "commit doesn't alter the buffer");
-        assert_eq!(f.apply(TextOp::Cancel), TextEvent::Cancel);
-        assert_eq!(f.text(), "ab", "cancel doesn't alter the buffer");
     }
 
     /// The save status transitions dirty → saved (toast) → expired across ticks,
@@ -7063,42 +6525,10 @@ mod tests {
         viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));
     }
 
-    /// A "simple" dialogue (a plain run of single-line messages) loads editable;
-    /// anything with non-text content or conditional segments loads read-only, so
-    /// a save can never drop a construct the UI doesn't model.
-    #[test]
-    fn dialogue_draft_classifies_simple_vs_advanced() {
-        // A plain line and a portraited line are both editable.
-        let simple = DialogueDef::Plain(Entry::Pages(vec!["One.".into(), "Two.".into()]));
-        let draft = DialogueDraft::from_def("k", &simple);
-        assert!(draft.editable);
-        assert_eq!(draft.messages.len(), 2);
-        assert_eq!(draft.messages[1].text, "Two.");
-
-        // A message carrying a sound (non-text content) is advanced/read-only.
-        let advanced = DialogueDef::Plain(Entry::Conversation {
-            messages: vec![MessageDef {
-                portrait: None,
-                flip: false,
-                pause: true,
-                content: vec![
-                    ContentDef::Sound("gain".into()),
-                    ContentDef::Text("Found.".into()),
-                ],
-            }],
-        });
-        assert!(!DialogueDraft::from_def("k", &advanced).editable);
-
-        // Conditional segments are advanced too.
-        let conditional = DialogueDef::Segments {
-            segments: Vec::new(),
-        };
-        assert!(!DialogueDraft::from_def("k", &conditional).editable);
-    }
-
     /// Stepping then drawing with the Dialog panel open, an object selected and a
-    /// matching script entry: the draft follows the selection, resolves an
-    /// editable preview, and the faithful box draws without panicking.
+    /// matching script entry: the panel follows the selection into its key,
+    /// resolves the faithful preview, and the box draws without panicking. (The
+    /// "edit in text editor" link, not the panel, edits the dialogue.)
     #[test]
     fn dialogue_panel_follows_selection_and_draws() {
         use crate::system::test_console::TestConsole;
@@ -7133,10 +6563,11 @@ mod tests {
             &save,
         );
 
-        let draft = viewer.dialogue_draft.as_ref().expect("draft loaded");
-        assert!(draft.editable, "a plain line is editable");
-        assert_eq!(draft.key, "greet");
-        assert_eq!(draft.messages[0].text, "Hello there!");
+        assert_eq!(
+            viewer.dialogue_key.as_deref(),
+            Some("greet"),
+            "panel follows the selected object's key"
+        );
         assert_eq!(viewer.dialogue_preview.len(), 1, "one previewed message");
 
         viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));

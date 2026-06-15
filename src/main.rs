@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use egg_core::EggState;
 
 use egg_core::data::tmj::TiledMap;
+use egg_core::gamestate::texteditor::TextEditor;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{
@@ -27,6 +28,13 @@ pub struct EggGame {
     pub loaded: bool,
     pub pause: bool,
     pub scale_mode: ScaleMode,
+    /// Whether the primary window shows the raw text editor (toggled with `F2`,
+    /// `F1` returns) instead of the game/map-editor — the main-window peer of the
+    /// per-view [`views::ViewMode::Text`]. The sim freezes while it's open.
+    pub text_mode: bool,
+    /// The primary window's text editor for the script files (used while
+    /// [`text_mode`](Self::text_mode)).
+    pub text_editor: TextEditor,
 }
 impl EggGame {
     pub fn run(&mut self) {
@@ -44,6 +52,8 @@ impl Default for EggGame {
             loaded: false,
 
             scale_mode: ScaleMode::Linear,
+            text_mode: false,
+            text_editor: TextEditor::default(),
         }
     }
 }
@@ -157,18 +167,14 @@ impl Plugin for CorePlugin {
 /// * resources: [`Manifest`] + [`GameAssets`] + [`SfxAssets`] (inserted by
 ///   [`setup_assets`]) and [`PendingLanguage`] (init).
 /// * `Startup`: [`setup_assets`].
-/// * `Update`: [`load_assets`], [`poll_language_change`] (registered unordered,
-///   exactly as in the original `main.rs` Update tuple).
+/// * `Update`: [`load_assets`], [`poll_language_change`] (registered unordered).
 struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingLanguage>()
             .add_systems(Startup, setup_assets)
-            .add_systems(
-                Update,
-                (load_assets, poll_language_change, poll_script_save),
-            );
+            .add_systems(Update, (load_assets, poll_language_change));
     }
 }
 
@@ -483,23 +489,6 @@ fn poll_language_change(
     }
 }
 
-/// Apply a dialogue edit saved from the in-game map editor: the editor writes the
-/// new `script/en.eggtext` to disk and parks its full source in the primary
-/// viewer's `pending_script`. Parse it and reinstall as the base language so the
-/// edit shows live (mirroring the startup install in `load_assets`).
-fn poll_script_save(mut state: ResMut<EggGame>) {
-    let Some(source) = state.state.walkaround.map_viewer.pending_script.take() else {
-        return;
-    };
-    match egg_core::data::eggtext::parse(&source) {
-        Ok(file) => {
-            state.state.script.set_base(file);
-            info!("Reloaded dialogue from in-editor save.");
-        }
-        Err(e) => warn!("In-editor dialogue save produced invalid eggtext: {e}"),
-    }
-}
-
 /// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
 fn draw_overlay(game: &mut EggGame, text: &str) {
     let colour =
@@ -657,6 +646,40 @@ fn step_state(
         game.system.input().mouse.left[0] = mouse_button.pressed(MouseButton::Left);
         game.system.input().mouse.right[0] = mouse_button.pressed(MouseButton::Right);
         game.system.input().mouse.middle[0] = mouse_button.pressed(MouseButton::Middle);
+    }
+
+    // Primary text-editor mode (F2): the main window shows the raw script editor
+    // instead of the world. Step + draw it into the main framebuffer and skip the
+    // sim (and all gameplay/debug hotkeys) — every key feeds the buffer. The
+    // cursor was mapped to the framebuffer above, so clicks land on the editor.
+    if game.text_mode {
+        // One deref of the `ResMut` so the field borrows below are disjoint.
+        let g = &mut *game;
+        // Only feed input while the primary window is actually focused; otherwise
+        // a focused view's typing would leak into this buffer too (one shared
+        // console). The editor still *draws* every frame so the window shows it.
+        if drives_player {
+            let (w, h) = (g.system.width(), g.system.height());
+            g.text_editor.step(&mut g.system, w, h);
+            if let Some(source) = g.text_editor.pending_script.take() {
+                match egg_core::data::eggtext::parse(&source) {
+                    Ok(file) => g.state.script.set_base(file),
+                    Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
+                }
+            }
+            if let Some(source) = g.text_editor.pending_scene.take() {
+                match egg_core::data::eggscene::parse(&source) {
+                    Ok(file) => g.state.set_scenes(file),
+                    Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
+                }
+            }
+        }
+        g.text_editor.draw(&mut g.state.draw_state, &g.system);
+        egg_core::gamestate::walkaround::WalkaroundState::composite_into(
+            &mut g.state.draw_state,
+            g.system.output_image(),
+        );
+        return;
     }
 
     // Pause (P) and single-step (N) are toggled in `hotkeys::primary_hotkeys`;
