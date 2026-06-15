@@ -88,7 +88,7 @@ pub struct ParseError {
 }
 
 impl ParseError {
-    fn new(line: usize, message: impl Into<String>) -> Self {
+    pub(crate) fn new(line: usize, message: impl Into<String>) -> Self {
         Self { line, message: message.into() }
     }
 }
@@ -176,8 +176,10 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
 }
 
 /// Pull the indented (and blank) lines that make up a block body, leaving the
-/// iterator positioned on the next column-0 line.
-fn collect_block<'a, I>(lines: &mut std::iter::Peekable<I>) -> Vec<(usize, &'a str)>
+/// iterator positioned on the next column-0 line. Shared with the `.eggscene`
+/// parser ([`crate::data::eggscene`]), which uses the same column-0-header /
+/// indented-body block shape.
+pub(crate) fn collect_block<'a, I>(lines: &mut std::iter::Peekable<I>) -> Vec<(usize, &'a str)>
 where
     I: Iterator<Item = (usize, &'a str)>,
 {
@@ -577,14 +579,19 @@ fn reduce_entry(messages: Vec<MessageDef>) -> Entry {
 }
 
 // --- line-level helpers ---
+//
+// A handful of these (`is_comment`, `split_first_word`, `parse_value`,
+// `quoted_span`, `unescape`, `escape`) are `pub(crate)` so the sibling
+// `.eggscene` parser ([`crate::data::eggscene`]) reuses the exact same line
+// scanner / quoting / escaping rules rather than duplicating them.
 
-fn is_comment(logical: &str) -> bool {
+pub(crate) fn is_comment(logical: &str) -> bool {
     logical.starts_with("//")
 }
 
 /// Split off the first whitespace-delimited word, returning it and the trimmed
 /// remainder.
-fn split_first_word(s: &str) -> (&str, &str) {
+pub(crate) fn split_first_word(s: &str) -> (&str, &str) {
     let s = s.trim();
     match s.find(char::is_whitespace) {
         Some(i) => (&s[..i], s[i..].trim()),
@@ -616,7 +623,7 @@ fn directive_segments(logical: &str) -> Vec<(&str, Option<&str>)> {
 
 /// A standalone string value (label value or list item): the verbatim contents
 /// of a `"quoted"` span, otherwise the trimmed line. Escapes are resolved.
-fn parse_value(s: &str) -> String {
+pub(crate) fn parse_value(s: &str) -> String {
     let s = s.trim();
     match quoted_span(s) {
         Some((inner, _)) => unescape(inner),
@@ -636,7 +643,7 @@ fn split_text(logical: &str, line_no: usize) -> Result<(String, Option<u8>), Par
 
 /// If `s` opens with a double quote, return the span between it and the final
 /// double quote, plus whatever trails the closing quote.
-fn quoted_span(s: &str) -> Option<(&str, &str)> {
+pub(crate) fn quoted_span(s: &str) -> Option<(&str, &str)> {
     let s = s.trim_start();
     let rest = s.strip_prefix('"')?;
     let close = rest.rfind('"')?;
@@ -691,7 +698,7 @@ fn parse_u8(arg: Option<&str>, line_no: usize) -> Result<u8, ParseError> {
 }
 
 /// Resolve backslash escapes; an unknown escape keeps its backslash.
-fn unescape(s: &str) -> String {
+pub(crate) fn unescape(s: &str) -> String {
     if !s.contains('\\') {
         return s.to_string();
     }
@@ -883,7 +890,7 @@ fn render_text(text: &str) -> String {
 /// Escape a string for inside a `"quoted"` span — the inverse of [`unescape`].
 /// Backslash first (so it doesn't double-escape the others), then the quote and
 /// the control characters. A literal `#` needs no escape inside quotes.
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

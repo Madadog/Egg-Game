@@ -410,11 +410,13 @@ impl TiledObject {
     /// 1. **warp** — `type == "warp"` or any warp property ([`to_warp`](Self::to_warp));
     /// 2. **func** — a `func` property names an [`InteractFn`](crate::interact::InteractFn)
     ///    ([`to_func`](Self::to_func));
-    /// 3. **dialogue** — a non-empty `description` (the registry key)
+    /// 3. **cutscene** — a non-empty `cutscene` property names a cutscene-registry
+    ///    entry ([`to_cutscene`](Self::to_cutscene));
+    /// 4. **dialogue** — a non-empty `description` (the registry key)
     ///    ([`to_interactable`](Self::to_interactable));
-    /// 4. **sprite-only** — just a `sprite` tile id: an [`Interaction::None`]
+    /// 5. **sprite-only** — just a `sprite` tile id: an [`Interaction::None`]
     ///    object that only draws an animation (e.g. the living-room TV);
-    /// 5. otherwise `None` (also for degenerate zero-size objects, via
+    /// 6. otherwise `None` (also for degenerate zero-size objects, via
     ///    [`hitbox`](Self::hitbox)) — the object is skipped.
     fn to_object(&self) -> Option<MapObject> {
         let hitbox = self.hitbox()?;
@@ -422,6 +424,8 @@ impl TiledObject {
             MapObject::warp(hitbox, warp)
         } else if let Some(func) = self.to_func() {
             self.attach_sprite(MapObject::func(hitbox, func))
+        } else if let Some(object) = self.to_cutscene() {
+            object
         } else if let Some(object) = self.to_interactable() {
             object
         } else {
@@ -537,6 +541,21 @@ impl TiledObject {
             warp = warp.with_narration(key);
         }
         Some(warp)
+    }
+    /// Build a cutscene interaction object if this object carries a non-empty
+    /// `cutscene` property (the cutscene-registry name; see
+    /// [`crate::data::eggscene`]). The name is taken verbatim and resolved
+    /// against the loaded registry when the object fires (like a warp's
+    /// `to_map`). Optional `sprite` round-trips like the dialogue object's.
+    /// Inverse of the `cutscene` serialisation in [`interaction_to_object`].
+    fn to_cutscene(&self) -> Option<MapObject> {
+        let name = self.prop("cutscene").filter(|s| !s.is_empty())?;
+        let object = MapObject::new(
+            self.hitbox()?,
+            ObjectEffect::Interact(Interaction::Cutscene(name.to_string())),
+            None,
+        );
+        Some(self.attach_sprite(object))
     }
     /// Build a dialogue interaction object if this object carries a `description`
     /// (the dialogue-registry key). Optional `sprite` property = a tile id drawn
@@ -675,12 +694,13 @@ fn warp_to_object(hitbox: Hitbox, warp: &Warp, id: usize) -> Value {
 
 /// Serialise an [`Interaction`] as a (non-warp) Tiled object placed at `hitbox`,
 /// carrying its optional sprite. Dialogue → `description`; a named `func` →
-/// `func` + its scalar props (`pitch`/`count`; piano/none need none); a
-/// sprite-carrying [`Interaction::None`] → just its sprite. The sprite is emitted
-/// as a plain `sprite` tile id when it is a single default-options frame, and as
-/// a full `anim` (JSON `Vec<AnimFrame>`) otherwise, so richer legacy sprites
-/// round-trip losslessly (see [`sprite_property`]). The cases with no spelling
-/// (unnamed func, sprite-less `None`) → `None`.
+/// `func` + its scalar props (`pitch`/`count`; piano/none need none); a cutscene
+/// → `cutscene` (its registry name); a sprite-carrying [`Interaction::None`] →
+/// just its sprite. The sprite is emitted as a plain `sprite` tile id when it is
+/// a single default-options frame, and as a full `anim` (JSON `Vec<AnimFrame>`)
+/// otherwise, so richer legacy sprites round-trip losslessly (see
+/// [`sprite_property`]). The cases with no spelling (unnamed func, sprite-less
+/// `None`) → `None`.
 fn interaction_to_object(
     hitbox: Hitbox,
     interaction: &Interaction,
@@ -691,6 +711,7 @@ fn interaction_to_object(
     let mut properties = match interaction {
         Interaction::Dialogue(key) => vec![prop_str("description", key)],
         Interaction::Func(func) => func_properties(func)?,
+        Interaction::Cutscene(name) => vec![prop_str("cutscene", name)],
         // A pure animation object only round-trips if it actually has a sprite;
         // a sprite-less `None` is nothing Tiled can represent.
         Interaction::None => {
@@ -1745,6 +1766,41 @@ mod tests {
         ));
         assert_eq!(objects2[0].sprite.as_ref().unwrap()[0].spr_id, 524);
         assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (8, 16),);
+    }
+
+    /// A `cutscene` property parses to an [`Interaction::Cutscene`] carrying the
+    /// registry name verbatim, and round-trips back to the same `cutscene`
+    /// property (the trigger object the cutscene authoring path relies on).
+    #[test]
+    fn tmj_round_trips_cutscene_object() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [{
+                    "x": 8, "y": 16, "width": 16, "height": 16, "type": "",
+                    "properties": [{"name": "cutscene", "type": "string", "value": "pet_dog"}]
+                }]
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 1);
+        assert!(matches!(
+            &objects[0].effect,
+            ObjectEffect::Interact(Interaction::Cutscene(n)) if n == "pet_dog"
+        ));
+
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let objects2 = reloaded.parse_objects();
+        assert_eq!(objects2.len(), 1);
+        assert!(matches!(
+            &objects2[0].effect,
+            ObjectEffect::Interact(Interaction::Cutscene(n)) if n == "pet_dog"
+        ));
+        assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (8, 16));
     }
 
     /// The pre-warp narration key of an object's warp effect, if it has one.

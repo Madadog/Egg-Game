@@ -24,6 +24,9 @@ pub enum Interaction {
     /// A dialogue-registry key. Resolved to a `Vec<Message>` when it fires.
     Dialogue(String),
     Func(InteractFn),
+    /// A cutscene-registry name (see [`crate::data::eggscene`]). Resolved against
+    /// the loaded cutscene registry and launched when it fires.
+    Cutscene(String),
     None,
 }
 

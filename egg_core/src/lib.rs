@@ -30,6 +30,7 @@ pub mod rand;
 pub mod system;
 pub mod ui;
 
+use crate::data::eggscene::{CutsceneDef, SceneFile};
 use crate::data::save::{SAVE_PATH, SaveData};
 use crate::data::script::Script;
 use crate::debug::DebugInfo;
@@ -60,6 +61,11 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// text, while the host installs the base script and swaps languages by
     /// mutating [`EggState::script`] directly (see [`EggState::set_language`]).
     pub script: &'a Script,
+    /// The loaded cutscene registry (a SEPARATE, language-independent file —
+    /// `assets/script/main.eggscene`). Held apart from [`script`](Self::script)
+    /// because choreography is not translated; a `dialogue` *step* still refers
+    /// to a script key resolved at play time. Read-only here.
+    pub scenes: &'a SceneFile,
     /// Persistent progress. Gameplay reads and writes it freely; the engine
     /// flushes it to the host's file store at the end of each frame (see
     /// [`EggState::flush_save`]), so save persistence is a piece of game state,
@@ -83,6 +89,13 @@ impl<S: ConsoleApi> Ctx<'_, S> {
     pub fn get_dialogue(&self, key: &str) -> Vec<Message> {
         self.script.get_dialogue(key, self.save)
     }
+
+    /// A cutscene definition by name from the loaded registry, or `None` if
+    /// undefined (see [`SceneFile::get_cutscene`]). The walkaround builds a
+    /// playable cutscene from this when a `cutscene` map object fires.
+    pub fn get_cutscene(&self, name: &str) -> Option<&CutsceneDef> {
+        self.scenes.get_cutscene(name)
+    }
 }
 
 pub struct EggState {
@@ -102,6 +115,12 @@ pub struct EggState {
     /// (`set_base`) and applies runtime language switches (`set_language`) by
     /// mutating this directly; gameplay only ever reads it.
     pub script: Script,
+    /// The loaded cutscene registry, threaded into every state through
+    /// [`Ctx::scenes`]. The host installs it at asset-load time from
+    /// `assets/script/main.eggscene` (see [`EggState::set_scenes`]); it is a
+    /// single, language-independent file, so unlike [`script`](Self::script) it
+    /// has no per-language overlay. Gameplay only reads it.
+    pub scenes: SceneFile,
     /// A language requested at runtime via [`EggState::set_language`], awaiting
     /// load by the host's asset loop (see [`EggState::take_pending_language`]).
     pending_language: Option<String>,
@@ -131,6 +150,7 @@ impl EggState {
             maps: &mut self.maps,
             rng: &mut self.rng,
             script: &self.script,
+            scenes: &self.scenes,
             save: &mut self.save,
         };
         self.gamestate.run(
@@ -177,6 +197,13 @@ impl EggState {
             Err(e) => log::error!("Failed to serialise save data: {e}"),
         }
     }
+    /// Install the loaded cutscene registry (parsed from
+    /// `assets/script/main.eggscene`). Called once at startup by the host's asset
+    /// loop, and again when the file is re-saved in-editor — mirroring
+    /// [`Script::set_base`] for dialogue.
+    pub fn set_scenes(&mut self, scenes: SceneFile) {
+        self.scenes = scenes;
+    }
     /// Request switching the active language at runtime. The host's asset loop
     /// drains the request via [`take_pending_language`](Self::take_pending_language),
     /// loads the matching script file, and applies it to [`script`](Self::script).
@@ -202,6 +229,7 @@ impl Default for EggState {
             maps: MapStore::default(),
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
+            scenes: SceneFile::default(),
             pending_language: None,
             save: SaveData::default(),
             save_loaded: false,

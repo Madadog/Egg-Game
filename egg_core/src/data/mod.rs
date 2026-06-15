@@ -1,3 +1,4 @@
+pub mod eggscene;
 pub mod eggtext;
 pub mod portraits;
 pub mod save;
