@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use crate::gamestate::inventory::ItemID;
 use crate::position::{Hitbox, Vec2};
 
 /// The effect payload of an interaction [`MapObject`](crate::map::MapObject):
@@ -57,6 +58,11 @@ pub enum InteractFn {
     /// Spawn `count + 1` wandering creatures at the player. `func =
     /// "add_creatures"`, `count` int property.
     AddCreatures(usize),
+    /// Grant an item into the live inventory. `func = "give_item"`, `item` int
+    /// property (the item's [`ItemID`]). A full inventory drops the grant rather
+    /// than panicking (see
+    /// [`execute_interact_fn`](crate::gamestate::walkaround::WalkaroundState::execute_interact_fn)).
+    GiveItem(ItemID),
     /// Pet the dog. Companion-internal (see the type doc): no `func` name.
     /// `Vec2`: dog position. `bool`: facing, `false` = left, `true` = right.
     Pet(Vec2, Option<bool>),
@@ -73,6 +79,7 @@ impl InteractFn {
         name: &str,
         pitch: Option<i32>,
         count: Option<usize>,
+        item: Option<u8>,
         hitbox: Hitbox,
     ) -> Option<Self> {
         Some(match name {
@@ -80,6 +87,7 @@ impl InteractFn {
             "piano" => InteractFn::Piano(Vec2::new(hitbox.x, hitbox.y)),
             "note" => InteractFn::Note(pitch.unwrap_or(0)),
             "add_creatures" => InteractFn::AddCreatures(count.unwrap_or(0)),
+            "give_item" => InteractFn::GiveItem(ItemID(item.unwrap_or(0))),
             _ => return None,
         })
     }
@@ -95,6 +103,7 @@ impl InteractFn {
             InteractFn::Piano(_) => "piano",
             InteractFn::Note(_) => "note",
             InteractFn::AddCreatures(_) => "add_creatures",
+            InteractFn::GiveItem(_) => "give_item",
             InteractFn::Pet(..) => return None,
         })
     }

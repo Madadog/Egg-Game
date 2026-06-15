@@ -123,7 +123,16 @@ impl EggState {
         // after every state has had a chance to mutate it — so the same frame
         // that changes progress also writes it, and exit-time saving needs no
         // special host hook.
-        self.load_save(system);
+        let loaded = self.load_save(system);
+        // On the one frame the save is read from storage, rebuild the live
+        // inventory from its persisted item ids (the inverse of the sync before
+        // `flush_save` below), so what the player picked up last run is restored
+        // before any state draws the inventory.
+        if loaded {
+            self.inventory_ui
+                .inventory
+                .load_from_save_ids(self.save.inventory);
+        }
         self.time += 1;
         let mut ctx = Ctx {
             draw: &mut self.draw_state,
@@ -140,6 +149,10 @@ impl EggState {
             &mut self.debug_info,
             self.time,
         );
+        // Serialise the live inventory into the save before it is flushed, so an
+        // item the player gained, dropped or reordered this frame persists (the
+        // inverse of `load_from_save_ids` after `load_save` above).
+        self.save.inventory = self.inventory_ui.inventory.to_save_ids();
         self.flush_save(system);
     }
 
@@ -147,10 +160,12 @@ impl EggState {
     /// old host loader's tone: a missing/unreadable/garbage save logs and falls
     /// back to the existing (default) `save`. Either way the last-flushed copy
     /// is seeded so the first [`flush_save`](Self::flush_save) doesn't rewrite
-    /// an unchanged file.
-    pub fn load_save(&mut self, system: &mut impl system::ConsoleApi) {
+    /// an unchanged file. Returns `true` on the one call that actually performs
+    /// the read, so [`run`](Self::run) can rebuild the live inventory from the
+    /// freshly loaded save exactly once.
+    pub fn load_save(&mut self, system: &mut impl system::ConsoleApi) -> bool {
         if self.save_loaded {
-            return;
+            return false;
         }
         self.save_loaded = true;
         if let Some(bytes) = system.read_file(SAVE_PATH) {
@@ -160,6 +175,7 @@ impl EggState {
             }
         }
         self.last_flushed_save = self.save.clone();
+        true
     }
 
     /// Flush the save to the host's file store when it differs from the last
@@ -271,5 +287,44 @@ mod tests {
         let mut state = EggState::default();
         state.load_save(&mut console);
         assert_eq!(state.save, SaveData::default());
+    }
+
+    /// The inventory survives a full save→load cycle through the real sync
+    /// points (`run`'s serialise-before-flush and repopulate-after-load): fill
+    /// the live inventory, flush it to the store, clear it on a fresh state, load
+    /// it back, and the slot contents (by item id) are identical. Exercises the
+    /// `Inventory::to_save_ids`/`load_from_save_ids` round trip through
+    /// [`SaveData::inventory`] and the host's file store via [`TestConsole`].
+    #[test]
+    fn inventory_round_trips_through_save_and_load() {
+        use crate::gamestate::inventory::Inventory;
+
+        let mut console = TestConsole::new();
+
+        // A populated inventory (the default three starting items) is the thing
+        // we expect to find again after a save→clear→load cycle.
+        let mut source = EggState::default();
+        source.load_save(&mut console); // no file: leaves the default save.
+        let filled = source.inventory_ui.inventory.to_save_ids();
+        assert_ne!(filled, [0; 8], "the default inventory has items to persist");
+
+        // Serialise-before-flush (the line `run` performs) then write to storage.
+        source.save.inventory = source.inventory_ui.inventory.to_save_ids();
+        source.flush_save(&mut console);
+        assert!(console.files.contains_key(SAVE_PATH), "save was written");
+
+        // A fresh state with a *cleared* inventory loads the stored save and
+        // repopulates from it (the lines `run` performs on the load frame).
+        let mut loaded = EggState::default();
+        loaded.inventory_ui.inventory = Inventory { items: [None; 8], unlocks: [false; 4] };
+        let did_load = loaded.load_save(&mut console);
+        assert!(did_load, "the stored save is read once");
+        loaded
+            .inventory_ui
+            .inventory
+            .load_from_save_ids(loaded.save.inventory);
+
+        // The reloaded slots match the originals item-for-item.
+        assert_eq!(loaded.inventory_ui.inventory.to_save_ids(), filled);
     }
 }

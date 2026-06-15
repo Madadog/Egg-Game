@@ -233,12 +233,14 @@ impl MenuState {
                         walk.execute_interact_fn(
                             &crate::interact::InteractFn::ToggleDog,
                             ctx.system,
+                            &mut inventory_ui.inventory,
                         );
                     }
                     5 => {
                         walk.execute_interact_fn(
                             &crate::interact::InteractFn::AddCreatures(1),
                             ctx.system,
+                            &mut inventory_ui.inventory,
                         );
                     }
                     6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.script))),
