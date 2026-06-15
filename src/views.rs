@@ -28,6 +28,7 @@ use bevy::prelude::*;
 use bevy::window::{WindowClosed, WindowRef};
 
 use egg_core::drawstate::DrawState;
+use egg_core::gamestate::EggInput;
 use egg_core::gamestate::mapeditor::MapViewer;
 use egg_core::gamestate::texteditor::{TextEditor, TextOpenReq};
 use egg_core::position::Vec2 as EggVec2;
@@ -132,6 +133,12 @@ pub struct ViewWindow {
     pub mode: ViewMode,
     /// This view's raw text editor for the script files ([`ViewMode::Text`]).
     pub text_editor: TextEditor,
+    /// This view's own input. `step_state` populates it (mapped to this view's
+    /// framebuffer) only while the view is focused; it's swapped into the shared
+    /// console for the duration of this view's step (the editors read input via
+    /// the console). Keeping it per-view preserves this view's own edge-detection
+    /// history and stops a focused view's keys/clicks reaching the primary.
+    pub input: EggInput,
     /// Base window px per framebuffer px — the view's framebuffer is the window
     /// size divided by this (Mirror-style), so resizing the window resizes the
     /// view. Fixed at [`VIEW_SCALE`]; [`effective_scale`] bumps it higher when a
@@ -233,6 +240,7 @@ pub fn spawn_view(
         editor: MapViewer::default(),
         mode: ViewMode::Walkaround,
         text_editor: TextEditor::default(),
+        input: EggInput::new(),
         scale: VIEW_SCALE,
     });
     info!(
@@ -446,6 +454,13 @@ pub fn update_views(
     // to decide whether to drive the controller; the view's edge-triggered
     // hotkey (`L`) lives in `view_hotkeys` (Update schedule).
     if let Focus::Extra(i) = focus {
+        // This view owns input this frame: install its own `EggInput` into the
+        // shared console for the duration of its step (the editors read input via
+        // the console), then restore at the end of the block. `step_state`
+        // populated this view's input (mapped to its framebuffer) and left the
+        // console — the primary's input — empty, so the primary never saw it.
+        std::mem::swap(game.system.input(), &mut views.views[i].input);
+
         // Text-editor mode: every key feeds the buffer. Step the editor at this
         // view's framebuffer size (so its click regions match `draw`), then drain
         // its live-reload requests — eggtext → base script, eggscene → cutscenes.
@@ -546,6 +561,9 @@ pub fn update_views(
                 }
             }
         }
+
+        // Restore the console's own (primary's) input now this view has stepped.
+        std::mem::swap(game.system.input(), &mut views.views[i].input);
     }
 
     // Reconcile each view's framebuffer with its window size ÷ pixel ratio
@@ -576,7 +594,16 @@ pub fn update_views(
 
     // Render + present every extra view from its own free camera.
     let g = &mut *game;
-    for view in views.views.iter_mut() {
+    for (i, view) in views.views.iter_mut().enumerate() {
+        // The focused view's editor reads the live mouse during *draw* too — the
+        // hover preview / tile cursor in `draw_at` — so install its input into the
+        // shared console here as well (the step swap above was already undone),
+        // then restore. Non-focused views draw with the empty console (no cursor
+        // is over them), which is what we want.
+        let focused = matches!(focus, Focus::Extra(fi) if fi == i);
+        if focused {
+            std::mem::swap(g.system.input(), &mut view.input);
+        }
         // Draw this view into its own DrawState BG layer — never the main
         // framebuffer — then composite that to its output. The world (+ editor)
         // from the free camera, or the text editor, per the view's mode.
@@ -604,6 +631,9 @@ pub fn update_views(
             &mut view.draw_state,
             &mut view.output,
         );
+        if focused {
+            std::mem::swap(g.system.input(), &mut view.input);
+        }
     }
 
     // Blit each view's finished frame into its GPU texture.

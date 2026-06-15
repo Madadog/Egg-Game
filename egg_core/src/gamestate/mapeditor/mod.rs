@@ -2548,43 +2548,6 @@ impl MapViewer {
 
     // --- Step (input) ---------------------------------------------------------
 
-    /// The keys the map editor consumes from the shared console — text-entry
-    /// control keys plus its command shortcuts (Ctrl+Z/Y/S, the Select clipboard
-    /// chords Ctrl+C/X/V, Delete, the 1-5 tool switches and their modifiers). The
-    /// host forwards these even when the key
-    /// wasn't aimed at the primary window, so editor shortcuts work over any
-    /// view; they're inert unless an editor is actually reading them (see
-    /// [`step_text_entry`](Self::step_text_entry) / [`handle_shortcuts`](Self::handle_shortcuts)).
-    pub fn wants_key(scancode: ScanCode) -> bool {
-        matches!(
-            scancode,
-            ScanCode::Backspace
-                | ScanCode::Escape
-                | ScanCode::Return
-                | ScanCode::Ctrl
-                | ScanCode::Shift
-                | ScanCode::Z
-                | ScanCode::Y
-                | ScanCode::S
-                // Select-tool clipboard chords (Ctrl+C/X/V).
-                | ScanCode::C
-                | ScanCode::X
-                | ScanCode::V
-                | ScanCode::Delete
-                // Grid toggle + arrow-key object nudge.
-                | ScanCode::G
-                | ScanCode::Up
-                | ScanCode::Down
-                | ScanCode::Left
-                | ScanCode::Right
-                | ScanCode::Digit1
-                | ScanCode::Digit2
-                | ScanCode::Digit3
-                | ScanCode::Digit4
-                | ScanCode::Digit5
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn step_map_viewer(
         &mut self,
