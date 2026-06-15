@@ -1,0 +1,26 @@
+// main.eggscene — the cutscene registry. One language-independent file: stages
+// of walk/wait/face/sound/dialogue choreography, keyed by name. A map object of
+// type `cutscene` (the `cutscene` property) names one of these. A `dialogue`
+// step refers to a `#dialogue` block by key, resolved at play time against the
+// active language (assets/script/<lang>.eggtext), so the staging is shared while
+// the spoken text follows the loaded language.
+//
+// Stage model: verbs inside one stage run in parallel each frame; a blank line
+// starts the next stage, which begins only once every item of the current one
+// finishes. See egg_core/src/data/eggscene.rs for the grammar.
+
+// pet_dog — the proof cutscene. The original Rust `Cutscene::pet_dog` builds its
+// targets from the dog's live position (companion-internal), which a static file
+// can't express; this fixed-coordinate version proves the registry → build →
+// play path end-to-end when placed on a map. The pet animation is staged as a
+// few `pop` sounds spaced by `wait`s, mirroring the runtime PetDog beat.
+#cutscene pet_dog
+    sound pop
+
+    wait 20
+    sound pop
+
+    wait 20
+    sound pop
+
+    wait 20

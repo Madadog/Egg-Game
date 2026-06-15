@@ -7,7 +7,7 @@ use egg_core::data::tmj::TiledMap;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture};
-use script_asset::{ScriptAsset, ScriptPlugin};
+use script_asset::{SceneAsset, ScriptAsset, ScriptPlugin};
 use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
 
 mod fantasy_console;
@@ -218,6 +218,9 @@ pub struct GameAssets {
     /// subset of these that loaded cleanly.
     pub map_names: Vec<String>,
     pub script: Handle<ScriptAsset>,
+    /// The cutscene registry (`script/main.eggscene`), loaded and installed
+    /// alongside the language script — a separate, language-independent file.
+    pub scenes: Handle<SceneAsset>,
     /// The image-layer PNGs the loaded maps reference, collected in phase 2 once
     /// the maps have parsed. `None` until that phase runs (so its presence is the
     /// phase-2-done signal); empty `Some` when no map has an image layer.
@@ -238,6 +241,7 @@ impl GameAssets {
                 .collect(),
             map_names: manifest.maps.clone(),
             script: assets.load("script/en.eggtext"),
+            scenes: assets.load("script/main.eggscene"),
             map_images: None,
         }
     }
@@ -250,6 +254,7 @@ impl GameAssets {
             ("font", self.font.id().untyped()),
             ("sprite sheet", self.sheet.id().untyped()),
             ("script", self.script.id().untyped()),
+            ("cutscenes", self.scenes.id().untyped()),
         ]
         .into_iter()
         .map(|(name, id)| (name.to_string(), id))
@@ -312,6 +317,7 @@ fn load_assets(
     maps: Res<Assets<TiledMapAsset>>,
     manifests: Res<Assets<ManifestAsset>>,
     scripts: Res<Assets<ScriptAsset>>,
+    scenes: Res<Assets<SceneAsset>>,
     mut state: ResMut<EggGame>,
 ) {
     // Phase 1: wait for the manifest, then expand it into GameAssets from the
@@ -409,6 +415,11 @@ fn load_assets(
     info!("Loaded {}/{} maps: {loaded:?}", loaded.len(), game_assets.map_names.len());
     if let Some(script) = scripts.get(&game_assets.script) {
         state.state.script.set_base(script.0.clone());
+    }
+    // The cutscene registry installs alongside the dialogue (both are essentials,
+    // so they've settled by here).
+    if let Some(scene) = scenes.get(&game_assets.scenes) {
+        state.state.set_scenes(scene.0.clone());
     }
     state.loaded = true;
     info!("Finished loading assets.");

@@ -42,6 +42,7 @@ pub fn by_name(name: &str) -> Option<SfxData> {
         "door" => DOOR,
         "interact" => INTERACT,
         "save" => SAVE,
+        "pop" => POP,
         _ => return None,
     })
 }

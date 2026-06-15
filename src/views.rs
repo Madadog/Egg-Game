@@ -424,6 +424,7 @@ pub fn update_views(
                     maps: &mut g.state.maps,
                     rng: &mut g.state.rng,
                     script: &g.state.script,
+                    scenes: &g.state.scenes,
                     save: &mut g.state.save,
                 };
                 g.state.walkaround.load_map_by_name(&mut ctx, &name);
@@ -497,6 +498,7 @@ pub fn update_views(
             maps: &mut g.state.maps,
             rng: &mut g.state.rng,
             script: &g.state.script,
+            scenes: &g.state.scenes,
             save: &mut g.state.save,
         };
         g.state

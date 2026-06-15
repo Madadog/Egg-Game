@@ -243,13 +243,21 @@ impl WalkaroundState {
     }
 
     /// Plays a cued cutscene until finished, then removes it from the cue.
-    fn play_cutscene(&mut self, system: &mut impl ConsoleApi) -> bool {
+    /// Pressing B fast-forwards it: [`Cutscene::skip`](cutscene::Cutscene::skip)
+    /// applies every remaining stage's end state + side effects safely, so a
+    /// cutscene can always be cut short without soft-locking. Takes the whole
+    /// [`Ctx`] (not just the console) because a `dialogue` step resolves its key
+    /// against `ctx.script` and drives the box through `ctx.save`.
+    fn play_cutscene<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> bool {
         // Taken out of `self` while it runs so it can borrow the walkaround
         // mutably; put back only while it's still playing.
         if let Some(mut cutscene) = self.cutscene.take() {
+            if just_pressed(ctx.system.controller().b) {
+                cutscene.skip(ctx, self);
+            }
             match cutscene.next_stage(self) {
                 cutscene::CutsceneState::Playing => {
-                    cutscene.advance(system, self);
+                    cutscene.advance(ctx, self);
                     self.cutscene = Some(cutscene);
                     true
                 }
@@ -321,6 +329,16 @@ impl WalkaroundState {
                 if let Some(key) = self.execute_interact_fn(x, ctx.system) {
                     let convo = ctx.get_dialogue(key);
                     self.dialogue.set_messages(ctx.system, ctx.save, &convo);
+                }
+            }
+            Interaction::Cutscene(name) => {
+                // Look the name up in the loaded cutscene registry and build a
+                // playable cutscene from its definition. An unknown name logs and
+                // does nothing (like a dangling warp target), so a typo can't
+                // crash or soft-lock.
+                match ctx.get_cutscene(name) {
+                    Some(def) => self.cutscene = Some(Cutscene::from_def(def)),
+                    None => info!("fire_interaction: unknown cutscene {name:?}"),
                 }
             }
             Interaction::None => {}
@@ -408,7 +426,7 @@ impl WalkaroundState {
         self.particles.step();
         self.creatures.iter_mut().for_each(|x| x.step(ctx.rng));
 
-        if self.play_cutscene(ctx.system) {
+        if self.play_cutscene(ctx) {
             return None;
         }
 

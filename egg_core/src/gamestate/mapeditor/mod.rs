@@ -69,6 +69,8 @@ pub enum EditorTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditField {
     Key,
+    /// A cutscene interaction's registry name (see [`crate::data::eggscene`]).
+    Scene,
     ToMap,
     ToX,
     ToY,
@@ -2042,6 +2044,7 @@ impl MapViewer {
                     format!("{row}: ->{dest}")
                 }
                 ObjectEffect::Interact(Interaction::Dialogue(k)) => format!("{row}: {k}"),
+                ObjectEffect::Interact(Interaction::Cutscene(n)) => format!("{row}: ~{n}"),
                 ObjectEffect::Interact(Interaction::Func(_)) => format!("{row}: <fn>"),
                 ObjectEffect::Interact(Interaction::None) => format!("{row}: <->"),
             };
@@ -2106,6 +2109,9 @@ impl MapViewer {
                     match interaction {
                         Interaction::Dialogue(k) => {
                             self.field_row(b, rows, EditField::Key, "key", k)
+                        }
+                        Interaction::Cutscene(name) => {
+                            self.field_row(b, rows, EditField::Scene, "name", name)
                         }
                         Interaction::Func(InteractFn::Note(p)) => {
                             self.field_row(b, rows, EditField::Pitch, "pitch", &p.to_string())
@@ -4252,6 +4258,7 @@ impl MapViewer {
         let effect = object.map(|o| &o.effect);
         let value = match (effect, field) {
             (Some(ObjectEffect::Interact(Interaction::Dialogue(k))), EditField::Key) => k.clone(),
+            (Some(ObjectEffect::Interact(Interaction::Cutscene(n))), EditField::Scene) => n.clone(),
             (Some(ObjectEffect::Warp(w)), EditField::ToMap) => w.map.clone().unwrap_or_default(),
             (Some(ObjectEffect::Warp(w)), EditField::ToX) => w.to.x.to_string(),
             (Some(ObjectEffect::Warp(w)), EditField::ToY) => w.to.y.to_string(),
@@ -4442,6 +4449,15 @@ impl MapViewer {
                     map.objects.get_mut(i).map(|o| &mut o.effect)
                 {
                     *interaction = Interaction::Dialogue(buffer.clone());
+                }
+            }),
+            EditField::Scene => self.modify_object(map, |map, i| {
+                // The cutscene name is stored verbatim; it's resolved against the
+                // loaded cutscene registry when the object fires.
+                if let Some(ObjectEffect::Interact(interaction)) =
+                    map.objects.get_mut(i).map(|o| &mut o.effect)
+                {
+                    *interaction = Interaction::Cutscene(buffer.clone());
                 }
             }),
             EditField::ToMap => self.modify_warp(map, |w| {
@@ -5782,12 +5798,14 @@ fn interaction_kind_label(i: &Interaction) -> &'static str {
         Interaction::None => "none",
         Interaction::Dialogue(_) => "dialog",
         Interaction::Func(f) => f.name().unwrap_or("func"),
+        Interaction::Cutscene(_) => "scene",
     }
 }
 
 /// Advance an interaction to the next kind, preserving a sensible default param.
-/// Cycle: none → dialogue → toggle_dog → piano → note → add_creatures → none.
-/// `origin` seeds a fresh `piano` (it sounds the note under its own position).
+/// Cycle: none → dialogue → toggle_dog → piano → note → add_creatures →
+/// cutscene → none. `origin` seeds a fresh `piano` (it sounds the note under its
+/// own position).
 fn cycle_interaction(current: &Interaction, origin: Vec2) -> Interaction {
     match current {
         Interaction::None => Interaction::Dialogue(String::new()),
@@ -5795,9 +5813,10 @@ fn cycle_interaction(current: &Interaction, origin: Vec2) -> Interaction {
         Interaction::Func(InteractFn::ToggleDog) => Interaction::Func(InteractFn::Piano(origin)),
         Interaction::Func(InteractFn::Piano(_)) => Interaction::Func(InteractFn::Note(0)),
         Interaction::Func(InteractFn::Note(_)) => Interaction::Func(InteractFn::AddCreatures(0)),
-        Interaction::Func(InteractFn::AddCreatures(_)) => Interaction::None,
+        Interaction::Func(InteractFn::AddCreatures(_)) => Interaction::Cutscene(String::new()),
         // Pet (no `func` name) can't be authored; cycle it back to none.
         Interaction::Func(_) => Interaction::None,
+        Interaction::Cutscene(_) => Interaction::None,
     }
 }
 
@@ -6072,6 +6091,7 @@ fn effect_eq(a: &ObjectEffect, b: &ObjectEffect) -> bool {
 fn interaction_eq(a: &Interaction, b: &Interaction) -> bool {
     match (a, b) {
         (Interaction::Dialogue(x), Interaction::Dialogue(y)) => x == y,
+        (Interaction::Cutscene(x), Interaction::Cutscene(y)) => x == y,
         (Interaction::None, Interaction::None) => true,
         (Interaction::Func(x), Interaction::Func(y)) => x == y,
         _ => false,
@@ -7188,12 +7208,15 @@ mod tests {
         i = cycle_interaction(&i, o);
         assert!(matches!(i, Interaction::Func(InteractFn::AddCreatures(0))));
         i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Cutscene(_)));
+        i = cycle_interaction(&i, o);
         assert!(matches!(i, Interaction::None));
         assert_eq!(
             interaction_kind_label(&Interaction::Func(InteractFn::Note(3))),
             "note"
         );
         assert_eq!(interaction_kind_label(&Interaction::None), "none");
+        assert_eq!(interaction_kind_label(&Interaction::Cutscene(String::new())), "scene");
     }
 
     /// A primary editor saves its dock arrangement and a fresh primary restores
