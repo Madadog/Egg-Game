@@ -42,7 +42,7 @@ pub const EDGE_SNAP: i16 = 10;
 /// Size of a floating panel's south-east resize handle, px.
 pub const FLOAT_HANDLE: i16 = 6;
 
-/// The four independent editor panels. (The old Interacts/Warps tool tabs live
+/// The independent editor panels. (The old Interacts/Warps tool tabs live
 /// together under [`Objects`](Self::Objects) as sub-tabs.)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 pub enum PanelKind {
@@ -52,11 +52,13 @@ pub enum PanelKind {
     Maps,
     /// Map-level settings: camera, background colour, resize.
     Map,
+    /// Preview + author the dialogue an object's interaction triggers.
+    Dialogue,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 5] =
-        [Self::Layers, Self::Paint, Self::Objects, Self::Maps, Self::Map];
+    pub const ALL: [PanelKind; 6] =
+        [Self::Layers, Self::Paint, Self::Objects, Self::Maps, Self::Map, Self::Dialogue];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -67,6 +69,7 @@ impl PanelKind {
             // "Setup" (not "Map") so its global-bar letter doesn't collide with
             // the "Maps" browser's "M".
             Self::Map => "Setup",
+            Self::Dialogue => "Dialog",
         }
     }
 }
@@ -217,9 +220,15 @@ impl Default for DockManager {
                     z: 4,
                     open: false,
                 },
+                Panel {
+                    kind: PanelKind::Dialogue,
+                    place: Placement::Float { x: 74, y: 20, w: 104, h: 108 },
+                    z: 5,
+                    open: false,
+                },
             ],
             drag: DragState::Idle,
-            z_top: 5,
+            z_top: 6,
             solved: Solved::default(),
             loaded: false,
             dirty: false,

@@ -177,7 +177,7 @@ impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingLanguage>()
             .add_systems(Startup, setup_assets)
-            .add_systems(Update, (load_assets, poll_language_change));
+            .add_systems(Update, (load_assets, poll_language_change, poll_script_save));
     }
 }
 
@@ -467,6 +467,23 @@ fn poll_language_change(
         state.state.script.set_language(script.0.clone());
         pending.0 = None;
         info!("Switched active language.");
+    }
+}
+
+/// Apply a dialogue edit saved from the in-game map editor: the editor writes the
+/// new `script/en.eggtext` to disk and parks its full source in the primary
+/// viewer's `pending_script`. Parse it and reinstall as the base language so the
+/// edit shows live (mirroring the startup install in `load_assets`).
+fn poll_script_save(mut state: ResMut<EggGame>) {
+    let Some(source) = state.state.walkaround.map_viewer.pending_script.take() else {
+        return;
+    };
+    match egg_core::data::eggtext::parse(&source) {
+        Ok(file) => {
+            state.state.script.set_base(file);
+            info!("Reloaded dialogue from in-editor save.");
+        }
+        Err(e) => warn!("In-editor dialogue save produced invalid eggtext: {e}"),
     }
 }
 

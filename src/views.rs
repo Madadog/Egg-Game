@@ -412,6 +412,8 @@ pub fn update_views(
                 cam,
                 screen,
                 sheet,
+                &g.state.script,
+                &g.state.save,
             );
             // Open a map the view's browser requested, into the shared map (so
             // every window sees it). Uses this view's framebuffer sprite sheet.
@@ -444,6 +446,15 @@ pub fn update_views(
                     g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
                     g.state.walkaround.current_map.layers = fresh.layers;
                     g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
+                }
+            }
+            // A dialogue edit saved from this view's editor: reinstall the new
+            // script so the change shows live in every window (same path the
+            // host's `poll_script_save` uses for the primary editor).
+            if let Some(source) = views.views[i].editor.pending_script.take() {
+                match egg_core::data::eggtext::parse(&source) {
+                    Ok(file) => g.state.script.set_base(file),
+                    Err(e) => warn!("In-editor dialogue save produced invalid eggtext: {e}"),
                 }
             }
         }

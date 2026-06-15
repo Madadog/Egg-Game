@@ -276,6 +276,12 @@ struct Language {
     /// is stored as one single-line [`Message`] per string, in one `Plain`
     /// segment.
     entries: HashMap<String, Vec<Segment>>,
+    /// The original, unresolved dialogue defs, kept verbatim so the in-game
+    /// dialogue editor can load a key back into an editable draft and classify
+    /// it (a resolved `Vec<Segment>` has lost the `#if` structure and the
+    /// authored shape). Dialogue only — lists live in `entries` and aren't here,
+    /// so `raw_dialogue.keys()` is exactly the dialogue key set.
+    raw_dialogue: HashMap<String, DialogueDef>,
     /// The flag vocabulary this language declared. Merged base+active is what
     /// [`Script::flags`] reports.
     flags: BTreeSet<String>,
@@ -283,6 +289,7 @@ struct Language {
 
 impl Language {
     fn resolve(file: ScriptFile) -> Self {
+        let raw_dialogue = file.dialogue.clone();
         let mut entries: HashMap<String, Vec<Segment>> = file
             .dialogue
             .into_iter()
@@ -295,6 +302,7 @@ impl Language {
         Language {
             labels: file.labels,
             entries,
+            raw_dialogue,
             flags: file.flags,
         }
     }
@@ -364,6 +372,29 @@ impl Script {
             .or_else(|| self.entry("default"))
             .map(|segments| Segment::flatten(segments, save))
             .unwrap_or_default()
+    }
+
+    /// Every dialogue key the loaded base + active languages define, sorted —
+    /// what the in-game dialogue browser lists. Excludes lists and labels.
+    pub fn dialogue_keys(&self) -> Vec<String> {
+        let keys: BTreeSet<&String> = self
+            .active
+            .raw_dialogue
+            .keys()
+            .chain(self.base.raw_dialogue.keys())
+            .collect();
+        keys.into_iter().cloned().collect()
+    }
+
+    /// A dialogue key's original, unresolved [`DialogueDef`] (active language
+    /// then base), for the in-game editor to load into an editable draft. Unlike
+    /// [`get_dialogue`](Self::get_dialogue) this keeps the authored `#if`
+    /// structure and shape rather than flattening against a save.
+    pub fn raw_dialogue(&self, key: &str) -> Option<&DialogueDef> {
+        self.active
+            .raw_dialogue
+            .get(key)
+            .or_else(|| self.base.raw_dialogue.get(key))
     }
 
     /// The merged flag vocabulary the loaded base + active languages declared —

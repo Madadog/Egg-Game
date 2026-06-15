@@ -425,6 +425,8 @@ impl WalkaroundState {
                 ctx.maps,
                 self.camera.pos,
                 sheet,
+                ctx.script,
+                ctx.save,
             );
             // The browser can't resolve a map itself (it lacks the sprite sheet),
             // so it parks the request here and we load it through the tested path.
