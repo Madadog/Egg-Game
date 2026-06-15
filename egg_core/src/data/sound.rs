@@ -18,13 +18,37 @@ impl SfxData {
             ..self
         }
     }
-
 }
 
-pub const DEFAULT_SFX: SfxOptions = SfxOptions {
-    note: 0,
-    octave: 5,
-};
+pub const DEFAULT_SFX: SfxOptions = SfxOptions { note: 0, octave: 5 };
+
+/// File stems of every sound effect, matching the `.ogg` files under
+/// `assets/sfx/` and the `id` of each `SfxData` const below. The host discovers
+/// sounds by scanning that directory; this list is the fallback the host loads
+/// where the filesystem can't be scanned (web). Keep it in sync with the assets.
+pub const SFX_IDS: [&str; 21] = [
+    "1_piano",
+    "2_obtained",
+    "3_deny",
+    "4_alert_up",
+    "5_alert_down",
+    "6_save",
+    "7_reject",
+    "8_item_up",
+    "9_item_swap",
+    "10_item_down",
+    "11_interact",
+    "12_bip",
+    "13_door",
+    "14_pop",
+    "15_click_pop",
+    "16_fanfare",
+    "17_gain",
+    "18_loss",
+    "19_stairs_down",
+    "20_stairs_up",
+    "21_footstep_plain",
+];
 
 /// Resolve a sound effect by its script name (lowercased identifier, e.g.
 /// `"gain"`), for sounds embedded in dialogue.
@@ -47,111 +71,45 @@ pub fn by_name(name: &str) -> Option<SfxData> {
     })
 }
 
-pub const PIANO: SfxData = SfxData::new(
-    "1_piano",
-    SfxOptions {
-        note: 0,
-        octave: 4,
-    },
-);
+pub const PIANO: SfxData = SfxData::new("1_piano", SfxOptions { note: 0, octave: 4 });
 
-pub const EQUIP_OBTAINED: SfxData = SfxData::new(
-    "2_obtained",
-    DEFAULT_SFX,
-);
+pub const EQUIP_OBTAINED: SfxData = SfxData::new("2_obtained", DEFAULT_SFX);
 
-pub const DENY: SfxData = SfxData::new(
-    "3_deny",
-    DEFAULT_SFX,
-);
-pub const ALERT_UP: SfxData = SfxData::new(
-    "4_alert_up",
-    DEFAULT_SFX,
-);
-pub const ALERT_DOWN: SfxData = SfxData::new(
-    "5_alert_down",
-    DEFAULT_SFX,
-);
+pub const DENY: SfxData = SfxData::new("3_deny", DEFAULT_SFX);
+pub const ALERT_UP: SfxData = SfxData::new("4_alert_up", DEFAULT_SFX);
+pub const ALERT_DOWN: SfxData = SfxData::new("5_alert_down", DEFAULT_SFX);
 
-pub const SAVE: SfxData = SfxData::new(
-    "6_save",
-    DEFAULT_SFX,
-);
+pub const SAVE: SfxData = SfxData::new("6_save", DEFAULT_SFX);
 
-pub const REJECT: SfxData = SfxData::new(
-    "7_reject",
-    DEFAULT_SFX,
-);
+pub const REJECT: SfxData = SfxData::new("7_reject", DEFAULT_SFX);
 
-pub const ITEM_UP: SfxData = SfxData::new(
-    "8_item_up",
-    DEFAULT_SFX,
-);
+pub const ITEM_UP: SfxData = SfxData::new("8_item_up", DEFAULT_SFX);
 
-pub const ITEM_SWAP: SfxData = SfxData::new(
-    "9_item_swap",
-    DEFAULT_SFX,
-);
+pub const ITEM_SWAP: SfxData = SfxData::new("9_item_swap", DEFAULT_SFX);
 
-pub const ITEM_DOWN: SfxData = SfxData::new(
-    "10_item_down",
-    DEFAULT_SFX,
-);
+pub const ITEM_DOWN: SfxData = SfxData::new("10_item_down", DEFAULT_SFX);
 
-pub const INTERACT: SfxData = SfxData::new(
-    "11_interact",
-    DEFAULT_SFX,
-);
+pub const INTERACT: SfxData = SfxData::new("11_interact", DEFAULT_SFX);
 
-pub const CLICK: SfxData = SfxData::new(
-    "12_bip",
-    DEFAULT_SFX,
-);
+pub const CLICK: SfxData = SfxData::new("12_bip", DEFAULT_SFX);
 
-pub const DOOR: SfxData = SfxData::new(
-    "13_door",
-    DEFAULT_SFX,
-);
+pub const DOOR: SfxData = SfxData::new("13_door", DEFAULT_SFX);
 
-pub const POP: SfxData = SfxData::new(
-    "14_pop",
-    DEFAULT_SFX,
-);
+pub const POP: SfxData = SfxData::new("14_pop", DEFAULT_SFX);
 
-pub const CLICK_POP: SfxData = SfxData::new(
-    "15_click_pop",
-    DEFAULT_SFX,
-);
+pub const CLICK_POP: SfxData = SfxData::new("15_click_pop", DEFAULT_SFX);
 
-pub const FANFARE: SfxData = SfxData::new(
-    "16_fanfare",
-    DEFAULT_SFX,
-);
+pub const FANFARE: SfxData = SfxData::new("16_fanfare", DEFAULT_SFX);
 
-pub const GAIN: SfxData = SfxData::new(
-    "17_gain",
-    DEFAULT_SFX,
-);
+pub const GAIN: SfxData = SfxData::new("17_gain", DEFAULT_SFX);
 
-pub const LOSS: SfxData = SfxData::new(
-    "18_loss",
-    DEFAULT_SFX,
-);
+pub const LOSS: SfxData = SfxData::new("18_loss", DEFAULT_SFX);
 
-pub const STAIRS_DOWN: SfxData = SfxData::new(
-    "19_stairs_down",
-    DEFAULT_SFX,
-);
+pub const STAIRS_DOWN: SfxData = SfxData::new("19_stairs_down", DEFAULT_SFX);
 
-pub const STAIRS_UP: SfxData = SfxData::new(
-    "20_stairs_up",
-    DEFAULT_SFX,
-);
+pub const STAIRS_UP: SfxData = SfxData::new("20_stairs_up", DEFAULT_SFX);
 
-pub const FOOTSTEP_PLAIN: SfxData = SfxData::new(
-    "21_footstep_plain",
-    DEFAULT_SFX,
-);
+pub const FOOTSTEP_PLAIN: SfxData = SfxData::new("21_footstep_plain", DEFAULT_SFX);
 
 pub mod music {
     /// A music track, identified by name — its file stem under `assets/music/`,

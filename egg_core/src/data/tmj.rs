@@ -595,7 +595,6 @@ fn parse_trigger(s: &str) -> Option<Trigger> {
     })
 }
 
-
 /// Map a `sound` property name to a known sound effect.
 fn parse_sound(s: &str) -> Option<SfxData> {
     Some(match s.to_ascii_lowercase().as_str() {
@@ -1002,7 +1001,9 @@ impl TiledMap {
     /// engine auto-frames from the map size.
     pub fn set_camera_stick(&mut self, point: Option<(i16, i16)>) {
         match point {
-            Some((x, y)) => self.set_property("camera_stick", "string", Value::from(format!("{x},{y}"))),
+            Some((x, y)) => {
+                self.set_property("camera_stick", "string", Value::from(format!("{x},{y}")))
+            }
             None => self.remove_property("camera_stick"),
         }
     }
@@ -1429,10 +1430,9 @@ mod tests {
         // Precise object parsing is covered by the synthetic-map tests above.
         assert!(!objects.is_empty(), "office parses some objects");
         assert!(
-            objects.iter().any(|o| matches!(
-                &o.effect,
-                ObjectEffect::Interact(Interaction::Dialogue(_))
-            )),
+            objects
+                .iter()
+                .any(|o| matches!(&o.effect, ObjectEffect::Interact(Interaction::Dialogue(_)))),
             "office has dialogue interactions"
         );
     }
@@ -1645,7 +1645,10 @@ mod tests {
         let map = TiledMap::blank_modern(4, 3);
         let out = map.to_tmj(&[]);
         // Structure is indented and multi-line.
-        assert!(out.contains("\n  \"layers\""), "expected indented keys:\n{out}");
+        assert!(
+            out.contains("\n  \"layers\""),
+            "expected indented keys:\n{out}"
+        );
         // The 4×3 tile data sits inline, not one number per line.
         assert!(
             out.contains("\"data\": [0,0,0,0,0,0,0,0,0,0,0,0]"),
@@ -1730,12 +1733,18 @@ mod tests {
         }"#;
         let map = from_json(json.as_bytes()).unwrap();
         let objects = map.parse_objects();
-        assert!(matches!(func(&objects[0]), Some(InteractFn::GiveItem(ItemID(3)))));
+        assert!(matches!(
+            func(&objects[0]),
+            Some(InteractFn::GiveItem(ItemID(3)))
+        ));
 
         let out = map.to_tmj(&objects);
         let reloaded = from_json(out.as_bytes()).unwrap();
         let objects2 = reloaded.parse_objects();
-        assert!(matches!(func(&objects2[0]), Some(InteractFn::GiveItem(ItemID(3)))));
+        assert!(matches!(
+            func(&objects2[0]),
+            Some(InteractFn::GiveItem(ItemID(3)))
+        ));
     }
 
     /// A `piano` func takes its origin from the hitbox (no property), so the
@@ -2045,7 +2054,13 @@ mod tests {
         // Re-setting replaces in place (no duplicate property).
         m.set_bg_colour(3);
         assert_eq!(m.bg_colour(), Some(3));
-        assert_eq!(m.properties.iter().filter(|p| p.name == "bg_colour").count(), 1);
+        assert_eq!(
+            m.properties
+                .iter()
+                .filter(|p| p.name == "bg_colour")
+                .count(),
+            1
+        );
 
         // Resize: top-left anchored, in-bounds cells preserved, new cells empty.
         m.set(1, 0, 0, 5);
@@ -2369,10 +2384,9 @@ mod tests {
         assert_eq!(reloaded.camera_stick(), Some((-36, -64)));
 
         // Absent map properties read None and serialise nothing.
-        let plain = from_json(
-            r#"{ "width": 1, "height": 1, "tilesets": [], "layers": [] }"#.as_bytes(),
-        )
-        .unwrap();
+        let plain =
+            from_json(r#"{ "width": 1, "height": 1, "tilesets": [], "layers": [] }"#.as_bytes())
+                .unwrap();
         assert_eq!(plain.bg_colour(), None);
         assert_eq!(plain.camera_stick(), None);
         assert!(!plain.to_tmj(&[]).contains("properties"));
@@ -2441,11 +2455,18 @@ mod tests {
         ));
 
         // A single default-options frame stays the compact `sprite` id.
-        let simple = MapObject::dialogue(Hitbox::new(8, 8, 8, 8), "egg").with_sprite(vec![
-            AnimFrame::new(Vec2::splat(0), 524, 30, SpriteOptions::transparent_zero()),
-        ]);
+        let simple =
+            MapObject::dialogue(Hitbox::new(8, 8, 8, 8), "egg").with_sprite(vec![AnimFrame::new(
+                Vec2::splat(0),
+                524,
+                30,
+                SpriteOptions::transparent_zero(),
+            )]);
         let simple_out = map.to_tmj(std::slice::from_ref(&simple));
-        assert!(simple_out.contains("\"sprite\""), "a simple sprite stays `sprite`");
+        assert!(
+            simple_out.contains("\"sprite\""),
+            "a simple sprite stays `sprite`"
+        );
         assert!(!simple_out.contains("\"anim\""));
     }
 }

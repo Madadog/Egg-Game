@@ -57,8 +57,14 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 6] =
-        [Self::Layers, Self::Paint, Self::Objects, Self::Maps, Self::Map, Self::Dialogue];
+    pub const ALL: [PanelKind; 6] = [
+        Self::Layers,
+        Self::Paint,
+        Self::Objects,
+        Self::Maps,
+        Self::Map,
+        Self::Dialogue,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -88,8 +94,16 @@ pub enum Side {
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum Placement {
     /// `size` is width for Left/Right, height for Top/Bottom.
-    Dock { side: Side, size: i16 },
-    Float { x: i16, y: i16, w: i16, h: i16 },
+    Dock {
+        side: Side,
+        size: i16,
+    },
+    Float {
+        x: i16,
+        y: i16,
+        w: i16,
+        h: i16,
+    },
 }
 
 /// One editor panel: its content kind, where it sits, its stacking order (higher
@@ -210,19 +224,34 @@ impl Default for DockManager {
                 dock_left(PanelKind::Objects, 2),
                 Panel {
                     kind: PanelKind::Maps,
-                    place: Placement::Float { x: 60, y: 20, w: 110, h: 96 },
+                    place: Placement::Float {
+                        x: 60,
+                        y: 20,
+                        w: 110,
+                        h: 96,
+                    },
                     z: 3,
                     open: false,
                 },
                 Panel {
                     kind: PanelKind::Map,
-                    place: Placement::Float { x: 70, y: 24, w: 86, h: 96 },
+                    place: Placement::Float {
+                        x: 70,
+                        y: 24,
+                        w: 86,
+                        h: 96,
+                    },
                     z: 4,
                     open: false,
                 },
                 Panel {
                     kind: PanelKind::Dialogue,
-                    place: Placement::Float { x: 74, y: 20, w: 104, h: 108 },
+                    place: Placement::Float {
+                        x: 74,
+                        y: 20,
+                        w: 104,
+                        h: 108,
+                    },
                     z: 5,
                     open: false,
                 },
@@ -250,7 +279,9 @@ impl DockManager {
         self.panels
             .iter()
             .enumerate()
-            .filter(|(_, p)| matches!(p.place, Placement::Dock { side: s, .. } if s == side) && p.open)
+            .filter(|(_, p)| {
+                matches!(p.place, Placement::Dock { side: s, .. } if s == side) && p.open
+            })
             .map(|(i, _)| i)
             .collect()
     }
@@ -279,7 +310,12 @@ impl DockManager {
     fn solve(&self, screen: (f32, f32)) -> Solved {
         let sw = screen.0 as i16;
         let sh = screen.1 as i16;
-        let mut world = Rect { x: 0, y: 0, w: sw, h: sh };
+        let mut world = Rect {
+            x: 0,
+            y: 0,
+            w: sw,
+            h: sh,
+        };
         let mut rects: Vec<(usize, Rect)> = Vec::new();
         let mut splitters: Vec<(Side, Rect)> = Vec::new();
 
@@ -296,29 +332,67 @@ impl DockManager {
             // equally. Reading/writing both axes through these keeps Left/Right
             // and Top/Bottom one algorithm, so a seam/clamp fix can't land on one
             // axis and miss the other.
-            let (main_pos, main_len) = if horizontal { (world.x, world.w) } else { (world.y, world.h) };
-            let (cross_pos, cross_len) = if horizontal { (world.y, world.h) } else { (world.x, world.w) };
-            let thick = self.side_thickness(&members).min((main_len - MIN_WORLD).max(0));
+            let (main_pos, main_len) = if horizontal {
+                (world.x, world.w)
+            } else {
+                (world.y, world.h)
+            };
+            let (cross_pos, cross_len) = if horizontal {
+                (world.y, world.h)
+            } else {
+                (world.x, world.w)
+            };
+            let thick = self
+                .side_thickness(&members)
+                .min((main_len - MIN_WORLD).max(0));
             for (k, &i) in members.iter().enumerate() {
                 let c0 = cross_pos + (cross_len * k as i16) / n;
                 let c1 = cross_pos + (cross_len * (k as i16 + 1)) / n;
-                let main_start = if near { main_pos } else { main_pos + main_len - thick };
+                let main_start = if near {
+                    main_pos
+                } else {
+                    main_pos + main_len - thick
+                };
                 rects.push((
                     i,
                     if horizontal {
-                        Rect { x: main_start, y: c0, w: thick, h: c1 - c0 }
+                        Rect {
+                            x: main_start,
+                            y: c0,
+                            w: thick,
+                            h: c1 - c0,
+                        }
                     } else {
-                        Rect { x: c0, y: main_start, w: c1 - c0, h: thick }
+                        Rect {
+                            x: c0,
+                            y: main_start,
+                            w: c1 - c0,
+                            h: thick,
+                        }
                     },
                 ));
             }
-            let seam = if near { main_pos + thick - 1 } else { main_pos + main_len - thick - 1 };
+            let seam = if near {
+                main_pos + thick - 1
+            } else {
+                main_pos + main_len - thick - 1
+            };
             splitters.push((
                 side,
                 if horizontal {
-                    Rect { x: seam, y: world.y, w: 2, h: world.h }
+                    Rect {
+                        x: seam,
+                        y: world.y,
+                        w: 2,
+                        h: world.h,
+                    }
                 } else {
-                    Rect { x: world.x, y: seam, w: world.w, h: 2 }
+                    Rect {
+                        x: world.x,
+                        y: seam,
+                        w: world.w,
+                        h: 2,
+                    }
                 },
             ));
             if near && horizontal {
@@ -394,10 +468,7 @@ impl DockManager {
 
     /// The first open panel of `kind` and its solved rect, if shown.
     pub fn open_panel(&self, kind: PanelKind) -> Option<(usize, Rect)> {
-        let idx = self
-            .panels
-            .iter()
-            .position(|p| p.kind == kind && p.open)?;
+        let idx = self.panels.iter().position(|p| p.kind == kind && p.open)?;
         self.solved.rect_of(idx).map(|r| (idx, r))
     }
 
@@ -419,7 +490,12 @@ impl DockManager {
                 self.z_top = z.wrapping_add(1);
                 self.panels.push(Panel {
                     kind,
-                    place: Placement::Float { x: 70, y: 24, w: 86, h: 96 },
+                    place: Placement::Float {
+                        x: 70,
+                        y: 24,
+                        w: 86,
+                        h: 96,
+                    },
                     z,
                     open: false,
                 });
@@ -444,7 +520,12 @@ impl DockManager {
         if let Some(p) = self.panels.get_mut(idx)
             && let Placement::Float { w, h, .. } = p.place
         {
-            p.place = Placement::Float { x: pos.x, y: pos.y, w, h };
+            p.place = Placement::Float {
+                x: pos.x,
+                y: pos.y,
+                w,
+                h,
+            };
         }
     }
 
@@ -464,7 +545,10 @@ impl DockManager {
     /// Dock panel `idx` to `side` at the default thickness (a dropped float).
     pub fn dock_panel(&mut self, idx: usize, side: Side) {
         if let Some(p) = self.panels.get_mut(idx) {
-            p.place = Placement::Dock { side, size: DEFAULT_DOCK };
+            p.place = Placement::Dock {
+                side,
+                size: DEFAULT_DOCK,
+            };
         }
     }
 
@@ -518,10 +602,30 @@ impl DockManager {
         let sw = screen.0 as i16;
         let sh = screen.1 as i16;
         match side {
-            Side::Left => Rect { x: 0, y: 0, w: DEFAULT_DOCK, h: sh },
-            Side::Right => Rect { x: sw - DEFAULT_DOCK, y: 0, w: DEFAULT_DOCK, h: sh },
-            Side::Top => Rect { x: 0, y: 0, w: sw, h: DEFAULT_DOCK },
-            Side::Bottom => Rect { x: 0, y: sh - DEFAULT_DOCK, w: sw, h: DEFAULT_DOCK },
+            Side::Left => Rect {
+                x: 0,
+                y: 0,
+                w: DEFAULT_DOCK,
+                h: sh,
+            },
+            Side::Right => Rect {
+                x: sw - DEFAULT_DOCK,
+                y: 0,
+                w: DEFAULT_DOCK,
+                h: sh,
+            },
+            Side::Top => Rect {
+                x: 0,
+                y: 0,
+                w: sw,
+                h: DEFAULT_DOCK,
+            },
+            Side::Bottom => Rect {
+                x: 0,
+                y: sh - DEFAULT_DOCK,
+                w: sw,
+                h: DEFAULT_DOCK,
+            },
         }
     }
 }
@@ -531,7 +635,12 @@ mod tests {
     use super::*;
 
     fn panel(kind: PanelKind, place: Placement) -> Panel {
-        Panel { kind, place, z: 0, open: true }
+        Panel {
+            kind,
+            place,
+            z: 0,
+            open: true,
+        }
     }
 
     fn dock(kind: PanelKind, side: Side, size: i16) -> Panel {
@@ -539,7 +648,10 @@ mod tests {
     }
 
     fn manager(panels: Vec<Panel>) -> DockManager {
-        DockManager { panels, ..DockManager::default() }
+        DockManager {
+            panels,
+            ..DockManager::default()
+        }
     }
 
     /// The default layout: three tool panels stacked in the left column (Maps
@@ -551,16 +663,56 @@ mod tests {
         dm.recompute((240.0, 136.0));
         let s = &dm.solved;
         // Layers/Paint/Objects (idx 0,1,2) are 84 wide, stacked, full height split.
-        assert_eq!(s.rect_of(0), Some(Rect { x: 0, y: 0, w: 84, h: 45 }));
-        assert_eq!(s.rect_of(1), Some(Rect { x: 0, y: 45, w: 84, h: 45 }));
-        assert_eq!(s.rect_of(2), Some(Rect { x: 0, y: 90, w: 84, h: 46 }));
+        assert_eq!(
+            s.rect_of(0),
+            Some(Rect {
+                x: 0,
+                y: 0,
+                w: 84,
+                h: 45
+            })
+        );
+        assert_eq!(
+            s.rect_of(1),
+            Some(Rect {
+                x: 0,
+                y: 45,
+                w: 84,
+                h: 45
+            })
+        );
+        assert_eq!(
+            s.rect_of(2),
+            Some(Rect {
+                x: 0,
+                y: 90,
+                w: 84,
+                h: 46
+            })
+        );
         // Maps (idx 3) is closed — not placed.
         assert_eq!(s.rect_of(3), None);
         // World is the right remainder; one Left splitter on the seam.
-        assert_eq!(s.world, Rect { x: 84, y: 0, w: 156, h: 136 });
+        assert_eq!(
+            s.world,
+            Rect {
+                x: 84,
+                y: 0,
+                w: 156,
+                h: 136
+            }
+        );
         assert_eq!(s.splitters.len(), 1);
         assert_eq!(s.splitters[0].0, Side::Left);
-        assert_eq!(s.splitters[0].1, Rect { x: 83, y: 0, w: 2, h: 136 });
+        assert_eq!(
+            s.splitters[0].1,
+            Rect {
+                x: 83,
+                y: 0,
+                w: 2,
+                h: 136
+            }
+        );
     }
 
     /// Each side tiles off the correct edge; Left/Right take full height first,
@@ -574,11 +726,43 @@ mod tests {
         ]);
         dm.recompute((240.0, 136.0));
         let s = &dm.solved;
-        assert_eq!(s.rect_of(0), Some(Rect { x: 0, y: 0, w: 40, h: 136 }));
-        assert_eq!(s.rect_of(1), Some(Rect { x: 210, y: 0, w: 30, h: 136 }));
+        assert_eq!(
+            s.rect_of(0),
+            Some(Rect {
+                x: 0,
+                y: 0,
+                w: 40,
+                h: 136
+            })
+        );
+        assert_eq!(
+            s.rect_of(1),
+            Some(Rect {
+                x: 210,
+                y: 0,
+                w: 30,
+                h: 136
+            })
+        );
         // Top spans only the 170px between the left and right docks.
-        assert_eq!(s.rect_of(2), Some(Rect { x: 40, y: 0, w: 170, h: 28 }));
-        assert_eq!(s.world, Rect { x: 40, y: 28, w: 170, h: 108 });
+        assert_eq!(
+            s.rect_of(2),
+            Some(Rect {
+                x: 40,
+                y: 0,
+                w: 170,
+                h: 28
+            })
+        );
+        assert_eq!(
+            s.world,
+            Rect {
+                x: 40,
+                y: 28,
+                w: 170,
+                h: 108
+            }
+        );
     }
 
     /// A docked side can't eat the whole framebuffer — the world keeps `MIN_WORLD`.
@@ -612,23 +796,48 @@ mod tests {
     fn float_clamps_into_screen() {
         let mut dm = manager(vec![panel(
             PanelKind::Maps,
-            Placement::Float { x: 300, y: 200, w: 80, h: 60 },
+            Placement::Float {
+                x: 300,
+                y: 200,
+                w: 80,
+                h: 60,
+            },
         )]);
         dm.recompute((240.0, 136.0));
         let r = dm.solved.rect_of(0).unwrap();
         assert_eq!((r.x, r.y, r.w, r.h), (160, 76, 80, 60));
         // No docks → the whole screen is world.
-        assert_eq!(dm.solved.world, Rect { x: 0, y: 0, w: 240, h: 136 });
+        assert_eq!(
+            dm.solved.world,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 240,
+                h: 136
+            }
+        );
     }
 
     /// The cursor near an edge resolves to that dock side; the middle is no edge.
     #[test]
     fn edge_near_snaps_at_the_borders() {
         let dm = DockManager::default();
-        assert_eq!(dm.edge_near(Vec2::new(3, 70), (240.0, 136.0)), Some(Side::Left));
-        assert_eq!(dm.edge_near(Vec2::new(238, 70), (240.0, 136.0)), Some(Side::Right));
-        assert_eq!(dm.edge_near(Vec2::new(120, 2), (240.0, 136.0)), Some(Side::Top));
-        assert_eq!(dm.edge_near(Vec2::new(120, 134), (240.0, 136.0)), Some(Side::Bottom));
+        assert_eq!(
+            dm.edge_near(Vec2::new(3, 70), (240.0, 136.0)),
+            Some(Side::Left)
+        );
+        assert_eq!(
+            dm.edge_near(Vec2::new(238, 70), (240.0, 136.0)),
+            Some(Side::Right)
+        );
+        assert_eq!(
+            dm.edge_near(Vec2::new(120, 2), (240.0, 136.0)),
+            Some(Side::Top)
+        );
+        assert_eq!(
+            dm.edge_near(Vec2::new(120, 134), (240.0, 136.0)),
+            Some(Side::Bottom)
+        );
         assert_eq!(dm.edge_near(Vec2::new(120, 70), (240.0, 136.0)), None);
     }
 
@@ -643,10 +852,21 @@ mod tests {
         assert!(dm.is_float(0));
         dm.recompute((240.0, 136.0));
         // The whole screen is world again (nothing docked).
-        assert_eq!(dm.solved.world, Rect { x: 0, y: 0, w: 240, h: 136 });
+        assert_eq!(
+            dm.solved.world,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 240,
+                h: 136
+            }
+        );
         // Its SE handle is pickable; the body is not a handle.
         let r = dm.solved.rect_of(0).unwrap();
-        assert_eq!(dm.float_handle_at(Vec2::new(r.x + r.w - 2, r.y + r.h - 2)), Some(0));
+        assert_eq!(
+            dm.float_handle_at(Vec2::new(r.x + r.w - 2, r.y + r.h - 2)),
+            Some(0)
+        );
         assert_eq!(dm.float_handle_at(Vec2::new(r.x + 2, r.y + 2)), None);
         // Drop on the right edge re-docks it there.
         dm.dock_panel(0, Side::Right);
@@ -674,15 +894,27 @@ mod tests {
     /// lands last in the draw list / first under a reverse hit walk).
     #[test]
     fn floats_sorted_after_docks_by_z() {
-        let mut a = panel(PanelKind::Maps, Placement::Float { x: 0, y: 0, w: 40, h: 40 });
+        let mut a = panel(
+            PanelKind::Maps,
+            Placement::Float {
+                x: 0,
+                y: 0,
+                w: 40,
+                h: 40,
+            },
+        );
         a.z = 5;
-        let mut b = panel(PanelKind::Layers, Placement::Float { x: 0, y: 0, w: 40, h: 40 });
+        let mut b = panel(
+            PanelKind::Layers,
+            Placement::Float {
+                x: 0,
+                y: 0,
+                w: 40,
+                h: 40,
+            },
+        );
         b.z = 2;
-        let mut dm = manager(vec![
-            dock(PanelKind::Paint, Side::Left, 84),
-            a,
-            b,
-        ]);
+        let mut dm = manager(vec![dock(PanelKind::Paint, Side::Left, 84), a, b]);
         dm.recompute((240.0, 136.0));
         // Draw order: dock (idx 0), then floats by z: b (idx 2, z=2), a (idx 1, z=5).
         let order: Vec<usize> = dm.solved.rects.iter().map(|(i, _)| *i).collect();

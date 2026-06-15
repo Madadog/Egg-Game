@@ -41,7 +41,11 @@ pub enum TextContent {
     ///   page (clearing the box); `> 0` *appends* to the current page after the
     ///   delay, so a sentence can build up clause by clause. (The old `Delayed`
     ///   is just `delay > 0`.)
-    Text { text: String, pause: bool, delay: u8 },
+    Text {
+        text: String,
+        pause: bool,
+        delay: u8,
+    },
     Delay(u8),
     Sound(SfxData),
     Portrait(Option<Portrait>),
@@ -64,15 +68,27 @@ impl TextContent {
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).
     pub fn text(s: impl Into<String>) -> Self {
-        Self::Text { text: s.into(), pause: true, delay: 0 }
+        Self::Text {
+            text: s.into(),
+            pause: true,
+            delay: 0,
+        }
     }
     /// Text that auto-advances into a new frame once the previous line is done.
     pub fn auto(s: impl Into<String>) -> Self {
-        Self::Text { text: s.into(), pause: false, delay: 0 }
+        Self::Text {
+            text: s.into(),
+            pause: false,
+            delay: 0,
+        }
     }
     /// Text appended to the current line after a `delay`-frame pause.
     pub fn delayed(s: impl Into<String>, delay: u8) -> Self {
-        Self::Text { text: s.into(), pause: false, delay }
+        Self::Text {
+            text: s.into(),
+            pause: false,
+            delay,
+        }
     }
 }
 
@@ -195,7 +211,12 @@ impl Dialogue {
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn add_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: String) -> bool {
+    pub fn add_text(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        save: &SaveData,
+        string: String,
+    ) -> bool {
         if self.current_text.is_none() || self.is_line_done() {
             self.set_current_text(system, save, &string);
             true
@@ -204,7 +225,12 @@ impl Dialogue {
             false
         }
     }
-    pub fn maybe_add_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: &'static str) {
+    pub fn maybe_add_text(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        save: &SaveData,
+        string: &'static str,
+    ) {
         if self.current_text.is_none() {
             self.set_current_text(system, save, string);
         }
@@ -219,7 +245,12 @@ impl Dialogue {
     /// `small_text_on`): a [`TextContent::SetFlag`] item — authored as `#set` —
     /// writes its named flag the moment it is consumed, so passing `&mut save`
     /// is what lets dialogue mutate progress as it plays.
-    pub fn set_messages(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, messages: &[Message]) {
+    pub fn set_messages(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        save: &mut SaveData,
+        messages: &[Message],
+    ) {
         let mut queue: Vec<TextContent> = Vec::new();
         let last = messages.len().saturating_sub(1);
         for (i, message) in messages.iter().enumerate() {
@@ -233,7 +264,12 @@ impl Dialogue {
         self.next_text = queue.into_iter().rev().collect();
         self.next_text(system, save, false);
     }
-    pub fn next_text(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, manual_skip: bool) -> bool {
+    pub fn next_text(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        save: &mut SaveData,
+        manual_skip: bool,
+    ) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
@@ -396,13 +432,15 @@ impl Dialogue {
 
         let w = self.width as i32;
         let h = 24;
-        self.draw_dialogue_box_with_offset(draw_state, layer, system, small_text, string, timer, 14, -2, 4);
+        self.draw_dialogue_box_with_offset(
+            draw_state, layer, system, small_text, string, timer, 14, -2, 4,
+        );
         let rect_fill = draw_state.colour(0);
         let rect_outline = draw_state.colour(3);
         //TODO: flexbox
         draw_state.rgba(layer).outlined_rect(
-            (screen_w -w) / 2 - 13,
-            (screen_h -h) - 6,
+            (screen_w - w) / 2 - 13,
+            (screen_h - h) - 6,
             h + 4,
             h + 4,
             rect_fill,
@@ -412,8 +450,8 @@ impl Dialogue {
             layer,
             &PALETTE_MAP_IDENTITY,
             portrait,
-            (screen_w -w) / 2 - 13 + 2,
-            (screen_h -h) - 6 + 2,
+            (screen_w - w) / 2 - 13 + 2,
+            (screen_h - h) - 6 + 2,
             SpriteOptions {
                 scale,
                 transparent: Some(0),
@@ -466,8 +504,8 @@ impl Dialogue {
             };
             y -= 2;
             draw_state.rgba(layer).outlined_rect(
-                (screen_w -pw) / 2 - 13,
-                (screen_h -h) - 6,
+                (screen_w - pw) / 2 - 13,
+                (screen_h - h) - 6,
                 h + 4,
                 h + 4,
                 dark,
@@ -477,11 +515,14 @@ impl Dialogue {
             portrait.draw_offset(
                 draw_state,
                 layer,
-                Vec2::new(((screen_w -pw) / 2 - 15) as i16, ((screen_h -h) - 8) as i16),
+                Vec2::new(
+                    ((screen_w - pw) / 2 - 15) as i16,
+                    ((screen_h - h) - 8) as i16,
+                ),
             );
             draw_state.rgba(layer).stroke_rect(
-                (screen_w -pw) / 2 - 13,
-                (screen_h -h) - 6,
+                (screen_w - pw) / 2 - 13,
+                (screen_h - h) - 6,
                 h + 4,
                 h + 4,
                 outline_colour,
@@ -490,8 +531,8 @@ impl Dialogue {
         // Text box
         if self.dark_theme {
             draw_state.rgba(layer).outlined_rect(
-                (screen_w -w) / 2 + x - 2,
-                (screen_h -h) - 4 + y - 2,
+                (screen_w - w) / 2 + x - 2,
+                (screen_h - h) - 4 + y - 2,
                 w + 4,
                 h + height + 4,
                 darkish,
@@ -499,8 +540,8 @@ impl Dialogue {
             );
         }
         draw_state.rgba(layer).outlined_rect(
-            (screen_w -w) / 2 + x,
-            (screen_h -h) - 4 + y,
+            (screen_w - w) / 2 + x,
+            (screen_h - h) - 4 + y,
             w,
             h + height,
             bg_colour,
@@ -515,8 +556,8 @@ impl Dialogue {
         system.print_to(
             draw_state.rgba(layer),
             text,
-            (screen_w -w) / 2 + 3 + x,
-            (screen_h -h) - 4 + 3 + y,
+            (screen_w - w) / 2 + 3 + x,
+            (screen_h - h) - 4 + 3 + y,
             bright,
             PrintOptions {
                 color: 12,
@@ -534,7 +575,9 @@ impl Dialogue {
         string: &str,
         timer: bool,
     ) {
-        self.draw_dialogue_box_with_offset(draw_state, layer, system, small_text, string, timer, 0, 0, 0)
+        self.draw_dialogue_box_with_offset(
+            draw_state, layer, system, small_text, string, timer, 0, 0, 0,
+        )
     }
 }
 

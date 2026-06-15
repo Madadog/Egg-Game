@@ -18,9 +18,7 @@ use egg_core::{
     data::sound::music::MusicTrack,
     gamestate::EggInput,
     system::{
-        ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode,
-        SfxOptions,
-        WIDTH,
+        ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode, SfxOptions, WIDTH,
         drawing::image::{IndexedImage, RgbaImage},
     },
 };
@@ -248,7 +246,10 @@ impl ConsoleApi for FantasyConsole {
             }
             return;
         }
-        info!("File write not persisted on web ({path}, {} bytes)", bytes.len());
+        info!(
+            "File write not persisted on web ({path}, {} bytes)",
+            bytes.len()
+        );
     }
 
     /// Read a file back from the same namespaces [`write_file`](Self::write_file)
@@ -413,35 +414,52 @@ pub struct SfxAssets {
     pub sounds: BevyHashMap<String, Handle<AudioSource>>,
 }
 impl SfxAssets {
+    /// Load every sound effect under `assets/sfx/`, keyed by file stem (the name
+    /// an engine `#sound`/`sfx` cue refers to). The set is discovered from the
+    /// directory — the same single-source-of-truth approach as
+    /// [`scan_music_dir`] — so adding a `.ogg` makes it playable without editing
+    /// the host. Web has no filesystem to scan, so it falls back to loading the
+    /// names declared in [`egg_core::data::sound`] by path (handles still resolve
+    /// against the bundled `assets/` on web).
     pub fn new(assets: &AssetServer) -> Self {
-        let sfx = |name: &str| -> (String, Handle<AudioSource>) {
-            (name.to_string(), assets.load(format!("sfx/{}.ogg", name)))
+        let load = |stem: &str| -> (String, Handle<AudioSource>) {
+            (stem.to_string(), assets.load(format!("sfx/{stem}.ogg")))
         };
-        let sounds = BevyHashMap::from_iter([
-            sfx("1_piano"),
-            sfx("2_obtained"),
-            sfx("3_deny"),
-            sfx("4_alert_up"),
-            sfx("5_alert_down"),
-            sfx("6_save"),
-            sfx("7_reject"),
-            sfx("8_item_up"),
-            sfx("9_item_swap"),
-            sfx("10_item_down"),
-            sfx("11_interact"),
-            sfx("12_bip"),
-            sfx("13_door"),
-            sfx("14_pop"),
-            sfx("15_click_pop"),
-            sfx("16_fanfare"),
-            sfx("17_gain"),
-            sfx("18_loss"),
-            sfx("19_stairs_down"),
-            sfx("20_stairs_up"),
-            sfx("21_footstep_plain"),
-        ]);
+        let sounds = sfx_stems().iter().map(|s| load(s)).collect();
         Self { sounds }
     }
+}
+
+/// The set of sound-effect names to load, by file stem. Native discovers them
+/// from `assets/sfx/` (so the directory is the single source of truth); web has
+/// no filesystem to scan and falls back to the names declared in
+/// [`egg_core::data::sound`].
+#[cfg(not(target_arch = "wasm32"))]
+fn sfx_stems() -> Vec<String> {
+    let mut stems = Vec::new();
+    let Ok(entries) = std::fs::read_dir("assets/sfx") else {
+        return egg_core::data::sound::SFX_IDS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("ogg")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            stems.push(stem.to_string());
+        }
+    }
+    stems
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sfx_stems() -> Vec<String> {
+    egg_core::data::sound::SFX_IDS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Standard audio playback at the game's mixing volume.
@@ -455,7 +473,11 @@ fn playback_settings(mode: bevy::audio::PlaybackMode, speed: f32) -> PlaybackSet
     }
 }
 
-pub fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut state: ResMut<EggGame>) {
+pub fn play_sounds(
+    mut commands: Commands,
+    game_assets: Res<SfxAssets>,
+    mut state: ResMut<EggGame>,
+) {
     for (name, options) in state.system.sounds() {
         if let Some(sound) = game_assets.sounds.get(&name.to_string()) {
             let speed =
@@ -465,7 +487,10 @@ pub fn play_sounds(mut commands: Commands, game_assets: Res<SfxAssets>, mut stat
                 playback_settings(bevy::audio::PlaybackMode::Despawn, speed),
             ));
         } else {
-            panic!("Unknown sound \"{name:?}\" with {options:?}")
+            // An unknown name — a `#sound` typo, or a sound added without its
+            // `.ogg` — is logged and skipped, never fatal. Mirrors the
+            // silent-no-op resilience of `music()` and dangling warps.
+            warn!("sfx: no sound named {name:?} in assets/sfx (cue {options:?})");
         }
     }
     state.system.sounds().clear();

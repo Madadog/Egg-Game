@@ -196,7 +196,12 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
     /// override via [`color`](Node::color)/[`small`](Node::small)/[`center`](Node::center).
     pub fn text(&mut self, text: impl Into<String>) -> Node<'_, K> {
         self.node(
-            Content::Text { text: text.into(), color: 12, center: false, small: false },
+            Content::Text {
+                text: text.into(),
+                color: 12,
+                center: false,
+                small: false,
+            },
             false,
         )
     }
@@ -204,7 +209,16 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
     /// A `w`×`h`-tile sprite from the default sheet at scale 1 — override via
     /// [`scale`](Node::scale)/[`sprite_outline`](Node::sprite_outline).
     pub fn sprite(&mut self, id: i32, w: i32, h: i32) -> Node<'_, K> {
-        self.node(Content::Sprite { id, scale: 1, w, h, outline: None }, false)
+        self.node(
+            Content::Sprite {
+                id,
+                scale: 1,
+                w,
+                h,
+                outline: None,
+            },
+            false,
+        )
     }
 
     /// An empty full-width box of fixed `height` — vertical spacing in a column.
@@ -231,7 +245,11 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
 
     /// A wrapping row — give it a fixed [`width`](Node::width) and fixed-size
     /// children to get a grid.
-    pub fn wrap_row(&mut self, gap: f32, children: impl IntoIterator<Item = NodeId>) -> Node<'_, K> {
+    pub fn wrap_row(
+        &mut self,
+        gap: f32,
+        children: impl IntoIterator<Item = NodeId>,
+    ) -> Node<'_, K> {
         self.stack(wrap_row(gap), children)
     }
 
@@ -403,7 +421,15 @@ impl<K: Copy + PartialEq> Node<'_, K> {
 
     /// Insert the configured node into the tree and return its [`NodeId`].
     pub fn id(self) -> NodeId {
-        let Node { builder, style, content, deco, key, children, container } = self;
+        let Node {
+            builder,
+            style,
+            content,
+            deco,
+            key,
+            children,
+            container,
+        } = self;
         if container {
             builder.container(style, deco, key, &children)
         } else {
@@ -687,7 +713,12 @@ fn clamp_rect(rect: Rect, clip: Rect) -> Option<Rect> {
     let y0 = rect.y.max(clip.y);
     let x1 = (rect.x + rect.w).min(clip.x + clip.w);
     let y1 = (rect.y + rect.h).min(clip.y + clip.h);
-    (x1 > x0 && y1 > y0).then_some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+    (x1 > x0 && y1 > y0).then_some(Rect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    })
 }
 
 /// Paint a [`Decoration`] (fill and/or 1px outline) over `rect`.
@@ -880,7 +911,10 @@ mod tests {
         let rows: Vec<_> = (0..3)
             .map(|i| {
                 b.leaf(
-                    Style { size: full_width(8.0), ..Default::default() },
+                    Style {
+                        size: full_width(8.0),
+                        ..Default::default()
+                    },
                     Content::None,
                     Decoration::default(),
                     Some(i),
@@ -888,7 +922,10 @@ mod tests {
             })
             .collect();
         let root = b.container(
-            Style { size: size(40.0, 24.0), ..column(0.0) },
+            Style {
+                size: size(40.0, 24.0),
+                ..column(0.0)
+            },
             Decoration::default(),
             None,
             &rows,
@@ -902,10 +939,23 @@ mod tests {
         assert_eq!(ui.hit_at(100, 50, Vec2::new(110, 59)), Some(1));
         assert_eq!(ui.hit_at(100, 50, Vec2::new(10, 9)), None);
         // `rect_at` reports the translated screen rect.
-        assert_eq!(ui.rect(1), Some(Rect { x: 0, y: 8, w: 40, h: 8 }));
+        assert_eq!(
+            ui.rect(1),
+            Some(Rect {
+                x: 0,
+                y: 8,
+                w: 40,
+                h: 8
+            })
+        );
         assert_eq!(
             ui.rect_at(100, 50, 1),
-            Some(Rect { x: 100, y: 58, w: 40, h: 8 })
+            Some(Rect {
+                x: 100,
+                y: 58,
+                w: 40,
+                h: 8
+            })
         );
     }
 
@@ -920,7 +970,11 @@ mod tests {
         let rows: Vec<_> = (0..6)
             .map(|i| {
                 b.leaf(
-                    Style { size: full_width(10.0), flex_shrink: 0.0, ..Default::default() },
+                    Style {
+                        size: full_width(10.0),
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    },
                     Content::None,
                     Decoration::default(),
                     Some(i),
@@ -929,7 +983,10 @@ mod tests {
             .collect();
         let body = b.container(Style { ..column(0.0) }, Decoration::default(), None, &rows);
         let root = b.container(
-            Style { size: size(40.0, 30.0), ..column(0.0) },
+            Style {
+                size: size(40.0, 30.0),
+                ..column(0.0)
+            },
             Decoration::default(),
             None,
             &[body],
@@ -939,13 +996,26 @@ mod tests {
         // Content runs the full 60px even though the panel is 30px tall.
         assert_eq!(ui.content_height(), 60);
         // Row 0 sits at the top; a clip covering only the top 20px lets it hit...
-        let top_clip = Rect { x: 0, y: 0, w: 40, h: 20 };
+        let top_clip = Rect {
+            x: 0,
+            y: 0,
+            w: 40,
+            h: 20,
+        };
         assert_eq!(ui.hit_at_clipped(0, 0, top_clip, Vec2::new(5, 5)), Some(0));
         // ...but the same point is dead once the clip starts below it.
-        let lower_clip = Rect { x: 0, y: 20, w: 40, h: 20 };
+        let lower_clip = Rect {
+            x: 0,
+            y: 20,
+            w: 40,
+            h: 20,
+        };
         assert_eq!(ui.hit_at_clipped(0, 0, lower_clip, Vec2::new(5, 5)), None);
         // Scrolling the body up by 20px brings row 2 (local y=20) under the point.
-        assert_eq!(ui.hit_at_clipped(0, -20, top_clip, Vec2::new(5, 5)), Some(2));
+        assert_eq!(
+            ui.hit_at_clipped(0, -20, top_clip, Vec2::new(5, 5)),
+            Some(2)
+        );
     }
 
     /// `centered()` places a fixed-size panel in the middle of the viewport,

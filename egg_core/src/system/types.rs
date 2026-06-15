@@ -43,7 +43,14 @@ impl DrawParams {
                 outline,
             );
         } else {
-            draw_state.spr(layer, &palette_map, self.index, self.x, self.y, self.options);
+            draw_state.spr(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                self.options,
+            );
         }
     }
     pub fn bottom(&self) -> i32 {

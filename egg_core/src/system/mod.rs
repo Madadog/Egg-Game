@@ -1,6 +1,6 @@
 use crate::{
     data::sound::{SfxData, music::MusicTrack},
-    system::drawing::{image::RgbaImage, Canvas},
+    system::drawing::{Canvas, image::RgbaImage},
 };
 
 pub use consts::*;

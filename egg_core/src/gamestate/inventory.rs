@@ -69,7 +69,12 @@ pub struct InventoryItem {
 }
 impl InventoryItem {
     pub const fn new(id: ItemID, sprite: i32, name: &'static str, desc: &'static str) -> Self {
-        Self { id, sprite, name, desc }
+        Self {
+            id,
+            sprite,
+            name,
+            desc,
+        }
     }
 }
 
@@ -319,7 +324,11 @@ impl InventoryUi {
         const MAIN_W: f32 = 89.0;
 
         let small = ctx.save.small_text_on;
-        let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
+        let body_opts = PrintOptions {
+            color: 12,
+            small_text: small,
+            ..Default::default()
+        };
         // Centre against the render target (the framebuffer drawn into), so the
         // panel re-centres at any window size — and the hit-test pass in `step`
         // and the draw pass agree on the layout.
@@ -409,7 +418,11 @@ impl InventoryUi {
                     .id()
             }
             n => {
-                let hint = if n == 2 { "Open options menu" } else { "Back to world" };
+                let hint = if n == 2 {
+                    "Open options menu"
+                } else {
+                    "Back to world"
+                };
                 let hint_w = ctx.system.text_width(hint, body_opts.clone());
                 let text_node = b.text(hint).small(small).size(hint_w as f32, 8.0).id();
                 let hint_box = b
@@ -434,12 +447,16 @@ impl InventoryUi {
     }
     pub fn draw(&self, ctx: &mut Ctx<impl ConsoleApi>) {
         use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::{Rgba, RgbaImage};
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::{PrintOptions, SpriteOptions};
 
         let small = ctx.save.small_text_on;
-        let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
+        let body_opts = PrintOptions {
+            color: 12,
+            small_text: small,
+            ..Default::default()
+        };
         let black = ctx.draw.colour(0);
         let white = ctx.draw.colour(12);
         let c2 = ctx.draw.colour(2);
@@ -455,8 +472,22 @@ impl InventoryUi {
         let (cw, ch) = ctx.draw.size();
         let cx = cw / 2;
         let title_y = (ch - PANEL_H as i32) / 2 - 7;
-        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, cx + 1, title_y + 1, black, body_opts.clone());
-        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, cx, title_y, white, body_opts.clone());
+        ctx.system.print_to_centered(
+            ctx.draw.rgba(FG),
+            &inventory_title,
+            cx + 1,
+            title_y + 1,
+            black,
+            body_opts.clone(),
+        );
+        ctx.system.print_to_centered(
+            ctx.draw.rgba(FG),
+            &inventory_title,
+            cx,
+            title_y,
+            white,
+            body_opts.clone(),
+        );
 
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(&*ctx);
@@ -466,9 +497,13 @@ impl InventoryUi {
         match &self.state {
             InventoryUiState::Items(current, selected) => {
                 if let Some(slot) = ui.rect(InvKey::Slot(*current)) {
-                    ctx.draw
-                        .rgba(FG)
-                        .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
+                    ctx.draw.rgba(FG).stroke_rect(
+                        slot.x.into(),
+                        slot.y.into(),
+                        slot.w.into(),
+                        slot.h.into(),
+                        white,
+                    );
                     if let Some((_, item)) = selected {
                         // Picked-up item floats 4px above its cursor slot, outlined.
                         ctx.draw.spr_with_outline(
@@ -477,7 +512,11 @@ impl InventoryUi {
                             item.sprite,
                             i32::from(slot.x) + 2,
                             i32::from(slot.y) + 2 - 4,
-                            SpriteOptions { scale: 2, transparent: Some(0), ..Default::default() },
+                            SpriteOptions {
+                                scale: 2,
+                                transparent: Some(0),
+                                ..Default::default()
+                            },
                             12,
                         );
                     }
@@ -497,14 +536,25 @@ impl InventoryUi {
                     let nx = (cw - self.dialogue.width as i32) / 2 - 13;
                     let ny = ch - 38;
                     ctx.draw.rgba(FG).outlined_rect(nx, ny, 70, 9, c2, c3);
-                    ctx.system.print_to(ctx.draw.rgba(FG), &name, nx + 2, ny + 2, white, body_opts.clone());
+                    ctx.system.print_to(
+                        ctx.draw.rgba(FG),
+                        &name,
+                        nx + 2,
+                        ny + 2,
+                        white,
+                        body_opts.clone(),
+                    );
                 }
             }
             InventoryUiState::Eggs(current) => {
                 if let Some(slot) = ui.rect(InvKey::Egg(*current)) {
-                    ctx.draw
-                        .rgba(FG)
-                        .stroke_rect(slot.x.into(), slot.y.into(), slot.w.into(), slot.h.into(), white);
+                    ctx.draw.rgba(FG).stroke_rect(
+                        slot.x.into(),
+                        slot.y.into(),
+                        slot.w.into(),
+                        slot.h.into(),
+                        white,
+                    );
                 }
             }
             _ => {}
@@ -519,8 +569,18 @@ impl InventoryUi {
             if let Some(item) = item {
                 let desc = ctx.label(item.desc);
                 let string = self.dialogue.fit_text(ctx.system, small, &desc);
-                self.dialogue
-                    .draw_dialogue_portrait(ctx.draw, FG, ctx.system, small, &string, false, item.sprite, 3, 1, 1);
+                self.dialogue.draw_dialogue_portrait(
+                    ctx.draw,
+                    FG,
+                    ctx.system,
+                    small,
+                    &string,
+                    false,
+                    item.sprite,
+                    3,
+                    1,
+                    1,
+                );
             }
         }
 

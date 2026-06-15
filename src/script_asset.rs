@@ -54,7 +54,8 @@ impl AssetLoader for ScriptLoader {
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("eggtext"));
         let file: ScriptFile = if is_eggtext {
-            let text = std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+            let text =
+                std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
             egg_core::data::eggtext::parse(text)
                 .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?
         } else {
@@ -83,7 +84,8 @@ impl AssetLoader for SceneLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let text = std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        let text =
+            std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
         let file = egg_core::data::eggscene::parse(text)
             .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
         Ok(SceneAsset(file))

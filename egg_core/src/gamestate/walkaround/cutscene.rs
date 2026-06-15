@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::Ctx;
 use crate::data::eggscene::{CutsceneDef, StepDef};
-use crate::data::sound::{self, SfxData};
 use crate::data::sound::music::MusicTrack;
+use crate::data::sound::{self, SfxData};
 use crate::player::Shell;
 use crate::position::Vec2;
 use crate::system::{ConsoleApi, ConsoleHelper, just_pressed, pressed};
@@ -126,7 +126,10 @@ pub enum CutsceneState {
 pub enum CutsceneItem {
     /// Walk the player to a target, with a frame budget (counts down) so an
     /// unreachable point can't hang the stage — see [`WALK_BUDGET`].
-    WalkPlayer { target: Vec2, budget: u32 },
+    WalkPlayer {
+        target: Vec2,
+        budget: u32,
+    },
     WalkEntity(Vec2, usize),
     FacePlayer((i8, i8)),
     MovePlayer(Vec2),
@@ -136,7 +139,10 @@ pub enum CutsceneItem {
     /// Open the named dialogue and wait for the box to close. The bool latches
     /// "has been opened" so it opens exactly once; once opened, `is_done` reads
     /// the closed box. (Resolved at play time — the key follows the language.)
-    Dialogue { key: String, opened: bool },
+    Dialogue {
+        key: String,
+        opened: bool,
+    },
     /// Set a save flag (fires once, on the first advance).
     SetFlag(String, bool),
     /// Play a sound effect (fires once). `None` = an unknown name, an inert no-op.
@@ -156,13 +162,17 @@ impl CutsceneItem {
     fn from_step(step: &StepDef) -> CutsceneItem {
         match step {
             StepDef::Wait(frames) => CutsceneItem::Wait(*frames),
-            StepDef::Dialogue(key) => CutsceneItem::Dialogue { key: key.clone(), opened: false },
+            StepDef::Dialogue(key) => CutsceneItem::Dialogue {
+                key: key.clone(),
+                opened: false,
+            },
             StepDef::SetFlag(name, value) => CutsceneItem::SetFlag(name.clone(), *value),
             StepDef::Sound(name) => CutsceneItem::Sound(sound::by_name(name)),
-            StepDef::Music(track) => {
-                CutsceneItem::Music(track.as_deref().map(MusicTrack::named))
-            }
-            StepDef::Walk(pos) => CutsceneItem::WalkPlayer { target: *pos, budget: WALK_BUDGET },
+            StepDef::Music(track) => CutsceneItem::Music(track.as_deref().map(MusicTrack::named)),
+            StepDef::Walk(pos) => CutsceneItem::WalkPlayer {
+                target: *pos,
+                budget: WALK_BUDGET,
+            },
             StepDef::Move(pos) => CutsceneItem::MovePlayer(*pos),
             StepDef::Face(dx, dy) => CutsceneItem::FacePlayer((*dx, *dy)),
         }
@@ -317,7 +327,9 @@ impl CutsceneItem {
                     // Never ran: resolve + queue it so its `#set` side effects
                     // still apply, then close immediately.
                     let convo = ctx.get_dialogue(key);
-                    walkaround.dialogue.set_messages(ctx.system, ctx.save, &convo);
+                    walkaround
+                        .dialogue
+                        .set_messages(ctx.system, ctx.save, &convo);
                     *opened = true;
                 }
                 walkaround.dialogue.close();
@@ -372,19 +384,9 @@ mod tests {
         /// Install a one-line dialogue under `key` so a `Dialogue` step resolves.
         fn with_dialogue(mut self, key: &str, line: &str) -> Self {
             let src = format!("#dialogue {key}\n    {line}");
-            self.script.set_base(crate::data::eggtext::parse(&src).unwrap());
+            self.script
+                .set_base(crate::data::eggtext::parse(&src).unwrap());
             self
-        }
-        fn ctx(&mut self) -> Ctx<'_, TestConsole> {
-            Ctx {
-                draw: &mut self.draw,
-                system: &mut self.system,
-                maps: &mut self.maps,
-                rng: &mut self.rng,
-                script: &self.script,
-                scenes: &self.scenes,
-                save: &mut self.save,
-            }
         }
     }
 
@@ -392,7 +394,7 @@ mod tests {
     fn step(h: &mut Harness, item: &mut CutsceneItem) {
         // Split the borrow: the walkaround is held apart from the Ctx-borrowed
         // fields, exactly as `play_cutscene` does with `self`.
-        let mut walk = std::mem::replace(&mut h.walk, WalkaroundState::new());
+        let mut walk = std::mem::take(&mut h.walk);
         let mut ctx = Ctx {
             draw: &mut h.draw,
             system: &mut h.system,
@@ -450,7 +452,10 @@ mod tests {
     #[test]
     fn dialogue_opens_the_box_then_done_when_closed() {
         let mut h = Harness::new().with_dialogue("hi", "Hello.");
-        let mut item = CutsceneItem::Dialogue { key: "hi".into(), opened: false };
+        let mut item = CutsceneItem::Dialogue {
+            key: "hi".into(),
+            opened: false,
+        };
         // Not done before it opens (the open is its work).
         assert!(!item.is_done(&h.walk));
         // First advance opens the box; now it's not done (box is live).
@@ -477,11 +482,14 @@ mod tests {
         let mut h = Harness::new().with_dialogue("hi", "Hello.");
         let def: eggscene::CutsceneDef = vec![
             vec![StepDef::Move(Vec2::new(40, 50))],
-            vec![StepDef::SetFlag("done".into(), true), StepDef::Dialogue("hi".into())],
+            vec![
+                StepDef::SetFlag("done".into(), true),
+                StepDef::Dialogue("hi".into()),
+            ],
         ];
         let mut cutscene = Cutscene::from_def(&def);
 
-        let mut walk = std::mem::replace(&mut h.walk, WalkaroundState::new());
+        let mut walk = std::mem::take(&mut h.walk);
         {
             let mut ctx = Ctx {
                 draw: &mut h.draw,
@@ -496,8 +504,15 @@ mod tests {
         }
         h.walk = walk;
 
-        assert!(matches!(cutscene.next_stage(&h.walk), CutsceneState::Finished));
-        assert_eq!(h.walk.player_ref().pos, Vec2::new(40, 50), "end position applied");
+        assert!(matches!(
+            cutscene.next_stage(&h.walk),
+            CutsceneState::Finished
+        ));
+        assert_eq!(
+            h.walk.player_ref().pos,
+            Vec2::new(40, 50),
+            "end position applied"
+        );
         assert!(h.save.flag("done"), "flag side effect fired");
         assert!(
             h.walk.dialogue.current_text.is_none() && h.walk.dialogue.next_text.is_empty(),
@@ -511,12 +526,18 @@ mod tests {
         // capped by the frame budget so the stage can't hang. Drive the item with
         // a tiny budget to keep the test fast.
         let mut h = Harness::new();
-        let mut item = CutsceneItem::WalkPlayer { target: Vec2::new(9999, 9999), budget: 3 };
+        let mut item = CutsceneItem::WalkPlayer {
+            target: Vec2::new(9999, 9999),
+            budget: 3,
+        };
         for _ in 0..3 {
             assert!(!item.is_done(&h.walk));
             step(&mut h, &mut item);
         }
-        assert!(item.is_done(&h.walk), "budget exhausted -> done despite not arriving");
+        assert!(
+            item.is_done(&h.walk),
+            "budget exhausted -> done despite not arriving"
+        );
     }
 
     #[test]

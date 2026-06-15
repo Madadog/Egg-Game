@@ -86,7 +86,11 @@ pub fn primary_hotkeys(
                 ScreenMode::Fit => ScreenMode::Mirror,
                 ScreenMode::Mirror => ScreenMode::Fit,
             };
-            let mode = if matches!(game.screen_mode, ScreenMode::Fit) { "Fit" } else { "Mirror" };
+            let mode = if matches!(game.screen_mode, ScreenMode::Fit) {
+                "Fit"
+            } else {
+                "Mirror"
+            };
             info!("Screen mode: {mode} ({}x)", game.mirror_scale);
         }
         if drives_player && keys.just_pressed(KeyCode::F3) {

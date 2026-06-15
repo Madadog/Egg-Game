@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::system::{pressed, Controller, MouseInput, PrintOptions, ScanCode, SCANCODE_COUNT};
+use crate::system::{Controller, MouseInput, PrintOptions, SCANCODE_COUNT, ScanCode, pressed};
 use log::trace;
 
 use self::inventory::{InventoryUi, InventoryUiState};
@@ -167,8 +167,8 @@ impl GameMode {
 
 pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
     use crate::drawstate::LayerId;
-    use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     use crate::system::drawing::image::RgbaImage;
+    use crate::system::drawing::{Canvas, EdgePolicy, Transform};
     let small_text = ctx.save.small_text_on;
     let title = ctx.label("instructions_title");
     let instructions = ctx.label("instructions");
@@ -190,8 +190,24 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
         let d = (canvas.height() as i32 - crate::system::HEIGHT) / 2;
         canvas.outlined_rect(6, 15 + d, cw - 12, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17 + d, cw - 16, 96, colour_1);
-        ctx.system.print_to_shadow(canvas, &title, 11, 20 + d, colour_12, colour_0, opts.clone());
-        ctx.system.print_to_shadow(canvas, &instructions, 11, 36 + d, colour_12, colour_0, opts.clone());
+        ctx.system.print_to_shadow(
+            canvas,
+            &title,
+            11,
+            20 + d,
+            colour_12,
+            colour_0,
+            opts.clone(),
+        );
+        ctx.system.print_to_shadow(
+            canvas,
+            &instructions,
+            11,
+            36 + d,
+            colour_12,
+            colour_0,
+            opts.clone(),
+        );
         let width = ctx.system.text_width(&title, opts) - 1;
         let origin = 11;
         canvas.line(origin, 27 + d, origin + width, 27 + d, colour_12);

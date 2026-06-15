@@ -89,7 +89,10 @@ pub struct ParseError {
 
 impl ParseError {
     pub(crate) fn new(line: usize, message: impl Into<String>) -> Self {
-        Self { line, message: message.into() }
+        Self {
+            line,
+            message: message.into(),
+        }
     }
 }
 
@@ -117,7 +120,10 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
             continue;
         }
         if raw.starts_with([' ', '\t']) {
-            return Err(ParseError::new(line_no, "indented line is not inside a block"));
+            return Err(ParseError::new(
+                line_no,
+                "indented line is not inside a block",
+            ));
         }
 
         if let Some(header) = logical.strip_prefix('#') {
@@ -153,7 +159,9 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
                 other => {
                     return Err(ParseError::new(
                         line_no,
-                        format!("unknown block `#{other}` (expected `#dialogue`, `#list` or `#flag`)"),
+                        format!(
+                            "unknown block `#{other}` (expected `#dialogue`, `#list` or `#flag`)"
+                        ),
                     ));
                 }
             }
@@ -161,9 +169,13 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
             seen_entry = true;
             let key = logical[..eq].trim();
             if key.is_empty() {
-                return Err(ParseError::new(line_no, "label is missing a name before `=`"));
+                return Err(ParseError::new(
+                    line_no,
+                    "label is missing a name before `=`",
+                ));
             }
-            file.labels.insert(key.to_string(), parse_value(&logical[eq + 1..]));
+            file.labels
+                .insert(key.to_string(), parse_value(&logical[eq + 1..]));
         } else {
             return Err(ParseError::new(
                 line_no,
@@ -204,7 +216,10 @@ fn parse_list(body: &[(usize, &str)]) -> Result<Vec<String>, ParseError> {
             continue;
         }
         if logical.starts_with('#') {
-            return Err(ParseError::new(line_no, "`#list` items can't be directives"));
+            return Err(ParseError::new(
+                line_no,
+                "`#list` items can't be directives",
+            ));
         }
         items.push(parse_value(logical));
     }
@@ -324,8 +339,14 @@ impl AutoflipState {
                 self.side = explicit;
                 self.last_portrait = def.portrait.clone();
             }
-        } else if self.autoflip && let Some(portrait) = &def.portrait {
-            if self.last_portrait.as_ref().is_some_and(|last| last != portrait) {
+        } else if self.autoflip
+            && let Some(portrait) = &def.portrait
+        {
+            if self
+                .last_portrait
+                .as_ref()
+                .is_some_and(|last| last != portrait)
+            {
                 self.side = !self.side;
             }
             def.flip = self.side;
@@ -379,7 +400,10 @@ impl SegmentBuilder {
         match marker {
             Marker::If(flag) => {
                 if self.open.is_some() {
-                    return Err(ParseError::new(line_no, "`#if` cannot be nested inside another `#if`"));
+                    return Err(ParseError::new(
+                        line_no,
+                        "`#if` cannot be nested inside another `#if`",
+                    ));
                 }
                 check_flag(flag, line_no, flags)?;
                 // Close the current plain run so the conditional slots in order.
@@ -418,14 +442,20 @@ impl SegmentBuilder {
     /// Flush the pending plain run as a `Plain` segment, if non-empty.
     fn flush_plain(&mut self) {
         if !self.plain.is_empty() {
-            self.segments.push(SegmentDef::Plain(reduce_entry(std::mem::take(&mut self.plain))));
+            self.segments
+                .push(SegmentDef::Plain(reduce_entry(std::mem::take(
+                    &mut self.plain,
+                ))));
         }
     }
 
     fn finish(mut self) -> Result<DialogueDef, ParseError> {
         if let Some(open) = &self.open {
             // The body ended with a conditional still open; point at the `#if`.
-            return Err(ParseError::new(open.open_line, "`#if` is missing its closing `#end`"));
+            return Err(ParseError::new(
+                open.open_line,
+                "`#if` is missing its closing `#end`",
+            ));
         }
         // A body with no conditionals is one plain run: keep the compact
         // single-entry shape so existing entries round-trip unchanged.
@@ -433,7 +463,9 @@ impl SegmentBuilder {
             return Ok(DialogueDef::Plain(reduce_entry(self.plain)));
         }
         self.flush_plain();
-        Ok(DialogueDef::Segments { segments: self.segments })
+        Ok(DialogueDef::Segments {
+            segments: self.segments,
+        })
     }
 }
 
@@ -443,7 +475,10 @@ fn check_flag(name: &str, line_no: usize, flags: &BTreeSet<String>) -> Result<()
     if flags.contains(name) {
         Ok(())
     } else {
-        Err(ParseError::new(line_no, format!("undeclared flag {name:?} (add `#flag {name}` at the top)")))
+        Err(ParseError::new(
+            line_no,
+            format!("undeclared flag {name:?} (add `#flag {name}` at the top)"),
+        ))
     }
 }
 
@@ -462,7 +497,12 @@ fn parse_message(
     lines: &[(usize, &str)],
     flags: &BTreeSet<String>,
 ) -> Result<ParsedMessage, ParseError> {
-    let mut def = MessageDef { portrait: None, flip: false, pause: true, content: Vec::new() };
+    let mut def = MessageDef {
+        portrait: None,
+        flip: false,
+        pause: true,
+        content: Vec::new(),
+    };
     let mut flip: Option<bool> = None;
     let mut autoflip = false;
     let mut have_portrait = false;
@@ -479,9 +519,11 @@ fn parse_message(
                 return Err(ParseError::new(line_no, "`#set` needs `NAME BOOL`"));
             }
             check_flag(name, line_no, flags)?;
-            let value = parse_bool(Some(bool_arg.trim()), line_no)
-                .map_err(|_| ParseError::new(line_no, "`#set` needs `NAME true` or `NAME false`"))?;
-            def.content.push(ContentDef::SetFlag(name.to_string(), value));
+            let value = parse_bool(Some(bool_arg.trim()), line_no).map_err(|_| {
+                ParseError::new(line_no, "`#set` needs `NAME true` or `NAME false`")
+            })?;
+            def.content
+                .push(ContentDef::SetFlag(name.to_string(), value));
             continue;
         }
         if logical.starts_with('#') {
@@ -508,15 +550,18 @@ fn parse_message(
                         }
                     }
                     "sound" => {
-                        let name = arg
-                            .ok_or_else(|| ParseError::new(line_no, "`#sound` needs a name"))?;
+                        let name =
+                            arg.ok_or_else(|| ParseError::new(line_no, "`#sound` needs a name"))?;
                         def.content.push(ContentDef::Sound(name.to_string()));
                     }
                     "delay" => def.content.push(ContentDef::Delay(parse_u8(arg, line_no)?)),
                     "nopause" => def.pause = false,
                     "autoflip" => autoflip = true,
                     other => {
-                        return Err(ParseError::new(line_no, format!("unknown directive `#{other}`")));
+                        return Err(ParseError::new(
+                            line_no,
+                            format!("unknown directive `#{other}`"),
+                        ));
                     }
                 }
             }
@@ -535,7 +580,11 @@ fn parse_message(
         }
     }
 
-    Ok(ParsedMessage { def, flip, autoflip })
+    Ok(ParsedMessage {
+        def,
+        flip,
+        autoflip,
+    })
 }
 
 /// Drop mid-message `#flip`s that don't actually change the current side, so a
@@ -605,7 +654,9 @@ fn directive_segments(logical: &str) -> Vec<(&str, Option<&str>)> {
     let mut segments = Vec::new();
     let mut tokens = logical.split_whitespace().peekable();
     while let Some(token) = tokens.next() {
-        let Some(name) = token.strip_prefix('#') else { continue };
+        let Some(name) = token.strip_prefix('#') else {
+            continue;
+        };
         let mut arg = None;
         while let Some(next) = tokens.peek() {
             if next.starts_with('#') {
@@ -657,7 +708,10 @@ fn parse_trailing_delay(after: &str, line_no: usize) -> Result<Option<u8>, Parse
         return Ok(None);
     }
     let Some(rest) = after.strip_prefix('#') else {
-        return Err(ParseError::new(line_no, format!("unexpected text after quote: {after:?}")));
+        return Err(ParseError::new(
+            line_no,
+            format!("unexpected text after quote: {after:?}"),
+        ));
     };
     let (keyword, arg) = split_first_word(rest);
     if keyword == "delay" {
@@ -764,7 +818,11 @@ pub fn emit_dialogue(key: &str, def: &DialogueDef) -> Result<String, EmitError> 
             for segment in segments {
                 match segment {
                     SegmentDef::Plain(entry) => emit_entry(entry, &mut units)?,
-                    SegmentDef::If { flag, then, otherwise } => {
+                    SegmentDef::If {
+                        flag,
+                        then,
+                        otherwise,
+                    } => {
                         units.push(Unit::Marker(format!("#if {flag}")));
                         emit_entry(then, &mut units)?;
                         if let Some(otherwise) = otherwise {
@@ -862,10 +920,14 @@ fn message_lines(message: &MessageDef) -> Result<Vec<String>, EmitError> {
             ContentDef::Flip(value) => format!("#flip {value}"),
             ContentDef::SetFlag(name, value) => format!("#set {name} {value}"),
             ContentDef::Auto(_) => {
-                return Err(EmitError("`auto` content has no `.eggtext` form".to_string()));
+                return Err(EmitError(
+                    "`auto` content has no `.eggtext` form".to_string(),
+                ));
             }
             ContentDef::Pause => {
-                return Err(EmitError("`pause` content has no `.eggtext` form".to_string()));
+                return Err(EmitError(
+                    "`pause` content has no `.eggtext` form".to_string(),
+                ));
             }
         });
     }
@@ -879,7 +941,9 @@ fn message_lines(message: &MessageDef) -> Result<Vec<String>, EmitError> {
 fn render_text(text: &str) -> String {
     let needs_quote = text.is_empty()
         || text.trim() != text
-        || text.chars().any(|c| matches!(c, '\n' | '\t' | '\r' | '"' | '#' | '\\'));
+        || text
+            .chars()
+            .any(|c| matches!(c, '\n' | '\t' | '\r' | '"' | '#' | '\\'));
     if needs_quote {
         format!("\"{}\"", escape(text))
     } else {
@@ -974,7 +1038,10 @@ mod tests {
     /// [`DialogueDef`] shape (so conditional-segment tests can inspect it).
     fn dialogue_def(src: &str) -> DialogueDef {
         let file = parse(src).expect("parse");
-        file.dialogue.into_values().next().expect("one dialogue entry")
+        file.dialogue
+            .into_values()
+            .next()
+            .expect("one dialogue entry")
     }
 
     fn convo(src: &str) -> Vec<MessageDef> {
@@ -1000,7 +1067,10 @@ mod tests {
 
     #[test]
     fn single_line_reduces_to_line() {
-        assert_eq!(dialogue("#dialogue d\n    Just one line."), Entry::Line("Just one line.".into()));
+        assert_eq!(
+            dialogue("#dialogue d\n    Just one line."),
+            Entry::Line("Just one line.".into())
+        );
     }
 
     #[test]
@@ -1017,7 +1087,10 @@ mod tests {
         let messages = convo("#dialogue d\n    Hi\n    \" there\" #delay 5");
         assert_eq!(
             messages[0].content,
-            vec![ContentDef::Text("Hi".into()), ContentDef::Delayed(" there".into(), 5)],
+            vec![
+                ContentDef::Text("Hi".into()),
+                ContentDef::Delayed(" there".into(), 5)
+            ],
         );
     }
 
@@ -1027,7 +1100,10 @@ mod tests {
         let messages = convo("#dialogue d\n    \"T\" #delay 10\n    \"h\" #delay 10");
         assert_eq!(
             messages[0].content,
-            vec![ContentDef::Text("T".into()), ContentDef::Delayed("h".into(), 10)],
+            vec![
+                ContentDef::Text("T".into()),
+                ContentDef::Delayed("h".into(), 10)
+            ],
         );
     }
 
@@ -1036,7 +1112,10 @@ mod tests {
         let messages = convo("#dialogue d\n    #sound gain\n    Found it...!\\n");
         assert_eq!(
             messages[0].content,
-            vec![ContentDef::Sound("gain".into()), ContentDef::Text("Found it...!\n".into())],
+            vec![
+                ContentDef::Sound("gain".into()),
+                ContentDef::Text("Found it...!\n".into())
+            ],
         );
     }
 
@@ -1097,7 +1176,10 @@ mod tests {
         );
         assert!(!messages[0].pause);
         assert!(messages[1].pause);
-        assert_eq!(messages[0].content, vec![ContentDef::Text("flowing".into())]);
+        assert_eq!(
+            messages[0].content,
+            vec![ContentDef::Text("flowing".into())]
+        );
     }
 
     #[test]
@@ -1130,7 +1212,10 @@ mod tests {
         let messages = convo("#flag seen\n#dialogue d\n    #set seen true\n    Hello.");
         assert_eq!(
             messages[0].content,
-            vec![ContentDef::SetFlag("seen".into(), true), ContentDef::Text("Hello.".into())],
+            vec![
+                ContentDef::SetFlag("seen".into(), true),
+                ContentDef::Text("Hello.".into())
+            ],
         );
     }
 
@@ -1179,7 +1264,11 @@ mod tests {
         };
         assert_eq!(
             segments[0],
-            SegmentDef::If { flag: "seen".into(), then: Entry::Line("Yes.".into()), otherwise: None },
+            SegmentDef::If {
+                flag: "seen".into(),
+                then: Entry::Line("Yes.".into()),
+                otherwise: None
+            },
         );
     }
 
@@ -1229,7 +1318,10 @@ mod tests {
 
     #[test]
     fn else_or_end_without_if_errors_at_the_line() {
-        assert_eq!(parse("#dialogue d\n    Hi.\n    #else").unwrap_err().line, 3);
+        assert_eq!(
+            parse("#dialogue d\n    Hi.\n    #else").unwrap_err().line,
+            3
+        );
         assert_eq!(parse("#dialogue d\n    Hi.\n    #end").unwrap_err().line, 3);
     }
 
@@ -1269,7 +1361,14 @@ mod tests {
     #[test]
     fn emit_quotes_text_that_needs_it() {
         // Leading space, an embedded quote, a hash, and a newline all force quoting.
-        for text in ["  padded  ", "say \"hi\"", "a # b", "line\nbreak", "back\\slash", ""] {
+        for text in [
+            "  padded  ",
+            "say \"hi\"",
+            "a # b",
+            "line\nbreak",
+            "back\\slash",
+            "",
+        ] {
             let def = DialogueDef::Plain(Entry::Line(text.to_string()));
             assert_eq!(round_trip(&def), def, "text {text:?} did not round-trip");
         }
@@ -1349,11 +1448,18 @@ mod tests {
     #[test]
     fn emit_round_trips_every_shipped_dialogue() {
         let file = parse(include_str!("../../../assets/script/en.eggtext")).expect("parse en");
-        assert!(!file.dialogue.is_empty(), "expected shipped dialogue to test");
+        assert!(
+            !file.dialogue.is_empty(),
+            "expected shipped dialogue to test"
+        );
         for (key, def) in &file.dialogue {
-            let block = emit_dialogue(key, def)
-                .unwrap_or_else(|e| panic!("emit {key:?} failed: {e}"));
-            assert_eq!(reparse(&block, &file.flags), *def, "dialogue {key:?} did not round-trip");
+            let block =
+                emit_dialogue(key, def).unwrap_or_else(|e| panic!("emit {key:?} failed: {e}"));
+            assert_eq!(
+                reparse(&block, &file.flags),
+                *def,
+                "dialogue {key:?} did not round-trip"
+            );
         }
     }
 
@@ -1373,7 +1479,8 @@ intro = hi
 
 last = bye
 ";
-        let block = emit_dialogue("first", &DialogueDef::Plain(Entry::Line("Edited!".into()))).unwrap();
+        let block =
+            emit_dialogue("first", &DialogueDef::Plain(Entry::Line("Edited!".into()))).unwrap();
         let out = replace_dialogue_block(source, "first", &block);
         // The edit landed…
         assert!(out.contains("    Edited!"));
@@ -1385,17 +1492,33 @@ last = bye
         assert!(out.contains("last = bye"));
         // Re-parsing the whole file proves it's still well-formed.
         let file = parse(&out).expect("spliced file parses");
-        assert_eq!(file.dialogue["first"], DialogueDef::Plain(Entry::Line("Edited!".into())));
-        assert_eq!(file.dialogue["second"], DialogueDef::Plain(Entry::Line("Second stays.".into())));
+        assert_eq!(
+            file.dialogue["first"],
+            DialogueDef::Plain(Entry::Line("Edited!".into()))
+        );
+        assert_eq!(
+            file.dialogue["second"],
+            DialogueDef::Plain(Entry::Line("Second stays.".into()))
+        );
     }
 
     #[test]
     fn splice_appends_an_unknown_key() {
         let source = "#dialogue only\n    Just this.\n";
-        let block = emit_dialogue("fresh", &DialogueDef::Plain(Entry::Line("Brand new.".into()))).unwrap();
+        let block = emit_dialogue(
+            "fresh",
+            &DialogueDef::Plain(Entry::Line("Brand new.".into())),
+        )
+        .unwrap();
         let out = replace_dialogue_block(source, "fresh", &block);
         let file = parse(&out).expect("appended file parses");
-        assert_eq!(file.dialogue["only"], DialogueDef::Plain(Entry::Line("Just this.".into())));
-        assert_eq!(file.dialogue["fresh"], DialogueDef::Plain(Entry::Line("Brand new.".into())));
+        assert_eq!(
+            file.dialogue["only"],
+            DialogueDef::Plain(Entry::Line("Just this.".into()))
+        );
+        assert_eq!(
+            file.dialogue["fresh"],
+            DialogueDef::Plain(Entry::Line("Brand new.".into()))
+        );
     }
 }

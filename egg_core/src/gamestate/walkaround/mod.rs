@@ -9,15 +9,17 @@ use crate::particles::{Particle, ParticleDraw, ParticleList};
 use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
-use crate::system::{ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed};
+use crate::system::{
+    ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed,
+};
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 
 use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
-use super::mapeditor::MapViewer;
 use super::inventory::{self, Inventory, InventoryUi};
+use super::mapeditor::MapViewer;
 
 mod creatures;
 mod cutscene;
@@ -405,10 +407,20 @@ impl WalkaroundState {
     /// view's editor (which mutates the same shared map but never passes through
     /// `step`), so an extra "map preview" window reflects its own edits too.
     pub fn sync_map_animations(&mut self) {
-        let live: Vec<_> = self.current_map.objects.iter().filter_map(|o| o.sprite.clone()).collect();
+        let live: Vec<_> = self
+            .current_map
+            .objects
+            .iter()
+            .filter_map(|o| o.sprite.clone())
+            .collect();
         if live.len() != self.map_animations.len() {
-            self.map_animations =
-                live.into_iter().map(|frames| Animation { frames, ..Animation::default() }).collect();
+            self.map_animations = live
+                .into_iter()
+                .map(|frames| Animation {
+                    frames,
+                    ..Animation::default()
+                })
+                .collect();
             return;
         }
         for (anim, frames) in self.map_animations.iter_mut().zip(live) {
@@ -472,9 +484,11 @@ impl WalkaroundState {
             // stay as they are.
             if self.map_viewer.pending_reload {
                 self.map_viewer.pending_reload = false;
-                if let Some(fresh) =
-                    map_by_name(&ctx.draw.indexed_sprites, &self.current_map.source, ctx.maps)
-                {
+                if let Some(fresh) = map_by_name(
+                    &ctx.draw.indexed_sprites,
+                    &self.current_map.source,
+                    ctx.maps,
+                ) {
                     self.apply_map_framing(ctx.system, &fresh);
                     self.current_map.bg_colour = fresh.bg_colour;
                     self.current_map.camera_bounds = fresh.camera_bounds;
@@ -485,7 +499,7 @@ impl WalkaroundState {
             return None;
         }
 
-        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.keyp(ScanCode::Ctrl)  {
+        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.keyp(ScanCode::Ctrl) {
             self.load_pmem(ctx);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
@@ -532,7 +546,9 @@ impl WalkaroundState {
             info!("Attempting interact...");
         }
         if just_pressed(pad.x) {
-            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(ctx.script)));
+            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(
+                ctx.script,
+            )));
         }
         if ctx.system.any_btnpr() {
             self.player().flip_controls = Axis::None
@@ -549,14 +565,7 @@ impl WalkaroundState {
         for shell in self.entities.iter_mut() {
             match shell.move_mode {
                 MoveMode::Player => {
-                    let (dx, dy) = shell.walk(
-                        ctx.system,
-                        dx,
-                        dy,
-                        noclip,
-                        &self.current_map,
-                        tiles,
-                    );
+                    let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
                     shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
                 }
                 MoveMode::Wander => {
@@ -568,14 +577,7 @@ impl WalkaroundState {
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    let (dx, dy) = shell.walk(
-                        ctx.system,
-                        dx,
-                        dy,
-                        false,
-                        &self.current_map,
-                        tiles,
-                    );
+                    let (dx, dy) = shell.walk(ctx.system, dx, dy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
                 }
             }
@@ -640,13 +642,17 @@ impl WalkaroundState {
             match &object.effect {
                 ObjectEffect::Warp(warp)
                     if warp_hit.is_none()
-                        && object.trigger.warp_fires(touched, probed, &warp.mode, manual_doors) =>
+                        && object
+                            .trigger
+                            .warp_fires(touched, probed, &warp.mode, manual_doors) =>
                 {
                     warp_hit = Some(i);
                 }
                 ObjectEffect::Interact(_)
                     if interact_hit.is_none()
-                        && object.trigger.interaction_fires(touched, was_inside, probed) =>
+                        && object
+                            .trigger
+                            .interaction_fires(touched, was_inside, probed) =>
                 {
                     interact_hit = Some(i);
                 }
@@ -794,8 +800,14 @@ impl WalkaroundState {
         }
 
         if let Some(string) = self.dialogue.current_text.clone() {
-            self.dialogue
-                .draw_dialogue_box(ctx.draw, BG, ctx.system, ctx.save.small_text_on, &string, true);
+            self.dialogue.draw_dialogue_box(
+                ctx.draw,
+                BG,
+                ctx.system,
+                ctx.save.small_text_on,
+                &string,
+                true,
+            );
         }
         if debug_info.map_info {
             // Warp hitboxes in colour 12, interaction hitboxes in colour 14;
@@ -839,7 +851,13 @@ impl WalkaroundState {
                 opts,
             );
         }
-        editor.draw_at(ctx.draw, ctx.system, &self.current_map, ctx.maps, camera_pos);
+        editor.draw_at(
+            ctx.draw,
+            ctx.system,
+            &self.current_map,
+            ctx.maps,
+            camera_pos,
+        );
     }
 
     /// Composite the finished walkaround frame (left in `draw_state.rgba(BG)` by
@@ -851,8 +869,8 @@ impl WalkaroundState {
         output: &mut crate::system::drawing::image::RgbaImage,
     ) {
         use crate::drawstate::LayerId::*;
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::RgbaImage;
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
 
         output.blit::<RgbaImage>(
             0,
@@ -929,8 +947,15 @@ mod tests {
         ];
         walk.load_map(&mut console, map_with_objects(objects));
 
-        assert_eq!(walk.inside_objects, vec![false, false], "latch sized + cleared");
-        assert!(walk.pending_warp.is_none(), "pending warp dropped on map load");
+        assert_eq!(
+            walk.inside_objects,
+            vec![false, false],
+            "latch sized + cleared"
+        );
+        assert!(
+            walk.pending_warp.is_none(),
+            "pending warp dropped on map load"
+        );
     }
 
     /// `sync_map_animations` mirrors live editor edits into the cached object
@@ -939,7 +964,10 @@ mod tests {
     #[test]
     fn sync_map_animations_reflects_live_edits() {
         use crate::animation::AnimFrame;
-        let frame = |id: u16| AnimFrame { spr_id: id, ..AnimFrame::default() };
+        let frame = |id: u16| AnimFrame {
+            spr_id: id,
+            ..AnimFrame::default()
+        };
 
         let mut walk = WalkaroundState::new();
         walk.current_map = map_with_objects(vec![
@@ -957,8 +985,16 @@ mod tests {
         walk.map_animations[0].tick = 1;
         walk.current_map.objects[0].sprite = Some(vec![frame(9)]);
         walk.sync_map_animations();
-        assert_eq!(walk.map_animations.len(), 1, "same count: patched, not rebuilt");
-        assert_eq!(walk.map_animations[0].frames, vec![frame(9)], "frames synced");
+        assert_eq!(
+            walk.map_animations.len(),
+            1,
+            "same count: patched, not rebuilt"
+        );
+        assert_eq!(
+            walk.map_animations[0].frames,
+            vec![frame(9)],
+            "frames synced"
+        );
         assert_eq!(walk.map_animations[0].tick, 1, "playback cursor preserved");
 
         // Giving the second object a sprite changes the count -> rebuild to two.
@@ -980,10 +1016,20 @@ mod tests {
         let mut walk = WalkaroundState::new();
 
         // Start empty so the grant lands in slot 0 deterministically.
-        let mut inventory = Inventory { items: [None; 8], unlocks: [false; 4] };
+        let mut inventory = Inventory {
+            items: [None; 8],
+            unlocks: [false; 4],
+        };
         let give = InteractFn::GiveItem(ItemID(1));
-        assert!(walk.execute_interact_fn(&give, &mut console, &mut inventory).is_none());
-        assert_eq!(inventory.items[0].map(|i| i.id), Some(ItemID(1)), "item granted to first free slot");
+        assert!(
+            walk.execute_interact_fn(&give, &mut console, &mut inventory)
+                .is_none()
+        );
+        assert_eq!(
+            inventory.items[0].map(|i| i.id),
+            Some(ItemID(1)),
+            "item granted to first free slot"
+        );
 
         // Fill the rest, then a further grant on a full inventory changes nothing.
         let filler = by_id(ItemID(2)).unwrap();
@@ -991,7 +1037,15 @@ mod tests {
             *slot = Some(filler);
         }
         let before = inventory.to_save_ids();
-        walk.execute_interact_fn(&InteractFn::GiveItem(ItemID(3)), &mut console, &mut inventory);
-        assert_eq!(inventory.to_save_ids(), before, "full inventory: grant dropped, nothing lost");
+        walk.execute_interact_fn(
+            &InteractFn::GiveItem(ItemID(3)),
+            &mut console,
+            &mut inventory,
+        );
+        assert_eq!(
+            inventory.to_save_ids(),
+            before,
+            "full inventory: grant dropped, nothing lost"
+        );
     }
 }

@@ -174,7 +174,11 @@ impl ContentDef {
 impl MessageDef {
     fn resolve(self) -> Message {
         Message {
-            content: self.content.into_iter().filter_map(ContentDef::resolve).collect(),
+            content: self
+                .content
+                .into_iter()
+                .filter_map(ContentDef::resolve)
+                .collect(),
             portrait: resolve_portrait(self.portrait),
             flip_portrait: self.flip,
             pause_when_done: self.pause,
@@ -198,7 +202,11 @@ impl SegmentDef {
     fn resolve(self) -> Segment {
         match self {
             SegmentDef::Plain(entry) => Segment::Plain(entry.resolve()),
-            SegmentDef::If { flag, then, otherwise } => Segment::If {
+            SegmentDef::If {
+                flag,
+                then,
+                otherwise,
+            } => Segment::If {
                 flag,
                 then: then.resolve(),
                 otherwise: otherwise.map(Entry::resolve).unwrap_or_default(),
@@ -254,7 +262,11 @@ impl Segment {
         for segment in segments {
             match segment {
                 Segment::Plain(messages) => out.extend(messages.iter().cloned()),
-                Segment::If { flag, then, otherwise } => {
+                Segment::If {
+                    flag,
+                    then,
+                    otherwise,
+                } => {
                     let branch = if save.flag(flag) { then } else { otherwise };
                     out.extend(branch.iter().cloned());
                 }
@@ -428,7 +440,10 @@ impl Script {
     /// Look up a keyed entry (dialogue or list) as its resolved segments, active
     /// language then base.
     fn entry(&self, key: &str) -> Option<&Vec<Segment>> {
-        self.active.entries.get(key).or_else(|| self.base.entries.get(key))
+        self.active
+            .entries
+            .get(key)
+            .or_else(|| self.base.entries.get(key))
     }
 }
 
@@ -502,7 +517,10 @@ mod tests {
             convo[0].content.first(),
             Some(TextContent::SetFlag(name, true)) if name == "seen"
         ));
-        assert!(matches!(convo[0].content.get(1), Some(TextContent::Text { .. })));
+        assert!(matches!(
+            convo[0].content.get(1),
+            Some(TextContent::Text { .. })
+        ));
     }
 
     #[test]
@@ -517,7 +535,10 @@ mod tests {
     #[test]
     fn unknown_key_falls_back_to_default() {
         let script = script("#dialogue default\n    Nothing here.");
-        assert_eq!(plain(&script.get_dialogue("missing", &SaveData::default())), "Nothing here.");
+        assert_eq!(
+            plain(&script.get_dialogue("missing", &SaveData::default())),
+            "Nothing here."
+        );
     }
 
     #[test]

@@ -108,11 +108,7 @@ impl MapStore {
 /// `.tmj`), so the store is the sole source. `indexed_sprites` is only read for
 /// the sprite art the modern collision layer derives its colliders from (the
 /// sheet that lives on [`crate::drawstate::DrawState`]).
-pub fn map_by_name(
-    indexed_sprites: &IndexedImage,
-    name: &str,
-    maps: &MapStore,
-) -> Option<MapInfo> {
+pub fn map_by_name(indexed_sprites: &IndexedImage, name: &str, maps: &MapStore) -> Option<MapInfo> {
     if maps.is_modern(name) {
         return Some(modern_map_info(indexed_sprites, name, maps.get(name)?));
     }
@@ -194,7 +190,12 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
                 if image.is_collision() {
                     layers.push(painted_collision_layer(image, i));
                 } else {
-                    push_bg_or_fg(&mut layers, &mut fg_layers, image_draw_layer(image, i), &image.name);
+                    push_bg_or_fg(
+                        &mut layers,
+                        &mut fg_layers,
+                        image_draw_layer(image, i),
+                        &image.name,
+                    );
                 }
             }
             TiledMapLayer::ObjectLayer(_) => {}
@@ -207,9 +208,7 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
         fg_layers,
         objects,
         bg_colour: map.bg_colour().unwrap_or(0),
-        camera_bounds: map
-            .camera_stick()
-            .map(|(x, y)| CameraBounds::stick(x, y)),
+        camera_bounds: map.camera_stick().map(|(x, y)| CameraBounds::stick(x, y)),
         // The `music` property names a track by file stem; the host resolves it
         // against the music directory at play time (an unknown name no-ops there,
         // just as a dangling warp `to_map` no-ops against the map store). The
@@ -225,7 +224,12 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
 /// `fg` prefix (case-insensitive) — the one convention shared by tile and image
 /// draw layers, so an `fg`-named painted overlay sits above sprites just like an
 /// `fg` tile layer does.
-fn push_bg_or_fg(layers: &mut Vec<LayerInfo>, fg_layers: &mut Vec<LayerInfo>, info: LayerInfo, name: &str) {
+fn push_bg_or_fg(
+    layers: &mut Vec<LayerInfo>,
+    fg_layers: &mut Vec<LayerInfo>,
+    info: LayerInfo,
+    name: &str,
+) {
     if name.to_lowercase().starts_with("fg") {
         fg_layers.push(info);
     } else {
@@ -550,7 +554,12 @@ impl LayerInfo {
     /// skipped by every collision/draw guard that hit-tests it.
     pub fn hitbox(&self) -> Hitbox {
         if self.size.x.is_positive() && self.size.y.is_positive() {
-            Hitbox::new(self.offset.x, self.offset.y, self.size.x * 8, self.size.y * 8)
+            Hitbox::new(
+                self.offset.x,
+                self.offset.y,
+                self.size.x * 8,
+                self.size.y * 8,
+            )
         } else {
             Hitbox::empty_at(self.offset.x, self.offset.y)
         }
@@ -646,7 +655,13 @@ impl Trigger {
     /// player opted into manual doors (`manual_doors`) *and* this is an
     /// `Interact`-mode warp; `Auto`-mode warps always keep their touch path. The
     /// press path is never suppressed.
-    pub fn warp_fires(self, touched: bool, probed: bool, mode: &WarpMode, manual_doors: bool) -> bool {
+    pub fn warp_fires(
+        self,
+        touched: bool,
+        probed: bool,
+        mode: &WarpMode,
+        manual_doors: bool,
+    ) -> bool {
         let touch_suppressed = manual_doors && matches!(mode, WarpMode::Interact);
         (self.allows_touch() && touched && !touch_suppressed) || (self.allows_press() && probed)
     }
@@ -721,11 +736,19 @@ impl MapObject {
     }
     /// An interaction object showing the dialogue registered under `key`.
     pub fn dialogue(hitbox: Hitbox, key: &str) -> Self {
-        Self::new(hitbox, ObjectEffect::Interact(Interaction::Dialogue(key.to_string())), None)
+        Self::new(
+            hitbox,
+            ObjectEffect::Interact(Interaction::Dialogue(key.to_string())),
+            None,
+        )
     }
     /// An interaction object running a one-off [`InteractFn`].
     pub fn func(hitbox: Hitbox, func: InteractFn) -> Self {
-        Self::new(hitbox, ObjectEffect::Interact(Interaction::Func(func)), None)
+        Self::new(
+            hitbox,
+            ObjectEffect::Interact(Interaction::Func(func)),
+            None,
+        )
     }
     /// Attach an animated sprite drawn at the object's location.
     pub fn with_sprite(mut self, frames: Vec<AnimFrame>) -> Self {
@@ -958,7 +981,8 @@ mod tests {
         let mut store = MapStore::default();
         store.insert("lab", synthetic_modern_map());
         assert!(store.is_modern("lab"));
-        let lab = map_by_name(&console.indexed_sprites, "lab", &store).expect("lab is in the store");
+        let lab =
+            map_by_name(&console.indexed_sprites, "lab", &store).expect("lab is in the store");
         assert_eq!(lab.source, "lab");
         assert_eq!(lab.layers.len(), 1, "collision layer only");
         assert!(!lab.layers[0].visible);
@@ -989,7 +1013,9 @@ mod tests {
         );
         // `with_trigger` overrides it.
         assert_eq!(
-            MapObject::dialogue(hb, "k").with_trigger(Trigger::Touch).trigger,
+            MapObject::dialogue(hb, "k")
+                .with_trigger(Trigger::Touch)
+                .trigger,
             Trigger::Touch
         );
     }
@@ -1119,13 +1145,19 @@ mod tests {
         let colliders = painted_colliders(&img, 2, 1);
         assert_eq!(colliders.len(), 2);
         assert!(!colliders[0].get(1, 2), "the first cell is empty");
-        assert!(colliders[1].get(1, 2), "the solid pixel lands in cell index 1");
+        assert!(
+            colliders[1].get(1, 2),
+            "the solid pixel lands in cell index 1"
+        );
 
         // A 9×9 image rounds up to a 2×2 grid (the stray 9th row/col gets cells).
         let big = one_solid_pixel(9, 9, 8, 8);
         let grid = painted_colliders(&big, 2, 2);
         assert_eq!(grid.len(), 4);
-        assert!(grid[3].get(0, 0), "the stray pixel at (8,8) is cell (1,1) in-cell (0,0)");
+        assert!(
+            grid[3].get(0, 0),
+            "the stray pixel at (8,8) is cell (1,1) in-cell (0,0)"
+        );
     }
 
     /// A collision-marked image layer builds an **invisible**, collider-bearing
@@ -1194,10 +1226,17 @@ mod tests {
         );
         let info = map_by_name(&console.indexed_sprites, "art", &store).unwrap();
         assert_eq!(info.layers.len(), 1, "the bg image is a bg layer");
-        assert_eq!(info.fg_layers.len(), 1, "the fg-prefixed image is a fg layer");
+        assert_eq!(
+            info.fg_layers.len(),
+            1,
+            "the fg-prefixed image is a fg layer"
+        );
         assert!(info.layers[0].visible);
         assert_eq!(info.layers[0].kind, LayerKind::Image);
-        assert!(info.layers[0].colliders.is_empty(), "a drawn layer has no colliders");
+        assert!(
+            info.layers[0].colliders.is_empty(),
+            "a drawn layer has no colliders"
+        );
         assert!(info.fg_layers[0].visible);
     }
 
@@ -1332,7 +1371,10 @@ mod tests {
         let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
         store.insert("bedroom1", crate::data::tmj::from_json(&bytes).unwrap());
         let bedroom = map_by_name(&console.indexed_sprites, "bedroom1", &store).unwrap();
-        assert!(!bedroom.layers[0].visible, "tile layer 0 is the collision layer");
+        assert!(
+            !bedroom.layers[0].visible,
+            "tile layer 0 is the collision layer"
+        );
         assert!(
             bedroom.layers.iter().any(|l| l.kind == LayerKind::Image),
             "the painted walls are an image bg layer"

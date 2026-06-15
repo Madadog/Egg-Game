@@ -317,14 +317,7 @@ impl IndexedImage {
     /// The `opts.transparent` colour key (if any) is skipped; all other indices
     /// are copied through unchanged (no palette lookup — that's a
     /// compositing-time concern).
-    pub fn spr(
-        &mut self,
-        source: &IndexedImage,
-        id: i32,
-        x: i32,
-        y: i32,
-        opts: SpriteOptions,
-    ) {
+    pub fn spr(&mut self, source: &IndexedImage, id: i32, x: i32, y: i32, opts: SpriteOptions) {
         let transparent = opts.transparent;
         draw_sprite(self, source, id, x, y, &opts, |idx| {
             if transparent == Some(idx) {

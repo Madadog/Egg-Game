@@ -139,10 +139,16 @@ pub fn parse(src: &str) -> Result<SceneFile, ParseError> {
             continue;
         }
         if raw.starts_with([' ', '\t']) {
-            return Err(ParseError::new(line_no, "indented line is not inside a block"));
+            return Err(ParseError::new(
+                line_no,
+                "indented line is not inside a block",
+            ));
         }
         let Some(header) = logical.strip_prefix('#') else {
-            return Err(ParseError::new(line_no, "expected a block (`#cutscene name`)"));
+            return Err(ParseError::new(
+                line_no,
+                "expected a block (`#cutscene name`)",
+            ));
         };
         let (kind, name) = split_first_word(header);
         if kind != "cutscene" {
@@ -209,8 +215,10 @@ fn parse_step(logical: &str, line_no: usize) -> Result<StepDef, ParseError> {
         "face" => {
             let (dx, dy) = parse_pair(args, line_no, "face")?;
             StepDef::Face(
-                i8::try_from(dx).map_err(|_| ParseError::new(line_no, "`face` dx is out of range"))?,
-                i8::try_from(dy).map_err(|_| ParseError::new(line_no, "`face` dy is out of range"))?,
+                i8::try_from(dx)
+                    .map_err(|_| ParseError::new(line_no, "`face` dx is out of range"))?,
+                i8::try_from(dy)
+                    .map_err(|_| ParseError::new(line_no, "`face` dy is out of range"))?,
             )
         }
         other => return Err(ParseError::new(line_no, format!("unknown verb `{other}`"))),
@@ -248,7 +256,10 @@ fn parse_pair(args: &str, line_no: usize, verb: &str) -> Result<(i16, i16), Pars
     let x = parts.next().and_then(|s| s.parse().ok()).ok_or_else(err)?;
     let y = parts.next().and_then(|s| s.parse().ok()).ok_or_else(err)?;
     if parts.next().is_some() {
-        return Err(ParseError::new(line_no, format!("`{verb}` takes exactly `X Y`")));
+        return Err(ParseError::new(
+            line_no,
+            format!("`{verb}` takes exactly `X Y`"),
+        ));
     }
     Ok((x, y))
 }
@@ -341,8 +352,7 @@ mod tests {
 
     #[test]
     fn every_verb_parses() {
-        let def = one(
-            "#cutscene c\n\
+        let def = one("#cutscene c\n\
              \x20   wait 30\n\
              \x20   dialogue some_key\n\
              \x20   set seen true\n\
@@ -350,8 +360,7 @@ mod tests {
              \x20   music theme\n\
              \x20   walk 10 20\n\
              \x20   move 30 40\n\
-             \x20   face -1 1",
-        );
+             \x20   face -1 1");
         assert_eq!(
             def[0],
             vec![
@@ -384,7 +393,10 @@ mod tests {
     fn errors_point_at_the_line() {
         assert_eq!(parse("#cutscene c\n    bogus 1").unwrap_err().line, 2);
         assert_eq!(parse("#cutscene c\n    wait").unwrap_err().line, 2);
-        assert_eq!(parse("#cutscene c\n    set seen maybe").unwrap_err().line, 2);
+        assert_eq!(
+            parse("#cutscene c\n    set seen maybe").unwrap_err().line,
+            2
+        );
         assert_eq!(parse("#wat name").unwrap_err().line, 1);
         assert_eq!(parse("ok\n   stray").unwrap_err().line, 1);
         assert_eq!(parse("#cutscene").unwrap_err().line, 1);
@@ -421,7 +433,10 @@ mod tests {
     #[test]
     fn emit_round_trips_every_shipped_cutscene() {
         let file = parse(include_str!("../../../assets/script/main.eggscene")).expect("parse main");
-        assert!(!file.cutscenes.is_empty(), "expected shipped cutscenes to test");
+        assert!(
+            !file.cutscenes.is_empty(),
+            "expected shipped cutscenes to test"
+        );
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
         assert_eq!(file, reparsed);
     }

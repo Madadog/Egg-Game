@@ -63,7 +63,10 @@ impl AnimFrame {
         }
     }
     pub const fn with_outline(self, outline: Option<u8>) -> Self {
-        Self { outline_colour: outline, ..self }
+        Self {
+            outline_colour: outline,
+            ..self
+        }
     }
     pub const fn default() -> Self {
         Self {
@@ -94,7 +97,10 @@ pub struct Animation {
 }
 impl Animation {
     pub fn new(frames: &[AnimFrame]) -> Self {
-        Self { frames: frames.into(), ..Self::default() }
+        Self {
+            frames: frames.into(),
+            ..Self::default()
+        }
     }
     pub const fn default() -> Self {
         Self {
@@ -104,7 +110,9 @@ impl Animation {
         }
     }
     pub fn current_frame(&self) -> &AnimFrame {
-        self.frames.get(self.index).expect("Couldn't find animation frame!")
+        self.frames
+            .get(self.index)
+            .expect("Couldn't find animation frame!")
     }
     pub fn advance(&mut self) {
         if self.tick >= self.current_frame().duration {

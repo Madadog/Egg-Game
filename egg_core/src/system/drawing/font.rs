@@ -1,8 +1,8 @@
 //! Bitmap font: a glyph atlas plus cached glyph widths, and the free
 //! functions that measure and render text with it.
 
-use super::image::RgbaImage;
 use super::Canvas;
+use super::image::RgbaImage;
 use crate::system::types::PrintOptions;
 
 /// An 8×8 bitmap font: an [`RgbaImage`] laid out as a 16×16 grid of glyphs

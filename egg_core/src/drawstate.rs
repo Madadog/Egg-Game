@@ -133,7 +133,15 @@ impl DrawState {
     ) {
         let canvas = &mut self.rgba_canvas[layer as usize];
         let palette = self.palettes[0].as_slice();
-        canvas.spr_outline(&self.indexed_sprites, palette, id, x, y, opts, outline_colour);
+        canvas.spr_outline(
+            &self.indexed_sprites,
+            palette,
+            id,
+            x,
+            y,
+            opts,
+            outline_colour,
+        );
     }
 
     /// Draw a sprite with a 1-pixel outline around it. Equivalent to
@@ -194,18 +202,13 @@ pub const fn palette_map_all(c: u8) -> [usize; 16] {
 
 /// Linearly interpolate each RGB triple in `target` between `from` and `to`.
 /// `amount` is fixed-point with 256 = "fully `to`". Clamped at 256.
-pub fn fade_palette_into(
-    target: &mut [[u8; 3]],
-    from: &[[u8; 3]],
-    to: &[[u8; 3]],
-    amount: u16,
-) {
+pub fn fade_palette_into(target: &mut [[u8; 3]], from: &[[u8; 3]], to: &[[u8; 3]], amount: u16) {
     let amount = amount.min(256);
     let n = target.len().min(from.len()).min(to.len());
     for i in 0..n {
         for j in 0..3 {
-            target[i][j] = ((from[i][j] as u16 * (256 - amount) + to[i][j] as u16 * amount) >> 8)
-                as u8;
+            target[i][j] =
+                ((from[i][j] as u16 * (256 - amount) + to[i][j] as u16 * amount) >> 8) as u8;
         }
     }
 }
@@ -244,7 +247,10 @@ mod tests {
             20,
             SpriteOptions::default(),
         );
-        assert_eq!(s.rgba_canvas[0].get_pixel(10, 20), Rgba::new(255, 0, 0, 255));
+        assert_eq!(
+            s.rgba_canvas[0].get_pixel(10, 20),
+            Rgba::new(255, 0, 0, 255)
+        );
     }
 
     #[test]

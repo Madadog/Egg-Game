@@ -26,25 +26,11 @@ impl Portrait {
         };
         for (id, i) in self.spr_ids.iter().zip(0..) {
             let (x, y) = xy(i);
-            draw_state.spr_outline(
-                layer,
-                *id,
-                x,
-                y,
-                SpriteOptions::transparent_zero(),
-                1,
-            );
+            draw_state.spr_outline(layer, *id, x, y, SpriteOptions::transparent_zero(), 1);
         }
         for (id, i) in self.spr_ids.iter().zip(0..) {
             let (x, y) = xy(i);
-            draw_state.spr(
-                layer,
-                &pmap,
-                *id,
-                x,
-                y,
-                SpriteOptions::transparent_zero(),
-            );
+            draw_state.spr(layer, &pmap, *id, x, y, SpriteOptions::transparent_zero());
         }
     }
 }

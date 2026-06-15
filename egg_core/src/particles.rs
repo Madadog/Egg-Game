@@ -84,7 +84,8 @@ impl Particle {
         y_offset: i32,
     ) {
         let (x, y): (i32, i32) = (self.position.x.into(), self.position.y.into());
-        self.draw.draw_indexed(draw_state, layer, x + x_offset, y + y_offset);
+        self.draw
+            .draw_indexed(draw_state, layer, x + x_offset, y + y_offset);
     }
 }
 

@@ -132,7 +132,11 @@ impl MenuState {
     /// for the now-removed `memory()`).
     pub fn build_ui<S: ConsoleApi>(&self, ctx: &Ctx<S>) -> Ui<usize> {
         let small = ctx.save.small_text_on;
-        let texts: Vec<String> = self.entries.iter().map(|e| e.text(ctx.script, ctx.save)).collect();
+        let texts: Vec<String> = self
+            .entries
+            .iter()
+            .map(|e| e.text(ctx.script, ctx.save))
+            .collect();
         // Centre the menu against the render target (the framebuffer being drawn
         // into), so it re-centres at any window size — and stays consistent
         // between this layout pass and the matching hit-test pass in `step`.
@@ -280,7 +284,9 @@ impl MenuState {
             // A 120px-wide tooltip, centred on the framebuffer (60px margins at
             // the base 240 width).
             let (w, _) = draw_state.size();
-            draw_state.rgba(BG).fill_rect((w - 120) / 2, 10, 120, 11, c2);
+            draw_state
+                .rgba(BG)
+                .fill_rect((w - 120) / 2, 10, 120, 11, c2);
             system.print_to_centered(
                 draw_state.rgba(BG),
                 &lose_data,
@@ -296,8 +302,8 @@ impl MenuState {
     }
     pub fn draw_main_menu(&self, ctx: &mut Ctx<impl ConsoleApi>, elapsed_frames: i32) {
         use crate::drawstate::LayerId::*;
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
         use crate::system::drawing::image::RgbaImage;
+        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
 
         let c0 = ctx.draw.colour(0);
         ctx.draw.rgba(BG).fill(c0);
@@ -309,11 +315,24 @@ impl MenuState {
             // unchanged), keeping the title's canonical gap above the entries —
             // `build_ui` shifts the entries by the same `d`.
             let d = (ctx.draw.size().1 - crate::system::HEIGHT) / 2;
-            draw_title_rgba(ctx.draw, ctx.system, ctx.script, 53 + d, &title, elapsed_frames);
+            draw_title_rgba(
+                ctx.draw,
+                ctx.system,
+                ctx.script,
+                53 + d,
+                &title,
+                elapsed_frames,
+            );
         }
 
         self.build_ui(&*ctx).draw(ctx.draw, ctx.system, BG);
-        self.hover(ctx.draw, ctx.system, ctx.script, ctx.save.small_text_on, self.index);
+        self.hover(
+            ctx.draw,
+            ctx.system,
+            ctx.script,
+            ctx.save.small_text_on,
+            self.index,
+        );
 
         let output = ctx.system.output_image();
         output.blit::<RgbaImage>(
@@ -421,7 +440,13 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
             ..Default::default()
         },
     );
-    canvas.fill_rect(cx - title_width / 2, y + 19, title_width - 1, 2, title_colour);
+    canvas.fill_rect(
+        cx - title_width / 2,
+        y + 19,
+        title_width - 1,
+        2,
+        title_colour,
+    );
     title_width
 }
 

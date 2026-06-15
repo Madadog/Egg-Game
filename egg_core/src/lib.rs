@@ -16,10 +16,10 @@
 
 pub mod animation;
 pub mod camera;
-pub mod drawstate;
 pub mod data;
 pub mod debug;
 pub mod dialogue;
+pub mod drawstate;
 pub mod gamestate;
 pub mod interact;
 pub mod map;
@@ -291,19 +291,22 @@ mod tests {
     fn load_save_installs_valid_file_and_falls_back_on_garbage() {
         // Valid file -> installed into `save`.
         let mut console = TestConsole::new();
-        let stored = SaveData { egg_count: 42, ..SaveData::default() };
-        console.files.insert(
-            SAVE_PATH.to_string(),
-            serde_json::to_vec(&stored).unwrap(),
-        );
+        let stored = SaveData {
+            egg_count: 42,
+            ..SaveData::default()
+        };
+        console
+            .files
+            .insert(SAVE_PATH.to_string(), serde_json::to_vec(&stored).unwrap());
         let mut state = EggState::default();
         state.load_save(&mut console);
         assert_eq!(state.save.egg_count, 42);
 
         // The guard makes it run once: a later store change isn't re-read.
-        console
-            .files
-            .insert(SAVE_PATH.to_string(), serde_json::to_vec(&SaveData::default()).unwrap());
+        console.files.insert(
+            SAVE_PATH.to_string(),
+            serde_json::to_vec(&SaveData::default()).unwrap(),
+        );
         state.load_save(&mut console);
         assert_eq!(state.save.egg_count, 42);
 
@@ -344,7 +347,10 @@ mod tests {
         // A fresh state with a *cleared* inventory loads the stored save and
         // repopulates from it (the lines `run` performs on the load frame).
         let mut loaded = EggState::default();
-        loaded.inventory_ui.inventory = Inventory { items: [None; 8], unlocks: [false; 4] };
+        loaded.inventory_ui.inventory = Inventory {
+            items: [None; 8],
+            unlocks: [false; 4],
+        };
         let did_load = loaded.load_save(&mut console);
         assert!(did_load, "the stored save is read once");
         loaded

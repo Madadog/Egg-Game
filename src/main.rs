@@ -6,7 +6,9 @@ use egg_core::EggState;
 use egg_core::data::tmj::TiledMap;
 use egg_core::system::ConsoleApi;
 use egg_core::system::{HEIGHT, ScanCode, WIDTH};
-use fantasy_console::{ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture};
+use fantasy_console::{
+    ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture,
+};
 use script_asset::{SceneAsset, ScriptAsset, ScriptPlugin};
 use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
 
@@ -177,7 +179,10 @@ impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingLanguage>()
             .add_systems(Startup, setup_assets)
-            .add_systems(Update, (load_assets, poll_language_change, poll_script_save));
+            .add_systems(
+                Update,
+                (load_assets, poll_language_change, poll_script_save),
+            );
     }
 }
 
@@ -357,7 +362,9 @@ fn load_assets(
         }
         let mut map_images = Vec::new();
         for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
-            let Some(map) = maps.get(handle) else { continue };
+            let Some(map) = maps.get(handle) else {
+                continue;
+            };
             for rel_path in map.0.image_layer_paths() {
                 // Image paths are authored relative to the map file, which lives
                 // in `maps/`; resolve under it (e.g. `images/bedroom1_mask.png`
@@ -370,7 +377,10 @@ fn load_assets(
                 });
             }
         }
-        info!("Discovered {} image-layer PNG(s) across maps.", map_images.len());
+        info!(
+            "Discovered {} image-layer PNG(s) across maps.",
+            map_images.len()
+        );
         game_assets.map_images = Some(map_images);
         return;
     }
@@ -380,8 +390,10 @@ fn load_assets(
     if !game_assets.images_settled(&assets) {
         return;
     }
-    let (Some(font), Some(sheet)) = (images.get(&game_assets.font), images.get(&game_assets.sheet))
-    else {
+    let (Some(font), Some(sheet)) = (
+        images.get(&game_assets.font),
+        images.get(&game_assets.sheet),
+    ) else {
         return;
     };
     state.system.set_font(font);
@@ -412,7 +424,11 @@ fn load_assets(
             None => warn!("Skipping map `{name}` (failed to load or parse)."),
         }
     }
-    info!("Loaded {}/{} maps: {loaded:?}", loaded.len(), game_assets.map_names.len());
+    info!(
+        "Loaded {}/{} maps: {loaded:?}",
+        loaded.len(),
+        game_assets.map_names.len()
+    );
     if let Some(script) = scripts.get(&game_assets.script) {
         state.state.script.set_base(script.0.clone());
     }
@@ -500,7 +516,8 @@ fn poll_script_save(mut state: ResMut<EggGame>) {
 
 /// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
 fn draw_overlay(game: &mut EggGame, text: &str) {
-    let colour = egg_core::system::drawing::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
+    let colour =
+        egg_core::system::drawing::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
     let system = &mut game.system;
     egg_core::system::print_to_with_font(
         &system.font,
@@ -577,8 +594,8 @@ fn step_state(
         held(&[ArrowDown, KeyS], GamepadButton::DPadDown) || stick(GamepadAxis::LeftStickY) < -0.2;
     c.left[0] =
         held(&[ArrowLeft, KeyA], GamepadButton::DPadLeft) || stick(GamepadAxis::LeftStickX) < -0.2;
-    c.right[0] = held(&[ArrowRight, KeyD], GamepadButton::DPadRight)
-        || stick(GamepadAxis::LeftStickX) > 0.2;
+    c.right[0] =
+        held(&[ArrowRight, KeyD], GamepadButton::DPadRight) || stick(GamepadAxis::LeftStickX) > 0.2;
     c.a[0] = held(&[KeyZ, Space, Enter, KeyE], GamepadButton::South);
     c.b[0] = held(&[KeyX, Escape, KeyQ], GamepadButton::East);
     c.x[0] = held(&[KeyC], GamepadButton::West);

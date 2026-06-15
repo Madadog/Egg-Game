@@ -2,9 +2,10 @@ use crate::{
     Ctx,
     drawstate::{LayerId, PALETTE_MAP_IDENTITY},
     system::{
-        ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, SpriteOptions, pressed,
-        drawing::{Canvas, EdgePolicy, Transform},
+        ConsoleApi, ConsoleHelper, PrintOptions, SWEETIE_16, SpriteOptions,
         drawing::image::{Rgba, RgbaImage},
+        drawing::{Canvas, EdgePolicy, Transform},
+        pressed,
     },
 };
 
@@ -56,11 +57,13 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
                     }
                 }
             }
-            ctx.system.print_to(canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
+            ctx.system
+                .print_to(canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
         }
         if pressed(pad.a) {
             for i in 0..255i32 {
-                ctx.system.print_to(canvas, "PALETTE:", 0, 0, white, print_opts.clone());
+                ctx.system
+                    .print_to(canvas, "PALETTE:", 0, 0, white, print_opts.clone());
                 let px = 10 + i % 32;
                 let py = 10 + i / 32;
                 if px >= 0

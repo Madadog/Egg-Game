@@ -52,10 +52,8 @@ pub struct ViewsPlugin;
 
 impl Plugin for ViewsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ViewWindows>().add_systems(
-            Update,
-            (view_hotkeys, resize_views, handle_closed_views),
-        );
+        app.init_resource::<ViewWindows>()
+            .add_systems(Update, (view_hotkeys, resize_views, handle_closed_views));
     }
 }
 
@@ -197,7 +195,10 @@ pub fn spawn_view(
         editor: MapViewer::default(),
         scale: VIEW_SCALE,
     });
-    info!("Opened extra view window (layer {layer}); {} open.", views.views.len());
+    info!(
+        "Opened extra view window (layer {layer}); {} open.",
+        views.views.len()
+    );
 }
 
 /// Despawn an extra view's render entities and its `ViewWindow`. The OS window
@@ -363,10 +364,7 @@ pub fn update_views(
     // Which window is focused? `Window.focused` is the live OS focus state. Read
     // it through the shared routing brain ([`InputRouting`]) so this matches what
     // `step_state` decides for the player from the same moment.
-    let focused = windows
-        .iter()
-        .find(|(_, w)| w.focused)
-        .map(|(e, _)| e);
+    let focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
     let focus = InputRouting::compute(focused, &game, &views).focus;
 
     // Route the held arrow keys to the focused extra view's free camera (if
