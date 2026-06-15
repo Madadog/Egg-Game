@@ -389,7 +389,10 @@ impl Dialogue {
     ) {
         use crate::drawstate::PALETTE_MAP_IDENTITY;
         use crate::system::drawing::Canvas;
-        let (screen_w, screen_h) = (system.width(), system.height());
+        // Measure the render target, matching `draw_dialogue_box_with_offset` so
+        // this variant's portrait stays aligned with the text box on any
+        // framebuffer (not just the main window).
+        let (screen_w, screen_h) = draw_state.size();
 
         let w = self.width as i32;
         let h = 24;
@@ -435,7 +438,12 @@ impl Dialogue {
         mut height: i32,
     ) {
         use crate::system::drawing::Canvas;
-        let (screen_w, screen_h) = (system.width(), system.height());
+        // Measure against the surface being drawn into, not the host's main
+        // window: an off-screen render target (an extra editor view) has its own
+        // framebuffer size, so the box must re-centre against that to land at the
+        // bottom-middle of *that* view. For the main window the two are identical,
+        // so in-game rendering is unchanged.
+        let (screen_w, screen_h) = draw_state.size();
 
         let print_timer = self.characters;
         let w = self.width as i32;

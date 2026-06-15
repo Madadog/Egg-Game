@@ -133,7 +133,11 @@ impl MenuState {
     pub fn build_ui<S: ConsoleApi>(&self, ctx: &Ctx<S>) -> Ui<usize> {
         let small = ctx.save.small_text_on;
         let texts: Vec<String> = self.entries.iter().map(|e| e.text(ctx.script, ctx.save)).collect();
-        let screen = (ctx.system.width() as f32, ctx.system.height() as f32);
+        // Centre the menu against the render target (the framebuffer being drawn
+        // into), so it re-centres at any window size — and stays consistent
+        // between this layout pass and the matching hit-test pass in `step`.
+        let (sw, sh) = ctx.draw.size();
+        let screen = (sw as f32, sh as f32);
         let mut builder = UiBuilder::new();
         let rows: Vec<_> = self
             .entries
@@ -152,10 +156,14 @@ impl MenuState {
                     .id()
             })
             .collect();
+        // Shift the entries down by the same `d` as the title (0 at the base
+        // height), so the title+menu block stays vertically centred — and keeps
+        // its canonical gap below the title — at any framebuffer height.
+        let d = (sh - crate::system::HEIGHT) / 2;
         let root = builder
             .column(0.0, rows)
             .size(screen.0, screen.1)
-            .pad_lrtb(0.0, 0.0, self.entry_height() as f32, 0.0)
+            .pad_lrtb(0.0, 0.0, (self.entry_height() as i32 + d) as f32, 0.0)
             .id();
         builder.finish(root, screen)
     }
@@ -267,11 +275,14 @@ impl MenuState {
             let c12 = draw_state.colour(12);
             let options = print_options(small_text);
             let lose_data = script.label("options_lose_data");
-            draw_state.rgba(BG).fill_rect(60, 10, 120, 11, c2);
+            // A 120px-wide tooltip, centred on the framebuffer (60px margins at
+            // the base 240 width).
+            let (w, _) = draw_state.size();
+            draw_state.rgba(BG).fill_rect((w - 120) / 2, 10, 120, 11, c2);
             system.print_to_centered(
                 draw_state.rgba(BG),
                 &lose_data,
-                120,
+                w / 2,
                 13,
                 c12,
                 PrintOptions {
@@ -291,7 +302,12 @@ impl MenuState {
 
         if let Some(key) = self.draw_title {
             let title = ctx.script.label(key);
-            draw_title_rgba(ctx.draw, ctx.system, ctx.script, 120, 53, &title, elapsed_frames);
+            // Centre the whole 136-tall title+menu composition vertically on the
+            // framebuffer (`d` = 0 at the base height, so the canonical look is
+            // unchanged), keeping the title's canonical gap above the entries —
+            // `build_ui` shifts the entries by the same `d`.
+            let d = (ctx.draw.size().1 - crate::system::HEIGHT) / 2;
+            draw_title_rgba(ctx.draw, ctx.system, ctx.script, 53 + d, &title, elapsed_frames);
         }
 
         self.build_ui(&*ctx).draw(ctx.draw, ctx.system, BG);
@@ -376,18 +392,21 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
     canvas: &mut C,
     system: &impl ConsoleApi,
     script: &Script,
-    x: i32,
     y: i32,
     game_title: &str,
     title_colour: C::Pixel,
     blurb_colour: C::Pixel,
 ) -> i32 {
+    // Centre on the target canvas's own width, so the title tracks the
+    // framebuffer size (e.g. a mirror-resized window) rather than a fixed
+    // 240-wide screen. The corner blurb stays anchored to the top-left.
+    let cx = canvas.width() as i32 / 2;
     let opts = PrintOptions {
         scale: 1,
         ..Default::default()
     };
     let title_width = system.print_to(canvas, game_title, 999, 999, title_colour, opts.clone());
-    system.print_to_centered(canvas, game_title, x, y + 23, title_colour, opts);
+    system.print_to_centered(canvas, game_title, cx, y + 23, title_colour, opts);
     system.print_to(
         canvas,
         &script.label("game_title_blurb"),
@@ -400,7 +419,7 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
             ..Default::default()
         },
     );
-    canvas.fill_rect(120 - title_width / 2, y + 19, title_width - 1, 2, title_colour);
+    canvas.fill_rect(cx - title_width / 2, y + 19, title_width - 1, 2, title_colour);
     title_width
 }
 
@@ -414,16 +433,16 @@ pub fn draw_title_indexed(
     indexed_sprites: &crate::system::drawing::image::IndexedImage,
     system: &impl ConsoleApi,
     script: &Script,
-    x: i32,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    draw_title_text(canvas, system, script, x, y, game_title, 2u8, 14u8);
+    draw_title_text(canvas, system, script, y, game_title, 2u8, 14u8);
+    let egg_x = canvas.width() as i32 / 2 - 8;
     canvas.spr(
         indexed_sprites,
         534,
-        120 - 8,
+        egg_x,
         y + ((elapsed_frames / 30) % 2),
         SpriteOptions {
             transparent: Some(0),
@@ -440,7 +459,6 @@ pub fn draw_title_rgba(
     draw_state: &mut crate::drawstate::DrawState,
     system: &impl ConsoleApi,
     script: &Script,
-    x: i32,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
@@ -448,12 +466,13 @@ pub fn draw_title_rgba(
     use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
-    draw_title_text(draw_state.rgba(BG), system, script, x, y, game_title, c2, c14);
+    draw_title_text(draw_state.rgba(BG), system, script, y, game_title, c2, c14);
+    let egg_x = draw_state.size().0 / 2 - 8;
     draw_state.spr(
         BG,
         &PALETTE_MAP_IDENTITY,
         534,
-        120 - 8,
+        egg_x,
         y + ((elapsed_frames / 30) % 2),
         SpriteOptions {
             transparent: Some(0),

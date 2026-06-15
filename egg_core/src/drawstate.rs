@@ -56,6 +56,17 @@ impl DrawState {
         &mut self.indexed_canvas[layer as usize]
     }
 
+    /// The render target's size in px — the layer canvases' dimensions (all
+    /// layers share one size; see [`resize`](Self::resize)). This is the surface
+    /// draw calls actually land on, so screen-relative positioning (e.g. the
+    /// dialogue box) should measure against it rather than the host's main-window
+    /// [`ConsoleApi::width`](crate::system::ConsoleApi::width), which differs for
+    /// off-screen render targets such as the extra editor views.
+    pub fn size(&self) -> (i32, i32) {
+        let bg = &self.rgba_canvas[LayerId::BG as usize];
+        (bg.width() as i32, bg.height() as i32)
+    }
+
     /// Reallocate every screen layer canvas (RGBA + indexed) to `w`×`h`. Used
     /// when the framebuffer follows the window ("mirror" mode). Contents are
     /// dropped — each layer is fully redrawn per frame. The sprite sheets

@@ -166,6 +166,11 @@ fn slot(b: &mut UiBuilder<InvKey>, key: InvKey, outline: u8, child: Option<NodeI
         .id()
 }
 
+/// The Taffy panel's fixed height (px): the side column + slot grid. Centred
+/// vertically on the framebuffer, so the title and the item-name box position
+/// themselves relative to it.
+const PANEL_H: f32 = 47.0;
+
 pub struct InventoryUi {
     pub inventory: Inventory,
     pub state: InventoryUiState,
@@ -238,12 +243,16 @@ impl InventoryUi {
 
         // Original fixed dimensions, kept so the panel centres exactly as before
         // (item slot stride was `2*8 + 5 = 21`: a 20px box with a 1px gap).
+        // `PANEL_H` is a module const so `draw` can place the title above it.
         const MAIN_W: f32 = 89.0;
-        const PANEL_H: f32 = 47.0;
 
         let small = ctx.save.small_text_on;
         let body_opts = PrintOptions { color: 12, small_text: small, ..Default::default() };
-        let screen = (ctx.system.width() as f32, ctx.system.height() as f32);
+        // Centre against the render target (the framebuffer drawn into), so the
+        // panel re-centres at any window size — and the hit-test pass in `step`
+        // and the draw pass agree on the layout.
+        let (sw, sh) = ctx.draw.size();
+        let screen = (sw as f32, sh as f32);
         let page = self.state.page();
         let page_select = matches!(self.state, InventoryUiState::PageSelect(_));
         // While choosing a page the side column is highlighted (palette +2); once
@@ -367,10 +376,15 @@ impl InventoryUi {
         // Foreground starts clear each frame; everything here draws onto it.
         ctx.draw.rgba(FG).fill(Rgba::TRANSPARENT);
 
-        // Title, white with a 1px black shadow.
+        // Title, white with a 1px black shadow. Centred on the framebuffer width
+        // and kept its canonical 7px gap above the (vertically-centred) grid, so
+        // it tracks the panel instead of floating off when the window grows.
         let inventory_title = ctx.label("inventory_title");
-        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 121, 38, black, body_opts.clone());
-        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, 120, 37, white, body_opts.clone());
+        let (cw, ch) = ctx.draw.size();
+        let cx = cw / 2;
+        let title_y = (ch - PANEL_H as i32) / 2 - 7;
+        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, cx + 1, title_y + 1, black, body_opts.clone());
+        ctx.system.print_to_centered(ctx.draw.rgba(FG), &inventory_title, cx, title_y, white, body_opts.clone());
 
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(&*ctx);
@@ -402,8 +416,16 @@ impl InventoryUi {
                 };
                 if let Some(name) = name {
                     let name = ctx.label(name);
-                    ctx.draw.rgba(FG).outlined_rect(7, 98, 70, 9, c2, c3);
-                    ctx.system.print_to(ctx.draw.rgba(FG), &name, 9, 100, white, body_opts.clone());
+                    // Glued to the description box's portrait (the item dialogue
+                    // below): the portrait's left edge is `(cw - width)/2 - 13`
+                    // (x 7 at the base width) and the box is bottom-anchored, so a
+                    // 38px bottom margin gives y 98 at the base height. Tracking the
+                    // same expressions keeps the name tab on the box in BOTH axes.
+                    let (cw, ch) = ctx.draw.size();
+                    let nx = (cw - self.dialogue.width as i32) / 2 - 13;
+                    let ny = ch - 38;
+                    ctx.draw.rgba(FG).outlined_rect(nx, ny, 70, 9, c2, c3);
+                    ctx.system.print_to(ctx.draw.rgba(FG), &name, nx + 2, ny + 2, white, body_opts.clone());
                 }
             }
             InventoryUiState::Eggs(current) => {

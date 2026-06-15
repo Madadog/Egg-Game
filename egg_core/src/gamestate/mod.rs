@@ -183,14 +183,19 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
     {
         let canvas = ctx.draw.rgba(LayerId::BG);
         canvas.fill(colour_0);
-        canvas.outlined_rect(6, 15, 228, 100, colour_0, colour_1);
-        canvas.fill_rect(8, 17, 224, 96, colour_1);
-        ctx.system.print_to_shadow(canvas, &title, 11, 20, colour_12, colour_0, opts.clone());
-        ctx.system.print_to_shadow(canvas, &instructions, 11, 36, colour_12, colour_0, opts.clone());
+        // The box spans the framebuffer width with fixed 6/8px margins (228 = 240-12
+        // at the base width). `d` vertically centres the 136-tall design (0 at the
+        // base height), so the box rides the middle of a taller window.
+        let cw = canvas.width() as i32;
+        let d = (canvas.height() as i32 - crate::system::HEIGHT) / 2;
+        canvas.outlined_rect(6, 15 + d, cw - 12, 100, colour_0, colour_1);
+        canvas.fill_rect(8, 17 + d, cw - 16, 96, colour_1);
+        ctx.system.print_to_shadow(canvas, &title, 11, 20 + d, colour_12, colour_0, opts.clone());
+        ctx.system.print_to_shadow(canvas, &instructions, 11, 36 + d, colour_12, colour_0, opts.clone());
         let width = ctx.system.print_to(canvas, &title, 999, 999, colour_12, opts) - 1;
         let origin = 11;
-        canvas.line(origin, 27, origin + width, 27, colour_12);
-        canvas.line(origin + 1, 28, origin + width + 1, 28, colour_0);
+        canvas.line(origin, 27 + d, origin + width, 27 + d, colour_12);
+        canvas.line(origin + 1, 28 + d, origin + width + 1, 28 + d, colour_0);
     }
     let output = ctx.system.output_image();
     output.blit::<RgbaImage>(

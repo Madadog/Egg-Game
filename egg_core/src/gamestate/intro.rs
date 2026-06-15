@@ -20,11 +20,15 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 ctx.system.music(Some(&MusicTrack::named("intro")));
                 let fg = &mut ctx.draw.indexed(FG);
                 fg.fill(0);
-                fg.stroke_circle(90, 38, 4, 4);
-                fg.stroke_circle(90, 36, 3, 4);
-                fg.fill_circle(90, 38, 3, 12);
-                fg.fill_circle(90, 36, 2, 12);
+                // Centre the whole composition on the canvas (the oblong sun sits
+                // 30px left of centre), so the intro re-centres with the
+                // framebuffer size rather than hugging the top-left.
                 let (fw, fh) = (fg.width(), fg.height());
+                let (cx, cy) = (fw as i32 / 2, fh as i32 / 2);
+                fg.stroke_circle(cx - 30, cy - 30, 4, 4);
+                fg.stroke_circle(cx - 30, cy - 32, 3, 4);
+                fg.fill_circle(cx - 30, cy - 30, 3, 12);
+                fg.fill_circle(cx - 30, cy - 32, 2, 12);
                 for _ in 0..420 {
                     let x = ctx.rng.next_u32() as i32 % (fw as i32);
                     let y = ctx.rng.next_u32() as i32 % (fh as i32);
@@ -43,14 +47,15 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                     local_time * 2,
                 );
                 let t = (local_time as f32 / max_time).powf(0.02);
-                let size = 200.0 / (max_time + 1.0 - t * max_time).powi(2).max(1.0);
+                let size = 200.0 / (max_time + 1.0 - t * max_time).powi(2).max(0.1);
                 let t = size as i32;
                 if let Some(slot) = ctx.draw.palettes[0].get_mut(15) {
                     *slot = [0x0F; 3];
                 }
                 let fg = &mut ctx.draw.indexed(FG);
-                fg.fill_circle(120, 68, t, 15);
-                fg.stroke_circle(120, 68, t, 2);
+                let (cx, cy) = (fg.width() as i32 / 2, fg.height() as i32 / 2);
+                fg.fill_circle(cx, cy, t, 15);
+                fg.stroke_circle(cx, cy, t, 2);
                 let (horizontal, vertical) = (
                     (ctx.rng.next_u32() % 2) as i8 - 1,
                     (ctx.rng.next_u32() % 2) as i8 - 1,
@@ -81,13 +86,13 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 ctx.draw.indexed(BG).fill(15);
                 ctx.draw.indexed(FG).fill(0);
                 let fg = &mut ctx.draw.indexed_canvas[FG as usize];
+                let ty = fg.height() as i32 / 2 - 15;
                 draw_title_indexed(
                     fg,
                     &ctx.draw.indexed_sprites,
                     ctx.system,
                     ctx.script,
-                    120,
-                    53,
+                    ty,
                     &ctx.script.label("game_title"),
                     t as i32,
                 );
@@ -104,13 +109,13 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
         ctx.draw.indexed(BG).fill(0);
         ctx.draw.indexed(FG).fill(0);
         let fg = &mut ctx.draw.indexed_canvas[FG as usize];
+        let ty = fg.height() as i32 / 2 - 15;
         draw_title_indexed(
             fg,
             &ctx.draw.indexed_sprites,
             ctx.system,
             ctx.script,
-            120,
-            53,
+            ty,
             &ctx.script.label("game_title"),
             t as i32,
         );
