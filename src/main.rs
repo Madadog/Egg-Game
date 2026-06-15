@@ -27,10 +27,6 @@ pub struct EggGame {
     pub loaded: bool,
     pub pause: bool,
     pub scale_mode: ScaleMode,
-    /// Fixed-resolution fit vs. window-mirroring framebuffer (toggle: F2).
-    pub screen_mode: ScreenMode,
-    /// In `Mirror` mode, the window:framebuffer pixel ratio — 1/2/4/8 (cycle: F3).
-    pub mirror_scale: u32,
 }
 impl EggGame {
     pub fn run(&mut self) {
@@ -48,27 +44,17 @@ impl Default for EggGame {
             loaded: false,
 
             scale_mode: ScaleMode::Linear,
-            screen_mode: ScreenMode::Fit,
-            mirror_scale: 1,
         }
     }
 }
 
-/// How the framebuffer is scaled into the window in [`ScreenMode::Fit`].
+/// How the framebuffer is scaled into the window: the fixed base resolution is
+/// scaled to fit the window (the classic look), either smoothly or at integer
+/// steps.
 #[derive(Clone, Copy, PartialEq)]
 pub enum ScaleMode {
     Linear,
     Integer,
-}
-
-/// Screen-sizing policy. `Fit` renders at the fixed base resolution and scales
-/// it to fit the window (the classic look). `Mirror` makes the framebuffer
-/// follow the window size (÷ `mirror_scale`) for genuinely more drawing room —
-/// each game pixel then covers an N×N block of window pixels.
-#[derive(Clone, Copy, PartialEq)]
-pub enum ScreenMode {
-    Fit,
-    Mirror,
 }
 
 fn main() {
@@ -635,22 +621,25 @@ fn step_state(
         && let Some(pos) = window.cursor_position()
     {
         let (fb_w, fb_h, scale) = if primary {
+            // The primary window renders at the fixed base resolution, scaled to
+            // fit the window; invert that scale to map the cursor.
             let fb_w = game.system.width() as f32;
             let fb_h = game.system.height() as f32;
-            let scale = match game.screen_mode {
-                ScreenMode::Fit => screen_scale(window, &game.scale_mode),
-                ScreenMode::Mirror => game.mirror_scale.max(1) as f32,
-            };
+            let scale = screen_scale(window, &game.scale_mode);
             (fb_w, fb_h, scale)
         } else if let views::Focus::Extra(i) = routing.focus {
             // Extra views render Mirror-style: the framebuffer is the window ÷
-            // the view's pixel ratio and the sprite is scaled by exactly that
-            // ratio (see `views::update_views`/`resize_views`).
+            // the view's *effective* pixel ratio and the sprite is scaled by
+            // exactly that ratio (see `views::update_views`/`resize_views`). Map
+            // the cursor through the same `effective_scale` — not the raw
+            // `v.scale` — or a window large enough to hit the resolution cap
+            // would divide by the wrong ratio and land the cursor off-canvas.
             let v = &views.views[i];
+            let scale = views::effective_scale(window.width(), window.height(), v.scale);
             (
                 v.output.width() as f32,
                 v.output.height() as f32,
-                v.scale.max(1) as f32,
+                scale.max(1) as f32,
             )
         } else {
             // Focused window is neither the primary nor a known view (shouldn't

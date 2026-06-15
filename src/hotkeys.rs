@@ -15,7 +15,7 @@ use bevy::prelude::*;
 
 use egg_core::gamestate::GameMode;
 
-use crate::{EggGame, ScaleMode, ScreenMode, views};
+use crate::{EggGame, ScaleMode, views};
 
 /// Primary-window debug/control hotkeys plugin.
 ///
@@ -73,40 +73,6 @@ pub fn primary_hotkeys(
                 ScaleMode::Linear => ScaleMode::Integer,
                 _ => ScaleMode::Linear,
             };
-        }
-        // F2 toggles fixed-resolution Fit vs. window-mirroring. F3 cycles the
-        // Mirror pixel ratio 1→2→4→8 — and since that ratio only means anything
-        // in Mirror, F3 also flips Fit→Mirror so it's never a silent no-op (the
-        // "F3 does nothing in Fit" surprise). Both log so it's clear the key
-        // registered and what state you're now in. Both only apply while the
-        // PRIMARY window is focused — F3 over an extra view cycles *that* view's
-        // pixel ratio instead (see [`views::view_hotkeys`]).
-        if drives_player && keys.just_pressed(KeyCode::F2) {
-            game.screen_mode = match game.screen_mode {
-                ScreenMode::Fit => ScreenMode::Mirror,
-                ScreenMode::Mirror => ScreenMode::Fit,
-            };
-            let mode = if matches!(game.screen_mode, ScreenMode::Fit) {
-                "Fit"
-            } else {
-                "Mirror"
-            };
-            info!("Screen mode: {mode} ({}x)", game.mirror_scale);
-        }
-        if drives_player && keys.just_pressed(KeyCode::F3) {
-            if matches!(game.screen_mode, ScreenMode::Fit) {
-                // Enter Mirror first (at the current ratio) so F3 always shows
-                // a visible change rather than silently doing nothing in Fit.
-                game.screen_mode = ScreenMode::Mirror;
-            } else {
-                game.mirror_scale = match game.mirror_scale {
-                    1 => 2,
-                    2 => 4,
-                    4 => 8,
-                    _ => 1,
-                };
-            }
-            info!("Screen mode: Mirror ({}x)", game.mirror_scale);
         }
     }
 

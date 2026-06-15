@@ -23,7 +23,7 @@ use egg_core::{
     },
 };
 
-use crate::{EggGame, ScaleMode, ScreenMode};
+use crate::{EggGame, ScaleMode};
 
 pub struct FantasyConsole {
     pub output_screen: RgbaImage,
@@ -580,11 +580,9 @@ pub fn screen_scale(window: &Window, mode: &ScaleMode) -> f32 {
     }
 }
 
-/// Reconcile the framebuffer with the active screen mode + window size, then
-/// scale the screen sprite so it fills the window. In `Fit` the framebuffer
-/// stays at the base resolution and the sprite scales to fit; in `Mirror` the
-/// framebuffer follows the window (÷ `mirror_scale`) and the sprite scales by
-/// exactly that integer factor (crisp N×N pixels).
+/// Reconcile the framebuffer with the window size, then scale the screen sprite
+/// so it fills the window. The framebuffer stays at the fixed base resolution
+/// and the sprite scales to fit the window.
 fn resize_screen(
     mut sprite: Query<(&Sprite, &mut Transform), With<GameScreenSprite>>,
     mut window: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
@@ -601,18 +599,8 @@ fn resize_screen(
         return;
     };
 
-    let (target, scale) = match game.screen_mode {
-        ScreenMode::Fit => (
-            (WIDTH as u32, HEIGHT as u32),
-            screen_scale(&window, &game.scale_mode),
-        ),
-        ScreenMode::Mirror => {
-            let n = game.mirror_scale.max(1);
-            let w = (window.width() as u32 / n).max(MIN_FB_W);
-            let h = (window.height() as u32 / n).max(MIN_FB_H);
-            ((w, h), n as f32)
-        }
-    };
+    let target = (WIDTH as u32, HEIGHT as u32);
+    let scale = screen_scale(&window, &game.scale_mode);
 
     // Resize the three lock-step buffers (console screen, draw layers, GPU
     // texture) together, only when the size actually changes — `blit_to_image`

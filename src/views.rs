@@ -3,8 +3,8 @@
 //! keys when that window is focused) and can run the in-game map editor (`L`) on
 //! its own view. The primary window keeps normal gameplay: the player moves with
 //! the arrows/WASD and its camera follows the player. Each view is resizable:
-//! its framebuffer follows its window (Mirror-style) at a per-view pixel ratio
-//! cycled with `F3` while that view is focused.
+//! its framebuffer follows its window (Mirror-style) at a fixed base pixel ratio,
+//! capped so the internal resolution never exceeds [`MAX_FB_W`]×[`MAX_FB_H`].
 //!
 //! Architecture (the Bevy multi-window way, with one shared console):
 //! - Every extra view is a [`Window`] entity + a [`Camera2d`] whose
@@ -38,7 +38,7 @@ use crate::fantasy_console::{MIN_FB_H, MIN_FB_W, new_screen_image};
 /// view-management systems.
 ///
 /// Registers:
-/// * `Update`: [`view_hotkeys`] (edge-triggered per-view `L`/`F3`),
+/// * `Update`: [`view_hotkeys`] (edge-triggered per-view `L`),
 ///   [`resize_views`] (scale each view's sprite to its window), and
 ///   [`handle_closed_views`] (reap a view closed via its OS button) — registered
 ///   unordered, exactly as in the original `main.rs` Update tuple.
@@ -65,14 +65,24 @@ pub struct ViewScreenSprite;
 
 /// Internal resolution each extra view *starts* at (the base resolution). The
 /// framebuffer then follows the window — like the main window's Mirror mode —
-/// at the view's pixel ratio ([`ViewWindow::scale`], cycled with `F3`).
+/// at the view's base pixel ratio ([`VIEW_SCALE`]).
 const VIEW_W: u32 = egg_core::system::WIDTH as u32;
 const VIEW_H: u32 = egg_core::system::HEIGHT as u32;
 
-/// Pixel ratio a fresh view starts at (window px per framebuffer px); the spawn
+/// The view's base pixel ratio (window px per framebuffer px): the spawn
 /// resolution is the base resolution at this ratio, so a new view looks exactly
-/// like the classic fixed-resolution one until resized.
+/// like the classic fixed-resolution one until resized, and resizing keeps each
+/// game pixel covering this many window pixels until the resolution cap bumps it.
 const VIEW_SCALE: u32 = 3;
+
+/// The largest internal resolution an extra view renders at. However big the
+/// window, the framebuffer is capped here and the viewer is *scaled up* (its
+/// effective pixel ratio bumped past the base [`VIEW_SCALE`]) to keep filling the
+/// window — so a maximised view renders the world at a bounded resolution rather
+/// than an unbounded, and slow, one. The cap is per-axis: a window that exceeds
+/// it on *either* width or height triggers the bump.
+const MAX_FB_W: u32 = 640;
+const MAX_FB_H: u32 = 480;
 
 /// Free-camera pan speed (framebuffer px per fixed step), and the faster speed
 /// while a Shift key is held.
@@ -98,9 +108,10 @@ pub struct ViewWindow {
     pub free_cam: EggVec2,
     /// This view's own map editor (toggled with `L` while focused).
     pub editor: MapViewer,
-    /// Window px per framebuffer px — the view's framebuffer is the window size
-    /// divided by this (Mirror-style), so resizing the window resizes the view.
-    /// Cycled 1→2→4→8 with `F3` while the view is focused.
+    /// Base window px per framebuffer px — the view's framebuffer is the window
+    /// size divided by this (Mirror-style), so resizing the window resizes the
+    /// view. Fixed at [`VIEW_SCALE`]; [`effective_scale`] bumps it higher when a
+    /// large window would exceed the [`MAX_FB_W`]×[`MAX_FB_H`] resolution cap.
     pub scale: u32,
 }
 
@@ -308,17 +319,17 @@ pub fn handle_closed_views(
     }
 }
 
-/// Edge-triggered hotkeys for the focused extra view: `L` toggles its map
-/// editor, `F3` cycles its pixel ratio. In the `Update` schedule (like
-/// [`hotkeys`](crate::hotkeys)) so `just_pressed` fires exactly once per tap —
-/// the held-key panning stays in the fixed step ([`update_views`]).
+/// Edge-triggered hotkey for the focused extra view: `L` toggles its map
+/// editor. In the `Update` schedule (like [`hotkeys`](crate::hotkeys)) so
+/// `just_pressed` fires exactly once per tap — the held-key panning stays in the
+/// fixed step ([`update_views`]).
 pub fn view_hotkeys(
     game: Res<EggGame>,
     mut views: ResMut<ViewWindows>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<(Entity, &Window)>,
 ) {
-    // Shared routing brain ([`InputRouting`]); these hotkeys only act on the
+    // Shared routing brain ([`InputRouting`]); this hotkey only acts on the
     // focused *extra* view, so anything else (primary focused, nothing focused)
     // falls through.
     let focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
@@ -328,21 +339,10 @@ pub fn view_hotkeys(
     let view = &mut views.views[i];
 
     // While the editor captures text, leave the `L` toggle alone so a typed
-    // literal "l" doesn't close the editor. F3 is a function key — no clash.
+    // literal "l" doesn't close the editor.
     if !view.editor.is_typing() && keys.just_pressed(KeyCode::KeyL) {
         view.editor.focused = !view.editor.focused;
         view.editor.layer_index = 0;
-    }
-    // F3 cycles this view's pixel ratio (the framebuffer follows in
-    // `update_views`), mirroring the main window's Mirror-ratio hotkey.
-    if keys.just_pressed(KeyCode::F3) {
-        view.scale = match view.scale {
-            1 => 2,
-            2 => 4,
-            4 => 8,
-            _ => 1,
-        };
-        info!("View pixel ratio: {}x", view.scale);
     }
 }
 
@@ -370,7 +370,7 @@ pub fn update_views(
     // Route the held arrow keys to the focused extra view's free camera (if
     // any). The player is handled in `step_state`, which reads the same `Focus`
     // to decide whether to drive the controller; the view's edge-triggered
-    // hotkeys (`L`/`F3`) live in `view_hotkeys` (Update schedule).
+    // hotkey (`L`) lives in `view_hotkeys` (Update schedule).
     if let Focus::Extra(i) = focus {
         let fast = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         // While the editor captures text, leave panning alone so typed keys
@@ -518,23 +518,41 @@ pub fn update_views(
     }
 }
 
+/// A view's *effective* pixel ratio: the base `scale` ([`VIEW_SCALE`]), bumped
+/// up by whatever further integer factor is needed to keep the framebuffer's
+/// internal resolution within [`MAX_FB_W`]×[`MAX_FB_H`]. A window larger than the
+/// cap therefore renders at a capped resolution scaled up to fill it, instead of
+/// at an unbounded framebuffer. Both the framebuffer sizing ([`view_fb_size`])
+/// and the screen-sprite scaling ([`resize_views`]) read this, so they stay in
+/// lock-step. Pure + unit-tested.
+pub fn effective_scale(window_w: f32, window_h: f32, scale: u32) -> u32 {
+    // `div_ceil` gives the smallest ratio whose floored division fits the cap.
+    let need_w = (window_w as u32).div_ceil(MAX_FB_W);
+    let need_h = (window_h as u32).div_ceil(MAX_FB_H);
+    scale.max(1).max(need_w).max(need_h)
+}
+
 /// A view's framebuffer size for its window size and pixel ratio: the window ÷
-/// the ratio, floored at the same minimum as the main Mirror mode so a tiny
-/// window or large ratio can't produce a degenerate framebuffer. Pure so the
-/// sizing rule is unit-testable.
+/// the [`effective_scale`] ratio (which already enforces the [`MAX_FB_W`]×
+/// [`MAX_FB_H`] cap), floored at the same minimum as the main Mirror mode so a
+/// tiny window or large ratio can't produce a degenerate framebuffer. Pure so
+/// the sizing rule is unit-testable.
 pub fn view_fb_size(window_w: f32, window_h: f32, scale: u32) -> (u32, u32) {
-    let n = scale.max(1);
+    let n = effective_scale(window_w, window_h, scale);
     (
         (window_w as u32 / n).max(MIN_FB_W),
         (window_h as u32 / n).max(MIN_FB_H),
     )
 }
 
-/// Scale each extra view's screen sprite by exactly its pixel ratio (crisp N×N
-/// pixels, like the main window's Mirror mode) — the framebuffer itself follows
-/// the window in `update_views`, so the scaled sprite always fills the window
-/// (bar a sub-ratio remainder strip). Also pins the OS scale factor to 1 so
-/// window units equal device pixels, matching the primary window.
+/// Scale each extra view's screen sprite by exactly its *effective* pixel ratio
+/// (crisp N×N pixels, like the main window's Mirror mode) — the framebuffer
+/// itself follows the window in `update_views` at the same [`effective_scale`],
+/// so the scaled sprite always fills the window (bar a sub-ratio remainder
+/// strip), including when a large window bumps the ratio past the base
+/// [`VIEW_SCALE`] to honour the [`MAX_FB_W`]×[`MAX_FB_H`] cap. Also pins the OS
+/// scale factor to 1 so window units equal device pixels, matching the primary
+/// window.
 pub fn resize_views(
     views: Res<ViewWindows>,
     mut windows: Query<&mut Window, Without<bevy::window::PrimaryWindow>>,
@@ -548,7 +566,7 @@ pub fn resize_views(
         let Ok(mut transform) = transforms.get_mut(view.sprite) else {
             continue;
         };
-        let scale = view.scale.max(1) as f32;
+        let scale = effective_scale(window.width(), window.height(), view.scale) as f32;
         transform.scale = Vec3::new(scale, scale, 1.0);
     }
 }
@@ -591,6 +609,23 @@ mod tests {
         assert_eq!(view_fb_size(100.0, 100.0, 8), (MIN_FB_W, MIN_FB_H));
         // A zero ratio is treated as 1, not a divide-by-zero.
         assert_eq!(view_fb_size(320.0, 240.0, 0), (320, 240));
+    }
+
+    #[test]
+    fn view_capped_at_max_resolution() {
+        // At or below the cap, the user's ratio is used unchanged.
+        assert_eq!(effective_scale(640.0, 480.0, 1), 1);
+        assert_eq!(view_fb_size(640.0, 480.0, 1), (640, 480));
+        // One pixel over on *either* axis bumps the effective ratio up.
+        assert_eq!(effective_scale(641.0, 480.0, 1), 2);
+        assert_eq!(effective_scale(640.0, 481.0, 1), 2);
+        // A big window at ratio 1 is scaled up until the framebuffer fits the
+        // cap (1920×1080 ÷ 3 = 640×360, both within 640×480).
+        assert_eq!(effective_scale(1920.0, 1080.0, 1), 3);
+        assert_eq!(view_fb_size(1920.0, 1080.0, 1), (640, 360));
+        // The user's chosen ratio still wins when it already exceeds the floor.
+        assert_eq!(effective_scale(640.0, 480.0, 4), 4);
+        assert_eq!(view_fb_size(640.0, 480.0, 4), (160, 120));
     }
 
     #[test]
