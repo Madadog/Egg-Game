@@ -4683,7 +4683,7 @@ impl MapViewer {
                     for c in system.key_chars() {
                         let allowed = !c.is_control() && (!digits_only || c.is_ascii_digit());
                         if allowed {
-                            field.apply(TextOp::Push(*c));
+                            field.edit(TextOp::Push(*c));
                         }
                     }
                     field.edit_keys(system);
@@ -4736,7 +4736,7 @@ impl MapViewer {
                     let field = if *focus == 0 { w } else { h };
                     for c in system.key_chars() {
                         if c.is_ascii_digit() {
-                            field.apply(TextOp::Push(*c));
+                            field.edit(TextOp::Push(*c));
                         }
                     }
                     field.edit_keys(system);
@@ -7158,9 +7158,9 @@ mod tests {
         assert_eq!(g.display(), "foo _bar baz");
         g.apply(TextOp::WordRight);
         assert_eq!(g.display(), "foo bar_ baz");
-        // Ctrl+Backspace empties the field.
-        g.apply(TextOp::Clear);
-        assert_eq!((g.text(), g.display().as_str()), ("", "_"));
+        // Ctrl+Backspace deletes the word before the cursor.
+        g.apply(TextOp::DeleteWordBack);
+        assert_eq!((g.text(), g.display().as_str()), ("foo  baz", "foo _ baz"));
     }
 
     /// A tile layer's offset / palette-rotation fields edit the store and are

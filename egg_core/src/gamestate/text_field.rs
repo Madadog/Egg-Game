@@ -34,8 +34,12 @@ pub(crate) enum TextOp {
     Push(char),
     /// Delete the character before the cursor (Backspace).
     Pop,
-    /// Empty the whole buffer (Ctrl+Backspace).
-    Clear,
+    /// Delete the character after the cursor (Delete).
+    DeleteForward,
+    /// Delete the word before the cursor (Ctrl+Backspace).
+    DeleteWordBack,
+    /// Delete the word after the cursor (Ctrl+Delete).
+    DeleteWordForward,
     /// Move the cursor one character left / right (Arrow keys).
     Left,
     Right,
@@ -75,6 +79,12 @@ pub(crate) struct TextField {
     /// Caret position as a byte index into `buffer`, always on a char boundary.
     /// Inserts/deletes happen here, and the arrow keys move it.
     cursor: usize,
+    /// The selection's fixed end (the *anchor*), as a byte index, set while a
+    /// Shift-motion or drag is extending a selection; `cursor` is the moving end
+    /// and the selected span runs between the two. `None` when nothing is
+    /// selected. An unshifted motion clears it, as does consuming the selection
+    /// (deleting / replacing it).
+    anchor: Option<usize>,
 }
 
 impl TextField {
@@ -83,12 +93,170 @@ impl TextField {
     pub(crate) fn new(initial: impl Into<String>) -> Self {
         let buffer = initial.into();
         let cursor = buffer.len();
-        Self { buffer, cursor }
+        Self {
+            buffer,
+            cursor,
+            anchor: None,
+        }
     }
 
     /// The current buffer contents (the committed/parsed value).
     pub(crate) fn text(&self) -> &str {
         &self.buffer
+    }
+
+    /// The cursor's byte index — for snapshotting (e.g. the editor's undo).
+    pub(crate) fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Place the cursor at `byte`, snapped down to a char boundary and clamped to
+    /// the buffer — restores a snapshotted position.
+    pub(crate) fn set_cursor(&mut self, byte: usize) {
+        self.cursor = self.snap(byte);
+    }
+
+    /// Snap `byte` down to the nearest char boundary at or below it, clamped to
+    /// the buffer length — so a byte index from a snapshot, a click, or a stale
+    /// selection anchor is always safe to slice at.
+    fn snap(&self, byte: usize) -> usize {
+        let b = byte.min(self.buffer.len());
+        (0..=b)
+            .rev()
+            .find(|&i| self.buffer.is_char_boundary(i))
+            .unwrap_or(0)
+    }
+
+    /// The selected byte range as ordered `(start, end)`, or `None` when there is
+    /// no selection — no anchor, or it coincides with the caret. The anchor is
+    /// snapped defensively, so slicing the buffer at these bounds is always safe.
+    pub(crate) fn selection(&self) -> Option<(usize, usize)> {
+        let a = self.snap(self.anchor?);
+        (a != self.cursor).then(|| (a.min(self.cursor), a.max(self.cursor)))
+    }
+
+    /// The currently selected text, or `""` when nothing is selected.
+    pub(crate) fn selected_text(&self) -> &str {
+        match self.selection() {
+            Some((s, e)) => &self.buffer[s..e],
+            None => "",
+        }
+    }
+
+    /// Drop any selection, leaving the caret where it is.
+    pub(crate) fn clear_selection(&mut self) {
+        self.anchor = None;
+    }
+
+    /// Select the byte range `[start, end)` (snapped + ordered), parking the caret
+    /// at the high end — used by select-all and to highlight a find match.
+    pub(crate) fn select(&mut self, start: usize, end: usize) {
+        let lo = self.snap(start.min(end));
+        let hi = self.snap(start.max(end));
+        self.anchor = Some(lo);
+        self.cursor = hi;
+    }
+
+    /// Delete the selected span if there is one, parking the caret where the
+    /// selection began and clearing the anchor; returns whether it deleted.
+    pub(crate) fn delete_selection(&mut self) -> bool {
+        let had = if let Some((s, e)) = self.selection() {
+            self.buffer.replace_range(s..e, "");
+            self.cursor = s;
+            true
+        } else {
+            false
+        };
+        self.anchor = None;
+        had
+    }
+
+    /// Remove the bytes in `[start, end)` (snapped + ordered) and park the caret
+    /// at the start. A raw primitive for the editor's line ops — it doesn't touch
+    /// the selection anchor (the caller manages that).
+    pub(crate) fn delete_range(&mut self, start: usize, end: usize) {
+        let lo = self.snap(start.min(end));
+        let hi = self.snap(start.max(end));
+        self.buffer.replace_range(lo..hi, "");
+        self.cursor = lo;
+    }
+
+    /// Insert `text` at the caret, advancing the caret past it. A raw primitive
+    /// (paste / line ops); the caller deletes any selection first.
+    pub(crate) fn insert_str(&mut self, text: &str) {
+        self.buffer.insert_str(self.cursor, text);
+        self.cursor += text.len();
+    }
+
+    /// Move the caret with `op`, extending or collapsing the selection: when
+    /// `extend` is set, anchor at the current caret if not already anchored (so
+    /// the far end stays put) and then move; otherwise drop any selection first.
+    pub(crate) fn move_caret(&mut self, op: TextOp, extend: bool) -> TextEvent {
+        if extend {
+            self.anchor.get_or_insert(self.cursor);
+        } else {
+            self.anchor = None;
+        }
+        self.apply(op)
+    }
+
+    /// Apply an editing `op` after first deleting any active selection, so typing
+    /// or a delete key replaces the selection. A lone delete op is satisfied by
+    /// that deletion alone (it doesn't then also remove a neighbouring char/word).
+    pub(crate) fn edit(&mut self, op: TextOp) -> TextEvent {
+        let deleted = self.delete_selection();
+        let is_delete = matches!(
+            op,
+            TextOp::Pop
+                | TextOp::DeleteForward
+                | TextOp::DeleteWordBack
+                | TextOp::DeleteWordForward
+        );
+        if deleted && is_delete {
+            TextEvent::Active
+        } else {
+            self.apply(op)
+        }
+    }
+
+    /// Select the whole buffer (Ctrl+A); the caret parks at the end.
+    pub(crate) fn select_all(&mut self) {
+        self.select(0, self.buffer.len());
+    }
+
+    /// The byte span `[start, end)` of the line the caret is on, excluding the
+    /// trailing newline — for the editor's current-line copy and line ops.
+    pub(crate) fn current_line_span(&self) -> (usize, usize) {
+        (
+            self.line_start_at(self.cursor),
+            self.line_end_at(self.cursor),
+        )
+    }
+
+    /// Anchor a selection at the current caret — a mouse press that may become a
+    /// drag. With anchor == caret the selection is empty, so a bare click selects
+    /// nothing; a following drag moves the caret and grows it.
+    pub(crate) fn anchor_here(&mut self) {
+        self.anchor = Some(self.cursor);
+    }
+
+    /// Move the caret to `(line, col)` while keeping (or starting) the selection
+    /// — Shift-click and drag-select.
+    pub(crate) fn extend_to_line_col(&mut self, line: usize, col: usize) {
+        self.anchor.get_or_insert(self.cursor);
+        self.move_to_line_col(line, col);
+    }
+
+    /// Move the caret to byte `target` (snapped), extending the selection when
+    /// `extend` is set and collapsing it otherwise — the byte-addressed sibling of
+    /// [`move_caret`](Self::move_caret), for the editor's smart-Home.
+    pub(crate) fn move_to_byte(&mut self, target: usize, extend: bool) {
+        if extend {
+            self.anchor.get_or_insert(self.cursor);
+        } else {
+            self.anchor = None;
+        }
+        self.cursor = self.snap(target);
     }
 
     /// The buffer with a caret marker inserted at the cursor — what a focused
@@ -209,9 +377,20 @@ impl TextField {
                     self.cursor = prev;
                 }
             }
-            TextOp::Clear => {
-                self.buffer.clear();
-                self.cursor = 0;
+            TextOp::DeleteForward => {
+                if self.cursor < self.buffer.len() {
+                    let next = self.next_boundary();
+                    self.buffer.replace_range(self.cursor..next, "");
+                }
+            }
+            TextOp::DeleteWordBack => {
+                let start = self.word_left();
+                self.buffer.replace_range(start..self.cursor, "");
+                self.cursor = start;
+            }
+            TextOp::DeleteWordForward => {
+                let end = self.word_right();
+                self.buffer.replace_range(self.cursor..end, "");
             }
             TextOp::Left => self.cursor = self.prev_boundary(),
             TextOp::Right => self.cursor = self.next_boundary(),
@@ -255,20 +434,36 @@ impl TextField {
     /// caret behaviour.
     pub(crate) fn edit_keys(&mut self, system: &impl ConsoleApi) {
         let ctrl = system.key(ScanCode::Ctrl);
-        // These auto-repeat while held (Backspace to delete a run, arrows to glide
-        // the caret); the Ctrl variants repeat by word.
+        let shift = system.key(ScanCode::Shift);
+        // These auto-repeat while held (Backspace/Delete to delete a run, arrows to
+        // glide the caret); the Ctrl variants act by word, Shift+arrow extends the
+        // selection, and a delete with an active selection removes the selection.
         if system.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE) {
-            self.apply(if ctrl { TextOp::Clear } else { TextOp::Pop });
+            self.edit(if ctrl {
+                TextOp::DeleteWordBack
+            } else {
+                TextOp::Pop
+            });
+        }
+        if system.key_repeat(ScanCode::Delete, REPEAT_DELAY, REPEAT_RATE) {
+            self.edit(if ctrl {
+                TextOp::DeleteWordForward
+            } else {
+                TextOp::DeleteForward
+            });
         }
         if system.key_repeat(ScanCode::Left, REPEAT_DELAY, REPEAT_RATE) {
-            self.apply(if ctrl { TextOp::WordLeft } else { TextOp::Left });
+            self.move_caret(if ctrl { TextOp::WordLeft } else { TextOp::Left }, shift);
         }
         if system.key_repeat(ScanCode::Right, REPEAT_DELAY, REPEAT_RATE) {
-            self.apply(if ctrl {
-                TextOp::WordRight
-            } else {
-                TextOp::Right
-            });
+            self.move_caret(
+                if ctrl {
+                    TextOp::WordRight
+                } else {
+                    TextOp::Right
+                },
+                shift,
+            );
         }
     }
 
@@ -282,7 +477,7 @@ impl TextField {
     pub(crate) fn step(&mut self, system: &impl ConsoleApi) -> TextEvent {
         for c in system.key_chars() {
             if !c.is_control() {
-                self.apply(TextOp::Push(*c));
+                self.edit(TextOp::Push(*c));
             }
         }
         self.edit_keys(system);
@@ -329,7 +524,11 @@ mod tests {
     fn at_caret(marked: &str) -> TextField {
         let cursor = marked.find('|').expect("caret marker");
         let buffer = marked.replace('|', "");
-        TextField { buffer, cursor }
+        TextField {
+            buffer,
+            cursor,
+            anchor: None,
+        }
     }
 
     /// Home/End snap to the bounds of the current line, not the whole buffer.
@@ -385,5 +584,84 @@ mod tests {
         f.apply(TextOp::Push('\n'));
         assert_eq!(f.text(), "ab\ncd");
         assert_eq!(f.line_col(), (1, 0));
+    }
+
+    /// Forward delete (Delete) removes the char after the caret; the word variants
+    /// (Ctrl+Delete / Ctrl+Backspace) remove a whole word in each direction.
+    #[test]
+    fn forward_and_word_deletes() {
+        let mut f = at_caret("ab|cd");
+        f.apply(TextOp::DeleteForward);
+        assert_eq!(
+            (f.text(), f.line_col()),
+            ("abd", (0, 2)),
+            "removed 'c', caret stays"
+        );
+
+        let mut g = at_caret("foo |bar baz");
+        g.apply(TextOp::DeleteWordForward);
+        assert_eq!(g.text(), "foo  baz", "removed the word after the caret");
+
+        let mut h = at_caret("foo bar| baz");
+        h.apply(TextOp::DeleteWordBack);
+        assert_eq!(
+            (h.text(), h.line_col()),
+            ("foo  baz", (0, 4)),
+            "removed the word before"
+        );
+    }
+
+    /// A Shift-motion builds a selection from the anchor; an unshifted motion
+    /// drops it. `selected_text` reflects the spanned range whichever way the
+    /// caret moved relative to the anchor.
+    #[test]
+    fn selection_extends_and_collapses() {
+        let mut f = at_caret("|hello");
+        // Extend right twice: anchor stays at 0, caret moves to column 2.
+        f.move_caret(TextOp::Right, true);
+        f.move_caret(TextOp::Right, true);
+        assert_eq!(f.selection(), Some((0, 2)));
+        assert_eq!(f.selected_text(), "he");
+        // An unshifted motion collapses the selection (anchor cleared).
+        f.move_caret(TextOp::Right, false);
+        assert_eq!(f.selection(), None);
+        assert_eq!(f.selected_text(), "");
+
+        // Selecting leftward orders the range the same way (anchor > caret).
+        let mut g = at_caret("hello|");
+        g.move_caret(TextOp::WordLeft, true);
+        assert_eq!(g.selection(), Some((0, 5)));
+        assert_eq!(g.selected_text(), "hello");
+    }
+
+    /// `edit` deletes an active selection first, so typing or a delete key
+    /// replaces it; with no selection it falls through to plain `apply`.
+    #[test]
+    fn edit_replaces_selection() {
+        let mut f = at_caret("|hello");
+        f.move_caret(TextOp::Right, true);
+        f.move_caret(TextOp::Right, true); // selects "he"
+        f.edit(TextOp::Push('H')); // typing replaces it
+        assert_eq!((f.text(), f.line_col()), ("Hllo", (0, 1)));
+        assert!(f.selection().is_none(), "selection consumed by the edit");
+
+        // A delete key with a selection removes only the selection (no extra char).
+        let mut g = at_caret("a|bcd");
+        g.move_caret(TextOp::Right, true);
+        g.move_caret(TextOp::Right, true); // selects "bc"
+        g.edit(TextOp::Pop);
+        assert_eq!((g.text(), g.line_col()), ("ad", (0, 1)));
+    }
+
+    /// `select` highlights an explicit range (find / select-all), and
+    /// `delete_selection` removes it and reports whether it did.
+    #[test]
+    fn select_and_delete_selection() {
+        let mut f = TextField::new("alpha beta");
+        f.select(6, 10); // "beta"
+        assert_eq!(f.selected_text(), "beta");
+        assert!(f.delete_selection());
+        assert_eq!(f.text(), "alpha ");
+        assert!(!f.delete_selection(), "nothing selected now");
     }
 }
