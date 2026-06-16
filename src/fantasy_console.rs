@@ -155,6 +155,10 @@ impl ConsoleApi for FantasyConsole {
         self.input.keyp(scancode)
     }
 
+    fn key_repeat(&self, scancode: ScanCode, delay: u16, rate: u16) -> bool {
+        self.input.key_repeat(scancode, delay, rate)
+    }
+
     fn key_chars(&self) -> &[char] {
         self.input.key_chars()
     }

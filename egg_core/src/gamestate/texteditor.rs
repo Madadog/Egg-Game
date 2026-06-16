@@ -16,7 +16,7 @@
 //! [`TextField`](super::text_field::TextField); this module adds the multi-line
 //! navigation, file I/O, outline and rendering on top.
 
-use super::text_field::{TextField, TextOp};
+use super::text_field::{REPEAT_DELAY, REPEAT_RATE, TextField, TextOp};
 use crate::data::{eggscene, eggtext};
 use crate::drawstate::{DrawState, LayerId};
 use crate::system::drawing::Canvas;
@@ -202,11 +202,13 @@ impl TextEditor {
                     changed = true;
                 }
             }
-            if system.keyp(ScanCode::Return) {
+            // Navigation + edits auto-repeat while held (newlines, indents, caret
+            // glide, paging); the cadence is the shared text-entry one.
+            if system.key_repeat(ScanCode::Return, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.apply(TextOp::Push('\n'));
                 changed = true;
             }
-            if system.keyp(ScanCode::Tab) {
+            if system.key_repeat(ScanCode::Tab, REPEAT_DELAY, REPEAT_RATE) {
                 for _ in 0..TAB_WIDTH {
                     self.field.apply(TextOp::Push(' '));
                 }
@@ -217,25 +219,25 @@ impl TextEditor {
             let len_before = self.field.text().len();
             self.field.edit_keys(system);
             changed |= self.field.text().len() != len_before;
-            if system.keyp(ScanCode::Up) {
+            if system.key_repeat(ScanCode::Up, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.apply(TextOp::Up);
             }
-            if system.keyp(ScanCode::Down) {
+            if system.key_repeat(ScanCode::Down, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.apply(TextOp::Down);
             }
-            if system.keyp(ScanCode::Home) {
+            if system.key_repeat(ScanCode::Home, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.apply(TextOp::Home);
             }
-            if system.keyp(ScanCode::End) {
+            if system.key_repeat(ScanCode::End, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.apply(TextOp::End);
             }
             let page = r.visible_rows.saturating_sub(1);
-            if system.keyp(ScanCode::PageUp) {
+            if system.key_repeat(ScanCode::PageUp, REPEAT_DELAY, REPEAT_RATE) {
                 for _ in 0..page {
                     self.field.apply(TextOp::Up);
                 }
             }
-            if system.keyp(ScanCode::PageDown) {
+            if system.key_repeat(ScanCode::PageDown, REPEAT_DELAY, REPEAT_RATE) {
                 for _ in 0..page {
                     self.field.apply(TextOp::Down);
                 }

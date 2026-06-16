@@ -45,6 +45,9 @@ pub struct EggInput {
     pub controllers: [Controller; 4],
     pub keyboard: [bool; SCANCODE_COUNT],
     pub previous_keyboard: [bool; SCANCODE_COUNT],
+    /// Consecutive fixed steps each scancode has been held (0 while up), advanced
+    /// in [`refresh`](Self::refresh) — drives [`key_repeat`](Self::key_repeat).
+    pub held: [u16; SCANCODE_COUNT],
     pub mouse: MouseInput,
     pub typed_chars: Vec<char>,
 }
@@ -60,6 +63,7 @@ impl EggInput {
             controllers: [Controller::default(); 4],
             keyboard: [false; SCANCODE_COUNT],
             previous_keyboard: [false; SCANCODE_COUNT],
+            held: [0; SCANCODE_COUNT],
             mouse: MouseInput::default(),
             typed_chars: Vec::with_capacity(8),
         }
@@ -71,6 +75,15 @@ impl EggInput {
         self.typed_chars.push(c);
     }
     pub fn refresh(&mut self) {
+        // Advance the per-key hold counters from the frame that just ended — the
+        // `keyboard` array still holds it here, before the clear below.
+        for i in 0..SCANCODE_COUNT {
+            self.held[i] = if self.keyboard[i] {
+                self.held[i].saturating_add(1)
+            } else {
+                0
+            };
+        }
         self.previous_keyboard = self.keyboard;
         self.mouse.step();
         for controller in &mut self.controllers {
@@ -88,6 +101,53 @@ impl EggInput {
     }
     pub fn key(&self, key: ScanCode) -> bool {
         self.keyboard[key.index()]
+    }
+    /// Edge-or-repeat: true on the initial press, then — while still held — again
+    /// every `rate` fixed steps after an initial `delay` (both in fixed steps).
+    /// `delay`/`rate` are per-call so different consumers can tune their cadence.
+    pub fn key_repeat(&self, key: ScanCode, delay: u16, rate: u16) -> bool {
+        let i = key.index();
+        if !self.keyboard[i] {
+            return false;
+        }
+        if self.held[i] == 0 {
+            return true;
+        }
+        self.held[i] >= delay && (self.held[i] - delay).is_multiple_of(rate.max(1))
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    /// `key_repeat` fires on the press frame, then — once held past `delay` — every
+    /// `rate` fixed steps, and never while the key is up. One frame = `refresh()`
+    /// (advances the hold counter from last frame, clears `keyboard`) then a press.
+    #[test]
+    fn key_repeat_fires_on_press_then_after_delay_at_rate() {
+        let mut input = EggInput::new();
+        let k = ScanCode::Backspace;
+        let (delay, rate) = (3u16, 2u16);
+
+        let mut fired = Vec::new();
+        for frame in 0..10 {
+            input.refresh();
+            input.press_key(k);
+            if input.key_repeat(k, delay, rate) {
+                fired.push(frame);
+            }
+        }
+        // Initial press at 0, then held reaches `delay` (3) and repeats every `rate`.
+        assert_eq!(fired, vec![0, 3, 5, 7, 9]);
+
+        // A held key that's no longer pressed this frame never repeats…
+        input.refresh();
+        assert!(!input.key_repeat(k, delay, rate));
+        // …and after release the counter resets, so a fresh press fires again.
+        input.refresh();
+        input.press_key(k);
+        assert!(input.key_repeat(k, delay, rate));
     }
 }
 

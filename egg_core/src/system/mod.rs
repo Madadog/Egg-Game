@@ -32,6 +32,13 @@ pub trait ConsoleApi {
     fn exit(&mut self);
     fn key(&self, scancode: ScanCode) -> bool;
     fn keyp(&self, scancode: ScanCode) -> bool;
+    /// Edge-or-repeat: like [`keyp`](Self::keyp) on the initial press, then again
+    /// while held — `delay` fixed steps before the first repeat, then every
+    /// `rate`. Default = no repeat (the press edge only); the real console
+    /// overrides it with the held-key timing from `EggInput`.
+    fn key_repeat(&self, scancode: ScanCode, _delay: u16, _rate: u16) -> bool {
+        self.keyp(scancode)
+    }
     /// Latest character entered by the user this frame (for text entry).
     fn key_chars(&self) -> &[char];
     fn mouse(&self) -> MouseInput;

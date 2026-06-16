@@ -15,6 +15,14 @@
 
 use crate::system::{ConsoleApi, ScanCode};
 
+/// Held-key repeat cadence for text entry, in fixed steps (the sim runs at
+/// 64 Hz): `REPEAT_DELAY` before the first repeat, then one every `REPEAT_RATE`.
+/// The single place to tune how Backspace / arrows / etc. auto-repeat across the
+/// text editor and the map editor's fields. (`EggInput::key_repeat` itself is
+/// cadence-agnostic — these are this use case's numbers.)
+pub(crate) const REPEAT_DELAY: u16 = 20;
+pub(crate) const REPEAT_RATE: u16 = 2;
+
 /// A single character-level edit to a [`TextField`], the pure unit its console
 /// input decodes into. Splitting the keyboard read (which needs a
 /// [`ConsoleApi`]) from the buffer mutation (which doesn't) is what lets the
@@ -247,13 +255,15 @@ impl TextField {
     /// caret behaviour.
     pub(crate) fn edit_keys(&mut self, system: &impl ConsoleApi) {
         let ctrl = system.key(ScanCode::Ctrl);
-        if system.keyp(ScanCode::Backspace) {
+        // These auto-repeat while held (Backspace to delete a run, arrows to glide
+        // the caret); the Ctrl variants repeat by word.
+        if system.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE) {
             self.apply(if ctrl { TextOp::Clear } else { TextOp::Pop });
         }
-        if system.keyp(ScanCode::Left) {
+        if system.key_repeat(ScanCode::Left, REPEAT_DELAY, REPEAT_RATE) {
             self.apply(if ctrl { TextOp::WordLeft } else { TextOp::Left });
         }
-        if system.keyp(ScanCode::Right) {
+        if system.key_repeat(ScanCode::Right, REPEAT_DELAY, REPEAT_RATE) {
             self.apply(if ctrl {
                 TextOp::WordRight
             } else {
