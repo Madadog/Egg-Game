@@ -36,6 +36,9 @@ pub struct FantasyConsole {
     music_registry: HashMap<String, MusicTrack>,
     sounds: HashMap<String, SfxOptions>,
     input: EggInput,
+    /// App-local clipboard for the text editor's copy/cut/paste. Shared across all
+    /// windows (one console), but not wired to the OS clipboard yet.
+    clipboard: String,
     /// Set by [`ConsoleApi::exit`]; a host system polls
     /// [`exit_requested`](Self::exit_requested) and sends `AppExit`. (No engine
     /// caller exercises this yet — it replaces the old shutdown `panic!`.)
@@ -51,6 +54,7 @@ impl FantasyConsole {
             music_registry: scan_music_dir(),
             sounds: HashMap::new(),
             input: EggInput::new(),
+            clipboard: String::new(),
             exit_requested: false,
         }
     }
@@ -165,6 +169,13 @@ impl ConsoleApi for FantasyConsole {
 
     fn mouse(&self) -> MouseInput {
         self.input.mouse
+    }
+
+    fn clipboard_get(&mut self) -> Option<String> {
+        (!self.clipboard.is_empty()).then(|| self.clipboard.clone())
+    }
+    fn clipboard_set(&mut self, text: &str) {
+        self.clipboard = text.to_string();
     }
 
     fn music(&mut self, track: Option<&MusicTrack>) {

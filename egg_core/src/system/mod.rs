@@ -43,6 +43,15 @@ pub trait ConsoleApi {
     fn key_chars(&self) -> &[char];
     fn mouse(&self) -> MouseInput;
 
+    /// Read / write the host clipboard (for the text editor's copy/cut/paste).
+    /// Default: no clipboard — `get` is `None`, `set` is a no-op — so a minimal
+    /// console needs nothing. The real console backs it with an app-local string
+    /// (shared across windows); OS-clipboard interop is a future host concern.
+    fn clipboard_get(&mut self) -> Option<String> {
+        None
+    }
+    fn clipboard_set(&mut self, _text: &str) {}
+
     // Audio
     fn music(&mut self, track: Option<&MusicTrack>);
     fn sfx(&mut self, sfx_id: &str, opts: SfxOptions);
@@ -188,6 +197,9 @@ pub mod test_console {
         /// can drive [`ConsoleApi::write_file`]/[`read_file`](ConsoleApi::read_file)
         /// (e.g. the engine's autosave round trip).
         pub files: HashMap<String, Vec<u8>>,
+        /// App-local clipboard, mirroring the real console, so the text editor's
+        /// copy/cut/paste round-trips are testable.
+        pub clipboard: Option<String>,
         /// A blank sprite sheet fixture: enough for collider-deriving helpers
         /// to read any low tile id.
         pub indexed_sprites: IndexedImage,
@@ -200,6 +212,7 @@ pub mod test_console {
             Self {
                 controllers: [Controller::default(); 4],
                 files: HashMap::new(),
+                clipboard: None,
                 // One blank 256px-wide sheet row block: enough for the
                 // modern-map collider derivation to read any low tile id.
                 indexed_sprites: IndexedImage::new(256, 64),
@@ -231,6 +244,12 @@ pub mod test_console {
         }
         fn mouse(&self) -> MouseInput {
             MouseInput::default()
+        }
+        fn clipboard_get(&mut self) -> Option<String> {
+            self.clipboard.clone()
+        }
+        fn clipboard_set(&mut self, text: &str) {
+            self.clipboard = Some(text.to_string());
         }
         fn music(&mut self, _track: Option<&MusicTrack>) {}
         fn sfx(&mut self, _sfx_id: &str, _opts: SfxOptions) {}
