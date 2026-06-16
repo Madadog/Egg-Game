@@ -23,13 +23,14 @@ use std::collections::HashSet;
 // is map-editor-specific, so the outline runs a focused single-panel dock.)
 use super::mapeditor::dock::{DEFAULT_DOCK, MIN_DOCK, MIN_WORLD, Side};
 use super::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
+use crate::data::portraits::Portrait;
 use crate::data::save::SaveData;
 use crate::data::script::Script;
 use crate::data::sound::music::MusicTrack;
 use crate::data::{eggscene, eggtext};
-use crate::dialogue::Dialogue;
+use crate::dialogue::{Dialogue, Message};
 use crate::drawstate::{DrawState, LayerId};
-use crate::system::drawing::image::RgbaImage;
+use crate::system::drawing::image::{Rgba, RgbaImage};
 use crate::system::drawing::{Canvas, EdgePolicy, Transform};
 use crate::system::{
     ConsoleApi, ConsoleHelper, Controller, Font, MouseInput, PrintOptions, ScanCode, SfxOptions,
@@ -204,35 +205,39 @@ impl PanelRect {
     }
 }
 
-/// The live dialogue previewer's runtime state. It parses the editor's *own*
-/// buffer into a throwaway [`Script`] (so unsaved edits preview live), plays the
-/// dialogue the caret is inside, and steps page-by-page with forward / back.
-#[derive(Debug)]
+/// One resolved conversation page: its fitted text and the portrait/flip in
+/// effect — enough to redraw a dialogue box for that turn.
+#[derive(Debug, Clone, Default)]
+struct PageSnap {
+    text: String,
+    portrait: Option<Portrait>,
+    flip: bool,
+}
+
+/// The live dialogue previewer. It parses the editor's *own* buffer into a
+/// throwaway [`Script`] (so unsaved edits preview live), resolves the
+/// `#dialogue` the caret is inside into per-turn [`PageSnap`]s, and draws a
+/// stack of turns ending at the current page (the caret's turn / forward-back).
+#[derive(Debug, Default)]
 struct Preview {
     /// The buffer parsed into a throwaway script — `None` when it doesn't parse,
     /// or the open file isn't eggtext. Rebuilt on edit.
     script: Option<Script>,
     /// The dialogue key currently shown (the caret's `#dialogue` block).
     key: Option<String>,
-    /// The running dialogue box (typewriter / portrait state).
-    dialogue: Dialogue,
-    /// A scratch save for `#if` resolution / `#set` writes, reset each (re)load so
-    /// the preview stays deterministic.
-    save: SaveData,
-    /// The current page (manual-advance) index — what forward / back step.
+    /// The conversation's turns, fitted to the box width; rebuilt on edit / key /
+    /// font change.
+    pages: Vec<PageSnap>,
+    /// The current page (the bottom of the stack) — what forward / back / the
+    /// caret select.
     page: usize,
-}
-
-impl Default for Preview {
-    fn default() -> Self {
-        Self {
-            script: None,
-            key: None,
-            dialogue: Dialogue::default(),
-            save: SaveData::default(),
-            page: 0,
-        }
-    }
+    /// Typewriter progress (chars revealed) of the current page; `delay` paces it.
+    chars: usize,
+    delay: usize,
+    /// Skip the typewriter — show each page's full text at once.
+    skip: bool,
+    /// Render the box with the small (condensed) font.
+    small_font: bool,
 }
 
 /// A console that delegates everything to the real one but silences audio — so
@@ -945,12 +950,18 @@ impl TextEditor {
                 }
                 self.dragging = true; // a body press may become a drag-select
             } else if let Some(rect) = r.preview.filter(|rc| rc.contains(mx, my)) {
-                // Preview controls: the `<` / `>` arrows on the panel's top line.
+                // Preview control line (top): `<` back · skip/page · sm/reg · `>`
+                // forward, laid out in eighths.
                 if my < rect.y + LINE_H + PAD {
-                    if mx <= rect.x + PAD + 10 {
-                        self.preview_prev(system, rect.w);
-                    } else if mx >= rect.x + rect.w - PAD - 10 {
-                        self.preview_next(system);
+                    match (mx - rect.x) / (rect.w / 8).max(1) {
+                        0 => self.preview_prev(),
+                        1 | 2 => {
+                            self.preview.skip = !self.preview.skip;
+                            self.preview.chars = 0;
+                        }
+                        5 | 6 => self.toggle_preview_font(system, rect.w),
+                        7.. => self.preview_next(),
+                        _ => {}
                     }
                 }
             }
@@ -1073,10 +1084,10 @@ impl TextEditor {
             self.goal_x = None;
             boundary = true;
         } else if ctrl && system.keyp(ScanCode::Period) {
-            self.preview_next(system); // Ctrl+. forward-skips the preview a page
+            self.preview_next(); // Ctrl+. forward-skips the preview a turn
             boundary = true;
         } else if ctrl && system.keyp(ScanCode::Comma) {
-            self.preview_prev(system, r.preview.map_or(0, |p| p.w)); // Ctrl+, back
+            self.preview_prev(); // Ctrl+, back a turn
             boundary = true;
         } else {
             // Typed text — replaces any selection; a whitespace insert closes the
@@ -1219,6 +1230,14 @@ impl TextEditor {
             draw_state.colour(C_ESCAPE),
         ];
         let kind = self.kind();
+        // Clone the sprite sheet + palette for the preview's offscreen box surface
+        // (it draws portraits) before the canvas borrow below — only when shown.
+        let preview_assets = r.preview.map(|_| {
+            (
+                draw_state.indexed_sprites.clone(),
+                draw_state.palettes.clone(),
+            )
+        });
 
         draw_state.cls(LayerId::BG, C_BG);
         let canvas = draw_state.rgba(LayerId::BG);
@@ -1373,10 +1392,13 @@ impl TextEditor {
             }
         }
 
-        // Dialogue preview panel: a control line (`<  key pN  >`) and the live
-        // box, rendered into a panel-sized surface and blitted below the controls.
+        // Dialogue preview panel: a control line (`<  N/M  page  reg  >`) over a
+        // stack of conversation turns ending at the current page. Each turn is
+        // drawn into an offscreen box surface that carries the real sprite sheet
+        // (so portraits render) and is blitted into the panel.
         if let Some(rect) = r.preview {
             let cy = rect.y + PAD;
+            let total = self.preview.pages.len();
             system.print_to(canvas, "<", rect.x + PAD, cy, hilite, opts.clone());
             system.print_to(
                 canvas,
@@ -1386,33 +1408,61 @@ impl TextEditor {
                 hilite,
                 opts.clone(),
             );
-            let label = match &self.preview.key {
-                Some(k) => format!("{k}  p{}", self.preview.page + 1),
+            let mode = if self.preview.skip { "skip" } else { "page" };
+            let font = if self.preview.small_font { "sm" } else { "reg" };
+            let mid = match &self.preview.key {
+                Some(_) if total > 0 => {
+                    format!("{}/{total}   {mode}   {font}", self.preview.page + 1)
+                }
+                Some(_) => "no dialogue".to_string(),
                 None => "caret not in a dialogue".to_string(),
             };
-            system.print_to_centered(canvas, &label, rect.x + rect.w / 2, cy, dim, opts.clone());
+            system.print_to_centered(canvas, &mid, rect.x + rect.w / 2, cy, dim, opts.clone());
 
-            if let Some(text) = self.preview.dialogue.current_text.clone() {
-                let bh = (rect.h - LINE_H).max(1);
+            if total > 0
+                && let Some((sheet, palettes)) = preview_assets
+            {
+                let turn_h = if self.preview.small_font { 26 } else { 30 };
+                let visible = ((rect.h - LINE_H) / turn_h).max(1) as usize;
+                let end = self.preview.page;
+                let start = end + 1 - visible.min(end + 1); // window ends at `page`
+                let box_w = (rect.w - 8).clamp(40, 220) as usize;
                 let mut tmp = DrawState::default();
-                tmp.resize(rect.w.max(1) as u32, bh as u32);
-                self.preview.dialogue.draw_dialogue_box(
-                    &mut tmp,
-                    LayerId::BG,
-                    system,
-                    true,
-                    &text,
-                    true,
-                );
-                let src: &RgbaImage = tmp.rgba(LayerId::BG);
-                canvas.blit(
-                    rect.x,
-                    rect.y + LINE_H,
-                    src,
-                    EdgePolicy::Transparent,
-                    Transform::default(),
-                    |px| px.0[3] == 0,
-                );
+                tmp.resize(rect.w.max(1) as u32, turn_h as u32);
+                tmp.indexed_sprites = sheet;
+                tmp.palettes = palettes;
+                for (slot, pi) in (start..=end).enumerate() {
+                    let snap = &self.preview.pages[pi];
+                    tmp.rgba(LayerId::BG).fill(Rgba::TRANSPARENT);
+                    // Only the current (bottom) turn animates; earlier turns and
+                    // skip-mode show full text.
+                    let timer = pi == self.preview.page && !self.preview.skip;
+                    let d = Dialogue {
+                        current_text: Some(snap.text.clone()),
+                        portrait: snap.portrait.clone(),
+                        flip_portrait: snap.flip,
+                        characters: self.preview.chars,
+                        width: box_w,
+                        ..Dialogue::default()
+                    };
+                    d.draw_dialogue_box(
+                        &mut tmp,
+                        LayerId::BG,
+                        system,
+                        self.preview.small_font,
+                        &snap.text,
+                        timer,
+                    );
+                    let y = rect.y + LINE_H + slot as i32 * turn_h;
+                    canvas.blit(
+                        rect.x,
+                        y,
+                        tmp.rgba(LayerId::BG),
+                        EdgePolicy::Transparent,
+                        Transform::default(),
+                        |px| px.0[3] == 0,
+                    );
+                }
             }
         }
 
@@ -1748,10 +1798,37 @@ impl TextEditor {
             .and_then(|e| e.key.clone())
     }
 
+    /// The 0-based turn the caret is on within its `#dialogue` block — the index
+    /// of the blank-line-separated message group it sits in. Maps a caret move
+    /// onto a preview page (clamped to the resolved page count by the caller).
+    fn caret_dialogue_page(&self) -> usize {
+        let caret = self.field.line_col().0;
+        let Some(header) = self
+            .outline
+            .iter()
+            .filter(|e| e.category == OutlineCat::Dialogue && e.line <= caret)
+            .map(|e| e.line)
+            .max()
+        else {
+            return 0;
+        };
+        let lines: Vec<&str> = self.field.text().split('\n').collect();
+        let mut groups = 0usize;
+        let mut prev_blank = true; // the header acts as a leading boundary
+        for i in (header + 1)..=caret {
+            let blank = lines.get(i).is_none_or(|l| l.trim().is_empty());
+            if !blank && prev_blank {
+                groups += 1; // a new message group begins
+            }
+            prev_blank = blank;
+        }
+        groups.saturating_sub(1)
+    }
+
     /// Advance the previewer one frame: (re)parse the buffer on edit, follow the
-    /// caret's dialogue, and tick the typewriter. `panel_w` is the preview dock's
-    /// width (for text wrapping); `changed` is whether the buffer changed this
-    /// frame. A cheap no-op when the preview is hidden.
+    /// caret to its dialogue + turn, and tick the typewriter. `panel_w` is the
+    /// preview dock's width (for text fitting); `changed` is whether the buffer
+    /// changed. A cheap no-op when the preview is hidden.
     fn update_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32, changed: bool) {
         if self.preview_dock.side.is_none() {
             return;
@@ -1768,80 +1845,85 @@ impl TextEditor {
         }
         let key = self.caret_dialogue_key();
         let key_changed = key != self.preview.key;
+        let target = self.caret_dialogue_page();
         if changed || key_changed {
             self.preview.key = key;
-            if key_changed {
-                self.preview.page = 0;
-            }
+            self.preview.page = target;
             self.reload_preview(system, panel_w);
+        } else if target != self.preview.page {
+            // The caret moved to a different turn of the same dialogue.
+            self.preview.page = target.min(self.preview.pages.len().saturating_sub(1));
+            self.preview.chars = 0;
+            self.preview.delay = 0;
         }
         self.preview_tick();
     }
 
-    /// Rebuild the running dialogue from the parsed buffer + caret key against a
-    /// fresh save, then silently replay to the current page (so a live edit keeps
-    /// your place). Leaves it empty when there's no dialogue at the caret.
+    /// Rebuild the conversation's per-turn [`PageSnap`]s from the parsed buffer +
+    /// caret key, fitted to the box width at the current font. Clamps the page and
+    /// resets the typewriter. Silent (loads through a [`Muted`] console).
     fn reload_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
-        self.preview.save = SaveData::default();
+        let width = (panel_w - 8).clamp(40, 220) as usize;
         let messages = match (&self.preview.script, &self.preview.key) {
-            (Some(script), Some(key)) => script.get_dialogue(key, &self.preview.save),
+            (Some(script), Some(key)) => script.get_dialogue(key, &SaveData::default()),
             _ => Vec::new(),
         };
-        let target = self.preview.page;
-        let width = (panel_w - 8).clamp(40, 220) as usize;
-        self.preview.dialogue = Dialogue::default().with_width(width);
+        let small = self.preview.small_font;
         let mut m = Muted(system);
-        self.preview
-            .dialogue
-            .set_messages(&mut m, &mut self.preview.save, &messages);
-        let mut p = 0;
-        while p < target
-            && advance_dialogue(&mut self.preview.dialogue, &mut m, &mut self.preview.save)
-        {
-            p += 1;
-        }
-        self.preview.page = p;
+        self.preview.pages = extract_pages(&messages, width, small, &mut m);
+        self.preview.page = self
+            .preview
+            .page
+            .min(self.preview.pages.len().saturating_sub(1));
+        self.preview.chars = 0;
+        self.preview.delay = 0;
     }
 
-    /// Forward-skip the preview: reveal the current page if still typing, else
-    /// step to the next page.
-    fn preview_next(&mut self, system: &mut impl ConsoleApi) {
-        if !self.preview.dialogue.is_line_done() {
-            self.preview.dialogue.finish_line();
-            return;
-        }
-        let mut m = Muted(system);
-        if advance_dialogue(&mut self.preview.dialogue, &mut m, &mut self.preview.save) {
+    /// Forward-skip the preview one turn (reveals the next stacked turn).
+    fn preview_next(&mut self) {
+        if self.preview.page + 1 < self.preview.pages.len() {
             self.preview.page += 1;
+            self.preview.chars = 0;
+            self.preview.delay = 0;
         }
     }
 
-    /// Back-skip the preview to the previous page (replayed from the start).
-    fn preview_prev(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+    /// Back-skip the preview one turn.
+    fn preview_prev(&mut self) {
         self.preview.page = self.preview.page.saturating_sub(1);
+        self.preview.chars = 0;
+        self.preview.delay = 0;
+    }
+
+    /// Toggle the preview box between the small and regular font (re-fits the
+    /// pages, which the wrap width depends on).
+    fn toggle_preview_font(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+        self.preview.small_font = !self.preview.small_font;
         self.reload_preview(system, panel_w);
     }
 
-    /// Tick the preview typewriter (silent, no auto-advance), so each page types
-    /// out then holds until forward-skipped.
+    /// Tick the current page's typewriter (silent), pacing ~1 char / 2 frames with
+    /// a beat on full stops; a no-op in skip mode or once the page is fully shown.
     fn preview_tick(&mut self) {
-        let d = &mut self.preview.dialogue;
-        if d.current_text.is_none() || d.is_line_done() {
+        if self.preview.skip {
             return;
         }
-        if d.delay != 0 {
-            d.delay = d.delay.saturating_sub(1);
+        let Some(page) = self.preview.pages.get(self.preview.page) else {
+            return;
+        };
+        let full = page.text.chars().count();
+        if self.preview.chars >= full {
             return;
         }
-        if d.current_text
-            .as_deref()
-            .and_then(|t| t.chars().nth(d.characters))
-            == Some('.')
-        {
-            d.delay += 4; // a beat on full stops, like the real tick
+        if self.preview.delay > 0 {
+            self.preview.delay -= 1;
+            return;
         }
-        d.step_text(1);
-        d.delay += 1;
+        if page.text.chars().nth(self.preview.chars) == Some('.') {
+            self.preview.delay += 4;
+        }
+        self.preview.chars += 1;
+        self.preview.delay += 1;
     }
 
     // ---- Visual-row layout (word-wrap + folding) ----------------------------
@@ -2323,6 +2405,38 @@ fn advance_dialogue(d: &mut Dialogue, console: &mut impl ConsoleApi, save: &mut 
             return true;
         }
     }
+}
+
+/// Resolve a conversation into its per-turn snapshots (text fitted to `width` at
+/// `small_text`, plus the portrait/flip in effect on each turn), by silently
+/// playing it through to the end. `console` should be a [`Muted`] wrapper.
+fn extract_pages(
+    messages: &[Message],
+    width: usize,
+    small_text: bool,
+    console: &mut impl ConsoleApi,
+) -> Vec<PageSnap> {
+    let mut save = SaveData {
+        small_text_on: small_text,
+        ..SaveData::default()
+    };
+    let mut d = Dialogue::default().with_width(width);
+    d.set_messages(console, &mut save, messages);
+    let mut pages = Vec::new();
+    while let Some(text) = d.current_text.clone() {
+        pages.push(PageSnap {
+            text,
+            portrait: d.portrait.clone(),
+            flip: d.flip_portrait,
+        });
+        // Mark the page done so the next text loads rather than appending to it
+        // (`add_text` only starts a fresh page once the current one is finished).
+        d.finish_line();
+        if !advance_dialogue(&mut d, console, &mut save) {
+            break;
+        }
+    }
+    pages
 }
 
 /// Scan a quoted string starting at the opening quote `start`, returning the byte
@@ -3137,8 +3251,8 @@ title = Hello
         assert_eq!(ed.caret_dialogue_key().as_deref(), Some("bye"));
     }
 
-    /// The previewer parses the buffer, loads the caret's dialogue, and steps
-    /// pages forward / back.
+    /// The previewer parses the buffer, resolves the caret's dialogue into turns,
+    /// and steps forward / back (clamped).
     #[test]
     fn preview_loads_and_steps_pages() {
         use crate::system::test_console::TestConsole;
@@ -3146,22 +3260,46 @@ title = Hello
         let src = "#dialogue talk\n  First page.\n\n  Second page.\n\n  Third page.";
         let mut ed = editor_with("script/en.eggtext", src);
         ed.rebuild_outline();
-        ed.field.move_to_line_col(1, 0); // inside the dialogue
+        ed.field.move_to_line_col(1, 0); // inside the dialogue, first turn
 
-        ed.update_preview(&mut console, 200, true); // parse + load
+        ed.update_preview(&mut console, 200, true); // parse + resolve pages
         assert_eq!(ed.preview.key.as_deref(), Some("talk"));
-        assert!(
-            ed.preview.dialogue.current_text.is_some(),
-            "first page loaded"
-        );
+        assert_eq!(ed.preview.pages.len(), 3, "three turns resolved");
         assert_eq!(ed.preview.page, 0);
 
-        ed.preview.dialogue.finish_line(); // so forward advances, not just reveals
-        ed.preview_next(&mut console);
-        assert_eq!(ed.preview.page, 1, "forward steps to the next page");
+        ed.preview_next();
+        ed.preview_next();
+        assert_eq!(ed.preview.page, 2, "forward steps through the turns");
+        ed.preview_next();
+        assert_eq!(ed.preview.page, 2, "clamped at the last turn");
+        ed.preview_prev();
+        assert_eq!(ed.preview.page, 1, "back steps a turn");
+    }
 
-        ed.preview_prev(&mut console, 200);
-        assert_eq!(ed.preview.page, 0, "back returns to the previous page");
+    /// The caret's turn within a `#dialogue` block maps to a preview page (by
+    /// blank-line-separated message group); the preview follows it.
+
+    #[test]
+    fn caret_dialogue_page_maps_turns() {
+        use crate::system::test_console::TestConsole;
+        let mut console = TestConsole::new();
+        let src = "#dialogue talk\n  One.\n\n  Two.\n\n  Three.";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        ed.field.move_to_line_col(1, 0); // "One." → turn 0
+        assert_eq!(ed.caret_dialogue_page(), 0);
+        ed.field.move_to_line_col(3, 0); // "Two." → turn 1
+        assert_eq!(ed.caret_dialogue_page(), 1);
+        ed.field.move_to_line_col(5, 0); // "Three." → turn 2
+        assert_eq!(ed.caret_dialogue_page(), 2);
+
+        // Moving the caret (no edit) makes the preview follow to that turn.
+        ed.field.move_to_line_col(1, 0);
+        ed.update_preview(&mut console, 200, true);
+        assert_eq!(ed.preview.page, 0);
+        ed.field.move_to_line_col(5, 0);
+        ed.update_preview(&mut console, 200, false);
+        assert_eq!(ed.preview.page, 2, "preview followed the caret to turn 3");
     }
 
     /// Ctrl+Shift+M maximizes an aux to the centre, swapping the body into the
