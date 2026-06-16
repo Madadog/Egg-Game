@@ -467,7 +467,10 @@ impl Dialogue {
         &self,
         draw_state: &mut DrawState,
         layer: LayerId,
-        system: &mut impl ConsoleApi,
+        // Drawing only measures/prints text (`&self` console methods), so a shared
+        // reference suffices — which lets the text-editor previewer call this from
+        // its own `&self` draw. Callers passing `&mut` reborrow automatically.
+        system: &impl ConsoleApi,
         small_text: bool,
         string: &str,
         timer: bool,
@@ -570,7 +573,7 @@ impl Dialogue {
         &self,
         draw_state: &mut DrawState,
         layer: LayerId,
-        system: &mut impl ConsoleApi,
+        system: &impl ConsoleApi,
         small_text: bool,
         string: &str,
         timer: bool,

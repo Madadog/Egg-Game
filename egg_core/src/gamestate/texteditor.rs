@@ -23,10 +23,18 @@ use std::collections::HashSet;
 // is map-editor-specific, so the outline runs a focused single-panel dock.)
 use super::mapeditor::dock::{DEFAULT_DOCK, MIN_DOCK, MIN_WORLD, Side};
 use super::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
+use crate::data::save::SaveData;
+use crate::data::script::Script;
+use crate::data::sound::music::MusicTrack;
 use crate::data::{eggscene, eggtext};
+use crate::dialogue::Dialogue;
 use crate::drawstate::{DrawState, LayerId};
-use crate::system::drawing::Canvas;
-use crate::system::{ConsoleApi, ConsoleHelper, PrintOptions, ScanCode, just_pressed, pressed};
+use crate::system::drawing::image::RgbaImage;
+use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+use crate::system::{
+    ConsoleApi, ConsoleHelper, Controller, Font, MouseInput, PrintOptions, ScanCode, SfxOptions,
+    just_pressed, pressed,
+};
 
 /// The English dialogue/text source and the cutscene source — the editor's two
 /// known files (matching the startup asset loads). No host directory enumeration
@@ -160,6 +168,107 @@ enum OutlineRow {
     Item(usize),
 }
 
+/// An editor dock panel, besides the always-present text body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextPanel {
+    Outline,
+    Preview,
+}
+
+/// A dock panel's placement: which screen edge it tiles off (`None` = hidden) and
+/// its size in px (width for Left/Right, height for Top/Bottom), drag-resizable.
+#[derive(Debug, Clone, Copy)]
+struct Dock {
+    side: Option<Side>,
+    size: i32,
+}
+
+/// An absolute panel rectangle in framebuffer px.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PanelRect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+impl PanelRect {
+    fn contains(&self, mx: i32, my: i32) -> bool {
+        mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.h
+    }
+}
+
+/// The live dialogue previewer's runtime state. It parses the editor's *own*
+/// buffer into a throwaway [`Script`] (so unsaved edits preview live), plays the
+/// dialogue the caret is inside, and steps page-by-page with forward / back.
+#[derive(Debug)]
+struct Preview {
+    /// The buffer parsed into a throwaway script — `None` when it doesn't parse,
+    /// or the open file isn't eggtext. Rebuilt on edit.
+    script: Option<Script>,
+    /// The dialogue key currently shown (the caret's `#dialogue` block).
+    key: Option<String>,
+    /// The running dialogue box (typewriter / portrait state).
+    dialogue: Dialogue,
+    /// A scratch save for `#if` resolution / `#set` writes, reset each (re)load so
+    /// the preview stays deterministic.
+    save: SaveData,
+    /// The current page (manual-advance) index — what forward / back step.
+    page: usize,
+}
+
+impl Default for Preview {
+    fn default() -> Self {
+        Self {
+            script: None,
+            key: None,
+            dialogue: Dialogue::default(),
+            save: SaveData::default(),
+            page: 0,
+        }
+    }
+}
+
+/// A console that delegates everything to the real one but silences audio — so
+/// loading / replaying a preview dialogue (which fits text, and would otherwise
+/// play its sounds) stays quiet.
+struct Muted<'a, C: ConsoleApi>(&'a mut C);
+
+impl<C: ConsoleApi> ConsoleApi for Muted<'_, C> {
+    fn controllers(&self) -> &[Controller; 4] {
+        self.0.controllers()
+    }
+    fn exit(&mut self) {
+        self.0.exit();
+    }
+    fn key(&self, s: ScanCode) -> bool {
+        self.0.key(s)
+    }
+    fn keyp(&self, s: ScanCode) -> bool {
+        self.0.keyp(s)
+    }
+    fn key_chars(&self) -> &[char] {
+        self.0.key_chars()
+    }
+    fn mouse(&self) -> MouseInput {
+        self.0.mouse()
+    }
+    fn music(&mut self, _track: Option<&MusicTrack>) {}
+    fn sfx(&mut self, _id: &str, _opts: SfxOptions) {}
+    fn write_file(&mut self, path: &str, bytes: &[u8]) {
+        self.0.write_file(path, bytes);
+    }
+    fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
+        self.0.read_file(path)
+    }
+    fn output_image(&mut self) -> &mut RgbaImage {
+        self.0.output_image()
+    }
+    fn font(&self) -> &Font {
+        self.0.font()
+    }
+}
+
 /// Where to place the caret when the host opens a file — the Dialogue panel's
 /// "edit in text editor" link jumps to a dialogue key's block.
 #[derive(Debug, Clone)]
@@ -276,14 +385,15 @@ pub struct TextEditor {
     /// vertical moves, so Up/Down keep a column through short/wrapped rows.
     /// Cleared by any horizontal move or edit.
     goal_x: Option<i32>,
-    /// Where the outline panel is docked: `Some(Left)`/`Some(Right)`, or `None`
-    /// when hidden (its width reclaimed by the body). Cycled with Ctrl+Shift+O.
-    outline_side: Option<Side>,
-    /// The outline dock's width in px, drag-resizable via its inner-edge splitter
-    /// (clamped in `regions`). Shared across left/right, like a map editor dock.
-    outline_w: i32,
-    /// True while dragging the outline's splitter to resize it.
-    outline_resizing: bool,
+    /// The outline and dialogue-preview docks. Each tiles to a screen edge or is
+    /// hidden; both drag-resize and cycle sides (Ctrl+Shift+O / Ctrl+Shift+P), the
+    /// body taking whatever they leave. Reuses the map editor's `Side`.
+    outline_dock: Dock,
+    preview_dock: Dock,
+    /// The panel whose resize splitter is currently being dragged, if any.
+    resizing: Option<TextPanel>,
+    /// The dialogue previewer's runtime (parsed buffer + the playing dialogue).
+    preview: Preview,
 }
 
 impl Default for TextEditor {
@@ -307,9 +417,16 @@ impl Default for TextEditor {
             wrap: true, // word-wrap on by default
             folded: HashSet::new(),
             goal_x: None,
-            outline_side: Some(Side::Left),
-            outline_w: DEFAULT_DOCK as i32,
-            outline_resizing: false,
+            outline_dock: Dock {
+                side: Some(Side::Left),
+                size: DEFAULT_DOCK as i32,
+            },
+            preview_dock: Dock {
+                side: Some(Side::Bottom),
+                size: 44,
+            },
+            resizing: None,
+            preview: Preview::default(),
         }
     }
 }
@@ -781,25 +898,27 @@ impl TextEditor {
         let mouse = system.mouse();
         let p = mouse.pos();
         let (mx, my) = (i32::from(p.x), i32::from(p.y));
-        if just_pressed(mouse.left) && r.on_splitter(mx) {
-            self.outline_resizing = true; // grab the outline's resize splitter
+        if just_pressed(mouse.left)
+            && let Some(panel) = r.splitter_at(mx, my)
+        {
+            self.resizing = Some(panel); // grab a dock's resize band
             boundary = true;
-        } else if just_pressed(mouse.left) && my >= PAD && my < r.status_y {
+        } else if just_pressed(mouse.left) {
             boundary = true;
-            let row_in_view = ((my - PAD) / LINE_H).max(0) as usize;
-            if r.in_outline(mx) {
-                if let Some(line) = self.outline_jump_target(self.outline_scroll + row_in_view) {
+            if let Some(rect) = r.outline.filter(|rc| rc.contains(mx, my)) {
+                let row = ((my - rect.y - PAD).max(0) / LINE_H) as usize;
+                if let Some(line) = self.outline_jump_target(self.outline_scroll + row) {
                     self.jump_to_line(line);
                 }
-            } else if r.in_gutter(mx) {
+            } else if r.in_gutter(mx, my) {
                 // Gutter click toggles a foldable header's fold.
-                if let Some(row) = layout.get(self.scroll + row_in_view)
-                    && row.fold.is_some()
+                if let Some(vr) = layout.get(self.scroll + r.row_at_y(my))
+                    && vr.fold.is_some()
                 {
-                    self.toggle_fold_at(row.line);
+                    self.toggle_fold_at(vr.line);
                 }
-            } else if r.in_body(mx)
-                && let Some(&row) = layout.get(self.scroll + row_in_view)
+            } else if r.in_body(mx, my)
+                && let Some(&row) = layout.get(self.scroll + r.row_at_y(my))
             {
                 let within = self.byte_at_x_in_row(&row, mx - r.text_x, system);
                 let global = self.line_start_byte(row.line) + within;
@@ -810,22 +929,37 @@ impl TextEditor {
                     self.field.anchor_here();
                 }
                 self.dragging = true; // a body press may become a drag-select
+            } else if let Some(rect) = r.preview.filter(|rc| rc.contains(mx, my)) {
+                // Preview controls: the `<` / `>` arrows on the panel's top line.
+                if my < rect.y + LINE_H + PAD {
+                    if mx <= rect.x + PAD + 10 {
+                        self.preview_prev(system, rect.w);
+                    } else if mx >= rect.x + rect.w - PAD - 10 {
+                        self.preview_next(system);
+                    }
+                }
             }
         }
 
-        if self.outline_resizing && pressed(mouse.left) {
-            // Drag the splitter: the outline's inner edge follows the cursor
-            // (clamped in `regions`); right-docked, width grows leftward.
-            self.outline_w = if matches!(self.outline_side, Some(Side::Right)) {
-                fb_w - mx
-            } else {
-                mx
+        if let Some(panel) = self.resizing.filter(|_| pressed(mouse.left)) {
+            // Drag a dock's splitter: its size follows the cursor relative to the
+            // panel's outer edge (clamped in `regions`).
+            let rect = match panel {
+                TextPanel::Outline => r.outline,
+                TextPanel::Preview => r.preview,
             };
+            if let (Some(rect), Some(side)) = (rect, self.dock(panel).side) {
+                self.dock_mut(panel).size = match side {
+                    Side::Left => mx - rect.x,
+                    Side::Right => rect.x + rect.w - mx,
+                    Side::Top => my - rect.y,
+                    Side::Bottom => rect.y + rect.h - my,
+                };
+            }
         } else if self.dragging && pressed(mouse.left) {
             // Drag in progress: extend the selection to the mouse, clamped to the
             // visible rows when it strays past an edge.
-            let row_in_view = ((my - PAD).max(0) / LINE_H) as usize;
-            let idx = (self.scroll + row_in_view).min(layout.len().saturating_sub(1));
+            let idx = (self.scroll + r.row_at_y(my)).min(layout.len().saturating_sub(1));
             if let Some(&row) = layout.get(idx) {
                 let within = self.byte_at_x_in_row(&row, (mx - r.text_x).max(0), system);
                 let global = self.line_start_byte(row.line) + within;
@@ -834,11 +968,11 @@ impl TextEditor {
         }
         if !pressed(mouse.left) {
             self.dragging = false;
-            self.outline_resizing = false;
+            self.resizing = None;
         }
         let wheel = i32::from(mouse.scroll_y[0]);
         if wheel != 0 {
-            if r.in_outline(mx) {
+            if r.outline.is_some_and(|rc| rc.contains(mx, my)) {
                 let max = self.outline_rows().len().saturating_sub(1) as i32;
                 self.outline_scroll =
                     (self.outline_scroll as i32 - wheel * 2).clamp(0, max) as usize;
@@ -863,7 +997,10 @@ impl TextEditor {
             self.save_and_reload(system);
             self.mid_edit = false; // a save closes the current undo group
         } else if ctrl && shift && system.keyp(ScanCode::O) {
-            self.cycle_outline_dock(); // Ctrl+Shift+O cycles the outline dock
+            self.cycle_dock(TextPanel::Outline); // Ctrl+Shift+O cycles the outline
+            boundary = true;
+        } else if ctrl && shift && system.keyp(ScanCode::P) {
+            self.cycle_dock(TextPanel::Preview); // Ctrl+Shift+P cycles the preview
             boundary = true;
         } else if ctrl && system.keyp(ScanCode::O) {
             self.switch_file(system);
@@ -915,6 +1052,12 @@ impl TextEditor {
                 self.h_scroll = 0;
             }
             self.goal_x = None;
+            boundary = true;
+        } else if ctrl && system.keyp(ScanCode::Period) {
+            self.preview_next(system); // Ctrl+. forward-skips the preview a page
+            boundary = true;
+        } else if ctrl && system.keyp(ScanCode::Comma) {
+            self.preview_prev(system, r.preview.map_or(0, |p| p.w)); // Ctrl+, back
             boundary = true;
         } else {
             // Typed text — replaces any selection; a whitespace insert closes the
@@ -1024,8 +1167,10 @@ impl TextEditor {
         let layout = self.layout(system, &r);
         self.ensure_caret_visible_rows(&layout, r.visible_rows);
         if !self.wrap {
-            self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+            self.ensure_caret_visible_h(system, r.body_w);
         }
+        // Drive the dialogue previewer (parse/follow-caret/tick) for this frame.
+        self.update_preview(system, r.preview.map_or(0, |p| p.w), changed);
     }
 
     /// Paint the editor into the view's BG layer (which `composite_into` blits to
@@ -1059,42 +1204,48 @@ impl TextEditor {
         draw_state.cls(LayerId::BG, C_BG);
         let canvas = draw_state.rgba(LayerId::BG);
 
-        // Column dividers: the outline's resize splitter (lit while dragging), the
-        // gutter↔body edge, and the status bar.
-        if let Some(sx) = r.splitter_x {
-            let band = if self.outline_resizing { hilite } else { dim };
-            canvas.fill_rect(sx, 0, 1, r.status_y, band);
+        // Dividers: each open dock's resize band (lit while that panel resizes),
+        // the gutter↔body edge, and the status bar.
+        for &(panel, band) in &r.splitters {
+            let lit = self.resizing == Some(panel);
+            canvas.fill_rect(
+                band.x,
+                band.y,
+                band.w,
+                band.h,
+                if lit { hilite } else { dim },
+            );
         }
-        canvas.fill_rect(r.text_x - 1, 0, 1, r.status_y, dim);
+        canvas.fill_rect(r.text_x - 1, r.body_top, 1, r.body_bottom - r.body_top, dim);
         canvas.fill_rect(0, r.status_y - 1, fb_w, 1, dim);
 
         let cur_line = self.field.line_col().0;
         let active = self.outline.iter().rposition(|e| e.line <= cur_line);
         let layout = self.layout(system, &r);
 
-        // Outline panel (when shown), at its dock side: category headers, then
-        // each item as `name … line-number` (number right-aligned).
-        if r.outline_w > 0 {
+        // Outline panel (when shown), at its dock rect: category headers, then each
+        // item as `name … line-number` (number right-aligned).
+        if let Some(rect) = r.outline {
+            let max_rows = ((rect.h - PAD) / LINE_H).max(0) as usize;
             for (vi, row) in self
                 .outline_rows()
                 .iter()
                 .enumerate()
                 .skip(self.outline_scroll)
-                .take(r.visible_rows)
+                .take(max_rows)
             {
-                let y = PAD + (vi - self.outline_scroll) as i32 * LINE_H;
+                let y = rect.y + PAD + (vi - self.outline_scroll) as i32 * LINE_H;
                 match *row {
                     OutlineRow::Header(title) => {
-                        system.print_to(canvas, title, r.outline_x + PAD, y, cat_col, opts.clone());
+                        system.print_to(canvas, title, rect.x + PAD, y, cat_col, opts.clone());
                     }
                     OutlineRow::Item(i) => {
                         let entry = &self.outline[i];
                         let name = entry.key.as_deref().unwrap_or(&entry.label);
                         let colour = if Some(i) == active { hilite } else { text_col };
                         let num = format!("{}", entry.line + 1);
-                        let num_x =
-                            r.outline_x + r.outline_w - PAD - system.text_width(&num, opts.clone());
-                        let name_x = r.outline_x + PAD + 4; // indent items under the header
+                        let num_x = rect.x + rect.w - PAD - system.text_width(&num, opts.clone());
+                        let name_x = rect.x + PAD + 4; // indent items under the header
                         let name =
                             truncate_to_width(name, (num_x - PAD - name_x).max(0), system, &opts);
                         system.print_to(canvas, &name, name_x, y, colour, opts.clone());
@@ -1115,7 +1266,7 @@ impl TextEditor {
             .skip(self.scroll)
             .take(r.visible_rows)
         {
-            let y = PAD + (vi - self.scroll) as i32 * LINE_H;
+            let y = r.row_y(vi - self.scroll);
             let ls = self.line_start_byte(row.line);
             let line = &body[ls..ls + self.line_byte_len(row.line)];
 
@@ -1198,8 +1349,51 @@ impl TextEditor {
                 let cx = x_off
                     + r.text_x
                     + system.text_width(&line[draw_start..cb.min(row.end)], opts.clone());
-                let cy = PAD + (cr - self.scroll) as i32 * LINE_H;
+                let cy = r.row_y(cr - self.scroll);
                 canvas.fill_rect(cx, cy, 1, LINE_H, hilite);
+            }
+        }
+
+        // Dialogue preview panel: a control line (`<  key pN  >`) and the live
+        // box, rendered into a panel-sized surface and blitted below the controls.
+        if let Some(rect) = r.preview {
+            let cy = rect.y + PAD;
+            system.print_to(canvas, "<", rect.x + PAD, cy, hilite, opts.clone());
+            system.print_to(
+                canvas,
+                ">",
+                rect.x + rect.w - PAD - 4,
+                cy,
+                hilite,
+                opts.clone(),
+            );
+            let label = match &self.preview.key {
+                Some(k) => format!("{k}  p{}", self.preview.page + 1),
+                None => "caret not in a dialogue".to_string(),
+            };
+            system.print_to_centered(canvas, &label, rect.x + rect.w / 2, cy, dim, opts.clone());
+
+            if let Some(text) = self.preview.dialogue.current_text.clone() {
+                let bh = (rect.h - LINE_H).max(1);
+                let mut tmp = DrawState::default();
+                tmp.resize(rect.w.max(1) as u32, bh as u32);
+                self.preview.dialogue.draw_dialogue_box(
+                    &mut tmp,
+                    LayerId::BG,
+                    system,
+                    true,
+                    &text,
+                    true,
+                );
+                let src: &RgbaImage = tmp.rgba(LayerId::BG);
+                canvas.blit(
+                    rect.x,
+                    rect.y + LINE_H,
+                    src,
+                    EdgePolicy::Transparent,
+                    Transform::default(),
+                    |px| px.0[3] == 0,
+                );
             }
         }
 
@@ -1342,36 +1536,139 @@ impl TextEditor {
         FOLD_W + system.text_width(&digits, print_opts()) + PAD * 2
     }
 
-    /// Resolve this frame's screen split from the framebuffer size, the outline's
-    /// dock side/width, and the line-number gutter width.
+    /// A panel's dock placement (copy).
+    fn dock(&self, panel: TextPanel) -> Dock {
+        match panel {
+            TextPanel::Outline => self.outline_dock,
+            TextPanel::Preview => self.preview_dock,
+        }
+    }
+
+    /// Mutable access to a panel's dock placement.
+    fn dock_mut(&mut self, panel: TextPanel) -> &mut Dock {
+        match panel {
+            TextPanel::Outline => &mut self.outline_dock,
+            TextPanel::Preview => &mut self.preview_dock,
+        }
+    }
+
+    /// The open docks as `(panel, side, size)`.
+    fn open_docks(&self) -> Vec<(TextPanel, Side, i32)> {
+        [TextPanel::Outline, TextPanel::Preview]
+            .into_iter()
+            .filter_map(|p| self.dock(p).side.map(|s| (p, s, self.dock(p).size)))
+            .collect()
+    }
+
+    /// Resolve this frame's screen split: tile the open docks off the edges
+    /// (Left/Right claim full height first, then Top/Bottom fill between), leaving
+    /// the body the centre. The gutter sizes to the file's line numbers.
     fn regions(&self, system: &impl ConsoleApi, fb_w: i32, fb_h: i32) -> Regions {
         let status_y = fb_h - LINE_H;
-        let visible_rows = ((status_y - PAD) / LINE_H).max(0) as usize;
         let gutter_w = self.gutter_width(system);
-        // Width the outline may take, leaving the body at least `MIN_WORLD` px.
-        let max_w = (fb_w - gutter_w - i32::from(MIN_WORLD)).max(i32::from(MIN_DOCK));
-        let ow = if self.outline_side.is_some() {
-            self.outline_w.clamp(i32::from(MIN_DOCK), max_w)
-        } else {
-            0
-        };
-        let (outline_x, gutter_x, body_right, splitter_x) = match self.outline_side {
-            Some(Side::Right) => (fb_w - ow, 0, fb_w - ow, Some(fb_w - ow)),
-            Some(_) => (0, ow, fb_w, Some(ow)), // Left (Top/Bottom unused → left)
-            None => (0, 0, fb_w, None),
-        };
+        let docks = self.open_docks();
+
+        // Tile panels off the dock area (everything above the status bar).
+        let (mut wx, mut wy, mut ww, mut wh) = (0, 0, fb_w, status_y);
+        let mut outline = None;
+        let mut preview = None;
+        let mut splitters = Vec::new();
+        for side in [Side::Left, Side::Right, Side::Top, Side::Bottom] {
+            let Some(&(panel, _, size)) = docks.iter().find(|(_, s, _)| *s == side) else {
+                continue;
+            };
+            let horizontal = matches!(side, Side::Left | Side::Right);
+            // Keep the body a minimum along the claimed axis (width also reserves
+            // the gutter).
+            let avail = if horizontal { ww - gutter_w } else { wh };
+            let lo = i32::from(MIN_DOCK);
+            let thick = size.clamp(lo, (avail - i32::from(MIN_WORLD)).max(lo));
+            let (rect, band) = match side {
+                Side::Left => (
+                    PanelRect {
+                        x: wx,
+                        y: wy,
+                        w: thick,
+                        h: wh,
+                    },
+                    PanelRect {
+                        x: wx + thick - 1,
+                        y: wy,
+                        w: 3,
+                        h: wh,
+                    },
+                ),
+                Side::Right => (
+                    PanelRect {
+                        x: wx + ww - thick,
+                        y: wy,
+                        w: thick,
+                        h: wh,
+                    },
+                    PanelRect {
+                        x: wx + ww - thick - 1,
+                        y: wy,
+                        w: 3,
+                        h: wh,
+                    },
+                ),
+                Side::Top => (
+                    PanelRect {
+                        x: wx,
+                        y: wy,
+                        w: ww,
+                        h: thick,
+                    },
+                    PanelRect {
+                        x: wx,
+                        y: wy + thick - 1,
+                        w: ww,
+                        h: 3,
+                    },
+                ),
+                Side::Bottom => (
+                    PanelRect {
+                        x: wx,
+                        y: wy + wh - thick,
+                        w: ww,
+                        h: thick,
+                    },
+                    PanelRect {
+                        x: wx,
+                        y: wy + wh - thick - 1,
+                        w: ww,
+                        h: 3,
+                    },
+                ),
+            };
+            match side {
+                Side::Left => (wx, ww) = (wx + thick, ww - thick),
+                Side::Right => ww -= thick,
+                Side::Top => (wy, wh) = (wy + thick, wh - thick),
+                Side::Bottom => wh -= thick,
+            }
+            match panel {
+                TextPanel::Outline => outline = Some(rect),
+                TextPanel::Preview => preview = Some(rect),
+            }
+            splitters.push((panel, band));
+        }
+
+        let gutter_x = wx;
         let text_x = gutter_x + gutter_w;
-        let body_w = (body_right - text_x - PAD).max(1);
+        let body_right = wx + ww;
         Regions {
-            outline_x,
-            outline_w: ow,
             gutter_x,
             text_x,
+            body_top: wy,
+            body_bottom: wy + wh,
             body_right,
-            splitter_x,
+            body_w: (body_right - text_x - PAD).max(1),
+            visible_rows: ((wh - PAD) / LINE_H).max(0) as usize,
             status_y,
-            visible_rows,
-            body_w,
+            outline,
+            preview,
+            splitters,
         }
     }
 
@@ -1403,13 +1700,142 @@ impl TextEditor {
         }
     }
 
-    /// Cycle the outline dock: Left → Right → Hidden → Left (Ctrl+Shift+O).
-    fn cycle_outline_dock(&mut self) {
-        self.outline_side = match self.outline_side {
-            Some(Side::Left) => Some(Side::Right),
-            Some(Side::Right) => None,
-            _ => Some(Side::Left),
+    /// Cycle a panel's dock side, skipping a side the *other* open panel already
+    /// occupies (so the two never collide; `None`/hidden never collides). The
+    /// outline cycles Left → Right → Hidden; the preview Bottom → Left → Right →
+    /// Hidden.
+    fn cycle_dock(&mut self, panel: TextPanel) {
+        let order: &[Option<Side>] = match panel {
+            TextPanel::Outline => &[Some(Side::Left), Some(Side::Right), None],
+            TextPanel::Preview => &[
+                Some(Side::Bottom),
+                Some(Side::Left),
+                Some(Side::Right),
+                None,
+            ],
         };
+        let other = match panel {
+            TextPanel::Outline => self.preview_dock.side,
+            TextPanel::Preview => self.outline_dock.side,
+        };
+        let cur = self.dock(panel).side;
+        let start = order.iter().position(|&s| s == cur).unwrap_or(0);
+        for step in 1..=order.len() {
+            let cand = order[(start + step) % order.len()];
+            if cand.is_none() || cand != other {
+                self.dock_mut(panel).side = cand;
+                return;
+            }
+        }
+    }
+
+    // ---- Dialogue preview ---------------------------------------------------
+
+    /// The dialogue key the caret is inside: the nearest `#dialogue` outline entry
+    /// at or above the caret line.
+    fn caret_dialogue_key(&self) -> Option<String> {
+        let line = self.field.line_col().0;
+        self.outline
+            .iter()
+            .filter(|e| e.category == OutlineCat::Dialogue && e.line <= line)
+            .max_by_key(|e| e.line)
+            .and_then(|e| e.key.clone())
+    }
+
+    /// Advance the previewer one frame: (re)parse the buffer on edit, follow the
+    /// caret's dialogue, and tick the typewriter. `panel_w` is the preview dock's
+    /// width (for text wrapping); `changed` is whether the buffer changed this
+    /// frame. A cheap no-op when the preview is hidden.
+    fn update_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32, changed: bool) {
+        if self.preview_dock.side.is_none() {
+            return;
+        }
+        if changed || self.preview.script.is_none() {
+            self.preview.script = (self.kind() == ScriptKind::EggText)
+                .then(|| eggtext::parse(self.field.text()).ok())
+                .flatten()
+                .map(|file| {
+                    let mut s = Script::new();
+                    s.set_base(file);
+                    s
+                });
+        }
+        let key = self.caret_dialogue_key();
+        let key_changed = key != self.preview.key;
+        if changed || key_changed {
+            self.preview.key = key;
+            if key_changed {
+                self.preview.page = 0;
+            }
+            self.reload_preview(system, panel_w);
+        }
+        self.preview_tick();
+    }
+
+    /// Rebuild the running dialogue from the parsed buffer + caret key against a
+    /// fresh save, then silently replay to the current page (so a live edit keeps
+    /// your place). Leaves it empty when there's no dialogue at the caret.
+    fn reload_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+        self.preview.save = SaveData::default();
+        let messages = match (&self.preview.script, &self.preview.key) {
+            (Some(script), Some(key)) => script.get_dialogue(key, &self.preview.save),
+            _ => Vec::new(),
+        };
+        let target = self.preview.page;
+        let width = (panel_w - 8).clamp(40, 220) as usize;
+        self.preview.dialogue = Dialogue::default().with_width(width);
+        let mut m = Muted(system);
+        self.preview
+            .dialogue
+            .set_messages(&mut m, &mut self.preview.save, &messages);
+        let mut p = 0;
+        while p < target
+            && advance_dialogue(&mut self.preview.dialogue, &mut m, &mut self.preview.save)
+        {
+            p += 1;
+        }
+        self.preview.page = p;
+    }
+
+    /// Forward-skip the preview: reveal the current page if still typing, else
+    /// step to the next page.
+    fn preview_next(&mut self, system: &mut impl ConsoleApi) {
+        if !self.preview.dialogue.is_line_done() {
+            self.preview.dialogue.finish_line();
+            return;
+        }
+        let mut m = Muted(system);
+        if advance_dialogue(&mut self.preview.dialogue, &mut m, &mut self.preview.save) {
+            self.preview.page += 1;
+        }
+    }
+
+    /// Back-skip the preview to the previous page (replayed from the start).
+    fn preview_prev(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+        self.preview.page = self.preview.page.saturating_sub(1);
+        self.reload_preview(system, panel_w);
+    }
+
+    /// Tick the preview typewriter (silent, no auto-advance), so each page types
+    /// out then holds until forward-skipped.
+    fn preview_tick(&mut self) {
+        let d = &mut self.preview.dialogue;
+        if d.current_text.is_none() || d.is_line_done() {
+            return;
+        }
+        if d.delay != 0 {
+            d.delay = d.delay.saturating_sub(1);
+            return;
+        }
+        if d.current_text
+            .as_deref()
+            .and_then(|t| t.chars().nth(d.characters))
+            == Some('.')
+        {
+            d.delay += 4; // a beat on full stops, like the real tick
+        }
+        d.step_text(1);
+        d.delay += 1;
     }
 
     // ---- Visual-row layout (word-wrap + folding) ----------------------------
@@ -1742,43 +2168,57 @@ impl TextEditor {
 }
 
 /// The editor's screen split, derived once per frame (by [`TextEditor::regions`])
-/// so `step`'s hit-testing and `draw`'s layout stay in lock-step. Honours the
-/// outline's dock side/width and a gutter sized to the file's line numbers.
+/// so `step`'s hit-testing and `draw`'s layout stay in lock-step. The docks tile
+/// off the edges; the body is the centre, with a gutter sized to the file's line
+/// numbers.
 struct Regions {
-    /// Outline panel along x: left edge and width (`outline_w == 0` when hidden).
-    outline_x: i32,
-    outline_w: i32,
     /// Gutter (fold glyphs + line numbers): `[gutter_x, text_x)`.
     gutter_x: i32,
     /// Left edge of the body text.
     text_x: i32,
-    /// Right edge of the body (exclusive): the framebuffer width, or the outline's
-    /// left edge when the outline is docked right.
+    /// Body text rect edges (top inclusive, right/bottom exclusive).
+    body_top: i32,
+    body_bottom: i32,
     body_right: i32,
-    /// X of the outline's inner-edge resize splitter, or `None` when hidden.
-    splitter_x: Option<i32>,
-    status_y: i32,
-    visible_rows: usize,
     /// Body text pixel width — the word-wrap budget.
     body_w: i32,
+    /// Body rows that fit between `body_top` and `body_bottom`.
+    visible_rows: usize,
+    status_y: i32,
+    /// Each open dock's absolute rect.
+    outline: Option<PanelRect>,
+    preview: Option<PanelRect>,
+    /// A resize grab band per open dock — drag to resize that panel.
+    splitters: Vec<(TextPanel, PanelRect)>,
 }
 
 impl Regions {
-    /// Is `mx` over the outline panel?
-    fn in_outline(&self, mx: i32) -> bool {
-        self.outline_w > 0 && mx >= self.outline_x && mx < self.outline_x + self.outline_w
+    /// Top y of the first body row.
+    fn body_origin_y(&self) -> i32 {
+        self.body_top + PAD
     }
-    /// Is `mx` over the gutter (fold glyphs / line numbers)?
-    fn in_gutter(&self, mx: i32) -> bool {
-        mx >= self.gutter_x && mx < self.text_x
+    /// Screen y of visible body row `row_in_view` (0 = first visible).
+    fn row_y(&self, row_in_view: usize) -> i32 {
+        self.body_origin_y() + row_in_view as i32 * LINE_H
     }
-    /// Is `mx` over the body text column?
-    fn in_body(&self, mx: i32) -> bool {
-        mx >= self.text_x && mx < self.body_right
+    /// The visible body row index under screen y `my` (floored at 0).
+    fn row_at_y(&self, my: i32) -> usize {
+        ((my - self.body_origin_y()).max(0) / LINE_H) as usize
     }
-    /// Is `mx` on the outline's resize splitter (a ±2px grab band)?
-    fn on_splitter(&self, mx: i32) -> bool {
-        self.splitter_x.is_some_and(|sx| (mx - sx).abs() <= 2)
+    /// Is `(mx, my)` over the body text rect?
+    fn in_body(&self, mx: i32, my: i32) -> bool {
+        mx >= self.text_x && mx < self.body_right && my >= self.body_top && my < self.body_bottom
+    }
+    /// Is `(mx, my)` over the gutter (fold glyphs / line numbers)?
+    fn in_gutter(&self, mx: i32, my: i32) -> bool {
+        mx >= self.gutter_x && mx < self.text_x && my >= self.body_top && my < self.body_bottom
+    }
+    /// The dock panel whose resize grab band contains `(mx, my)`, if any.
+    fn splitter_at(&self, mx: i32, my: i32) -> Option<TextPanel> {
+        self.splitters
+            .iter()
+            .find(|(_, b)| b.contains(mx, my))
+            .map(|(p, _)| *p)
     }
 }
 
@@ -1789,6 +2229,21 @@ impl Regions {
 /// for slicing a visible line prefix.
 fn byte_at_col(line: &str, col: usize) -> usize {
     line.char_indices().nth(col).map_or(line.len(), |(i, _)| i)
+}
+
+/// Advance a preview dialogue past a pause to the next page, returning whether a
+/// new page is shown. Loops `next_text` until the displayed text changes (a lone
+/// `Pause` is consumed without changing it) or the queue empties.
+fn advance_dialogue(d: &mut Dialogue, console: &mut impl ConsoleApi, save: &mut SaveData) -> bool {
+    let before = d.current_text.clone();
+    loop {
+        if !d.next_text(console, save, true) {
+            return false;
+        }
+        if d.current_text != before {
+            return true;
+        }
+    }
 }
 
 /// Scan a quoted string starting at the opening quote `start`, returning the byte
@@ -2507,35 +2962,57 @@ title = Hello
         );
     }
 
-    /// The outline docks left / right / hidden, and the splitter, gutter and body
-    /// edges fall out of `regions` accordingly.
+    /// The outline docks left / right / hidden, and the panel rect, gutter and
+    /// body edges fall out of `regions` accordingly.
     #[test]
     fn regions_dock_left_right_hidden() {
         use crate::gamestate::mapeditor::dock::Side;
         use crate::system::test_console::TestConsole;
         let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "a\nb\nc");
-        ed.outline_w = 60;
+        ed.preview_dock.side = None; // isolate the outline
+        ed.outline_dock.size = 60;
 
-        ed.outline_side = Some(Side::Left);
+        ed.outline_dock.side = Some(Side::Left);
         let r = ed.regions(&console, 240, 136);
-        assert_eq!((r.outline_x, r.outline_w, r.gutter_x), (0, 60, 60));
-        assert_eq!(r.splitter_x, Some(60));
+        let o = r.outline.expect("outline shown");
+        assert_eq!((o.x, o.w, r.gutter_x), (0, 60, 60));
         assert_eq!(r.body_right, 240);
         assert!(
             r.text_x > r.gutter_x,
             "gutter sits between outline and body"
         );
+        assert_eq!(r.splitters.len(), 1);
 
-        ed.outline_side = Some(Side::Right);
+        ed.outline_dock.side = Some(Side::Right);
         let r = ed.regions(&console, 240, 136);
-        assert_eq!((r.outline_x, r.gutter_x, r.body_right), (180, 0, 180));
-        assert_eq!(r.splitter_x, Some(180));
+        let o = r.outline.expect("outline shown");
+        assert_eq!((o.x, r.gutter_x, r.body_right), (180, 0, 180));
 
-        ed.outline_side = None;
+        ed.outline_dock.side = None;
         let r = ed.regions(&console, 240, 136);
-        assert_eq!((r.outline_w, r.gutter_x, r.body_right), (0, 0, 240));
-        assert_eq!(r.splitter_x, None);
+        assert!(r.outline.is_none());
+        assert_eq!((r.gutter_x, r.body_right), (0, 240));
+        assert!(r.splitters.is_empty());
+    }
+
+    /// A bottom dock shrinks the body upward — the body ends where the preview
+    /// begins, which sits just above the status bar.
+    #[test]
+    fn regions_bottom_dock_shrinks_body() {
+        use crate::gamestate::mapeditor::dock::Side;
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let mut ed = editor_with("script/en.eggtext", "a");
+        ed.outline_dock.side = None;
+        ed.preview_dock.side = Some(Side::Bottom);
+        ed.preview_dock.size = 40;
+        let r = ed.regions(&console, 240, 136);
+        let p = r.preview.expect("preview shown");
+        assert_eq!((p.x, p.w), (0, 240), "spans the full width");
+        assert_eq!(p.y + p.h, r.status_y, "sits just above the status bar");
+        assert_eq!(r.body_bottom, p.y, "body ends where the preview begins");
+        assert_eq!(r.body_top, 0);
     }
 
     /// The line-number gutter widens for a file with more digits in its numbers.
@@ -2551,18 +3028,77 @@ title = Hello
         );
     }
 
-    /// Ctrl+Shift+O cycles the dock side Left → Right → Hidden → Left.
+    /// Ctrl+Shift+O cycles the outline Left → Right → Hidden → Left.
     #[test]
     fn cycle_outline_dock_steps() {
         use crate::gamestate::mapeditor::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "");
-        assert_eq!(ed.outline_side, Some(Side::Left));
-        ed.cycle_outline_dock();
-        assert_eq!(ed.outline_side, Some(Side::Right));
-        ed.cycle_outline_dock();
-        assert_eq!(ed.outline_side, None);
-        ed.cycle_outline_dock();
-        assert_eq!(ed.outline_side, Some(Side::Left));
+        ed.preview_dock.side = None; // so the outline cycle doesn't skip-collide
+        assert_eq!(ed.outline_dock.side, Some(Side::Left));
+        ed.cycle_dock(TextPanel::Outline);
+        assert_eq!(ed.outline_dock.side, Some(Side::Right));
+        ed.cycle_dock(TextPanel::Outline);
+        assert_eq!(ed.outline_dock.side, None);
+        ed.cycle_dock(TextPanel::Outline);
+        assert_eq!(ed.outline_dock.side, Some(Side::Left));
+    }
+
+    /// The previewer's dialogue key follows the caret's `#dialogue` block; a caret
+    /// above any dialogue has none.
+    #[test]
+    fn caret_dialogue_key_follows_caret() {
+        let src = "title = Hi\n#dialogue greet\n  Hello.\n#dialogue bye\n  Later.";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        ed.field.move_to_line_col(0, 0); // on the title label, above any dialogue
+        assert_eq!(ed.caret_dialogue_key(), None);
+        ed.field.move_to_line_col(2, 0); // inside greet's body
+        assert_eq!(ed.caret_dialogue_key().as_deref(), Some("greet"));
+        ed.field.move_to_line_col(3, 0); // on bye's header
+        assert_eq!(ed.caret_dialogue_key().as_deref(), Some("bye"));
+    }
+
+    /// The previewer parses the buffer, loads the caret's dialogue, and steps
+    /// pages forward / back.
+    #[test]
+    fn preview_loads_and_steps_pages() {
+        use crate::system::test_console::TestConsole;
+        let mut console = TestConsole::new();
+        let src = "#dialogue talk\n  First page.\n\n  Second page.\n\n  Third page.";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        ed.field.move_to_line_col(1, 0); // inside the dialogue
+
+        ed.update_preview(&mut console, 200, true); // parse + load
+        assert_eq!(ed.preview.key.as_deref(), Some("talk"));
+        assert!(
+            ed.preview.dialogue.current_text.is_some(),
+            "first page loaded"
+        );
+        assert_eq!(ed.preview.page, 0);
+
+        ed.preview.dialogue.finish_line(); // so forward advances, not just reveals
+        ed.preview_next(&mut console);
+        assert_eq!(ed.preview.page, 1, "forward steps to the next page");
+
+        ed.preview_prev(&mut console, 200);
+        assert_eq!(ed.preview.page, 0, "back returns to the previous page");
+    }
+
+    /// Cycling a panel skips a side the other panel already occupies.
+    #[test]
+    fn cycle_dock_skips_occupied_side() {
+        use crate::gamestate::mapeditor::dock::Side;
+        let mut ed = editor_with("script/en.eggtext", "");
+        ed.outline_dock.side = Some(Side::Left);
+        ed.preview_dock.side = Some(Side::Bottom);
+        // Preview order Bottom→Left→Right→Hidden: Left is the outline's, so skip it.
+        ed.cycle_dock(TextPanel::Preview);
+        assert_eq!(
+            ed.preview_dock.side,
+            Some(Side::Right),
+            "skips the outline's Left"
+        );
     }
 
     /// The outline groups entries under category headers in a fixed order, items
