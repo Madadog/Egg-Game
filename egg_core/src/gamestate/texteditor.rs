@@ -18,6 +18,10 @@
 
 use std::collections::HashSet;
 
+// Reuse the map editor's shared dock primitives for the outline's own dock —
+// the `Side` enum and the resize-size constants. (The multi-panel `DockManager`
+// is map-editor-specific, so the outline runs a focused single-panel dock.)
+use super::mapeditor::dock::{DEFAULT_DOCK, MIN_DOCK, MIN_WORLD, Side};
 use super::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
 use crate::data::{eggscene, eggtext};
 use crate::drawstate::{DrawState, LayerId};
@@ -40,6 +44,8 @@ const TAB_WIDTH: usize = 2;
 /// Floor on a wrapped row's pixel budget, so a deeply-indented line in a narrow
 /// view still advances at least one character per row instead of looping.
 const MIN_WRAP_W: i32 = 8;
+/// Gutter space reserved left of the line number for the fold `+`/`-` glyph, px.
+const FOLD_W: i32 = 6;
 
 // Palette indices — the dock's known-good editor colours.
 const C_BG: u8 = 0;
@@ -108,10 +114,50 @@ enum ScriptKind {
 #[derive(Debug, Clone)]
 struct OutlineEntry {
     line: usize,
+    /// The full header text (e.g. `#dialogue lamp`), kept as the stable fold key.
     label: String,
-    /// The header's key (second token of a `#tag key`, or a label's name), used
-    /// to resolve a [`TextAnchor::Tag`] jump.
+    /// The header's key (second token of a `#tag key`, or a label's name) — the
+    /// short name shown under its category, and what a [`TextAnchor::Tag`] matches.
     key: Option<String>,
+    /// Which category group this entry lists under in the outline panel.
+    category: OutlineCat,
+}
+
+/// The category an outline entry groups under in the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutlineCat {
+    Label,
+    Flag,
+    Dialogue,
+    List,
+    Cutscene,
+}
+
+impl OutlineCat {
+    /// Display order of the groups; empty ones are skipped.
+    const ORDER: [OutlineCat; 5] = [
+        Self::Label,
+        Self::Flag,
+        Self::Dialogue,
+        Self::List,
+        Self::Cutscene,
+    ];
+    /// The uppercase group header drawn above the category's items.
+    fn title(self) -> &'static str {
+        match self {
+            Self::Label => "LABELS",
+            Self::Flag => "FLAGS",
+            Self::Dialogue => "DIALOGUE",
+            Self::List => "LISTS",
+            Self::Cutscene => "CUTSCENES",
+        }
+    }
+}
+
+/// A rendered outline row: a category header, or an item (index into `outline`).
+enum OutlineRow {
+    Header(&'static str),
+    Item(usize),
 }
 
 /// Where to place the caret when the host opens a file — the Dialogue panel's
@@ -230,6 +276,14 @@ pub struct TextEditor {
     /// vertical moves, so Up/Down keep a column through short/wrapped rows.
     /// Cleared by any horizontal move or edit.
     goal_x: Option<i32>,
+    /// Where the outline panel is docked: `Some(Left)`/`Some(Right)`, or `None`
+    /// when hidden (its width reclaimed by the body). Cycled with Ctrl+Shift+O.
+    outline_side: Option<Side>,
+    /// The outline dock's width in px, drag-resizable via its inner-edge splitter
+    /// (clamped in `regions`). Shared across left/right, like a map editor dock.
+    outline_w: i32,
+    /// True while dragging the outline's splitter to resize it.
+    outline_resizing: bool,
 }
 
 impl Default for TextEditor {
@@ -253,6 +307,9 @@ impl Default for TextEditor {
             wrap: true, // word-wrap on by default
             folded: HashSet::new(),
             goal_x: None,
+            outline_side: Some(Side::Left),
+            outline_w: DEFAULT_DOCK as i32,
+            outline_resizing: false,
         }
     }
 }
@@ -690,7 +747,7 @@ impl TextEditor {
         if self.path.is_none() {
             self.open(system, EGGTEXT_PATH, TextAnchor::Top);
         }
-        let r = Regions::of(fb_w, fb_h);
+        let r = self.regions(system, fb_w, fb_h);
         let ctrl = system.key(ScanCode::Ctrl);
         // Shift extends a selection (Shift+arrow / Shift+click); read once for the
         // mouse and keyboard handling below.
@@ -702,7 +759,7 @@ impl TextEditor {
             let layout = self.layout(system, &r);
             self.ensure_caret_visible_rows(&layout, r.visible_rows);
             if !self.wrap {
-                self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+                self.ensure_caret_visible_h(system, r.body_w);
             }
             return;
         }
@@ -724,22 +781,26 @@ impl TextEditor {
         let mouse = system.mouse();
         let p = mouse.pos();
         let (mx, my) = (i32::from(p.x), i32::from(p.y));
-        if just_pressed(mouse.left) && my >= PAD && my < r.status_y {
+        if just_pressed(mouse.left) && r.on_splitter(mx) {
+            self.outline_resizing = true; // grab the outline's resize splitter
+            boundary = true;
+        } else if just_pressed(mouse.left) && my >= PAD && my < r.status_y {
             boundary = true;
             let row_in_view = ((my - PAD) / LINE_H).max(0) as usize;
-            if mx < r.sidebar_w {
-                if let Some(entry) = self.outline.get(self.outline_scroll + row_in_view) {
-                    let line = entry.line;
+            if r.in_outline(mx) {
+                if let Some(line) = self.outline_jump_target(self.outline_scroll + row_in_view) {
                     self.jump_to_line(line);
                 }
-            } else if mx < r.text_x {
+            } else if r.in_gutter(mx) {
                 // Gutter click toggles a foldable header's fold.
                 if let Some(row) = layout.get(self.scroll + row_in_view)
                     && row.fold.is_some()
                 {
                     self.toggle_fold_at(row.line);
                 }
-            } else if let Some(&row) = layout.get(self.scroll + row_in_view) {
+            } else if r.in_body(mx)
+                && let Some(&row) = layout.get(self.scroll + row_in_view)
+            {
                 let within = self.byte_at_x_in_row(&row, mx - r.text_x, system);
                 let global = self.line_start_byte(row.line) + within;
                 if shift {
@@ -750,6 +811,16 @@ impl TextEditor {
                 }
                 self.dragging = true; // a body press may become a drag-select
             }
+        }
+
+        if self.outline_resizing && pressed(mouse.left) {
+            // Drag the splitter: the outline's inner edge follows the cursor
+            // (clamped in `regions`); right-docked, width grows leftward.
+            self.outline_w = if matches!(self.outline_side, Some(Side::Right)) {
+                fb_w - mx
+            } else {
+                mx
+            };
         } else if self.dragging && pressed(mouse.left) {
             // Drag in progress: extend the selection to the mouse, clamped to the
             // visible rows when it strays past an edge.
@@ -763,11 +834,12 @@ impl TextEditor {
         }
         if !pressed(mouse.left) {
             self.dragging = false;
+            self.outline_resizing = false;
         }
         let wheel = i32::from(mouse.scroll_y[0]);
         if wheel != 0 {
-            if mx < r.sidebar_w {
-                let max = self.outline.len().saturating_sub(1) as i32;
+            if r.in_outline(mx) {
+                let max = self.outline_rows().len().saturating_sub(1) as i32;
                 self.outline_scroll =
                     (self.outline_scroll as i32 - wheel * 2).clamp(0, max) as usize;
             } else if shift && !self.wrap {
@@ -790,6 +862,9 @@ impl TextEditor {
         if ctrl && system.keyp(ScanCode::S) {
             self.save_and_reload(system);
             self.mid_edit = false; // a save closes the current undo group
+        } else if ctrl && shift && system.keyp(ScanCode::O) {
+            self.cycle_outline_dock(); // Ctrl+Shift+O cycles the outline dock
+            boundary = true;
         } else if ctrl && system.keyp(ScanCode::O) {
             self.switch_file(system);
         } else if ctrl && system.keyp(ScanCode::F) {
@@ -958,7 +1033,7 @@ impl TextEditor {
     /// no stale world pixels behind.
     pub fn draw(&self, draw_state: &mut DrawState, system: &impl ConsoleApi) {
         let (fb_w, fb_h) = draw_state.size();
-        let r = Regions::of(fb_w, fb_h);
+        let r = self.regions(system, fb_w, fb_h);
         let opts = print_opts();
 
         // Resolve every palette colour before the mutable canvas borrow.
@@ -966,6 +1041,7 @@ impl TextEditor {
         let text_col = draw_state.colour(C_TEXT);
         let hilite = draw_state.colour(C_HILITE);
         let sel_col = draw_state.colour(C_SEL);
+        let cat_col = draw_state.colour(C_KEYWORD); // outline category headers
         // Syntax-highlight role colours, indexed by `HiRole as usize`.
         let role_cols = [
             text_col,
@@ -983,8 +1059,12 @@ impl TextEditor {
         draw_state.cls(LayerId::BG, C_BG);
         let canvas = draw_state.rgba(LayerId::BG);
 
-        // Column dividers.
-        canvas.fill_rect(r.sidebar_w, 0, 1, r.status_y, dim);
+        // Column dividers: the outline's resize splitter (lit while dragging), the
+        // gutter↔body edge, and the status bar.
+        if let Some(sx) = r.splitter_x {
+            let band = if self.outline_resizing { hilite } else { dim };
+            canvas.fill_rect(sx, 0, 1, r.status_y, band);
+        }
         canvas.fill_rect(r.text_x - 1, 0, 1, r.status_y, dim);
         canvas.fill_rect(0, r.status_y - 1, fb_w, 1, dim);
 
@@ -992,22 +1072,36 @@ impl TextEditor {
         let active = self.outline.iter().rposition(|e| e.line <= cur_line);
         let layout = self.layout(system, &r);
 
-        // Outline sidebar.
-        for (idx, entry) in self
-            .outline
-            .iter()
-            .enumerate()
-            .skip(self.outline_scroll)
-            .take(r.visible_rows)
-        {
-            let y = PAD + (idx - self.outline_scroll) as i32 * LINE_H;
-            let colour = if Some(idx) == active {
-                hilite
-            } else {
-                text_col
-            };
-            let label = truncate_to_width(&entry.label, r.sidebar_w - PAD * 2, system, &opts);
-            system.print_to(canvas, &label, PAD, y, colour, opts.clone());
+        // Outline panel (when shown), at its dock side: category headers, then
+        // each item as `name … line-number` (number right-aligned).
+        if r.outline_w > 0 {
+            for (vi, row) in self
+                .outline_rows()
+                .iter()
+                .enumerate()
+                .skip(self.outline_scroll)
+                .take(r.visible_rows)
+            {
+                let y = PAD + (vi - self.outline_scroll) as i32 * LINE_H;
+                match *row {
+                    OutlineRow::Header(title) => {
+                        system.print_to(canvas, title, r.outline_x + PAD, y, cat_col, opts.clone());
+                    }
+                    OutlineRow::Item(i) => {
+                        let entry = &self.outline[i];
+                        let name = entry.key.as_deref().unwrap_or(&entry.label);
+                        let colour = if Some(i) == active { hilite } else { text_col };
+                        let num = format!("{}", entry.line + 1);
+                        let num_x =
+                            r.outline_x + r.outline_w - PAD - system.text_width(&num, opts.clone());
+                        let name_x = r.outline_x + PAD + 4; // indent items under the header
+                        let name =
+                            truncate_to_width(name, (num_x - PAD - name_x).max(0), system, &opts);
+                        system.print_to(canvas, &name, name_x, y, colour, opts.clone());
+                        system.print_to(canvas, &num, num_x, y, dim, opts.clone());
+                    }
+                }
+            }
         }
 
         // Body: each visible visual row is a slice of a buffer line. The gutter
@@ -1029,11 +1123,11 @@ impl TextEditor {
             if row.start == 0 {
                 if let Some(folded) = row.fold {
                     let glyph = if folded { "+" } else { "-" };
-                    system.print_to(canvas, glyph, r.sidebar_w + 1, y, dim, opts.clone());
+                    system.print_to(canvas, glyph, r.gutter_x + 1, y, dim, opts.clone());
                 }
                 let num = format!("{}", row.line + 1);
                 let nx = (r.text_x - PAD - system.text_width(&num, opts.clone()))
-                    .max(r.sidebar_w + PAD + 6);
+                    .max(r.gutter_x + FOLD_W);
                 system.print_to(canvas, &num, nx, y, dim, opts.clone());
             }
 
@@ -1238,6 +1332,84 @@ impl TextEditor {
     /// Byte length of buffer line `line`.
     fn line_byte_len(&self, line: usize) -> usize {
         self.line_end_byte(line) - self.line_start_byte(line)
+    }
+
+    /// The line-number gutter's pixel width for the current file: room for a fold
+    /// glyph, the widest line number, and padding either side. Grows so a 4-digit
+    /// file's numbers aren't clipped.
+    fn gutter_width(&self, system: &impl ConsoleApi) -> i32 {
+        let digits = format!("{}", self.line_count().max(1));
+        FOLD_W + system.text_width(&digits, print_opts()) + PAD * 2
+    }
+
+    /// Resolve this frame's screen split from the framebuffer size, the outline's
+    /// dock side/width, and the line-number gutter width.
+    fn regions(&self, system: &impl ConsoleApi, fb_w: i32, fb_h: i32) -> Regions {
+        let status_y = fb_h - LINE_H;
+        let visible_rows = ((status_y - PAD) / LINE_H).max(0) as usize;
+        let gutter_w = self.gutter_width(system);
+        // Width the outline may take, leaving the body at least `MIN_WORLD` px.
+        let max_w = (fb_w - gutter_w - i32::from(MIN_WORLD)).max(i32::from(MIN_DOCK));
+        let ow = if self.outline_side.is_some() {
+            self.outline_w.clamp(i32::from(MIN_DOCK), max_w)
+        } else {
+            0
+        };
+        let (outline_x, gutter_x, body_right, splitter_x) = match self.outline_side {
+            Some(Side::Right) => (fb_w - ow, 0, fb_w - ow, Some(fb_w - ow)),
+            Some(_) => (0, ow, fb_w, Some(ow)), // Left (Top/Bottom unused → left)
+            None => (0, 0, fb_w, None),
+        };
+        let text_x = gutter_x + gutter_w;
+        let body_w = (body_right - text_x - PAD).max(1);
+        Regions {
+            outline_x,
+            outline_w: ow,
+            gutter_x,
+            text_x,
+            body_right,
+            splitter_x,
+            status_y,
+            visible_rows,
+            body_w,
+        }
+    }
+
+    /// The outline as rendered: category headers interleaved with their items, in
+    /// `OutlineCat::ORDER` (empty groups skipped). Items keep their file order.
+    fn outline_rows(&self) -> Vec<OutlineRow> {
+        let mut rows = Vec::new();
+        for &cat in &OutlineCat::ORDER {
+            let mut started = false;
+            for (i, e) in self.outline.iter().enumerate() {
+                if e.category == cat {
+                    if !started {
+                        rows.push(OutlineRow::Header(cat.title()));
+                        started = true;
+                    }
+                    rows.push(OutlineRow::Item(i));
+                }
+            }
+        }
+        rows
+    }
+
+    /// The buffer line an outline display row jumps to, or `None` if that row
+    /// isn't a jump target (a category header / out of range).
+    fn outline_jump_target(&self, row: usize) -> Option<usize> {
+        match self.outline_rows().get(row) {
+            Some(OutlineRow::Item(i)) => self.outline.get(*i).map(|e| e.line),
+            _ => None,
+        }
+    }
+
+    /// Cycle the outline dock: Left → Right → Hidden → Left (Ctrl+Shift+O).
+    fn cycle_outline_dock(&mut self) {
+        self.outline_side = match self.outline_side {
+            Some(Side::Left) => Some(Side::Right),
+            Some(Side::Right) => None,
+            _ => Some(Side::Left),
+        };
     }
 
     // ---- Visual-row layout (word-wrap + folding) ----------------------------
@@ -1530,11 +1702,14 @@ impl TextEditor {
                 let mut words = rest.split_whitespace();
                 let tag = words.next().unwrap_or("");
                 let key = words.next().map(str::to_string);
-                let relevant = match kind {
-                    ScriptKind::EggText => matches!(tag, "dialogue" | "list" | "flag"),
-                    ScriptKind::EggScene => tag == "cutscene",
+                let category = match (kind, tag) {
+                    (ScriptKind::EggText, "dialogue") => Some(OutlineCat::Dialogue),
+                    (ScriptKind::EggText, "list") => Some(OutlineCat::List),
+                    (ScriptKind::EggText, "flag") => Some(OutlineCat::Flag),
+                    (ScriptKind::EggScene, "cutscene") => Some(OutlineCat::Cutscene),
+                    _ => None,
                 };
-                if relevant {
+                if let Some(category) = category {
                     let label = match &key {
                         Some(k) => format!("#{tag} {k}"),
                         None => format!("#{tag}"),
@@ -1543,6 +1718,7 @@ impl TextEditor {
                         line: i,
                         label,
                         key,
+                        category,
                     });
                 }
             } else if kind == ScriptKind::EggText
@@ -1556,6 +1732,7 @@ impl TextEditor {
                         line: i,
                         label: name.to_string(),
                         key: Some(name.to_string()),
+                        category: OutlineCat::Label,
                     });
                 }
             }
@@ -1564,33 +1741,44 @@ impl TextEditor {
     }
 }
 
-/// The editor's screen split, derived once from the framebuffer size so `step`'s
-/// hit-testing and `draw`'s layout stay in lock-step.
+/// The editor's screen split, derived once per frame (by [`TextEditor::regions`])
+/// so `step`'s hit-testing and `draw`'s layout stay in lock-step. Honours the
+/// outline's dock side/width and a gutter sized to the file's line numbers.
 struct Regions {
-    sidebar_w: i32,
+    /// Outline panel along x: left edge and width (`outline_w == 0` when hidden).
+    outline_x: i32,
+    outline_w: i32,
+    /// Gutter (fold glyphs + line numbers): `[gutter_x, text_x)`.
+    gutter_x: i32,
+    /// Left edge of the body text.
     text_x: i32,
+    /// Right edge of the body (exclusive): the framebuffer width, or the outline's
+    /// left edge when the outline is docked right.
+    body_right: i32,
+    /// X of the outline's inner-edge resize splitter, or `None` when hidden.
+    splitter_x: Option<i32>,
     status_y: i32,
     visible_rows: usize,
-    /// Pixel width available for body text (right of the gutter, less padding) —
-    /// the word-wrap budget.
+    /// Body text pixel width — the word-wrap budget.
     body_w: i32,
 }
 
 impl Regions {
-    fn of(fb_w: i32, fb_h: i32) -> Self {
-        let sidebar_w = (fb_w / 4).clamp(36, 96);
-        let gutter_w = 18; // ~3 digits + padding
-        let text_x = sidebar_w + gutter_w;
-        let status_y = fb_h - LINE_H;
-        let visible_rows = ((status_y - PAD) / LINE_H).max(0) as usize;
-        let body_w = (fb_w - text_x - PAD).max(1);
-        Self {
-            sidebar_w,
-            text_x,
-            status_y,
-            visible_rows,
-            body_w,
-        }
+    /// Is `mx` over the outline panel?
+    fn in_outline(&self, mx: i32) -> bool {
+        self.outline_w > 0 && mx >= self.outline_x && mx < self.outline_x + self.outline_w
+    }
+    /// Is `mx` over the gutter (fold glyphs / line numbers)?
+    fn in_gutter(&self, mx: i32) -> bool {
+        mx >= self.gutter_x && mx < self.text_x
+    }
+    /// Is `mx` over the body text column?
+    fn in_body(&self, mx: i32) -> bool {
+        mx >= self.text_x && mx < self.body_right
+    }
+    /// Is `mx` on the outline's resize splitter (a ±2px grab band)?
+    fn on_splitter(&self, mx: i32) -> bool {
+        self.splitter_x.is_some_and(|sx| (mx - sx).abs() <= 2)
     }
 }
 
@@ -1860,7 +2048,7 @@ title = Hello
         // Drive the caret to the buffer end, let the visual caret-follow move the
         // scroll, then draw — the caret-on-screen branch and the end clamps.
         ed.field.set_cursor(ed.field.text().len());
-        let r = Regions::of(240, 136);
+        let r = ed.regions(&console, 240, 136);
         let layout = ed.layout(&console, &r);
         ed.ensure_caret_visible_rows(&layout, r.visible_rows);
         ed.draw(&mut draw, &console);
@@ -2194,8 +2382,8 @@ title = Hello
     fn folding_hides_body_rows() {
         use crate::system::test_console::TestConsole;
         let console = TestConsole::new();
-        let r = Regions::of(240, 136);
         let mut ed = folding_fixture();
+        let r = ed.regions(&console, 240, 136);
         let before = ed.layout(&console, &r).len();
         ed.toggle_fold_at(0);
         let after = ed.layout(&console, &r);
@@ -2236,10 +2424,10 @@ title = Hello
     fn visual_down_moves_and_skips_folds() {
         use crate::system::test_console::TestConsole;
         let console = TestConsole::new();
-        let r = Regions::of(240, 136);
 
         let mut ed = editor_with("script/en.eggtext", "one\ntwo\nthree");
         ed.field.move_to_line_col(0, 1);
+        let r = ed.regions(&console, 240, 136);
         let layout = ed.layout(&console, &r);
         assert_eq!(ed.caret_row(&layout), 0);
         ed.move_caret_visual(1, false, &layout, &console);
@@ -2248,6 +2436,7 @@ title = Hello
         let mut folded = folding_fixture();
         folded.toggle_fold_at(0); // hide lines 1, 2
         folded.field.move_to_line_col(0, 0); // on header a
+        let r = folded.regions(&console, 240, 136);
         let layout = folded.layout(&console, &r);
         folded.move_caret_visual(1, false, &layout, &console);
         assert_eq!(
@@ -2316,5 +2505,107 @@ title = Hello
             vec![],
             "an unknown verb isn't coloured"
         );
+    }
+
+    /// The outline docks left / right / hidden, and the splitter, gutter and body
+    /// edges fall out of `regions` accordingly.
+    #[test]
+    fn regions_dock_left_right_hidden() {
+        use crate::gamestate::mapeditor::dock::Side;
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let mut ed = editor_with("script/en.eggtext", "a\nb\nc");
+        ed.outline_w = 60;
+
+        ed.outline_side = Some(Side::Left);
+        let r = ed.regions(&console, 240, 136);
+        assert_eq!((r.outline_x, r.outline_w, r.gutter_x), (0, 60, 60));
+        assert_eq!(r.splitter_x, Some(60));
+        assert_eq!(r.body_right, 240);
+        assert!(
+            r.text_x > r.gutter_x,
+            "gutter sits between outline and body"
+        );
+
+        ed.outline_side = Some(Side::Right);
+        let r = ed.regions(&console, 240, 136);
+        assert_eq!((r.outline_x, r.gutter_x, r.body_right), (180, 0, 180));
+        assert_eq!(r.splitter_x, Some(180));
+
+        ed.outline_side = None;
+        let r = ed.regions(&console, 240, 136);
+        assert_eq!((r.outline_w, r.gutter_x, r.body_right), (0, 0, 240));
+        assert_eq!(r.splitter_x, None);
+    }
+
+    /// The line-number gutter widens for a file with more digits in its numbers.
+    #[test]
+    fn gutter_width_grows_with_line_count() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let few = editor_with("script/en.eggtext", "a\nb"); // up to "2"
+        let many = editor_with("script/en.eggtext", &"x\n".repeat(150)); // up to "151"
+        assert!(
+            many.gutter_width(&console) > few.gutter_width(&console),
+            "more digits → wider gutter"
+        );
+    }
+
+    /// Ctrl+Shift+O cycles the dock side Left → Right → Hidden → Left.
+    #[test]
+    fn cycle_outline_dock_steps() {
+        use crate::gamestate::mapeditor::dock::Side;
+        let mut ed = editor_with("script/en.eggtext", "");
+        assert_eq!(ed.outline_side, Some(Side::Left));
+        ed.cycle_outline_dock();
+        assert_eq!(ed.outline_side, Some(Side::Right));
+        ed.cycle_outline_dock();
+        assert_eq!(ed.outline_side, None);
+        ed.cycle_outline_dock();
+        assert_eq!(ed.outline_side, Some(Side::Left));
+    }
+
+    /// The outline groups entries under category headers in a fixed order, items
+    /// keeping their file order; a click resolves to the item's line and a header
+    /// is inert.
+    #[test]
+    fn outline_groups_by_category_with_line_numbers() {
+        let src = "title = Hi\n#flag seen\n#dialogue lamp\n  glows\n#list names\n  one";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        let rendered: Vec<String> = ed
+            .outline_rows()
+            .iter()
+            .map(|row| match *row {
+                OutlineRow::Header(t) => format!("[{t}]"),
+                OutlineRow::Item(i) => {
+                    let e = &ed.outline[i];
+                    format!("{}:{}", e.key.as_deref().unwrap_or(""), e.line + 1)
+                }
+            })
+            .collect();
+        assert_eq!(
+            rendered,
+            vec![
+                "[LABELS]",
+                "title:1",
+                "[FLAGS]",
+                "seen:2",
+                "[DIALOGUE]",
+                "lamp:3",
+                "[LISTS]",
+                "names:5",
+            ]
+        );
+
+        // Headers (rows 0, 2, 4, 6) are inert; items resolve to their lines.
+        assert_eq!(
+            ed.outline_jump_target(0),
+            None,
+            "a header isn't a jump target"
+        );
+        assert_eq!(ed.outline_jump_target(1), Some(0), "title → line 0");
+        assert_eq!(ed.outline_jump_target(5), Some(2), "lamp → line 2");
+        assert_eq!(ed.outline_jump_target(99), None);
     }
 }

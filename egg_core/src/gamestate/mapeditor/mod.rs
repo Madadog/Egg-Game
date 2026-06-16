@@ -37,7 +37,10 @@ use crate::{
 
 use super::walkaround::WalkaroundState;
 
-mod dock;
+// `pub(crate)` so the text editor can reuse the shared dock primitives (`Side`
+// and the resize-size constants) for its own outline dock — see
+// `super::texteditor`. The multi-panel `DockManager` itself stays map-specific.
+pub(crate) mod dock;
 use dock::{DockLayout, DockManager, DragState, PanelKind, Placement, Side};
 
 use super::text_field::{TextEvent, TextField, TextOp};
