@@ -168,15 +168,21 @@ enum OutlineRow {
     Item(usize),
 }
 
-/// An editor dock panel, besides the always-present text body.
+/// An editor dock panel. `Body` is the text-editing surface itself (never
+/// hidden); `Outline` and `Preview` are the aux docks. One panel is the *main*
+/// (centre) panel; the others tile off the edges. `repr(usize)` so a panel
+/// indexes the per-panel rect table in [`TextEditor::regions`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
 enum TextPanel {
+    Body = 0,
     Outline,
     Preview,
 }
 
-/// A dock panel's placement: which screen edge it tiles off (`None` = hidden) and
-/// its size in px (width for Left/Right, height for Top/Bottom), drag-resizable.
+/// A dock panel's placement *when it isn't the main/centre panel*: which screen
+/// edge it tiles off (`None` = hidden, for aux panels) and its size in px (width
+/// for Left/Right, height for Top/Bottom), drag-resizable.
 #[derive(Debug, Clone, Copy)]
 struct Dock {
     side: Option<Side>,
@@ -385,11 +391,15 @@ pub struct TextEditor {
     /// vertical moves, so Up/Down keep a column through short/wrapped rows.
     /// Cleared by any horizontal move or edit.
     goal_x: Option<i32>,
-    /// The outline and dialogue-preview docks. Each tiles to a screen edge or is
-    /// hidden; both drag-resize and cycle sides (Ctrl+Shift+O / Ctrl+Shift+P), the
-    /// body taking whatever they leave. Reuses the map editor's `Side`.
+    /// The aux docks (Ctrl+Shift+O outline / Ctrl+Shift+P preview cycle their
+    /// side / hidden) and the body's dock — where the body tiles *when it isn't
+    /// the main panel*. Reuses the map editor's `Side`.
     outline_dock: Dock,
     preview_dock: Dock,
+    body_dock: Dock,
+    /// Which panel holds the centre (the "main" panel). The body by default;
+    /// Ctrl+Shift+M cycles it, swapping the body into the vacated dock.
+    main_panel: TextPanel,
     /// The panel whose resize splitter is currently being dragged, if any.
     resizing: Option<TextPanel>,
     /// The dialogue previewer's runtime (parsed buffer + the playing dialogue).
@@ -425,6 +435,11 @@ impl Default for TextEditor {
                 side: Some(Side::Bottom),
                 size: 44,
             },
+            body_dock: Dock {
+                side: Some(Side::Bottom),
+                size: 44,
+            },
+            main_panel: TextPanel::Body,
             resizing: None,
             preview: Preview::default(),
         }
@@ -945,6 +960,7 @@ impl TextEditor {
             // Drag a dock's splitter: its size follows the cursor relative to the
             // panel's outer edge (clamped in `regions`).
             let rect = match panel {
+                TextPanel::Body => Some(r.body),
                 TextPanel::Outline => r.outline,
                 TextPanel::Preview => r.preview,
             };
@@ -1001,6 +1017,9 @@ impl TextEditor {
             boundary = true;
         } else if ctrl && shift && system.keyp(ScanCode::P) {
             self.cycle_dock(TextPanel::Preview); // Ctrl+Shift+P cycles the preview
+            boundary = true;
+        } else if ctrl && shift && system.keyp(ScanCode::M) {
+            self.cycle_main(); // Ctrl+Shift+M cycles which panel is the centre
             boundary = true;
         } else if ctrl && system.keyp(ScanCode::O) {
             self.switch_file(system);
@@ -1539,6 +1558,7 @@ impl TextEditor {
     /// A panel's dock placement (copy).
     fn dock(&self, panel: TextPanel) -> Dock {
         match panel {
+            TextPanel::Body => self.body_dock,
             TextPanel::Outline => self.outline_dock,
             TextPanel::Preview => self.preview_dock,
         }
@@ -1547,127 +1567,83 @@ impl TextEditor {
     /// Mutable access to a panel's dock placement.
     fn dock_mut(&mut self, panel: TextPanel) -> &mut Dock {
         match panel {
+            TextPanel::Body => &mut self.body_dock,
             TextPanel::Outline => &mut self.outline_dock,
             TextPanel::Preview => &mut self.preview_dock,
         }
     }
 
-    /// The open docks as `(panel, side, size)`.
-    fn open_docks(&self) -> Vec<(TextPanel, Side, i32)> {
-        [TextPanel::Outline, TextPanel::Preview]
+    /// The non-main panel docked to `side`, if any (the cycles keep ≤ 1 per side).
+    fn panel_on_side(&self, side: Side) -> Option<TextPanel> {
+        [TextPanel::Body, TextPanel::Outline, TextPanel::Preview]
             .into_iter()
-            .filter_map(|p| self.dock(p).side.map(|s| (p, s, self.dock(p).size)))
-            .collect()
+            .find(|&p| p != self.main_panel && self.dock(p).side == Some(side))
     }
 
-    /// Resolve this frame's screen split: tile the open docks off the edges
-    /// (Left/Right claim full height first, then Top/Bottom fill between), leaving
-    /// the body the centre. The gutter sizes to the file's line numbers.
+    /// Resolve this frame's screen split: the non-main panels tile off the edges
+    /// (Left/Right full height first, then Top/Bottom between), and the main panel
+    /// takes the leftover centre. The body's rect (centre or docked) drives the
+    /// gutter / text geometry; the gutter sizes to the file's line numbers.
     fn regions(&self, system: &impl ConsoleApi, fb_w: i32, fb_h: i32) -> Regions {
         let status_y = fb_h - LINE_H;
         let gutter_w = self.gutter_width(system);
-        let docks = self.open_docks();
 
-        // Tile panels off the dock area (everything above the status bar).
         let (mut wx, mut wy, mut ww, mut wh) = (0, 0, fb_w, status_y);
-        let mut outline = None;
-        let mut preview = None;
+        let mut rects: [Option<PanelRect>; 3] = [None; 3];
         let mut splitters = Vec::new();
         for side in [Side::Left, Side::Right, Side::Top, Side::Bottom] {
-            let Some(&(panel, _, size)) = docks.iter().find(|(_, s, _)| *s == side) else {
+            let Some(panel) = self.panel_on_side(side) else {
                 continue;
             };
             let horizontal = matches!(side, Side::Left | Side::Right);
-            // Keep the body a minimum along the claimed axis (width also reserves
-            // the gutter).
+            // Keep the leftover a minimum along the claimed axis (a body that ends
+            // up there also needs room for its gutter).
             let avail = if horizontal { ww - gutter_w } else { wh };
             let lo = i32::from(MIN_DOCK);
-            let thick = size.clamp(lo, (avail - i32::from(MIN_WORLD)).max(lo));
-            let (rect, band) = match side {
-                Side::Left => (
-                    PanelRect {
-                        x: wx,
-                        y: wy,
-                        w: thick,
-                        h: wh,
-                    },
-                    PanelRect {
-                        x: wx + thick - 1,
-                        y: wy,
-                        w: 3,
-                        h: wh,
-                    },
-                ),
-                Side::Right => (
-                    PanelRect {
-                        x: wx + ww - thick,
-                        y: wy,
-                        w: thick,
-                        h: wh,
-                    },
-                    PanelRect {
-                        x: wx + ww - thick - 1,
-                        y: wy,
-                        w: 3,
-                        h: wh,
-                    },
-                ),
-                Side::Top => (
-                    PanelRect {
-                        x: wx,
-                        y: wy,
-                        w: ww,
-                        h: thick,
-                    },
-                    PanelRect {
-                        x: wx,
-                        y: wy + thick - 1,
-                        w: ww,
-                        h: 3,
-                    },
-                ),
-                Side::Bottom => (
-                    PanelRect {
-                        x: wx,
-                        y: wy + wh - thick,
-                        w: ww,
-                        h: thick,
-                    },
-                    PanelRect {
-                        x: wx,
-                        y: wy + wh - thick - 1,
-                        w: ww,
-                        h: 3,
-                    },
-                ),
-            };
+            let thick = self
+                .dock(panel)
+                .size
+                .clamp(lo, (avail - i32::from(MIN_WORLD)).max(lo));
+            let (rect, band) = dock_strip(side, wx, wy, ww, wh, thick);
             match side {
                 Side::Left => (wx, ww) = (wx + thick, ww - thick),
                 Side::Right => ww -= thick,
                 Side::Top => (wy, wh) = (wy + thick, wh - thick),
                 Side::Bottom => wh -= thick,
             }
-            match panel {
-                TextPanel::Outline => outline = Some(rect),
-                TextPanel::Preview => preview = Some(rect),
-            }
+            rects[panel as usize] = Some(rect);
             splitters.push((panel, band));
         }
+        // The main panel claims the leftover centre.
+        rects[self.main_panel as usize] = Some(PanelRect {
+            x: wx,
+            y: wy,
+            w: ww,
+            h: wh,
+        });
 
-        let gutter_x = wx;
+        // The body's rect (centre or docked) drives the text geometry.
+        let body = rects[TextPanel::Body as usize].unwrap_or(PanelRect {
+            x: 0,
+            y: 0,
+            w: fb_w,
+            h: status_y,
+        });
+        let gutter_x = body.x;
         let text_x = gutter_x + gutter_w;
-        let body_right = wx + ww;
+        let body_right = body.x + body.w;
         Regions {
             gutter_x,
             text_x,
-            body_top: wy,
-            body_bottom: wy + wh,
+            body_top: body.y,
+            body_bottom: body.y + body.h,
             body_right,
             body_w: (body_right - text_x - PAD).max(1),
-            visible_rows: ((wh - PAD) / LINE_H).max(0) as usize,
+            visible_rows: ((body.h - PAD) / LINE_H).max(0) as usize,
             status_y,
-            outline,
-            preview,
+            body,
+            outline: rects[TextPanel::Outline as usize],
+            preview: rects[TextPanel::Preview as usize],
             splitters,
         }
     }
@@ -1700,11 +1676,14 @@ impl TextEditor {
         }
     }
 
-    /// Cycle a panel's dock side, skipping a side the *other* open panel already
-    /// occupies (so the two never collide; `None`/hidden never collides). The
-    /// outline cycles Left → Right → Hidden; the preview Bottom → Left → Right →
-    /// Hidden.
+    /// Cycle an aux panel's dock side, skipping a side another visible panel
+    /// occupies. A maximized aux drops back to a dock first. The outline cycles
+    /// Left → Right → Hidden; the preview Bottom → Left → Right → Hidden. (The
+    /// body is moved via [`cycle_main`](Self::cycle_main), never hidden.)
     fn cycle_dock(&mut self, panel: TextPanel) {
+        if self.main_panel == panel {
+            self.main_panel = TextPanel::Body;
+        }
         let order: &[Option<Side>] = match panel {
             TextPanel::Outline => &[Some(Side::Left), Some(Side::Right), None],
             TextPanel::Preview => &[
@@ -1713,17 +1692,44 @@ impl TextEditor {
                 Some(Side::Right),
                 None,
             ],
-        };
-        let other = match panel {
-            TextPanel::Outline => self.preview_dock.side,
-            TextPanel::Preview => self.outline_dock.side,
+            TextPanel::Body => return,
         };
         let cur = self.dock(panel).side;
         let start = order.iter().position(|&s| s == cur).unwrap_or(0);
         for step in 1..=order.len() {
             let cand = order[(start + step) % order.len()];
-            if cand.is_none() || cand != other {
+            if cand.is_none() || !self.side_taken(cand, panel) {
                 self.dock_mut(panel).side = cand;
+                return;
+            }
+        }
+    }
+
+    /// Whether `side` is occupied by a docked, visible panel other than `except`.
+    fn side_taken(&self, side: Option<Side>, except: TextPanel) -> bool {
+        let Some(side) = side else { return false };
+        [TextPanel::Body, TextPanel::Outline, TextPanel::Preview]
+            .into_iter()
+            .any(|p| p != except && p != self.main_panel && self.dock(p).side == Some(side))
+    }
+
+    /// Cycle which panel is the main (centre) one among the visible panels
+    /// (Ctrl+Shift+M); the body swaps into the spot the new main panel vacated, so
+    /// the layout stays collision-free.
+    fn cycle_main(&mut self) {
+        let order = [TextPanel::Body, TextPanel::Outline, TextPanel::Preview];
+        let visible = |p: TextPanel| p == TextPanel::Body || self.dock(p).side.is_some();
+        let cur = order
+            .iter()
+            .position(|&p| p == self.main_panel)
+            .unwrap_or(0);
+        for step in 1..=order.len() {
+            let cand = order[(cur + step) % order.len()];
+            if visible(cand) {
+                if cand != TextPanel::Body {
+                    self.body_dock = self.dock(cand); // body takes its vacated spot
+                }
+                self.main_panel = cand;
                 return;
             }
         }
@@ -2185,10 +2191,13 @@ struct Regions {
     /// Body rows that fit between `body_top` and `body_bottom`.
     visible_rows: usize,
     status_y: i32,
-    /// Each open dock's absolute rect.
+    /// The body panel's full rect (gutter + text), wherever it's placed — for
+    /// resizing the body when it's docked.
+    body: PanelRect,
+    /// Each aux dock's absolute rect (when shown).
     outline: Option<PanelRect>,
     preview: Option<PanelRect>,
-    /// A resize grab band per open dock — drag to resize that panel.
+    /// A resize grab band per docked (non-centre) panel — drag to resize it.
     splitters: Vec<(TextPanel, PanelRect)>,
 }
 
@@ -2229,6 +2238,76 @@ impl Regions {
 /// for slicing a visible line prefix.
 fn byte_at_col(line: &str, col: usize) -> usize {
     line.char_indices().nth(col).map_or(line.len(), |(i, _)| i)
+}
+
+/// The rect a dock of thickness `thick` on `side` claims off the area
+/// `(ax, ay, aw, ah)`, plus its inner-edge (3px) resize grab band.
+fn dock_strip(
+    side: Side,
+    ax: i32,
+    ay: i32,
+    aw: i32,
+    ah: i32,
+    thick: i32,
+) -> (PanelRect, PanelRect) {
+    match side {
+        Side::Left => (
+            PanelRect {
+                x: ax,
+                y: ay,
+                w: thick,
+                h: ah,
+            },
+            PanelRect {
+                x: ax + thick - 1,
+                y: ay,
+                w: 3,
+                h: ah,
+            },
+        ),
+        Side::Right => (
+            PanelRect {
+                x: ax + aw - thick,
+                y: ay,
+                w: thick,
+                h: ah,
+            },
+            PanelRect {
+                x: ax + aw - thick - 1,
+                y: ay,
+                w: 3,
+                h: ah,
+            },
+        ),
+        Side::Top => (
+            PanelRect {
+                x: ax,
+                y: ay,
+                w: aw,
+                h: thick,
+            },
+            PanelRect {
+                x: ax,
+                y: ay + thick - 1,
+                w: aw,
+                h: 3,
+            },
+        ),
+        Side::Bottom => (
+            PanelRect {
+                x: ax,
+                y: ay + ah - thick,
+                w: aw,
+                h: thick,
+            },
+            PanelRect {
+                x: ax,
+                y: ay + ah - thick - 1,
+                w: aw,
+                h: 3,
+            },
+        ),
+    }
 }
 
 /// Advance a preview dialogue past a pause to the next page, returning whether a
@@ -3083,6 +3162,41 @@ title = Hello
 
         ed.preview_prev(&mut console, 200);
         assert_eq!(ed.preview.page, 0, "back returns to the previous page");
+    }
+
+    /// Ctrl+Shift+M maximizes an aux to the centre, swapping the body into the
+    /// spot it vacated (so the body becomes a dockable side panel).
+    #[test]
+    fn cycle_main_swaps_body_into_panel() {
+        use crate::gamestate::mapeditor::dock::Side;
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let mut ed = editor_with("script/en.eggtext", "a\nb");
+        assert_eq!(ed.main_panel, TextPanel::Body);
+        let body0 = ed.regions(&console, 240, 136).body;
+
+        ed.cycle_main(); // Body → Outline (the first visible aux)
+        assert_eq!(ed.main_panel, TextPanel::Outline);
+        assert_eq!(
+            ed.body_dock.side,
+            Some(Side::Left),
+            "body took the outline's spot"
+        );
+
+        let r = ed.regions(&console, 240, 136);
+        let outline = r.outline.expect("outline shown (now centre)");
+        assert!(
+            outline.w > r.body.w,
+            "outline maximized; body shrank to its dock"
+        );
+        assert!(
+            r.body.w < body0.w,
+            "body is smaller than when it was the centre"
+        );
+        assert!(
+            r.splitters.iter().any(|(p, _)| *p == TextPanel::Body),
+            "the docked body now has a resize splitter"
+        );
     }
 
     /// Cycling a panel skips a side the other panel already occupies.
