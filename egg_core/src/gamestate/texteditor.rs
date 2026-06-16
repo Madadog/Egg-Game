@@ -16,6 +16,8 @@
 //! [`TextField`](super::text_field::TextField); this module adds the multi-line
 //! navigation, file I/O, outline and rendering on top.
 
+use std::collections::HashSet;
+
 use super::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
 use crate::data::{eggscene, eggtext};
 use crate::drawstate::{DrawState, LayerId};
@@ -35,16 +37,51 @@ const LINE_H: i32 = 7;
 const PAD: i32 = 2;
 /// Tab inserts this many spaces (the script files indent with spaces).
 const TAB_WIDTH: usize = 2;
+/// Floor on a wrapped row's pixel budget, so a deeply-indented line in a narrow
+/// view still advances at least one character per row instead of looping.
+const MIN_WRAP_W: i32 = 8;
 
 // Palette indices — the dock's known-good editor colours.
 const C_BG: u8 = 0;
 const C_TEXT: u8 = 12;
 const C_DIM: u8 = 13;
-const C_TAG: u8 = 14;
 const C_HILITE: u8 = 11;
 /// Selection background — a dark blue (Sweetie-16 #8) that white body text still
 /// reads clearly over, kept distinct from the cyan caret/active-outline hilite.
 const C_SEL: u8 = 8;
+
+// Syntax-highlight role colours (Sweetie-16 indices), resolved into `role_cols`
+// in draw and indexed by `HiRole as usize`.
+const C_COMMENT: u8 = 13; // muted grey-blue
+const C_KEYWORD: u8 = 3; // orange — `#` directives / headers / eggscene verbs
+const C_NAME: u8 = 4; // yellow — identifiers, label keys, arguments
+const C_STRING: u8 = 5; // light green — quoted strings
+const C_NUMBER: u8 = 10; // light blue
+const C_BOOL: u8 = 2; // maroon — true / false
+const C_OP: u8 = 13; // dim — the `=` of a label
+const C_ESCAPE: u8 = 11; // cyan — `\n`-style escapes inside strings
+
+/// A syntax-highlight role for a span of a body line. `Text` (0) is the default
+/// colour drawn under everything; the rest overdraw their spans. `repr(usize)`
+/// so a role indexes the resolved colour table directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+enum HiRole {
+    Text = 0,
+    Comment,
+    Keyword,
+    Name,
+    Str,
+    Number,
+    Bool,
+    Operator,
+    Escape,
+}
+
+/// The eggscene verb keywords — the first word of an indented cutscene line.
+const EGGSCENE_VERBS: &[&str] = &[
+    "wait", "dialogue", "set", "sound", "music", "walk", "move", "face",
+];
 
 /// Small (condensed) text, so a cramped view framebuffer still fits a useful
 /// number of columns and rows. Measuring and drawing share these options so the
@@ -122,10 +159,27 @@ struct Prompt {
     last_query: String,
 }
 
+/// One on-screen row produced by the layout: a slice `[start, end)` (byte
+/// offsets within buffer line `line`) of that line's text, drawn at `indent_px`
+/// from the text origin. A line that fits is one row (`start = 0`,
+/// `indent_px = 0`); a wrapped line is several (continuation rows hang-indent
+/// under the line's own indentation); a folded-away line yields none. `fold`
+/// marks a foldable header's first row for the gutter glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisualRow {
+    line: usize,
+    start: usize,
+    end: usize,
+    indent_px: i32,
+    /// `None` = no fold glyph; `Some(true)` = a folded header; `Some(false)` = a
+    /// foldable header that's currently open.
+    fold: Option<bool>,
+}
+
 /// A multi-line raw editor over one script file. Engine-agnostic: driven by a
 /// `&mut impl ConsoleApi` and drawn into a [`DrawState`], exactly like the map
 /// editor, so a host owns one per view and pumps `step`/`draw`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TextEditor {
     /// The open file's path, or `None` until the first `step` lazy-loads the
     /// eggtext file.
@@ -164,6 +218,43 @@ pub struct TextEditor {
     /// The open find / go-to-line prompt, if any. While `Some`, it intercepts
     /// all keyboard input (the editor body is read-only until it closes).
     prompt: Option<Prompt>,
+    /// Word-wrap: when on (the default), long lines break at word boundaries to
+    /// fit the body width — continuation rows hang-indent under the line's own
+    /// indentation — and horizontal scroll is disabled. Toggled with Alt+Z.
+    wrap: bool,
+    /// Collapsed outline sections, keyed by the header's outline label (so a fold
+    /// survives the line shifts of editing elsewhere). A header whose label is in
+    /// here hides its body lines until the next header.
+    folded: HashSet<String>,
+    /// The caret's target x (px from the text origin) held across a run of
+    /// vertical moves, so Up/Down keep a column through short/wrapped rows.
+    /// Cleared by any horizontal move or edit.
+    goal_x: Option<i32>,
+}
+
+impl Default for TextEditor {
+    fn default() -> Self {
+        Self {
+            path: None,
+            field: TextField::default(),
+            scroll: 0,
+            h_scroll: 0,
+            dragging: false,
+            outline_scroll: 0,
+            outline: Vec::new(),
+            status: String::new(),
+            dirty: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            mid_edit: false,
+            pending_script: None,
+            pending_scene: None,
+            prompt: None,
+            wrap: true, // word-wrap on by default
+            folded: HashSet::new(),
+            goal_x: None,
+        }
+    }
 }
 
 impl TextEditor {
@@ -608,15 +699,24 @@ impl TextEditor {
         // A modal find / go-to-line prompt swallows all input until it closes.
         if self.prompt.is_some() {
             self.step_prompt(system, shift);
-            self.ensure_caret_visible(r.visible_rows);
-            self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+            let layout = self.layout(system, &r);
+            self.ensure_caret_visible_rows(&layout, r.visible_rows);
+            if !self.wrap {
+                self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+            }
             return;
         }
+
+        // The visual-row layout for this frame: clicks and the caret map through
+        // it. Recomputed after edits below for the caret-follow.
+        let layout = self.layout(system, &r);
 
         // Closes the current coalescing undo group so a run of typing/deleting is
         // one undo step: set by navigation (click / arrows / paging) or by a
         // whitespace insert.
         let mut boundary = false;
+        // Whether a vertical move ran this frame — if not, the goal column resets.
+        let mut vertical = false;
 
         // Mouse: a click places the caret (Shift-click / drag extends the
         // selection); the outline jumps; the wheel scrolls whichever column the
@@ -632,24 +732,34 @@ impl TextEditor {
                     let line = entry.line;
                     self.jump_to_line(line);
                 }
-            } else if mx >= r.text_x {
-                let row = self.scroll + row_in_view;
-                let col = self.column_at_x(row, mx - r.text_x, system);
+            } else if mx < r.text_x {
+                // Gutter click toggles a foldable header's fold.
+                if let Some(row) = layout.get(self.scroll + row_in_view)
+                    && row.fold.is_some()
+                {
+                    self.toggle_fold_at(row.line);
+                }
+            } else if let Some(&row) = layout.get(self.scroll + row_in_view) {
+                let within = self.byte_at_x_in_row(&row, mx - r.text_x, system);
+                let global = self.line_start_byte(row.line) + within;
                 if shift {
-                    self.field.extend_to_line_col(row, col);
+                    self.field.move_to_byte(global, true);
                 } else {
-                    self.field.move_to_line_col(row, col);
+                    self.field.move_to_byte(global, false);
                     self.field.anchor_here();
                 }
                 self.dragging = true; // a body press may become a drag-select
             }
         } else if self.dragging && pressed(mouse.left) {
             // Drag in progress: extend the selection to the mouse, clamped to the
-            // body's rows/columns when it strays past an edge.
+            // visible rows when it strays past an edge.
             let row_in_view = ((my - PAD).max(0) / LINE_H) as usize;
-            let row = (self.scroll + row_in_view).min(self.line_count().saturating_sub(1));
-            let col = self.column_at_x(row, (mx - r.text_x).max(0), system);
-            self.field.extend_to_line_col(row, col);
+            let idx = (self.scroll + row_in_view).min(layout.len().saturating_sub(1));
+            if let Some(&row) = layout.get(idx) {
+                let within = self.byte_at_x_in_row(&row, (mx - r.text_x).max(0), system);
+                let global = self.line_start_byte(row.line) + within;
+                self.field.move_to_byte(global, true);
+            }
         }
         if !pressed(mouse.left) {
             self.dragging = false;
@@ -660,13 +770,13 @@ impl TextEditor {
                 let max = self.outline.len().saturating_sub(1) as i32;
                 self.outline_scroll =
                     (self.outline_scroll as i32 - wheel * 2).clamp(0, max) as usize;
-            } else if shift {
-                // Shift+wheel scrolls the body horizontally (the caret-follow can
-                // pull it back, exactly as a vertical wheel interacts with the caret).
+            } else if shift && !self.wrap {
+                // Shift+wheel scrolls a non-wrapped body horizontally (the
+                // caret-follow can pull it back, like the vertical wheel does).
                 let max = self.max_line_cols() as i32;
                 self.h_scroll = (self.h_scroll as i32 - wheel * 3).clamp(0, max) as usize;
             } else {
-                let max = self.line_count().saturating_sub(1) as i32;
+                let max = layout.len().saturating_sub(1) as i32;
                 self.scroll = (self.scroll as i32 - wheel * 3).clamp(0, max) as usize;
             }
         }
@@ -721,6 +831,16 @@ impl TextEditor {
             }
         } else if ctrl && system.key_repeat(ScanCode::Y, REPEAT_DELAY, REPEAT_RATE) {
             self.redo();
+        } else if ctrl && shift && system.keyp(ScanCode::LeftBracket) {
+            self.toggle_fold_at_caret(); // Ctrl+Shift+[ folds/unfolds the caret's section
+            boundary = true;
+        } else if alt && system.keyp(ScanCode::Z) {
+            self.wrap = !self.wrap; // Alt+Z toggles word-wrap
+            if self.wrap {
+                self.h_scroll = 0;
+            }
+            self.goal_x = None;
+            boundary = true;
         } else {
             // Typed text — replaces any selection; a whitespace insert closes the
             // undo group, so each word is its own undo step.
@@ -778,7 +898,8 @@ impl TextEditor {
                     self.move_line(false);
                     changed = true;
                 } else {
-                    self.field.move_caret(TextOp::Up, shift);
+                    self.move_caret_visual(-1, shift, &layout, system);
+                    vertical = true;
                 }
                 boundary = true;
             }
@@ -788,7 +909,8 @@ impl TextEditor {
                     self.move_line(true);
                     changed = true;
                 } else {
-                    self.field.move_caret(TextOp::Down, shift);
+                    self.move_caret_visual(1, shift, &layout, system);
+                    vertical = true;
                 }
                 boundary = true;
             }
@@ -800,17 +922,15 @@ impl TextEditor {
                 self.field.move_caret(TextOp::End, shift);
                 boundary = true;
             }
-            let page = r.visible_rows.saturating_sub(1);
+            let page = r.visible_rows.saturating_sub(1) as i32;
             if system.key_repeat(ScanCode::PageUp, REPEAT_DELAY, REPEAT_RATE) {
-                for _ in 0..page {
-                    self.field.move_caret(TextOp::Up, shift);
-                }
+                self.move_caret_visual(-page, shift, &layout, system);
+                vertical = true;
                 boundary = true;
             }
             if system.key_repeat(ScanCode::PageDown, REPEAT_DELAY, REPEAT_RATE) {
-                for _ in 0..page {
-                    self.field.move_caret(TextOp::Down, shift);
-                }
+                self.move_caret_visual(page, shift, &layout, system);
+                vertical = true;
                 boundary = true;
             }
         }
@@ -822,8 +942,15 @@ impl TextEditor {
         if boundary {
             self.mid_edit = false; // close the coalescing group at a boundary
         }
-        self.ensure_caret_visible(r.visible_rows);
-        self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+        if !vertical {
+            self.goal_x = None; // a non-vertical action resets the goal column
+        }
+        // Recompute the layout post-edit, then keep the caret on screen.
+        let layout = self.layout(system, &r);
+        self.ensure_caret_visible_rows(&layout, r.visible_rows);
+        if !self.wrap {
+            self.ensure_caret_visible_h(system, fb_w - r.text_x - PAD);
+        }
     }
 
     /// Paint the editor into the view's BG layer (which `composite_into` blits to
@@ -837,9 +964,21 @@ impl TextEditor {
         // Resolve every palette colour before the mutable canvas borrow.
         let dim = draw_state.colour(C_DIM);
         let text_col = draw_state.colour(C_TEXT);
-        let tag_col = draw_state.colour(C_TAG);
         let hilite = draw_state.colour(C_HILITE);
         let sel_col = draw_state.colour(C_SEL);
+        // Syntax-highlight role colours, indexed by `HiRole as usize`.
+        let role_cols = [
+            text_col,
+            draw_state.colour(C_COMMENT),
+            draw_state.colour(C_KEYWORD),
+            draw_state.colour(C_NAME),
+            draw_state.colour(C_STRING),
+            draw_state.colour(C_NUMBER),
+            draw_state.colour(C_BOOL),
+            draw_state.colour(C_OP),
+            draw_state.colour(C_ESCAPE),
+        ];
+        let kind = self.kind();
 
         draw_state.cls(LayerId::BG, C_BG);
         let canvas = draw_state.rgba(LayerId::BG);
@@ -849,8 +988,9 @@ impl TextEditor {
         canvas.fill_rect(r.text_x - 1, 0, 1, r.status_y, dim);
         canvas.fill_rect(0, r.status_y - 1, fb_w, 1, dim);
 
-        let (cur_line, cur_col) = self.field.line_col();
+        let cur_line = self.field.line_col().0;
         let active = self.outline.iter().rposition(|e| e.line <= cur_line);
+        let layout = self.layout(system, &r);
 
         // Outline sidebar.
         for (idx, entry) in self
@@ -870,74 +1010,103 @@ impl TextEditor {
             system.print_to(canvas, &label, PAD, y, colour, opts.clone());
         }
 
-        // Gutter line numbers + body text, scrolled horizontally by `h_scroll`
-        // (each line is drawn from that column on; the gutter stays fixed), with
-        // the selection highlighted behind the glyphs on every row it covers.
-        // TODO: word-wrap — long lines run off the right edge and are reached by
-        // horizontal scrolling for now; wrapping them is a future option.
+        // Body: each visible visual row is a slice of a buffer line. The gutter
+        // (line number, fold glyph) draws on a line's first row; continuation rows
+        // hang-indent. The selection is highlighted behind the glyphs per row.
         let body = self.field.text();
         let sel = self.field.selection();
-        // Byte offset of the first visible line, then advanced one line at a time
-        // (each line is its text plus the `'\n'` that follows it).
-        let mut byte = body
-            .split('\n')
-            .take(self.scroll)
-            .map(|l| l.len() + 1)
-            .sum::<usize>();
-        for (row, line) in body
-            .split('\n')
+        for (vi, row) in layout
+            .iter()
             .enumerate()
             .skip(self.scroll)
             .take(r.visible_rows)
         {
-            let y = PAD + (row - self.scroll) as i32 * LINE_H;
-            let num = format!("{}", row + 1);
-            system.print_to(canvas, &num, r.sidebar_w + PAD, y, dim, opts.clone());
+            let y = PAD + (vi - self.scroll) as i32 * LINE_H;
+            let ls = self.line_start_byte(row.line);
+            let line = &body[ls..ls + self.line_byte_len(row.line)];
 
-            // First visible byte of this line under the horizontal scroll.
-            let hb = byte_at_col(line, self.h_scroll);
+            // Gutter: line number (right-aligned) + fold glyph, on the first row.
+            if row.start == 0 {
+                if let Some(folded) = row.fold {
+                    let glyph = if folded { "+" } else { "-" };
+                    system.print_to(canvas, glyph, r.sidebar_w + 1, y, dim, opts.clone());
+                }
+                let num = format!("{}", row.line + 1);
+                let nx = (r.text_x - PAD - system.text_width(&num, opts.clone()))
+                    .max(r.sidebar_w + PAD + 6);
+                system.print_to(canvas, &num, nx, y, dim, opts.clone());
+            }
 
-            // Selection: intersect it with this line's byte span (its trailing
-            // newline included, so a selection through it shows a short tail past
-            // the text — a blank selected line still reads as selected). Offsets
-            // are measured from `hb`, and anything scrolled off to the left clips.
+            // Where this row's text starts (wrap rows from `start`; non-wrap rows
+            // from the horizontal-scroll column) and its x origin.
+            let (draw_start, x_off) = self.row_origin(row, line);
+            let x_base = r.text_x + x_off;
+            let row_lo = ls + row.start;
+            let row_hi = ls + row.end;
+            let last_row = row.end == self.line_byte_len(row.line);
+
+            // Selection: intersect with this row's span (the trailing newline is
+            // part of the line's last row, shown as a short tail).
             if let Some((s, e)) = sel {
-                let line_end = byte + line.len();
-                let lo = s.clamp(byte, line_end);
-                let hi = e.clamp(byte, line_end + 1);
+                let lo = s.clamp(row_lo, row_hi);
+                let hi = e.clamp(row_lo, if last_row { row_hi + 1 } else { row_hi });
                 if lo < hi {
-                    let left = (lo - byte).max(hb);
-                    let right = (hi.min(line_end) - byte).max(hb);
-                    let x0 = r.text_x + system.text_width(&line[hb..left], opts.clone());
-                    let x1 = r.text_x + system.text_width(&line[hb..right], opts.clone());
-                    let tail = if hi > line_end { 3 } else { 0 };
-                    let w = x1 - x0 + tail;
-                    if w > 0 {
-                        canvas.fill_rect(x0, y, w, LINE_H, sel_col);
+                    let from = lo.max(ls + draw_start) - ls;
+                    let to = hi.min(row_hi) - ls;
+                    if to >= from {
+                        let x0 = x_base + system.text_width(&line[draw_start..from], opts.clone());
+                        let x1 = x_base + system.text_width(&line[draw_start..to], opts.clone());
+                        let tail = if last_row && e > row_hi { 3 } else { 0 };
+                        let w = x1 - x0 + tail;
+                        if w > 0 {
+                            canvas.fill_rect(x0, y, w, LINE_H, sel_col);
+                        }
                     }
                 }
             }
 
-            let colour = if line.starts_with('#') {
-                tag_col
-            } else {
-                text_col
-            };
-            system.print_to(canvas, &line[hb..], r.text_x, y, colour, opts.clone());
-            byte += line.len() + 1;
+            // Base text, then each syntax-highlight span overdrawn in its colour,
+            // clipped to this row's visible slice.
+            system.print_to(
+                canvas,
+                &line[draw_start..row.end],
+                x_base,
+                y,
+                role_cols[0],
+                opts.clone(),
+            );
+            for (s, e, role) in highlight_line(line, kind) {
+                let cs = s.max(draw_start);
+                let ce = e.min(row.end);
+                if cs < ce {
+                    let x = x_base + system.text_width(&line[draw_start..cs], opts.clone());
+                    system.print_to(
+                        canvas,
+                        &line[cs..ce],
+                        x,
+                        y,
+                        role_cols[role as usize],
+                        opts.clone(),
+                    );
+                }
+            }
         }
 
-        // Caret, when its line is on screen and not scrolled off to the left.
-        if cur_line >= self.scroll
-            && cur_line < self.scroll + r.visible_rows
-            && cur_col >= self.h_scroll
-        {
-            let line = body.split('\n').nth(cur_line).unwrap_or("");
-            let hb = byte_at_col(line, self.h_scroll);
-            let end = byte_at_col(line, cur_col);
-            let cx = r.text_x + system.text_width(&line[hb..end], opts.clone());
-            let cy = PAD + (cur_line - self.scroll) as i32 * LINE_H;
-            canvas.fill_rect(cx, cy, 1, LINE_H, hilite);
+        // Caret, when its visual row is on screen and not scrolled off the left.
+        let cr = self.caret_row(&layout);
+        if cr >= self.scroll && cr < self.scroll + r.visible_rows {
+            let row = layout[cr];
+            let ls = self.line_start_byte(row.line);
+            let line = &body[ls..ls + self.line_byte_len(row.line)];
+            let (_, cb) = self.caret_line_byte();
+            let (draw_start, x_off) = self.row_origin(&row, line);
+            if cb >= draw_start {
+                let cx = x_off
+                    + r.text_x
+                    + system.text_width(&line[draw_start..cb.min(row.end)], opts.clone());
+                let cy = PAD + (cr - self.scroll) as i32 * LINE_H;
+                canvas.fill_rect(cx, cy, 1, LINE_H, hilite);
+            }
         }
 
         // Find / go-to-line prompt bar, one row above the status bar when open —
@@ -1020,21 +1189,12 @@ impl TextEditor {
         self.field.text().split('\n').count()
     }
 
-    /// Move the caret to `line` and scroll it a few rows below the top for
-    /// context (clamped later by [`ensure_caret_visible`](Self::ensure_caret_visible)).
+    /// Reveal `line` (unfolding any section that hides it) and move the caret to
+    /// its start; the scroll catches up via `ensure_caret_visible_rows`.
     fn jump_to_line(&mut self, line: usize) {
+        self.reveal_line(line);
         self.field.move_to_line_col(line, 0);
-        self.scroll = line.saturating_sub(3);
-    }
-
-    /// Keep the caret's line within the visible body after an edit or jump.
-    fn ensure_caret_visible(&mut self, visible_rows: usize) {
-        let (line, _) = self.field.line_col();
-        if line < self.scroll {
-            self.scroll = line;
-        } else if visible_rows > 0 && line >= self.scroll + visible_rows {
-            self.scroll = line + 1 - visible_rows;
-        }
+        self.goal_x = None;
     }
 
     /// Keep the caret's column within the body horizontally: scroll left if it's
@@ -1075,30 +1235,288 @@ impl TextEditor {
             .unwrap_or(0)
     }
 
-    /// The column whose glyph boundary is nearest `target_x` (px from the text
-    /// origin) on `row` — click-to-place-caret. Measured from the first visible
-    /// column, so it's correct under horizontal scroll. O(n²) in the line length,
-    /// but only run per click on a short line.
-    fn column_at_x(&self, row: usize, target_x: i32, system: &impl ConsoleApi) -> usize {
-        let text = self.field.text();
-        let line = text.split('\n').nth(row).unwrap_or("");
+    /// Byte length of buffer line `line`.
+    fn line_byte_len(&self, line: usize) -> usize {
+        self.line_end_byte(line) - self.line_start_byte(line)
+    }
+
+    // ---- Visual-row layout (word-wrap + folding) ----------------------------
+    //
+    // Screen rows are decoupled from buffer lines: a line that fits is one row, a
+    // wrapped line is several (continuation rows hang-indented), a folded-away
+    // line is none. `layout` produces the rows; caret/click/scroll/Up-Down all
+    // work in this visual-row space. `scroll` is the index of the top visible row.
+
+    /// Break `line` into the on-screen row slices it occupies at body width
+    /// `avail_w`, as `(start, end, indent_px)` byte ranges within the line. With
+    /// wrap off (or a line that fits) it's the whole line as one row; otherwise
+    /// continuation rows hang-indent under the line's leading whitespace and break
+    /// at the last space that fits, hard-breaking only a word too long for a row.
+    fn wrap_segments(
+        &self,
+        line: &str,
+        system: &impl ConsoleApi,
+        avail_w: i32,
+    ) -> Vec<(usize, usize, i32)> {
         let opts = print_opts();
-        let hb = byte_at_col(line, self.h_scroll);
-        let mut best = self.h_scroll;
+        if !self.wrap || line.is_empty() {
+            return vec![(0, line.len(), 0)];
+        }
+        let indent_bytes = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let indent_px = system.text_width(&line[..indent_bytes], opts.clone());
+        let mut segs = Vec::new();
+        let mut start = 0;
+        while start < line.len() {
+            let row_indent = if segs.is_empty() { 0 } else { indent_px };
+            let budget = (avail_w - row_indent).max(MIN_WRAP_W);
+            let mut end = start; // furthest fitting char boundary
+            let mut last_space = None; // boundary just after a space
+            for (off, ch) in line[start..].char_indices() {
+                let next = start + off + ch.len_utf8();
+                let over = system.text_width(&line[start..next], opts.clone()) > budget;
+                if over && next > start + ch.len_utf8() {
+                    break; // overflow, with at least one char already placed
+                }
+                end = next;
+                if ch == ' ' {
+                    last_space = Some(next);
+                }
+            }
+            if end >= line.len() {
+                segs.push((start, line.len(), row_indent));
+                break;
+            }
+            // Break at the last fitting space, else hard-break at the fit boundary.
+            let brk = last_space.filter(|&s| s > start).unwrap_or(end);
+            segs.push((start, brk, row_indent));
+            start = brk;
+        }
+        if segs.is_empty() {
+            segs.push((0, line.len(), 0));
+        }
+        segs
+    }
+
+    /// The line index where the foldable region opened by header line `i` ends
+    /// (exclusive) — the next outline header line, or the buffer end.
+    fn fold_end(&self, i: usize) -> usize {
+        self.outline
+            .iter()
+            .map(|e| e.line)
+            .filter(|&l| l > i)
+            .min()
+            .unwrap_or_else(|| self.line_count())
+    }
+
+    /// The outline entry that starts at buffer line `i`, if any.
+    fn outline_at(&self, i: usize) -> Option<&OutlineEntry> {
+        self.outline.iter().find(|e| e.line == i)
+    }
+
+    /// The fold-glyph state for line `i`: `None` unless it's an outline header
+    /// with a non-empty body, else `Some(is_folded)`.
+    fn fold_marker(&self, i: usize) -> Option<bool> {
+        let entry = self.outline_at(i)?;
+        if self.fold_end(i) <= i + 1 {
+            return None; // a header with no body line to hide isn't foldable
+        }
+        Some(self.folded.contains(&entry.label))
+    }
+
+    /// Build the body's visual rows at the current wrap/fold state and body width:
+    /// folded sections collapse to their header row, and (with wrap on) long lines
+    /// split into hang-indented continuation rows.
+    fn layout(&self, system: &impl ConsoleApi, r: &Regions) -> Vec<VisualRow> {
+        let text = self.field.text();
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut rows = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let fold = self.fold_marker(i);
+            for (start, end, indent_px) in self.wrap_segments(lines[i], system, r.body_w) {
+                rows.push(VisualRow {
+                    line: i,
+                    start,
+                    end,
+                    indent_px,
+                    fold: if start == 0 { fold } else { None },
+                });
+            }
+            i = if fold == Some(true) {
+                self.fold_end(i).max(i + 1) // skip the hidden body
+            } else {
+                i + 1
+            };
+        }
+        rows
+    }
+
+    /// `(line, byte within that line)` of the caret.
+    fn caret_line_byte(&self) -> (usize, usize) {
+        let (line, _) = self.field.line_col();
+        (line, self.field.cursor() - self.line_start_byte(line))
+    }
+
+    /// Index into `layout` of the visual row the caret sits on. A caret at a wrap
+    /// boundary belongs to the start of the following row; one at a line's very
+    /// end belongs to that line's last row.
+    fn caret_row(&self, layout: &[VisualRow]) -> usize {
+        let (cl, cb) = self.caret_line_byte();
+        let mut last_on_line = None;
+        let mut fallback = 0;
+        for (idx, row) in layout.iter().enumerate() {
+            if row.line < cl {
+                fallback = idx;
+            }
+            if row.line == cl {
+                last_on_line = Some(idx);
+                if cb >= row.start && (cb < row.end || cb == self.line_byte_len(cl)) {
+                    return idx;
+                }
+            }
+        }
+        last_on_line.unwrap_or(fallback)
+    }
+
+    /// Where visual `row` (whose buffer-line text is `line`) starts drawing and at
+    /// what x offset from the text origin: wrapped rows render from `start` at
+    /// their hang-indent; non-wrapped rows render from the horizontal-scroll
+    /// column at no offset. The single source of truth shared by draw, clicks and
+    /// caret math, so they stay in lock-step.
+    fn row_origin(&self, row: &VisualRow, line: &str) -> (usize, i32) {
+        if self.wrap {
+            (row.start, row.indent_px)
+        } else {
+            (byte_at_col(line, self.h_scroll).max(row.start), 0)
+        }
+    }
+
+    /// The caret's x in px from the text origin within its visual row.
+    fn caret_x(&self, layout: &[VisualRow], system: &impl ConsoleApi) -> i32 {
+        let row = layout[self.caret_row(layout)];
+        let (_, cb) = self.caret_line_byte();
+        let ls = self.line_start_byte(row.line);
+        let text = self.field.text();
+        let line = &text[ls..ls + self.line_byte_len(row.line)];
+        let (draw_start, x_off) = self.row_origin(&row, line);
+        let to = cb.clamp(draw_start, row.end);
+        x_off + system.text_width(&line[draw_start..to], print_opts())
+    }
+
+    /// The byte (within its line) on visual `row` whose x is closest to `goal_x`
+    /// (px from the text origin) — lands the caret under the goal column on a
+    /// vertical move or a click.
+    fn byte_at_x_in_row(&self, row: &VisualRow, goal_x: i32, system: &impl ConsoleApi) -> usize {
+        let text = self.field.text();
+        let ls = self.line_start_byte(row.line);
+        let line = &text[ls..ls + self.line_byte_len(row.line)];
+        let (draw_start, x_off) = self.row_origin(row, line);
+        let slice = &line[draw_start..row.end];
+        let opts = print_opts();
+        let target = (goal_x - x_off).max(0);
+        let mut best = draw_start;
         let mut best_dist = i32::MAX;
-        for (offset, end) in line[hb..]
+        for end in slice
             .char_indices()
-            .map(|(i, _)| hb + i)
-            .chain(std::iter::once(line.len()))
-            .enumerate()
+            .map(|(o, _)| o)
+            .chain(std::iter::once(slice.len()))
         {
-            let dist = (system.text_width(&line[hb..end], opts.clone()) - target_x).abs();
+            let dist = (system.text_width(&slice[..end], opts.clone()) - target).abs();
             if dist < best_dist {
                 best_dist = dist;
-                best = self.h_scroll + offset;
+                best = draw_start + end;
             }
         }
         best
+    }
+
+    /// Move the caret `delta` visual rows (negative = up), keeping its goal x
+    /// column, extending the selection when `extend`. Clamps at the ends.
+    fn move_caret_visual(
+        &mut self,
+        delta: i32,
+        extend: bool,
+        layout: &[VisualRow],
+        system: &impl ConsoleApi,
+    ) {
+        if layout.is_empty() {
+            return;
+        }
+        let cur = self.caret_row(layout) as i32;
+        let goal = match self.goal_x {
+            Some(g) => g,
+            None => {
+                let g = self.caret_x(layout, system);
+                self.goal_x = Some(g);
+                g
+            }
+        };
+        let target = (cur + delta).clamp(0, layout.len() as i32 - 1) as usize;
+        let row = layout[target];
+        let within = self.byte_at_x_in_row(&row, goal, system);
+        self.field
+            .move_to_byte(self.line_start_byte(row.line) + within, extend);
+    }
+
+    /// Keep the caret's visual row within the visible body after an edit / jump /
+    /// scroll, clamping the scroll into range.
+    fn ensure_caret_visible_rows(&mut self, layout: &[VisualRow], visible_rows: usize) {
+        let cr = self.caret_row(layout);
+        if cr < self.scroll {
+            self.scroll = cr;
+        } else if visible_rows > 0 && cr >= self.scroll + visible_rows {
+            self.scroll = cr + 1 - visible_rows;
+        }
+        self.scroll = self.scroll.min(layout.len().saturating_sub(1));
+    }
+
+    /// Toggle the fold of the outline section whose header is buffer line
+    /// `header_line`. Collapsing a section that holds the caret lifts the caret to
+    /// the header so it never lands on a hidden line.
+    fn toggle_fold_at(&mut self, header_line: usize) {
+        let Some(entry) = self.outline_at(header_line) else {
+            return;
+        };
+        let label = entry.label.clone();
+        if !self.folded.remove(&label) {
+            self.folded.insert(label);
+            let caret_line = self.field.line_col().0;
+            if caret_line > header_line && caret_line < self.fold_end(header_line) {
+                self.field.move_to_line_col(header_line, 0);
+                self.goal_x = None;
+            }
+        }
+    }
+
+    /// Toggle the fold of the section the caret is in (Ctrl+Shift+[): the nearest
+    /// foldable header at or above the caret's line.
+    fn toggle_fold_at_caret(&mut self) {
+        let caret_line = self.field.line_col().0;
+        let header = self
+            .outline
+            .iter()
+            .map(|e| e.line)
+            .filter(|&l| l <= caret_line && self.fold_marker(l).is_some())
+            .max();
+        if let Some(h) = header {
+            self.toggle_fold_at(h);
+        }
+    }
+
+    /// Unfold whatever section currently hides buffer `line`, so a jump (find /
+    /// go-to / outline click) can land there.
+    fn reveal_line(&mut self, line: usize) {
+        let open: Vec<String> = self
+            .outline
+            .iter()
+            .filter(|e| {
+                self.folded.contains(&e.label) && line > e.line && line < self.fold_end(e.line)
+            })
+            .map(|e| e.label.clone())
+            .collect();
+        for label in open {
+            self.folded.remove(&label);
+        }
     }
 
     /// Rescan the buffer for column-0 headers (and eggtext labels) to drive the
@@ -1153,6 +1571,9 @@ struct Regions {
     text_x: i32,
     status_y: i32,
     visible_rows: usize,
+    /// Pixel width available for body text (right of the gutter, less padding) —
+    /// the word-wrap budget.
+    body_w: i32,
 }
 
 impl Regions {
@@ -1162,11 +1583,13 @@ impl Regions {
         let text_x = sidebar_w + gutter_w;
         let status_y = fb_h - LINE_H;
         let visible_rows = ((status_y - PAD) / LINE_H).max(0) as usize;
+        let body_w = (fb_w - text_x - PAD).max(1);
         Self {
             sidebar_w,
             text_x,
             status_y,
             visible_rows,
+            body_w,
         }
     }
 }
@@ -1178,6 +1601,133 @@ impl Regions {
 /// for slicing a visible line prefix.
 fn byte_at_col(line: &str, col: usize) -> usize {
     line.char_indices().nth(col).map_or(line.len(), |(i, _)| i)
+}
+
+/// Scan a quoted string starting at the opening quote `start`, returning the byte
+/// just past the closing quote (or the line end) and the `\x` escape sub-spans
+/// inside it (drawn over the string in the escape colour).
+fn scan_string(line: &str, start: usize) -> (usize, Vec<(usize, usize)>) {
+    let mut i = start + 1;
+    let mut escapes = Vec::new();
+    while i < line.len() {
+        let ch = line[i..].chars().next().unwrap();
+        if ch == '\\' {
+            let mut e = i + 1;
+            if let Some(n) = line[e..].chars().next() {
+                e += n.len_utf8();
+            }
+            escapes.push((i, e));
+            i = e;
+            continue;
+        }
+        i += ch.len_utf8();
+        if ch == '"' {
+            break;
+        }
+    }
+    (i, escapes)
+}
+
+/// Tokenize one body `line` of script `kind` into coloured byte spans (only the
+/// non-default ones; gaps render in the base text colour). Best-effort and
+/// per-line: it colours structure — comments, `#` directives/headers, eggscene
+/// verbs, `key =` labels, strings, numbers, booleans, string escapes — without
+/// validating it (the parser owns correctness).
+fn highlight_line(line: &str, kind: ScriptKind) -> Vec<(usize, usize, HiRole)> {
+    let mut out = Vec::new();
+    let indent = line.len() - line.trim_start().len();
+    let body = &line[indent..];
+    if body.starts_with("//") {
+        out.push((indent, line.len(), HiRole::Comment));
+        return out;
+    }
+    if body.is_empty() {
+        return out;
+    }
+    let col0 = indent == 0;
+    let starts_hash = body.starts_with('#');
+    let first_word = body.split_whitespace().next().unwrap_or("");
+    let is_label = col0 && kind == ScriptKind::EggText && !starts_hash && body.contains('=');
+    let is_verb = !col0 && kind == ScriptKind::EggScene && EGGSCENE_VERBS.contains(&first_word);
+    // A "structured" line colours typed args; a free-text dialogue/list line only
+    // gets its strings and any `#`-directive coloured (via the rules below).
+    let structured = starts_hash || is_label || is_verb;
+
+    let mut i = indent;
+    let mut word_index = 0usize;
+    let mut seen_eq = false;
+    let mut prev_keyword = false;
+    while i < line.len() {
+        let c = line[i..].chars().next().unwrap();
+        if c.is_whitespace() {
+            i += c.len_utf8();
+            continue;
+        }
+        if c == '"' {
+            let (end, escapes) = scan_string(line, i);
+            out.push((i, end, HiRole::Str));
+            out.extend(escapes.into_iter().map(|(s, e)| (s, e, HiRole::Escape)));
+            i = end;
+            word_index += 1;
+            prev_keyword = false;
+            continue;
+        }
+        if c == '=' && is_label && !seen_eq {
+            out.push((i, i + 1, HiRole::Operator));
+            seen_eq = true;
+            i += 1;
+            prev_keyword = false;
+            continue;
+        }
+        // A word: an optional leading `#`, then identifier characters.
+        let start = i;
+        if c == '#' {
+            i += 1;
+        }
+        while let Some(ch) = line[i..].chars().next() {
+            if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+                i += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if i == start {
+            i += c.len_utf8(); // lone punctuation → base text
+            continue;
+        }
+        let word = &line[start..i];
+        let digits = word.strip_prefix('-').unwrap_or(word);
+        let is_num = !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit());
+        let role = if word.starts_with('#') {
+            HiRole::Keyword
+        } else if is_num && (structured || prev_keyword) {
+            HiRole::Number
+        } else if (word == "true" || word == "false") && (structured || prev_keyword) {
+            HiRole::Bool
+        } else if is_label {
+            if word_index == 0 {
+                HiRole::Name // the label key
+            } else {
+                HiRole::Text // a bare value
+            }
+        } else if structured && word_index == 0 {
+            if is_verb {
+                HiRole::Keyword
+            } else {
+                HiRole::Text
+            }
+        } else if structured || prev_keyword {
+            HiRole::Name // an argument identifier
+        } else {
+            HiRole::Text
+        };
+        if role != HiRole::Text {
+            out.push((start, i, role));
+        }
+        prev_keyword = role == HiRole::Keyword;
+        word_index += 1;
+    }
+    out
 }
 
 fn truncate_to_width(s: &str, max_w: i32, system: &impl ConsoleApi, opts: &PrintOptions) -> String {
@@ -1307,16 +1857,16 @@ title = Hello
         ed.step(&mut console, 240, 136);
         ed.draw(&mut draw, &console);
 
-        // Drive the caret past the last line and to a far column, scroll to follow,
-        // then draw — the caret-on-screen branch and the end-of-buffer clamps.
-        for _ in 0..20 {
-            ed.field.apply(TextOp::Down);
-        }
-        ed.field.apply(TextOp::End);
-        ed.ensure_caret_visible(Regions::of(240, 136).visible_rows);
+        // Drive the caret to the buffer end, let the visual caret-follow move the
+        // scroll, then draw — the caret-on-screen branch and the end clamps.
+        ed.field.set_cursor(ed.field.text().len());
+        let r = Regions::of(240, 136);
+        let layout = ed.layout(&console, &r);
+        ed.ensure_caret_visible_rows(&layout, r.visible_rows);
         ed.draw(&mut draw, &console);
 
-        // The minimum framebuffer (a very narrow text column) is also safe to draw.
+        // The minimum framebuffer (a very narrow text column) is also safe to draw
+        // — exercises the wrap layout at a tiny body width.
         let mut small = DrawState::default();
         small.resize(64, 48);
         ed.draw(&mut small, &console);
@@ -1326,9 +1876,10 @@ title = Hello
         ed.draw(&mut draw, &console);
         ed.draw(&mut small, &console);
 
-        // Horizontally scrolled (long lines sliced from a mid-line column) draws
-        // without slicing panics, both with and without a selection.
+        // Non-wrapped + horizontally scrolled (long lines sliced from a mid-line
+        // column) draws without slicing panics, both with and without a selection.
         ed.prompt = None;
+        ed.wrap = false;
         ed.h_scroll = 4;
         ed.field.select(0, ed.field.text().len());
         ed.draw(&mut draw, &console);
@@ -1577,5 +2128,193 @@ title = Hello
         ed.field.move_to_line_col(0, 6);
         ed.ensure_caret_visible_h(&console, -1);
         assert_eq!(ed.h_scroll, 6, "scrolls right, bounded by the caret column");
+    }
+
+    // The test console's blank font measures 1px per non-space glyph and 3px per
+    // space (small text), which is deterministic enough to drive the wrap layout.
+
+    /// A long line wraps into rows that tile it exactly; the first row has no
+    /// hang indent.
+    #[test]
+    fn wrap_segments_breaks_and_tiles() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let ed = editor_with("script/en.eggtext", "");
+        let line = "aa bb cc dd ee ff";
+        let segs = ed.wrap_segments(line, &console, 8);
+        assert!(segs.len() > 1, "wraps into multiple rows");
+        let joined: String = segs.iter().map(|&(s, e, _)| &line[s..e]).collect();
+        assert_eq!(joined, line, "rows tile the line exactly");
+        assert_eq!(segs[0].2, 0, "first row has no hang indent");
+    }
+
+    /// Wrapped continuation rows hang-indent under the line's leading whitespace.
+    #[test]
+    fn wrap_segments_hang_indent_continuations() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let ed = editor_with("script/en.eggtext", "");
+        let line = "    aa bb cc dd ee ff"; // 4-space indent
+        let segs = ed.wrap_segments(line, &console, 16);
+        assert!(segs.len() > 1);
+        let indent_px = console.text_width("    ", print_opts());
+        assert_eq!(segs[0].2, 0, "first row flush left");
+        assert!(
+            segs[1..].iter().all(|&(_, _, ind)| ind == indent_px),
+            "continuation rows hang-indent by the leading whitespace width"
+        );
+    }
+
+    /// With wrap off, a line is always a single full-width row.
+    #[test]
+    fn wrap_off_is_one_segment() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let mut ed = editor_with("script/en.eggtext", "");
+        ed.wrap = false;
+        let line = "a very long line that would otherwise wrap";
+        assert_eq!(
+            ed.wrap_segments(line, &console, 4),
+            vec![(0, line.len(), 0)]
+        );
+    }
+
+    fn folding_fixture() -> TextEditor {
+        let mut ed = editor_with(
+            "script/en.eggtext",
+            "#dialogue a\n  one\n  two\n#dialogue b\n  three",
+        );
+        ed.rebuild_outline();
+        ed
+    }
+
+    /// Folding a section drops its body rows from the layout but keeps the header
+    /// (now marked folded); the next section still shows.
+    #[test]
+    fn folding_hides_body_rows() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let r = Regions::of(240, 136);
+        let mut ed = folding_fixture();
+        let before = ed.layout(&console, &r).len();
+        ed.toggle_fold_at(0);
+        let after = ed.layout(&console, &r);
+        assert!(after.len() < before, "fewer rows once folded");
+        assert!(
+            after
+                .iter()
+                .any(|row| row.line == 0 && row.fold == Some(true)),
+            "header row marked folded"
+        );
+        assert!(
+            !after.iter().any(|row| row.line == 1 || row.line == 2),
+            "body lines hidden"
+        );
+        assert!(
+            after.iter().any(|row| row.line == 3),
+            "the next section still shows"
+        );
+    }
+
+    /// Collapsing the section the caret is in lifts the caret to the header;
+    /// `reveal_line` reopens a section hiding a target line.
+    #[test]
+    fn folding_lifts_caret_and_reveal_reopens() {
+        let mut ed = folding_fixture();
+        ed.field.move_to_line_col(2, 1); // caret inside section a's body
+        ed.toggle_fold_at(0);
+        assert_eq!(ed.field.line_col().0, 0, "caret lifted to the header");
+        assert!(ed.folded.contains("#dialogue a"));
+
+        ed.reveal_line(2); // line 2 is inside the folded section
+        assert!(!ed.folded.contains("#dialogue a"), "reveal reopened it");
+    }
+
+    /// Vertical motion is by visual row: Down advances one row, and steps over a
+    /// folded section's hidden body to the next visible row.
+    #[test]
+    fn visual_down_moves_and_skips_folds() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let r = Regions::of(240, 136);
+
+        let mut ed = editor_with("script/en.eggtext", "one\ntwo\nthree");
+        ed.field.move_to_line_col(0, 1);
+        let layout = ed.layout(&console, &r);
+        assert_eq!(ed.caret_row(&layout), 0);
+        ed.move_caret_visual(1, false, &layout, &console);
+        assert_eq!(ed.field.line_col().0, 1, "down moves one row");
+
+        let mut folded = folding_fixture();
+        folded.toggle_fold_at(0); // hide lines 1, 2
+        folded.field.move_to_line_col(0, 0); // on header a
+        let layout = folded.layout(&console, &r);
+        folded.move_caret_visual(1, false, &layout, &console);
+        assert_eq!(
+            folded.field.line_col().0,
+            3,
+            "down from a folded header skips the hidden body"
+        );
+    }
+
+    /// The eggtext tokenizer colours comments, `#` headers/directives, `key =`
+    /// labels, strings (with escapes), numbers and booleans — and leaves free
+    /// dialogue text default, save for a trailing `#delay`.
+    #[test]
+    fn highlight_eggtext_roles() {
+        use HiRole::*;
+        let roles = |line: &str| highlight_line(line, ScriptKind::EggText);
+        assert_eq!(roles("// hi"), vec![(0, 5, Comment)]);
+        assert_eq!(roles("  // indented"), vec![(2, 13, Comment)]);
+        assert_eq!(
+            roles("#dialogue lamp"),
+            vec![(0, 9, Keyword), (10, 14, Name)]
+        );
+        assert_eq!(
+            roles("game_title = \"EGG\""),
+            vec![(0, 10, Name), (11, 12, Operator), (13, 18, Str)]
+        );
+        assert_eq!(roles("  #flip false"), vec![(2, 7, Keyword), (8, 13, Bool)]);
+        assert_eq!(roles("  #delay 10"), vec![(2, 8, Keyword), (9, 11, Number)]);
+        assert_eq!(
+            roles("  You can't sleep."),
+            vec![],
+            "free text stays default"
+        );
+        assert_eq!(
+            roles("  Bye. #delay 30"),
+            vec![(7, 13, Keyword), (14, 16, Number)],
+            "a trailing directive still colours"
+        );
+        // A string escape overlays the string span.
+        assert_eq!(
+            roles("x = \"a\\nb\""),
+            vec![(0, 1, Name), (2, 3, Operator), (4, 10, Str), (6, 8, Escape)]
+        );
+    }
+
+    /// The eggscene tokenizer colours `#cutscene` headers and verb lines (verb
+    /// keyword + typed args), and leaves a non-verb line default.
+    #[test]
+    fn highlight_eggscene_roles() {
+        use HiRole::*;
+        let roles = |line: &str| highlight_line(line, ScriptKind::EggScene);
+        assert_eq!(
+            roles("#cutscene pet_dog"),
+            vec![(0, 9, Keyword), (10, 17, Name)]
+        );
+        assert_eq!(
+            roles("  walk 120 64"),
+            vec![(2, 6, Keyword), (7, 10, Number), (11, 13, Number)]
+        );
+        assert_eq!(
+            roles("  set seen true"),
+            vec![(2, 5, Keyword), (6, 10, Name), (11, 15, Bool)]
+        );
+        assert_eq!(
+            roles("  hello world"),
+            vec![],
+            "an unknown verb isn't coloured"
+        );
     }
 }

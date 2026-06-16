@@ -46,10 +46,6 @@ pub(crate) enum TextOp {
     /// Move the cursor one word left / right (Ctrl+Arrow).
     WordLeft,
     WordRight,
-    /// Move the cursor up / down one line, preserving the column (multi-line
-    /// editor only; clamps to the target line's length).
-    Up,
-    Down,
     /// Move the cursor to the start / end of the current line (Home / End).
     Home,
     End,
@@ -240,13 +236,6 @@ impl TextField {
         self.anchor = Some(self.cursor);
     }
 
-    /// Move the caret to `(line, col)` while keeping (or starting) the selection
-    /// — Shift-click and drag-select.
-    pub(crate) fn extend_to_line_col(&mut self, line: usize, col: usize) {
-        self.anchor.get_or_insert(self.cursor);
-        self.move_to_line_col(line, col);
-    }
-
     /// Move the caret to byte `target` (snapped), extending the selection when
     /// `extend` is set and collapsing it otherwise — the byte-addressed sibling of
     /// [`move_caret`](Self::move_caret), for the editor's smart-Home.
@@ -396,29 +385,6 @@ impl TextField {
             TextOp::Right => self.cursor = self.next_boundary(),
             TextOp::WordLeft => self.cursor = self.word_left(),
             TextOp::WordRight => self.cursor = self.word_right(),
-            TextOp::Up => {
-                let ls = self.line_start_at(self.cursor);
-                if ls == 0 {
-                    self.cursor = 0;
-                } else {
-                    let col = self.buffer[ls..self.cursor].chars().count();
-                    let prev_end = ls - 1; // the '\n' that ends the previous line
-                    let prev_start = self.line_start_at(prev_end);
-                    self.cursor = self.pos_at_column(prev_start, prev_end, col);
-                }
-            }
-            TextOp::Down => {
-                let le = self.line_end_at(self.cursor);
-                if le == self.buffer.len() {
-                    self.cursor = le;
-                } else {
-                    let ls = self.line_start_at(self.cursor);
-                    let col = self.buffer[ls..self.cursor].chars().count();
-                    let next_start = le + 1; // just past the '\n'
-                    let next_end = self.line_end_at(next_start);
-                    self.cursor = self.pos_at_column(next_start, next_end, col);
-                }
-            }
             TextOp::Home => self.cursor = self.line_start_at(self.cursor),
             TextOp::End => self.cursor = self.line_end_at(self.cursor),
             TextOp::Commit => return TextEvent::Commit,
@@ -539,30 +505,6 @@ mod tests {
         assert_eq!(f.line_col(), (1, 0));
         f.apply(TextOp::End);
         assert_eq!(f.line_col(), (1, 3), "End stops before the next newline");
-    }
-
-    /// Up/Down keep the column and clamp to a shorter target line; stepping off
-    /// the top/bottom parks at the buffer ends.
-    #[test]
-    fn up_down_preserve_and_clamp_column() {
-        // Column 4 on the middle line; the line above is shorter ("hi"), so Up
-        // clamps to its end (column 2).
-        let mut f = at_caret("hi\nfour|s\nbottom");
-        f.apply(TextOp::Up);
-        assert_eq!(f.line_col(), (0, 2));
-        // Back down restores column 4 on a long-enough line.
-        f.apply(TextOp::Down);
-        f.apply(TextOp::Down);
-        assert_eq!(f.line_col(), (2, 2), "column carried from the clamp above");
-
-        // Down on the last line parks at the very end; Up on the first parks at 0.
-        let mut g = at_caret("ab\nc|d");
-        g.apply(TextOp::Down);
-        assert_eq!(g.text(), "ab\ncd", "motion never alters the buffer");
-        assert_eq!(g.line_col(), (1, 2));
-        let mut h = at_caret("ab|c\nd");
-        h.apply(TextOp::Up);
-        assert_eq!(h.line_col(), (0, 0));
     }
 
     /// Clicking maps to `move_to_line_col`, which clamps a past-the-end column to
