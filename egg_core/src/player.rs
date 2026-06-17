@@ -22,6 +22,7 @@ use crate::{
     interact::Interaction,
     map::{Axis, LayerInfo, MapInfo, MapObject},
     position::{Hitbox, Vec2},
+    rand::Lcg64Xsh32,
     system::{ConsoleApi, ConsoleHelper, DrawParams, Flip, SpriteOptions},
 };
 
@@ -701,6 +702,106 @@ impl CompanionList {
             })
             .collect()
     }
+}
+
+/// A little critter spawned into the walkaround by the `add_creatures`
+/// interaction (see [`crate::interact::InteractFn::AddCreatures`]): it hatches
+/// from an egg, then loops between idling and wandering in a random direction.
+#[derive(Clone, Debug)]
+pub struct Creature {
+    pub hitbox: Hitbox,
+    pub state: CreatureState,
+    pub sprite: i16,
+    pub flip_h: bool,
+}
+impl Creature {
+    pub const fn default() -> Self {
+        Self {
+            hitbox: Hitbox::new(0, 0, 8, 8),
+            state: CreatureState::Egg(Timer(255)),
+            sprite: 688,
+            flip_h: false,
+        }
+    }
+    pub fn with_offset(self, delta: Vec2) -> Self {
+        Self {
+            hitbox: self.hitbox.offset(delta),
+            ..self
+        }
+    }
+    pub fn step(&mut self, rng: &mut Lcg64Xsh32) {
+        match &mut self.state {
+            CreatureState::Idle(timer) => {
+                if timer.tick() {
+                    self.state = CreatureState::Walking(
+                        Timer(rng.rand_u8().min(80)),
+                        Vec2::new(
+                            (rng.rand_u8() % 3) as i16 - 1,
+                            (rng.rand_u8() % 3) as i16 - 1,
+                        ),
+                    );
+                }
+            }
+            CreatureState::Walking(timer, vec) => {
+                if timer.tick() {
+                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
+                } else if timer.0 % 3 == 0 {
+                    if vec.x != 0 {
+                        self.flip_h = vec.x.is_negative()
+                    }
+                    self.hitbox = self.hitbox.offset(*vec);
+                }
+            }
+            CreatureState::Egg(timer) => {
+                if timer.tick() {
+                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
+                }
+            }
+        }
+    }
+    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
+        let sprite: i32 = match &self.state {
+            CreatureState::Idle(_) => self.sprite.into(),
+            CreatureState::Walking(x, _) => i32::from(self.sprite) + i32::from(x.0 / 20) % 2,
+            CreatureState::Egg(_) => i32::from(self.sprite) - 32 * 5 - 4,
+        };
+        let offset = offset * Vec2::new(-1, -1);
+        let flip = match self.flip_h {
+            true => Flip::Horizontal,
+            false => Flip::None,
+        };
+        DrawParams::new(
+            sprite,
+            self.hitbox.offset(offset).x.into(),
+            self.hitbox.offset(offset).y.into(),
+            SpriteOptions {
+                flip,
+                ..SpriteOptions::transparent_zero()
+            },
+            Some(1),
+            1,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Timer(pub u8);
+
+impl Timer {
+    pub fn tick_amt(&mut self, amount: u8) -> bool {
+        self.0 = self.0.saturating_sub(amount);
+        self.0 == 0
+    }
+    pub fn tick(&mut self) -> bool {
+        self.tick_amt(1)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum CreatureState {
+    Idle(Timer),
+    Walking(Timer, Vec2),
+    Egg(Timer),
 }
 
 #[cfg(test)]

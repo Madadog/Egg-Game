@@ -6,7 +6,7 @@ use crate::debug::DebugInfo;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, MapInfo, ObjectEffect, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell};
+use crate::player::{Companion, CompanionList, CompanionTrail, Creature, MoveMode, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
 use crate::system::{
@@ -15,13 +15,11 @@ use crate::system::{
 use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
 use log::info;
 
-use self::creatures::Creature;
 use self::cutscene::Cutscene;
 
 use super::inventory::{self, Inventory, InventoryUi};
 use super::mapeditor::MapViewer;
 
-mod creatures;
 mod cutscene;
 
 #[derive(Clone, Debug)]
