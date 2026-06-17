@@ -28,7 +28,7 @@ use crate::data::save::SaveData;
 use crate::data::script::Script;
 use crate::data::sound::music::MusicTrack;
 use crate::data::{eggscene, eggtext};
-use crate::dialogue::{Dialogue, Message};
+use crate::dialogue::{Dialogue, Message, TextContent};
 use crate::drawstate::{DrawState, LayerId};
 use crate::system::drawing::image::{Rgba, RgbaImage};
 use crate::system::drawing::{Canvas, EdgePolicy, Transform};
@@ -231,6 +231,10 @@ struct Preview {
     /// The current page (the bottom of the stack) — what forward / back / the
     /// caret select.
     page: usize,
+    /// The caret turn the preview last synced to. Caret-follow only re-syncs
+    /// `page` when the caret moves to a *different* turn (`!= followed`), so manual
+    /// paging (the `<` / `>` buttons, Ctrl+, / .) isn't snapped back every frame.
+    followed: usize,
     /// Typewriter progress (chars revealed) of the current page; `delay` paces it.
     chars: usize,
     delay: usize,
@@ -358,6 +362,11 @@ pub struct TextEditor {
     /// starting from this column so the caret stays visible past the right edge.
     /// The gutter and sidebar don't move. Driven by caret-follow and Shift+wheel.
     h_scroll: usize,
+    /// The caret byte as of the end of the previous `step` (or an external `open`).
+    /// The end-of-step caret-follow runs only when the caret has moved since — so
+    /// a jump / edit reveals itself, but a bare wheel scroll is free to leave the
+    /// caret off screen instead of snapping straight back to it.
+    last_caret: usize,
     /// True while the left mouse button is held after a press that began in the
     /// text body, so motion extends the selection (drag-select). Cleared on
     /// release.
@@ -418,6 +427,7 @@ impl Default for TextEditor {
             field: TextField::default(),
             scroll: 0,
             h_scroll: 0,
+            last_caret: 0,
             dragging: false,
             outline_scroll: 0,
             outline: Vec::new(),
@@ -894,10 +904,12 @@ impl TextEditor {
         if self.prompt.is_some() {
             self.step_prompt(system, shift);
             let layout = self.layout(system, &r);
-            self.ensure_caret_visible_rows(&layout, r.visible_rows);
+            // A find / go-to match moves the caret, so always reveal it here.
+            self.ensure_caret_visible_rows(&layout, r.visible_rows, true);
             if !self.wrap {
                 self.ensure_caret_visible_h(system, r.body_w);
             }
+            self.last_caret = self.field.cursor();
             return;
         }
 
@@ -950,18 +962,19 @@ impl TextEditor {
                 }
                 self.dragging = true; // a body press may become a drag-select
             } else if let Some(rect) = r.preview.filter(|rc| rc.contains(mx, my)) {
-                // Preview control line (top): `<` back · skip/page · sm/reg · `>`
-                // forward, laid out in eighths.
+                // Preview control line (top): five equal cells — `<` · N/M ·
+                // page/skip · reg/sm · `>` — sharing `preview_cell_w` with the
+                // renderer so each label's click target sits directly under it.
                 if my < rect.y + LINE_H + PAD {
-                    match (mx - rect.x) / (rect.w / 8).max(1) {
+                    match ((mx - rect.x) / Self::preview_cell_w(rect.w)).min(4) {
                         0 => self.preview_prev(),
-                        1 | 2 => {
+                        2 => {
                             self.preview.skip = !self.preview.skip;
                             self.preview.chars = 0;
                         }
-                        5 | 6 => self.toggle_preview_font(system, rect.w),
-                        7.. => self.preview_next(),
-                        _ => {}
+                        3 => self.toggle_preview_font(system, rect.w),
+                        4 => self.preview_next(),
+                        _ => {} // cell 1: the N/M counter, not a button
                     }
                 }
             }
@@ -1193,12 +1206,16 @@ impl TextEditor {
         if !vertical {
             self.goal_x = None; // a non-vertical action resets the goal column
         }
-        // Recompute the layout post-edit, then keep the caret on screen.
+        // Recompute the layout post-edit. Follow the caret only if it moved (since
+        // the previous step or an external jump) or the buffer changed this frame;
+        // a bare wheel scroll keeps its position.
+        let follow = changed || self.field.cursor() != self.last_caret;
         let layout = self.layout(system, &r);
-        self.ensure_caret_visible_rows(&layout, r.visible_rows);
-        if !self.wrap {
+        self.ensure_caret_visible_rows(&layout, r.visible_rows, follow);
+        if follow && !self.wrap {
             self.ensure_caret_visible_h(system, r.body_w);
         }
+        self.last_caret = self.field.cursor();
         // Drive the dialogue previewer (parse/follow-caret/tick) for this frame.
         self.update_preview(system, r.preview.map_or(0, |p| p.w), changed);
     }
@@ -1399,25 +1416,38 @@ impl TextEditor {
         if let Some(rect) = r.preview {
             let cy = rect.y + PAD;
             let total = self.preview.pages.len();
-            system.print_to(canvas, "<", rect.x + PAD, cy, hilite, opts.clone());
-            system.print_to(
-                canvas,
-                ">",
-                rect.x + rect.w - PAD - 4,
-                cy,
-                hilite,
-                opts.clone(),
-            );
-            let mode = if self.preview.skip { "skip" } else { "page" };
-            let font = if self.preview.small_font { "sm" } else { "reg" };
-            let mid = match &self.preview.key {
+            // Five equal cells: `<` · N/M · page/skip · reg/sm · `>`. The cell math
+            // is shared with the click hit-test (`preview_cell_w`) so each label and
+            // its button coincide; every label is centred in its own cell.
+            let cw = Self::preview_cell_w(rect.w);
+            let cell_cx = |i: i32| rect.x + i * cw + cw / 2;
+            system.print_to_centered(canvas, "<", cell_cx(0), cy, hilite, opts.clone());
+            system.print_to_centered(canvas, ">", cell_cx(4), cy, hilite, opts.clone());
+            match &self.preview.key {
                 Some(_) if total > 0 => {
-                    format!("{}/{total}   {mode}   {font}", self.preview.page + 1)
+                    let counter = format!("{}/{total}", self.preview.page + 1);
+                    let mode = if self.preview.skip { "skip" } else { "page" };
+                    let font = if self.preview.small_font { "sm" } else { "reg" };
+                    system.print_to_centered(canvas, &counter, cell_cx(1), cy, dim, opts.clone());
+                    // The two toggles read as hilit (clickable), the counter as dim.
+                    system.print_to_centered(canvas, mode, cell_cx(2), cy, hilite, opts.clone());
+                    system.print_to_centered(canvas, font, cell_cx(3), cy, hilite, opts.clone());
                 }
-                Some(_) => "no dialogue".to_string(),
-                None => "caret not in a dialogue".to_string(),
-            };
-            system.print_to_centered(canvas, &mid, rect.x + rect.w / 2, cy, dim, opts.clone());
+                Some(_) => {
+                    system
+                        .print_to_centered(canvas, "no dialogue", cell_cx(2), cy, dim, opts.clone());
+                }
+                None => {
+                    system.print_to_centered(
+                        canvas,
+                        "caret not in a dialogue",
+                        cell_cx(2),
+                        cy,
+                        dim,
+                        opts.clone(),
+                    );
+                }
+            }
 
             if total > 0
                 && let Some((sheet, palettes)) = preview_assets
@@ -1849,9 +1879,13 @@ impl TextEditor {
         if changed || key_changed {
             self.preview.key = key;
             self.preview.page = target;
+            self.preview.followed = target;
             self.reload_preview(system, panel_w);
-        } else if target != self.preview.page {
-            // The caret moved to a different turn of the same dialogue.
+        } else if target != self.preview.followed {
+            // The caret moved to a different turn of the same dialogue — follow it.
+            // Compared against `followed` (the turn last synced to), not `page`, so
+            // a manual page step away from the caret's turn isn't reverted here.
+            self.preview.followed = target;
             self.preview.page = target.min(self.preview.pages.len().saturating_sub(1));
             self.preview.chars = 0;
             self.preview.delay = 0;
@@ -1877,6 +1911,13 @@ impl TextEditor {
             .min(self.preview.pages.len().saturating_sub(1));
         self.preview.chars = 0;
         self.preview.delay = 0;
+    }
+
+    /// The preview control line is five equal cells — `<` · N/M · page/skip ·
+    /// reg/sm · `>`. The renderer and the click hit-test both derive cell `i`'s
+    /// span from this width (`rect.x + i*cw`), so labels and buttons stay aligned.
+    fn preview_cell_w(w: i32) -> i32 {
+        (w / 5).max(1)
     }
 
     /// Forward-skip the preview one turn (reveals the next stacked turn).
@@ -2144,14 +2185,18 @@ impl TextEditor {
             .move_to_byte(self.line_start_byte(row.line) + within, extend);
     }
 
-    /// Keep the caret's visual row within the visible body after an edit / jump /
-    /// scroll, clamping the scroll into range.
-    fn ensure_caret_visible_rows(&mut self, layout: &[VisualRow], visible_rows: usize) {
-        let cr = self.caret_row(layout);
-        if cr < self.scroll {
-            self.scroll = cr;
-        } else if visible_rows > 0 && cr >= self.scroll + visible_rows {
-            self.scroll = cr + 1 - visible_rows;
+    /// Keep the scroll in range, and — when `follow` — pull the caret's visual row
+    /// back on screen. `follow` is set after a caret move / edit (so a jump reveals
+    /// itself) but cleared after a bare wheel scroll, which is then free to leave
+    /// the caret off screen rather than snapping straight back to it.
+    fn ensure_caret_visible_rows(&mut self, layout: &[VisualRow], visible_rows: usize, follow: bool) {
+        if follow {
+            let cr = self.caret_row(layout);
+            if cr < self.scroll {
+                self.scroll = cr;
+            } else if visible_rows > 0 && cr >= self.scroll + visible_rows {
+                self.scroll = cr + 1 - visible_rows;
+            }
         }
         self.scroll = self.scroll.min(layout.len().saturating_sub(1));
     }
@@ -2423,20 +2468,45 @@ fn extract_pages(
     let mut d = Dialogue::default().with_width(width);
     d.set_messages(console, &mut save, messages);
     let mut pages = Vec::new();
-    while let Some(text) = d.current_text.clone() {
+    while d.current_text.is_some() {
+        // A `#delay` reveal *appends* to the current box rather than opening a new
+        // one, so absorb every queued append into this box before snapshotting it —
+        // otherwise a piecemeal sentence would show as several stacked turns.
+        while next_is_append(&d) {
+            d.finish_line();
+            if !advance_dialogue(&mut d, console, &mut save) {
+                break;
+            }
+        }
         pages.push(PageSnap {
-            text,
+            text: d.current_text.clone().unwrap_or_default(),
             portrait: d.portrait.clone(),
             flip: d.flip_portrait,
         });
-        // Mark the page done so the next text loads rather than appending to it
-        // (`add_text` only starts a fresh page once the current one is finished).
+        // Mark the page done so the next text opens a fresh box rather than
+        // appending (`add_text` only starts a new box once the current is finished).
         d.finish_line();
         if !advance_dialogue(&mut d, console, &mut save) {
             break;
         }
     }
     pages
+}
+
+/// Whether the next text the dialogue will display *appends* to the current box
+/// (a `#delay` reveal) rather than opening a fresh one. The queue holds play
+/// order reversed, so `rev()` walks it forwards; the first `Text` item decides —
+/// only a non-opening line carries `delay > 0` (the parser drops a message's
+/// first-line delay), so a positive delay unambiguously means "append".
+fn next_is_append(d: &Dialogue) -> bool {
+    d.next_text
+        .iter()
+        .rev()
+        .find_map(|c| match c {
+            TextContent::Text { delay, .. } => Some(*delay > 0),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 /// Scan a quoted string starting at the opening quote `start`, returning the byte
@@ -2698,7 +2768,7 @@ title = Hello
         ed.field.set_cursor(ed.field.text().len());
         let r = ed.regions(&console, 240, 136);
         let layout = ed.layout(&console, &r);
-        ed.ensure_caret_visible_rows(&layout, r.visible_rows);
+        ed.ensure_caret_visible_rows(&layout, r.visible_rows, true);
         ed.draw(&mut draw, &console);
 
         // The minimum framebuffer (a very narrow text column) is also safe to draw
@@ -3300,6 +3370,112 @@ title = Hello
         ed.field.move_to_line_col(5, 0);
         ed.update_preview(&mut console, 200, false);
         assert_eq!(ed.preview.page, 2, "preview followed the caret to turn 3");
+    }
+
+    /// Manual paging (the `<` / `>` buttons, Ctrl+, / .) sticks: a later
+    /// caret-follow frame with the caret unmoved doesn't snap the page back to the
+    /// caret's turn. Only a genuine caret move resumes following.
+    #[test]
+    fn manual_paging_survives_caret_follow() {
+        use crate::system::test_console::TestConsole;
+        let mut console = TestConsole::new();
+        let src = "#dialogue talk\n  One.\n\n  Two.\n\n  Three.";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        ed.field.move_to_line_col(1, 0); // first turn
+        ed.update_preview(&mut console, 200, true);
+        assert_eq!(ed.preview.page, 0);
+
+        ed.preview_next(); // step forward a turn via the button
+        assert_eq!(ed.preview.page, 1);
+        // A follow frame with the caret still on turn 0 must not revert it.
+        ed.update_preview(&mut console, 200, false);
+        assert_eq!(ed.preview.page, 1, "manual page step persists");
+
+        // Moving the caret to a different turn resumes following.
+        ed.field.move_to_line_col(5, 0); // third turn
+        ed.update_preview(&mut console, 200, false);
+        assert_eq!(ed.preview.page, 2, "a caret move resumes follow");
+    }
+
+    /// A `#delay` reveal appends to the current box, so the previewer resolves the
+    /// clauses as one turn (the built-up text), not a stack of partial messages.
+    #[test]
+    fn delay_reveals_collapse_into_one_turn() {
+        use crate::system::test_console::TestConsole;
+        let mut console = TestConsole::new();
+        // One message (no blank line): "Hi", then two appended clauses; then a
+        // second, separate message.
+        let src = "#dialogue talk\n  Hi\n  \" there\" #delay 5\n  \"!\" #delay 5\n\n  Next.";
+        let mut ed = editor_with("script/en.eggtext", src);
+        ed.rebuild_outline();
+        ed.field.move_to_line_col(1, 0);
+        ed.update_preview(&mut console, 200, true);
+        assert_eq!(ed.preview.pages.len(), 2, "delayed clauses stay one turn");
+        let first = &ed.preview.pages[0].text;
+        assert!(
+            first.contains("there") && first.contains('!'),
+            "the turn shows the fully built-up text, got {first:?}"
+        );
+    }
+
+    /// The control line's rendered label centres and its click hit-test both come
+    /// from `preview_cell_w`, so each label is hit-tested as its own cell (`<`=0,
+    /// page/skip=2, reg/sm=3, `>`=4; the counter, cell 1, is inert).
+    #[test]
+    fn preview_control_cells_align() {
+        for w in [120, 200, 240, 317] {
+            let cw = TextEditor::preview_cell_w(w);
+            for i in 0..5 {
+                let centre = i * cw + cw / 2; // where the renderer draws label `i`
+                let cell = (centre / cw).min(4); // how a click there is bucketed
+                assert_eq!(cell, i, "w={w}: label cell {i} click-maps to itself");
+            }
+        }
+    }
+
+    /// `ensure_caret_visible_rows` re-centres on the caret only when asked to
+    /// `follow`; a bare wheel scroll (`follow = false`) keeps its position so the
+    /// viewport can move off the caret, but the scroll is still clamped in range.
+    #[test]
+    fn scroll_follows_caret_only_when_asked() {
+        use crate::system::test_console::TestConsole;
+        let console = TestConsole::new();
+        let src = "x\n".repeat(200);
+        let mut ed = editor_with("script/en.eggtext", &src);
+        ed.field.move_to_line_col(0, 0); // caret at the top
+        let r = ed.regions(&console, 240, 136);
+        let layout = ed.layout(&console, &r);
+
+        ed.scroll = 50; // a wheel scrolled well past the caret
+        ed.ensure_caret_visible_rows(&layout, r.visible_rows, false);
+        assert_eq!(ed.scroll, 50, "a bare scroll is left where it is");
+
+        ed.ensure_caret_visible_rows(&layout, r.visible_rows, true);
+        assert_eq!(ed.scroll, 0, "following snaps back to the caret");
+
+        // The clamp still applies with no follow: scroll can't exceed the layout.
+        ed.scroll = 10_000;
+        ed.ensure_caret_visible_rows(&layout, r.visible_rows, false);
+        assert_eq!(ed.scroll, layout.len() - 1, "scroll stays clamped in range");
+    }
+
+    /// Opening at a deep anchor (the map editor's "edit in text editor" jump, run
+    /// from a separate host system before the view steps) still reveals the caret
+    /// on the next step — the follow keys off the caret moving since last step, not
+    /// just within it.
+    #[test]
+    fn open_anchor_scrolls_into_view_next_step() {
+        use crate::system::test_console::TestConsole;
+        let mut console = TestConsole::new();
+        console
+            .files
+            .insert("script/en.eggtext".to_string(), "x\n".repeat(200).into_bytes());
+        let mut ed = TextEditor::default();
+        ed.open(&mut console, "script/en.eggtext", TextAnchor::Line(150));
+        assert_eq!(ed.scroll, 0, "open resets the scroll");
+        ed.step(&mut console, 240, 136);
+        assert!(ed.scroll > 0, "the step scrolled the deep caret into view");
     }
 
     /// Ctrl+Shift+M maximizes an aux to the centre, swapping the body into the
