@@ -69,7 +69,9 @@ impl EggInput {
         }
     }
     pub fn press_key(&mut self, key: ScanCode) {
-        self.keyboard[key.index()] = true;
+        if let Some(down) = self.keyboard.get_mut(key.index()) {
+            *down = true;
+        }
     }
     pub fn push_char(&mut self, c: char) {
         self.typed_chars.push(c);
@@ -77,12 +79,8 @@ impl EggInput {
     pub fn refresh(&mut self) {
         // Advance the per-key hold counters from the frame that just ended — the
         // `keyboard` array still holds it here, before the clear below.
-        for i in 0..SCANCODE_COUNT {
-            self.held[i] = if self.keyboard[i] {
-                self.held[i].saturating_add(1)
-            } else {
-                0
-            };
+        for (held, &down) in self.held.iter_mut().zip(&self.keyboard) {
+            *held = if down { held.saturating_add(1) } else { 0 };
         }
         self.previous_keyboard = self.keyboard;
         self.mouse.step();
@@ -97,23 +95,27 @@ impl EggInput {
     }
     pub fn keyp(&self, key: ScanCode) -> bool {
         let i = key.index();
-        self.keyboard[i] && !self.previous_keyboard[i]
+        let down = self.keyboard.get(i).copied().unwrap_or(false);
+        let prev = self.previous_keyboard.get(i).copied().unwrap_or(false);
+        down && !prev
     }
     pub fn key(&self, key: ScanCode) -> bool {
-        self.keyboard[key.index()]
+        self.keyboard.get(key.index()).copied().unwrap_or(false)
     }
     /// Edge-or-repeat: true on the initial press, then — while still held — again
     /// every `rate` fixed steps after an initial `delay` (both in fixed steps).
     /// `delay`/`rate` are per-call so different consumers can tune their cadence.
     pub fn key_repeat(&self, key: ScanCode, delay: u16, rate: u16) -> bool {
         let i = key.index();
-        if !self.keyboard[i] {
+        let down = self.keyboard.get(i).copied().unwrap_or(false);
+        let held = self.held.get(i).copied().unwrap_or(0);
+        if !down {
             return false;
         }
-        if self.held[i] == 0 {
+        if held == 0 {
             return true;
         }
-        self.held[i] >= delay && (self.held[i] - delay).is_multiple_of(rate.max(1))
+        held >= delay && (held - delay).is_multiple_of(rate.max(1))
     }
 }
 
