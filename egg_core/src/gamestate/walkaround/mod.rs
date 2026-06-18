@@ -6,7 +6,7 @@ use crate::debug::DebugInfo;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, MapInfo, ObjectEffect, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, Creature, MoveMode, Shell};
+use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell, ShellPreset};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
 use crate::system::{
@@ -28,7 +28,6 @@ pub struct WalkaroundState {
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
     pub map_animations: Vec<Animation>,
-    pub creatures: Vec<Creature>,
     pub camera: Camera,
     pub current_map: MapInfo,
     pub map_viewer: MapViewer,
@@ -67,7 +66,6 @@ impl WalkaroundState {
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
-            creatures: Vec::new(),
             camera: Camera::default(),
             current_map: MapInfo::default(),
             map_viewer: MapViewer::primary(),
@@ -149,7 +147,6 @@ impl WalkaroundState {
 
         self.map_animations.shrink_to_fit();
 
-        self.creatures.clear();
         self.particles.clear();
     }
     /// Load a map by name through [`map_by_name`] (the loaded `maps` store).
@@ -232,8 +229,8 @@ impl WalkaroundState {
             }
             InteractFn::AddCreatures(x) => {
                 let pos = self.player_ref().pos;
-                self.creatures
-                    .extend((0..=*x).map(|_| Creature::default().with_offset(pos)));
+                self.entities
+                    .extend((0..=*x).map(|_| Shell::egg(ShellPreset::Critter).with_pos(pos)));
                 None
             }
             InteractFn::GiveItem(id) => {
@@ -449,7 +446,6 @@ impl WalkaroundState {
             .for_each(|anim| anim.advance());
 
         self.particles.step();
-        self.creatures.iter_mut().for_each(|x| x.step(ctx.rng));
 
         if self.play_cutscene(ctx) {
             return None;
@@ -560,14 +556,19 @@ impl WalkaroundState {
         };
 
         let tiles = ctx.maps.get(&self.current_map.source);
+        // What a shell wants this step. We decide behind a `&mut move_mode` borrow
+        // (so egg/amble timers can tick), then act once it's released — hatching
+        // reassigns the whole `Shell`, which the live borrow would forbid.
+        enum Act {
+            Player,
+            Drive(i16, i16),
+            Hatch(ShellPreset),
+        }
         for shell in self.entities.iter_mut() {
-            match shell.move_mode {
-                MoveMode::Player => {
-                    let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
-                    shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
-                }
+            let act = match &mut shell.move_mode {
+                MoveMode::Player => Act::Player,
                 MoveMode::Wander => {
-                    let (dx, dy) = if ctx.rng.rand_u8() < 25 {
+                    let (vx, vy) = if ctx.rng.rand_u8() < 25 {
                         (
                             (ctx.rng.rand_u8() % 3) as i16 - 1,
                             (ctx.rng.rand_u8() % 3) as i16 - 1,
@@ -575,8 +576,35 @@ impl WalkaroundState {
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    let (dx, dy) = shell.walk(ctx.system, dx, dy, false, &self.current_map, tiles);
+                    Act::Drive(vx, vy)
+                }
+                MoveMode::Egg {
+                    timer,
+                    hatches_into,
+                } => {
+                    if timer.tick() {
+                        Act::Hatch(*hatches_into)
+                    } else {
+                        Act::Drive(0, 0)
+                    }
+                }
+                MoveMode::Amble(state) => {
+                    let (vx, vy) = state.step(ctx.rng);
+                    Act::Drive(vx, vy)
+                }
+            };
+            match act {
+                Act::Player => {
+                    let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
+                    shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
+                }
+                Act::Drive(vx, vy) => {
+                    let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
+                }
+                Act::Hatch(preset) => {
+                    let pos = shell.pos;
+                    *shell = preset.build().with_pos(pos);
                 }
             }
         }
@@ -761,8 +789,6 @@ impl WalkaroundState {
                 anim.current_frame().palette_rotate,
             ));
         }
-
-        sprites.extend(self.creatures.iter().map(|x| x.draw_params(camera_pos)));
 
         sprites.extend(self.entities.iter().map(|x| x.draw_params(camera_pos)));
 

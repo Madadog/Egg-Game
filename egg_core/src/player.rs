@@ -191,12 +191,64 @@ impl WalkSprites {
     pub fn bro() -> Self {
         Self::humanoid(896, 902)
     }
+    /// The critter: a single front-facing look (toggling `688`/`689`), shown for
+    /// every direction. There's no left/right art yet, so `FrontBack` doubles the
+    /// front frames into both slots (no horizontal flip) — see the eight-way
+    /// Compass follow-up.
+    fn critter() -> Self {
+        let walk = || SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1);
+        Self::FrontBack {
+            north: walk(),
+            south: walk(),
+        }
+    }
+    /// A static, unhatched egg (single frame `524`).
+    fn egg() -> Self {
+        let egg = || SpriteAnimation::from_sprite_ids(&[524], 1, 1);
+        Self::FrontBack {
+            north: egg(),
+            south: egg(),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum MoveMode {
     Player,
+    /// Memoryless wander: a small chance each step to re-pick a random heading,
+    /// otherwise keep the current one. Used by NPC shells.
     Wander,
+    /// Inert until `timer` drains, then the shell *becomes* `hatches_into` in
+    /// place (keeping its position) — an egg hatching into any [`ShellPreset`].
+    Egg {
+        timer: Timer,
+        hatches_into: ShellPreset,
+    },
+    /// Dwell wander: commit to a random heading for a spell, idle for a spell,
+    /// repeat — the critter gait (see [`CreatureState`]).
+    Amble(CreatureState),
+}
+
+/// Names a [`Shell`] constructor so a preset can be stored as data — e.g. inside
+/// [`MoveMode::Egg`] to record what an egg hatches into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellPreset {
+    Ellie,
+    May,
+    Dog,
+    Bro,
+    Critter,
+}
+impl ShellPreset {
+    pub fn build(self) -> Shell {
+        match self {
+            ShellPreset::Ellie => Shell::ellie(),
+            ShellPreset::May => Shell::may(),
+            ShellPreset::Dog => Shell::dog(),
+            ShellPreset::Bro => Shell::bro(),
+            ShellPreset::Critter => Shell::critter(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +274,12 @@ impl ShellSprites {
     }
     pub fn bro() -> Self {
         Self::new(WalkSprites::bro(), &[905, 906], 1, 2)
+    }
+    pub fn critter() -> Self {
+        Self::new(WalkSprites::critter(), &[688], 1, 1)
+    }
+    pub fn egg() -> Self {
+        Self::new(WalkSprites::egg(), &[524], 1, 1)
     }
 }
 
@@ -470,6 +528,19 @@ impl Shell {
     pub fn bro() -> Self {
         Self::preset(Hitbox::new(0, 8, 7, 5), ShellSprites::bro())
     }
+    /// A wandering critter — the hatched form. See [`MoveMode::Amble`].
+    pub fn critter() -> Self {
+        Self::preset(Hitbox::new(0, 0, 8, 8), ShellSprites::critter())
+            .with_move_mode(MoveMode::Amble(CreatureState::Idle(Timer(0))))
+    }
+    /// An egg that hatches into `hatches_into` after a fixed delay. See
+    /// [`MoveMode::Egg`].
+    pub fn egg(hatches_into: ShellPreset) -> Self {
+        Self::preset(Hitbox::new(0, 0, 8, 8), ShellSprites::egg()).with_move_mode(MoveMode::Egg {
+            timer: Timer(255),
+            hatches_into,
+        })
+    }
 }
 
 fn test_many_points(
@@ -704,36 +775,26 @@ impl CompanionList {
     }
 }
 
-/// A little critter spawned into the walkaround by the `add_creatures`
-/// interaction (see [`crate::interact::InteractFn::AddCreatures`]): it hatches
-/// from an egg, then loops between idling and wandering in a random direction.
-#[derive(Clone, Debug)]
-pub struct Creature {
-    pub hitbox: Hitbox,
-    pub state: CreatureState,
-    pub sprite: i16,
-    pub flip_h: bool,
+/// A creature's wander state, driven by [`CreatureState::step`] and selected by
+/// [`MoveMode::Amble`]: dwell idle for a spell, then walk a random heading for a
+/// spell, and back. The unhatched phase lives in [`MoveMode::Egg`], not here —
+/// these critters are spawned (as eggs) by the `add_creatures` interaction, see
+/// [`crate::interact::InteractFn::AddCreatures`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CreatureState {
+    Idle(Timer),
+    Walking(Timer, Vec2),
 }
-impl Creature {
-    pub const fn default() -> Self {
-        Self {
-            hitbox: Hitbox::new(0, 0, 8, 8),
-            state: CreatureState::Egg(Timer(255)),
-            sprite: 688,
-            flip_h: false,
-        }
-    }
-    pub fn with_offset(self, delta: Vec2) -> Self {
-        Self {
-            hitbox: self.hitbox.offset(delta),
-            ..self
-        }
-    }
-    pub fn step(&mut self, rng: &mut Lcg64Xsh32) {
-        match &mut self.state {
+impl CreatureState {
+    /// Advance one step, returning the intended `(dx, dy)` for the shell to walk
+    /// (the caller applies collision). Idle yields no motion and eventually flips
+    /// to Walking; Walking nudges one pixel every third tick along its chosen
+    /// heading, then eventually flips back to Idle.
+    pub fn step(&mut self, rng: &mut Lcg64Xsh32) -> (i16, i16) {
+        match self {
             CreatureState::Idle(timer) => {
                 if timer.tick() {
-                    self.state = CreatureState::Walking(
+                    *self = CreatureState::Walking(
                         Timer(rng.rand_u8().min(80)),
                         Vec2::new(
                             (rng.rand_u8() % 3) as i16 - 1,
@@ -741,50 +802,24 @@ impl Creature {
                         ),
                     );
                 }
+                (0, 0)
             }
             CreatureState::Walking(timer, vec) => {
                 if timer.tick() {
-                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
+                    *self = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
+                    (0, 0)
                 } else if timer.0 % 3 == 0 {
-                    if vec.x != 0 {
-                        self.flip_h = vec.x.is_negative()
-                    }
-                    self.hitbox = self.hitbox.offset(*vec);
-                }
-            }
-            CreatureState::Egg(timer) => {
-                if timer.tick() {
-                    self.state = CreatureState::Idle(Timer(rng.rand_u8().min(80)));
+                    (vec.x, vec.y)
+                } else {
+                    (0, 0)
                 }
             }
         }
     }
-    pub fn draw_params(&self, offset: Vec2) -> DrawParams {
-        let sprite: i32 = match &self.state {
-            CreatureState::Idle(_) => self.sprite.into(),
-            CreatureState::Walking(x, _) => i32::from(self.sprite) + i32::from(x.0 / 20) % 2,
-            CreatureState::Egg(_) => i32::from(self.sprite) - 32 * 5 - 4,
-        };
-        let offset = offset * Vec2::new(-1, -1);
-        let flip = match self.flip_h {
-            true => Flip::Horizontal,
-            false => Flip::None,
-        };
-        DrawParams::new(
-            sprite,
-            self.hitbox.offset(offset).x.into(),
-            self.hitbox.offset(offset).y.into(),
-            SpriteOptions {
-                flip,
-                ..SpriteOptions::transparent_zero()
-            },
-            Some(1),
-            1,
-        )
-    }
 }
 
-#[derive(Clone, Debug)]
+/// A small countdown in fixed steps, saturating at zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timer(pub u8);
 
 impl Timer {
@@ -795,13 +830,6 @@ impl Timer {
     pub fn tick(&mut self) -> bool {
         self.tick_amt(1)
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum CreatureState {
-    Idle(Timer),
-    Walking(Timer, Vec2),
-    Egg(Timer),
 }
 
 #[cfg(test)]
@@ -815,5 +843,42 @@ mod tests {
         };
         let trail: CompanionTrail<16> = CompanionTrail::new();
         assert_eq!(list.interact(&trail).len(), 1);
+    }
+
+    #[test]
+    fn critter_preset_ambles_and_egg_carries_its_target() {
+        assert!(matches!(
+            Shell::critter().move_mode,
+            MoveMode::Amble(CreatureState::Idle(_))
+        ));
+        assert!(matches!(
+            Shell::egg(ShellPreset::Critter).move_mode,
+            MoveMode::Egg {
+                hatches_into: ShellPreset::Critter,
+                ..
+            }
+        ));
+        // `build` round-trips a preset back to its shell (here a Wander NPC).
+        assert!(matches!(
+            ShellPreset::Dog.build().move_mode,
+            MoveMode::Wander
+        ));
+    }
+
+    #[test]
+    fn amble_idles_then_walks_on_every_third_tick() {
+        use crate::rand::Lcg64Xsh32;
+        let mut rng = Lcg64Xsh32::default();
+
+        // Idle holds still, then flips to Walking once its timer drains.
+        let mut state = CreatureState::Idle(Timer(1));
+        assert_eq!(state.step(&mut rng), (0, 0));
+        assert!(matches!(state, CreatureState::Walking(..)));
+
+        // A long walk in a fixed heading nudges ≤1px/axis on every third tick and
+        // stays put on the two before it.
+        let mut state = CreatureState::Walking(Timer(90), Vec2::new(1, -1));
+        let steps: Vec<(i16, i16)> = (0..3).map(|_| state.step(&mut rng)).collect();
+        assert_eq!(steps, vec![(0, 0), (0, 0), (1, -1)]);
     }
 }
