@@ -93,25 +93,36 @@ impl EggInput {
     pub fn key_chars(&self) -> &[char] {
         &self.typed_chars
     }
-    pub fn keyp(&self, key: ScanCode) -> bool {
-        let i = key.index();
-        let down = self.keyboard.get(i).copied().unwrap_or(false);
-        let prev = self.previous_keyboard.get(i).copied().unwrap_or(false);
-        down && !prev
+    /// Index a per-scancode array by `key`, yielding the type's default (`false` /
+    /// `0`) for an out-of-range scancode. `ScanCode::index()` is always in range,
+    /// so this just keeps every lookup panic-free behind one helper.
+    fn at<T: Copy + Default>(array: &[T], key: ScanCode) -> T {
+        array.get(key.index()).copied().unwrap_or_default()
     }
+    /// Whether `key` is down this frame.
     pub fn key(&self, key: ScanCode) -> bool {
-        self.keyboard.get(key.index()).copied().unwrap_or(false)
+        Self::at(&self.keyboard, key)
+    }
+    /// Whether `key` was down on the previous frame.
+    fn was_down(&self, key: ScanCode) -> bool {
+        Self::at(&self.previous_keyboard, key)
+    }
+    /// Fixed steps `key` has been held (0 while up).
+    fn held_steps(&self, key: ScanCode) -> u16 {
+        Self::at(&self.held, key)
+    }
+    /// True only on the frame `key` goes down (down now, up last frame).
+    pub fn keyp(&self, key: ScanCode) -> bool {
+        self.key(key) && !self.was_down(key)
     }
     /// Edge-or-repeat: true on the initial press, then — while still held — again
     /// every `rate` fixed steps after an initial `delay` (both in fixed steps).
     /// `delay`/`rate` are per-call so different consumers can tune their cadence.
     pub fn key_repeat(&self, key: ScanCode, delay: u16, rate: u16) -> bool {
-        let i = key.index();
-        let down = self.keyboard.get(i).copied().unwrap_or(false);
-        let held = self.held.get(i).copied().unwrap_or(0);
-        if !down {
+        if !self.key(key) {
             return false;
         }
+        let held = self.held_steps(key);
         if held == 0 {
             return true;
         }
