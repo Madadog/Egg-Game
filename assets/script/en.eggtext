@@ -33,12 +33,6 @@ inventory_items = "Items"
 inventory_shell = "Shell"
 inventory_options = "Options"
 inventory_back = "Back"
-item_ff_name = "French Gry"
-item_ff_desc = "A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill."
-item_chegg_name = "Mystery Egg"
-item_chegg_desc = "There's something inside."
-item_lm_name = "Little Man"
-item_lm_desc = "\"... Hello? Somebody there? ... It's awful dark in here...\""
 instructions_title = "Instructions"
 instructions = "Arrow keys: Move around.\n\n[Z]: Interact.\n\n[X]: Open inventory, Skip text.\n\n\nRemember to get regular sleep.\n\n\n\n    Press any button to continue."
 sm_title = "S____MAR__T"
@@ -55,6 +49,21 @@ menu_music_test = "Music Test"
     Toggle Dog
     Add creature
     Debug Menu
+
+// Inventory items: element 0 is the display name, element 1 the description
+// (see Ctx::item_name / Ctx::item_desc).
+
+#list item_ff
+    French Gry
+    A fried, thinly-sliced potato snack shaped like a guy. You feel a little bit ill.
+
+#list item_lm
+    Little Man
+    "\"... Hello? Somebody there? ... It's awful dark in here...\""
+
+#list item_chegg
+    Mystery Egg
+    There's something inside.
 
 // --- bedroom ---
 

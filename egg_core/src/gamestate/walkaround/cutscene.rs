@@ -366,6 +366,7 @@ mod tests {
         script: Script,
         scenes: eggscene::SceneFile,
         save: SaveData,
+        items: crate::gamestate::inventory::GameItems,
         walk: WalkaroundState,
     }
     impl Harness {
@@ -378,6 +379,7 @@ mod tests {
                 script: Script::new(),
                 scenes: eggscene::SceneFile::default(),
                 save: SaveData::default(),
+                items: crate::gamestate::inventory::GameItems::default(),
                 walk: WalkaroundState::new(),
             }
         }
@@ -403,6 +405,7 @@ mod tests {
             script: &h.script,
             scenes: &h.scenes,
             save: &mut h.save,
+            items: &h.items,
         };
         item.advance(&mut ctx, &mut walk);
         h.walk = walk;
@@ -499,6 +502,7 @@ mod tests {
                 script: &h.script,
                 scenes: &h.scenes,
                 save: &mut h.save,
+                items: &h.items,
             };
             cutscene.skip(&mut ctx, &mut walk);
         }

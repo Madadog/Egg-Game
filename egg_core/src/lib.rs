@@ -36,7 +36,7 @@ use crate::data::script::Script;
 use crate::debug::DebugInfo;
 use crate::dialogue::Message;
 use crate::drawstate::DrawState;
-use crate::gamestate::inventory::{InventoryUi, InventoryUiState};
+use crate::gamestate::inventory::{GameItems, InventoryUi, InventoryUiState};
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::map::MapStore;
@@ -71,6 +71,9 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// [`EggState::flush_save`]), so save persistence is a piece of game state,
     /// not a hardware service.
     pub save: &'a mut SaveData,
+    /// The loaded item registry (sprite per item key). Loaded game data like
+    /// [`maps`](Self::maps)/[`script`](Self::script); read-only here.
+    pub items: &'a GameItems,
 }
 
 impl<S: ConsoleApi> Ctx<'_, S> {
@@ -82,6 +85,22 @@ impl<S: ConsoleApi> Ctx<'_, S> {
     /// An ordered string list by key (see [`Script::list`]).
     pub fn list(&self, key: &str) -> Vec<String> {
         self.script.list(key)
+    }
+
+    /// An inventory item's display name — element 0 of its `item_<key>` list.
+    pub fn item_name(&self, key: &str) -> String {
+        self.list(&format!("item_{key}"))
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+    }
+
+    /// An inventory item's description — element 1 of its `item_<key>` list.
+    pub fn item_desc(&self, key: &str) -> String {
+        self.list(&format!("item_{key}"))
+            .into_iter()
+            .nth(1)
+            .unwrap_or_default()
     }
 
     /// A dialogue conversation by key, resolved against the live save so its
@@ -117,6 +136,11 @@ pub struct EggState {
     /// Every loaded Tiled map by name — the tile data the game draws,
     /// collides against and edits. The host fills it at asset-load time.
     pub maps: MapStore,
+    /// The loaded item registry (sprite per item key), threaded into every
+    /// state through [`Ctx::items`]. Loaded game data like [`maps`](Self::maps);
+    /// currently the hard-coded [`GameItems::default`], a future `.eggitems`
+    /// file will fill it at asset-load time.
+    pub items: GameItems,
     /// The game's RNG, threaded into every state through [`Ctx::rng`].
     pub rng: Lcg64Xsh32,
     /// The loaded UI labels + dialogue, threaded into every state through
@@ -153,13 +177,13 @@ impl EggState {
         // special host hook.
         let loaded = self.load_save(system);
         // On the one frame the save is read from storage, rebuild the live
-        // inventory from its persisted item ids (the inverse of the sync before
+        // inventory from its persisted item keys (the inverse of the sync before
         // `flush_save` below), so what the player picked up last run is restored
         // before any state draws the inventory.
         if loaded {
             self.inventory_ui
                 .inventory
-                .load_from_save_ids(self.save.inventory);
+                .load_from_save(&self.save.inventory, &self.items);
         }
         self.time += 1;
         if let Some(mode) = self.step_mode(system) {
@@ -167,8 +191,8 @@ impl EggState {
         }
         // Serialise the live inventory into the save before it is flushed, so an
         // item the player gained, dropped or reordered this frame persists (the
-        // inverse of `load_from_save_ids` after `load_save` above).
-        self.save.inventory = self.inventory_ui.inventory.to_save_ids();
+        // inverse of `load_from_save` after `load_save` above).
+        self.save.inventory = self.inventory_ui.inventory.to_save();
         self.flush_save(system);
     }
 
@@ -185,6 +209,7 @@ impl EggState {
             script: &self.script,
             scenes: &self.scenes,
             save: &mut self.save,
+            items: &self.items,
         };
         match self.gamestate {
             GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
@@ -311,6 +336,7 @@ impl Default for EggState {
             time: 0,
             debug_info: DebugInfo::default(),
             maps: MapStore::default(),
+            items: GameItems::default(),
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
             scenes: SceneFile::default(),
@@ -391,8 +417,8 @@ mod tests {
     /// The inventory survives a full save→load cycle through the real sync
     /// points (`run`'s serialise-before-flush and repopulate-after-load): fill
     /// the live inventory, flush it to the store, clear it on a fresh state, load
-    /// it back, and the slot contents (by item id) are identical. Exercises the
-    /// `Inventory::to_save_ids`/`load_from_save_ids` round trip through
+    /// it back, and the slot contents (by item key) are identical. Exercises the
+    /// `Inventory::to_save`/`load_from_save` round trip through
     /// [`SaveData::inventory`] and the host's file store via [`TestConsole`].
     #[test]
     fn inventory_round_trips_through_save_and_load() {
@@ -404,11 +430,19 @@ mod tests {
         // we expect to find again after a save→clear→load cycle.
         let mut source = EggState::default();
         source.load_save(&mut console); // no file: leaves the default save.
-        let filled = source.inventory_ui.inventory.to_save_ids();
-        assert_ne!(filled, [0; 8], "the default inventory has items to persist");
+        // Grant a fourth item so the live inventory differs from the default
+        // save (whose `inventory` default is the three starting items) — this is
+        // what makes the diff-gated `flush_save` below actually write a file.
+        assert!(source.inventory_ui.inventory.add("ff".into()));
+        let filled = source.inventory_ui.inventory.to_save();
+        assert_ne!(
+            filled,
+            [const { None }; 8],
+            "the populated inventory has items to persist"
+        );
 
         // Serialise-before-flush (the line `run` performs) then write to storage.
-        source.save.inventory = source.inventory_ui.inventory.to_save_ids();
+        source.save.inventory = source.inventory_ui.inventory.to_save();
         source.flush_save(&mut console);
         assert!(console.files.contains_key(SAVE_PATH), "save was written");
 
@@ -416,7 +450,7 @@ mod tests {
         // repopulates from it (the lines `run` performs on the load frame).
         let mut loaded = EggState::default();
         loaded.inventory_ui.inventory = Inventory {
-            items: [None; 8],
+            items: [const { None }; 8],
             unlocks: [false; 4],
         };
         let did_load = loaded.load_save(&mut console);
@@ -424,9 +458,9 @@ mod tests {
         loaded
             .inventory_ui
             .inventory
-            .load_from_save_ids(loaded.save.inventory);
+            .load_from_save(&loaded.save.inventory, &loaded.items);
 
         // The reloaded slots match the originals item-for-item.
-        assert_eq!(loaded.inventory_ui.inventory.to_save_ids(), filled);
+        assert_eq!(loaded.inventory_ui.inventory.to_save(), filled);
     }
 }

@@ -6,80 +6,55 @@ use crate::{
     ui::{NodeId, Ui, UiBuilder},
 };
 
-/// A persistent item identifier. Stored as a `u8` in [`SaveData::inventory`]
-/// (a fixed `[u8; 8]`), so the live inventory can be serialised to and rebuilt
-/// from a save. Id `0` is the reserved *empty-slot* sentinel — no real item
-/// ever uses it — so a zeroed save array reads back as an empty inventory.
-///
-/// [`SaveData::inventory`](crate::data::save::SaveData::inventory)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ItemID(pub u8);
-impl ItemID {
-    /// The empty-slot sentinel: the id a save stores for a slot holding no item.
-    pub const EMPTY: ItemID = ItemID(0);
-}
-
-static ITEM_FF: InventoryItem = InventoryItem {
-    id: ItemID(1),
-    sprite: 513,
-    name: "item_ff_name",
-    desc: "item_ff_desc",
-};
-static ITEM_LM: InventoryItem = InventoryItem {
-    id: ItemID(2),
-    sprite: 514,
-    name: "item_lm_name",
-    desc: "item_lm_desc",
-};
-static ITEM_CHEGG: InventoryItem = InventoryItem {
-    id: ItemID(3),
-    sprite: 524,
-    name: "item_chegg_name",
-    desc: "item_chegg_desc",
-};
-
-/// Every item the game knows about, the single source of truth the registry
-/// lookups ([`by_id`], [`by_name`]) scan. Adding an item is a matter of writing
-/// one more `static InventoryItem` (with a fresh [`ItemID`]) and listing it here.
-static ALL_ITEMS: &[&InventoryItem] = &[&ITEM_FF, &ITEM_LM, &ITEM_CHEGG];
-
-/// Resolve an item by its persistent [`ItemID`] (the `u8` a save stores).
-/// `None` for the empty sentinel or an id no item claims — so an old/garbage
-/// save id leaves the slot empty rather than crashing. Mirrors
-/// [`sound::by_name`](crate::data::sound::by_name) /
-/// [`portraits::by_name`](crate::data::portraits::by_name).
-pub fn by_id(id: ItemID) -> Option<&'static InventoryItem> {
-    ALL_ITEMS.iter().copied().find(|item| item.id == id)
-}
-
-/// Resolve an item by its script name (the `name` label key, e.g.
-/// `"item_chegg_name"`), for an [`InteractFn`](crate::interact::InteractFn) that
-/// names the item it grants. `None` for an unknown name.
-pub fn by_name(name: &str) -> Option<&'static InventoryItem> {
-    ALL_ITEMS.iter().copied().find(|item| item.name == name)
-}
-
-#[derive(Debug)]
-pub struct InventoryItem {
-    /// This item's persistent id, the `u8` a save stores for it (see [`ItemID`]).
-    pub id: ItemID,
+/// The fixed, gameplay-relevant data for one item — currently just which sprite
+/// draws it. Its display name and description are NOT here: those are text, so
+/// they live in the script (the `item_<key>` list, read via
+/// [`Ctx::item_name`](crate::Ctx::item_name) /
+/// [`Ctx::item_desc`](crate::Ctx::item_desc)).
+#[derive(Debug, Clone)]
+pub struct ItemDef {
     pub sprite: i32,
-    pub name: &'static str,
-    pub desc: &'static str,
 }
-impl InventoryItem {
-    pub const fn new(id: ItemID, sprite: i32, name: &'static str, desc: &'static str) -> Self {
+
+/// The registry of every item the game knows about, keyed by the persistent
+/// string id a save stores (and an [`InteractFn`](crate::interact::InteractFn)
+/// names). Loaded game data, threaded through [`Ctx::items`](crate::Ctx::items)
+/// like `maps`/`script`/`scenes`.
+///
+/// The canonical item set lives in [`Default`] for now; a future `.eggitems`
+/// data file will replace that hard-coded default, the way maps/script/scenes
+/// moved out to their own files.
+#[derive(Debug, Clone)]
+pub struct GameItems {
+    items: std::collections::HashMap<String, ItemDef>,
+}
+impl GameItems {
+    pub fn new() -> Self {
         Self {
-            id,
-            sprite,
-            name,
-            desc,
+            items: std::collections::HashMap::new(),
         }
+    }
+    pub fn add(&mut self, key: &str, sprite: i32) -> &mut Self {
+        self.items.insert(key.to_string(), ItemDef { sprite });
+        self
+    }
+    pub fn get(&self, key: &str) -> Option<&ItemDef> {
+        self.items.get(key)
+    }
+    pub fn contains(&self, key: &str) -> bool {
+        self.items.contains_key(key)
+    }
+}
+impl Default for GameItems {
+    fn default() -> Self {
+        let mut i = Self::new();
+        i.add("ff", 513).add("lm", 514).add("chegg", 524);
+        i
     }
 }
 
 pub struct Inventory {
-    pub items: [Option<&'static InventoryItem>; 8],
+    pub items: [Option<String>; 8],
     pub unlocks: [bool; 4],
 }
 impl Default for Inventory {
@@ -92,9 +67,9 @@ impl Inventory {
     pub fn new() -> Self {
         Self {
             items: [
-                Some(&ITEM_FF),
-                Some(&ITEM_LM),
-                Some(&ITEM_CHEGG),
+                Some("ff".into()),
+                Some("lm".into()),
+                Some("chegg".into()),
                 None,
                 None,
                 None,
@@ -107,51 +82,52 @@ impl Inventory {
     pub fn swap(&mut self, a: usize, b: usize) {
         self.items.swap(a, b);
     }
-    pub fn take(&mut self, index: usize) -> Option<&'static InventoryItem> {
+    pub fn take(&mut self, index: usize) -> Option<String> {
         if let Some(slot) = self.items.get_mut(index) {
             if slot.is_some() { slot.take() } else { None }
         } else {
             None
         }
     }
-    /// Place `item` in the first empty slot. Returns `true` if it fit, `false`
-    /// if the inventory is full — the caller decides what a full inventory means
-    /// (today: nothing happens), so this never panics or drops the player's
-    /// existing items.
-    pub fn add(&mut self, item: &'static InventoryItem) -> bool {
+    /// The item key in slot `index`, or `None` for an empty/out-of-range slot.
+    pub fn get(&self, index: usize) -> Option<&str> {
+        self.items.get(index).and_then(|s| s.as_deref())
+    }
+    /// Place item `key` in the first empty slot. Returns `true` if it fit,
+    /// `false` if the inventory is full — the caller decides what a full
+    /// inventory means (today: nothing happens), so this never panics or drops
+    /// the player's existing items.
+    pub fn add(&mut self, key: String) -> bool {
         if let Some(slot) = self.items.iter_mut().find(|slot| slot.is_none()) {
-            *slot = Some(item);
+            *slot = Some(key);
             true
         } else {
             false
         }
     }
-    /// The slot contents as the persistent `[u8; 8]` a save stores: each slot's
-    /// [`ItemID`], or [`ItemID::EMPTY`] (`0`) for an empty slot. Inverse of
-    /// [`load_from_save_ids`](Self::load_from_save_ids).
-    pub fn to_save_ids(&self) -> [u8; 8] {
-        let mut ids = [ItemID::EMPTY.0; 8];
-        for (slot, out) in self.items.iter().zip(ids.iter_mut()) {
-            if let Some(item) = slot {
-                *out = item.id.0;
-            }
-        }
-        ids
+    /// The slot contents as the persistent `[Option<String>; 8]` a save stores:
+    /// each slot's item key, or `None` for an empty slot. Inverse of
+    /// [`load_from_save`](Self::load_from_save).
+    pub fn to_save(&self) -> [Option<String>; 8] {
+        self.items.clone()
     }
-    /// Repopulate the slots from a save's `[u8; 8]` of [`ItemID`]s, resolving
-    /// each through [`by_id`]. The empty sentinel or an id no item claims (an
-    /// old/garbage save) leaves that slot empty. Inverse of
-    /// [`to_save_ids`](Self::to_save_ids).
-    pub fn load_from_save_ids(&mut self, ids: [u8; 8]) {
-        for (out, id) in self.items.iter_mut().zip(ids) {
-            *out = by_id(ItemID(id));
+    /// Repopulate the slots from a save's `[Option<String>; 8]` of item keys,
+    /// dropping any key the registry no longer knows (an old/garbage save) so
+    /// that slot reads back empty rather than referencing a missing item.
+    /// Inverse of [`to_save`](Self::to_save).
+    pub fn load_from_save(&mut self, saved: &[Option<String>; 8], items: &GameItems) {
+        for (out, key) in self.items.iter_mut().zip(saved) {
+            *out = match key {
+                Some(k) if items.contains(k) => Some(k.clone()),
+                _ => None,
+            };
         }
     }
 }
 
 pub enum InventoryUiState {
     PageSelect(i32),
-    Items(usize, Option<(usize, &'static InventoryItem)>),
+    Items(usize, Option<(usize, String)>),
     Eggs(usize),
     Options,
     Close,
@@ -275,7 +251,7 @@ impl InventoryUi {
         match &mut self.state {
             InventoryUiState::PageSelect(_) => self.state.change(system),
             InventoryUiState::Items(new_index, selected_item) => {
-                if let Some((old_index, id)) = selected_item {
+                if let Some((old_index, key)) = selected_item {
                     // Put item back down
                     if old_index == new_index {
                         system.play_sound(sound::ITEM_DOWN);
@@ -287,7 +263,7 @@ impl InventoryUi {
                     self.inventory.swap(*new_index, *old_index);
                     if let Some(Some(x)) = self.inventory.items.get(*old_index) {
                         system.play_sound(sound::ITEM_SWAP);
-                        *id = *x;
+                        *key = x.clone();
                     } else {
                         system.play_sound(sound::ITEM_DOWN);
                         *selected_item = None;
@@ -296,7 +272,7 @@ impl InventoryUi {
                     // Pick up item
                     if let Some(Some(x)) = self.inventory.items.get(*new_index) {
                         system.play_sound(sound::ITEM_UP);
-                        *selected_item = Some((*new_index, *x));
+                        *selected_item = Some((*new_index, x.clone()));
                     } else {
                         system.play_sound(sound::DENY);
                     };
@@ -386,13 +362,15 @@ impl InventoryUi {
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(i, item)| {
+                    .map(|(i, slot_key)| {
                         // The slot we're currently dragging from is left empty;
                         // the floating item is drawn over the cursor in `draw`.
-                        let child = match item {
-                            Some(item) if dragging_from != Some(i) => {
-                                Some(b.sprite(item.sprite, 1, 1).scale(2).size(16.0, 16.0).id())
-                            }
+                        // Only a known item (in the registry) draws a sprite.
+                        let child = match slot_key {
+                            Some(key) if dragging_from != Some(i) => ctx
+                                .items
+                                .get(key)
+                                .map(|def| b.sprite(def.sprite, 1, 1).scale(2).size(16.0, 16.0).id()),
                             _ => None,
                         };
                         slot(&mut b, InvKey::Slot(i), main_c + 1, child)
@@ -504,29 +482,31 @@ impl InventoryUi {
                         slot.h.into(),
                         white,
                     );
-                    if let Some((_, item)) = selected {
+                    if let Some((_, key)) = selected {
                         // Picked-up item floats 4px above its cursor slot, outlined.
-                        ctx.draw.spr_with_outline(
-                            FG,
-                            &PALETTE_MAP_IDENTITY,
-                            item.sprite,
-                            i32::from(slot.x) + 2,
-                            i32::from(slot.y) + 2 - 4,
-                            SpriteOptions {
-                                scale: 2,
-                                transparent: Some(0),
-                                ..Default::default()
-                            },
-                            12,
-                        );
+                        if let Some(def) = ctx.items.get(key) {
+                            ctx.draw.spr_with_outline(
+                                FG,
+                                &PALETTE_MAP_IDENTITY,
+                                def.sprite,
+                                i32::from(slot.x) + 2,
+                                i32::from(slot.y) + 2 - 4,
+                                SpriteOptions {
+                                    scale: 2,
+                                    transparent: Some(0),
+                                    ..Default::default()
+                                },
+                                12,
+                            );
+                        }
                     }
                 }
-                let name = match selected {
-                    Some((_, item)) => Some(item.name),
-                    None => self.inventory.items[*current].map(|item| item.name),
+                let key = match selected {
+                    Some((_, key)) => Some(key.clone()),
+                    None => self.inventory.get(*current).map(str::to_string),
                 };
-                if let Some(name) = name {
-                    let name = ctx.label(name);
+                if let Some(key) = key {
+                    let name = ctx.item_name(&key);
                     // Glued to the description box's portrait (the item dialogue
                     // below): the portrait's left edge is `(cw - width)/2 - 13`
                     // (x 7 at the base width) and the box is bottom-anchored, so a
@@ -562,12 +542,16 @@ impl InventoryUi {
 
         // Description portrait for the held or hovered item.
         if let InventoryUiState::Items(current, selected) = &self.state {
-            let item = match selected {
-                Some((_, item)) => Some(*item),
-                None => self.inventory.items[*current],
+            let key = match selected {
+                Some((_, key)) => Some(key.clone()),
+                None => self.inventory.get(*current).map(str::to_string),
             };
-            if let Some(item) = item {
-                let desc = ctx.label(item.desc);
+            // Only a known item (sprite in the registry) draws its portrait.
+            let resolved = key
+                .as_deref()
+                .and_then(|k| ctx.items.get(k).map(|d| (d.sprite, k.to_string())));
+            if let Some((sprite, key)) = resolved {
+                let desc = ctx.item_desc(&key);
                 let string = self.dialogue.fit_text(ctx.system, small, &desc);
                 self.dialogue.draw_dialogue_portrait(
                     ctx.draw,
@@ -576,7 +560,7 @@ impl InventoryUi {
                     small,
                     &string,
                     false,
-                    item.sprite,
+                    sprite,
                     3,
                     1,
                     1,
@@ -622,11 +606,11 @@ impl InventoryUi {
                 }
                 InvKey::Slot(i) => {
                     let drag = match &self.state {
-                        InventoryUiState::Items(_, sel) => *sel,
+                        InventoryUiState::Items(_, sel) => sel.clone(),
                         _ => None,
                     };
                     if mouse.moved() {
-                        self.state = InventoryUiState::Items(i, drag);
+                        self.state = InventoryUiState::Items(i, drag.clone());
                     }
                     if just_pressed(mouse.left) {
                         self.state = InventoryUiState::Items(i, drag);

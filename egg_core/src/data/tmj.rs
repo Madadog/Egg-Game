@@ -456,7 +456,7 @@ impl TiledObject {
             name,
             self.prop_int("pitch"),
             self.prop_int("count"),
-            self.prop_int("item"),
+            self.prop("item"),
             self.hitbox()?,
         )
     }
@@ -792,7 +792,7 @@ fn func_properties(func: &InteractFn) -> Option<Vec<Value>> {
     match func {
         InteractFn::Note(pitch) => properties.push(prop_str("pitch", &pitch.to_string())),
         InteractFn::AddCreatures(count) => properties.push(prop_str("count", &count.to_string())),
-        InteractFn::GiveItem(item) => properties.push(prop_str("item", &item.0.to_string())),
+        InteractFn::GiveItem(key) => properties.push(prop_str("item", key)),
         InteractFn::ToggleDog | InteractFn::Piano(_) | InteractFn::Pet(..) => {}
     }
     Some(properties)
@@ -1711,12 +1711,10 @@ mod tests {
         assert_eq!((objects2[1].hitbox.x, objects2[1].hitbox.y), (16, 24));
     }
 
-    /// A `give_item` func round-trips its `item` scalar property (the granted
-    /// [`ItemID`](crate::gamestate::inventory::ItemID)) through serialise →
-    /// reparse, the id intact.
+    /// A `give_item` func round-trips its `item` string property (the granted
+    /// item's registry key) through serialise → reparse, the key intact.
     #[test]
     fn tmj_round_trips_give_item_func() {
-        use crate::gamestate::inventory::ItemID;
         let json = r#"{
             "width": 4, "height": 4,
             "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
@@ -1726,25 +1724,25 @@ mod tests {
                     "x": 8, "y": 8, "width": 8, "height": 8, "type": "",
                     "properties": [
                         {"name": "func", "type": "string", "value": "give_item"},
-                        {"name": "item", "type": "string", "value": "3"}
+                        {"name": "item", "type": "string", "value": "chegg"}
                     ]
                 }]
             }]
         }"#;
         let map = from_json(json.as_bytes()).unwrap();
         let objects = map.parse_objects();
-        assert!(matches!(
+        assert_eq!(
             func(&objects[0]),
-            Some(InteractFn::GiveItem(ItemID(3)))
-        ));
+            Some(&InteractFn::GiveItem("chegg".to_string()))
+        );
 
         let out = map.to_tmj(&objects);
         let reloaded = from_json(out.as_bytes()).unwrap();
         let objects2 = reloaded.parse_objects();
-        assert!(matches!(
+        assert_eq!(
             func(&objects2[0]),
-            Some(InteractFn::GiveItem(ItemID(3)))
-        ));
+            Some(&InteractFn::GiveItem("chegg".to_string()))
+        );
     }
 
     /// A `piano` func takes its origin from the hitbox (no property), so the

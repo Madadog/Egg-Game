@@ -9,7 +9,7 @@ pub const SAVE_PATH: &str = "save.json";
 
 /// Misc. progression flags and numbers. Persisted to the player's storage
 /// device and restored across runs.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SaveData {
     // UI / general flags
     pub intro_anim_seen: bool,
@@ -51,10 +51,13 @@ pub struct SaveData {
     pub shell_matryoshka: bool,
     pub shell_monster: bool,
 
-    /// Inventory slots, each holding a u8 ItemID. There's no way I'll use ALL
-    /// 255 items......
-    /// TODO: Convert between item and id.
-    pub inventory: [u8; 8],
+    /// Inventory slots, each holding an item key (`None` = empty slot). The
+    /// default seeds the three starting items (ff/lm/chegg), matching the live
+    /// [`Inventory::new`](crate::gamestate::inventory::Inventory::new); a key the
+    /// item registry no longer knows is dropped on load (garbage tolerance, see
+    /// [`Inventory::load_from_save`](crate::gamestate::inventory::Inventory::load_from_save)).
+    #[serde(default = "default_inventory")]
+    pub inventory: [Option<String>; 8],
 
     /// Name of the map the player saved on. `None` in saves written before
     /// maps were named — loading then falls back to the bedroom (see
@@ -68,6 +71,57 @@ pub struct SaveData {
 
     /// Number of times the game has saved
     pub save_count: u32,
+}
+
+/// The starting inventory a fresh save (and a save written before items were
+/// keyed) carries: the three default items, matching
+/// [`Inventory::new`](crate::gamestate::inventory::Inventory::new). Used as both
+/// the [`SaveData::default`] inventory and the `serde` default for the field, so
+/// an old save lacking the key reads back the original starting items (the old
+/// `[1,2,3,4,5,6,7,8]` resolved to exactly these, ids 4–8 being unknown).
+fn default_inventory() -> [Option<String>; 8] {
+    [
+        Some("ff".to_string()),
+        Some("lm".to_string()),
+        Some("chegg".to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+}
+
+impl Default for SaveData {
+    fn default() -> Self {
+        Self {
+            inventory: default_inventory(),
+            // Every other field is its own type's default; only `inventory`
+            // departs from a derived `Default` (it seeds the starting items).
+            intro_anim_seen: false,
+            small_text_on: false,
+            instructions_read: false,
+            manual_doors: false,
+            flags: BTreeSet::new(),
+            dog_fed: false,
+            living_room_seen: false,
+            egg_count: 0,
+            supermarket_thief: false,
+            supermarket_key_access: false,
+            supermarket_backroom: false,
+            wilderness_egg_found: false,
+            egg_pop_count: 0,
+            is_night: false,
+            shell_key: false,
+            shell_curiosity: false,
+            shell_matryoshka: false,
+            shell_monster: false,
+            current_map_name: None,
+            player_x: 0,
+            player_y: 0,
+            save_count: 0,
+        }
+    }
 }
 
 impl SaveData {
@@ -120,7 +174,16 @@ mod tests {
             intro_anim_seen: true,
             instructions_read: true,
             egg_count: 1234,
-            inventory: [1, 2, 3, 4, 5, 6, 7, 8],
+            inventory: [
+                Some("ff".to_string()),
+                Some("lm".to_string()),
+                Some("chegg".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             current_map_name: Some("town".to_string()),
             player_x: -42,
             player_y: 300,

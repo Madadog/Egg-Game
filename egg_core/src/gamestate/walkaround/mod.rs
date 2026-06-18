@@ -17,7 +17,7 @@ use log::info;
 
 use self::cutscene::Cutscene;
 
-use super::inventory::{self, Inventory, InventoryUi};
+use super::inventory::{Inventory, InventoryUi};
 use super::mapeditor::MapViewer;
 
 mod cutscene;
@@ -233,13 +233,12 @@ impl WalkaroundState {
                     .extend((0..=*x).map(|_| Shell::egg(ShellPreset::Critter).with_pos(pos)));
                 None
             }
-            InteractFn::GiveItem(id) => {
-                // Resolve the id to its item and slot it into the inventory. An
-                // unknown id or a full inventory is a no-op (no panic), so a bad
-                // map prop or a player with no free slot simply gains nothing.
-                if let Some(item) = inventory::by_id(*id) {
-                    inventory.add(item);
-                }
+            InteractFn::GiveItem(key) => {
+                // Slot the item key into the inventory. A full inventory is a
+                // no-op (no panic), so a player with no free slot simply gains
+                // nothing; an unknown key still occupies a slot but draws no
+                // sprite/name until the registry knows it.
+                inventory.add(key.clone());
                 None
             }
             InteractFn::Pet(vec, flip) => {
@@ -1028,12 +1027,11 @@ mod tests {
         assert_eq!(walk.map_animations[1].frames, vec![frame(2)]);
     }
 
-    /// `execute_interact_fn(GiveItem)` resolves the id and slots the item into the
-    /// first free slot of the live inventory; an inventory with no free slot is a
-    /// graceful no-op (no panic, no items lost).
+    /// `execute_interact_fn(GiveItem)` slots the item key into the first free
+    /// slot of the live inventory; an inventory with no free slot is a graceful
+    /// no-op (no panic, no items lost).
     #[test]
     fn give_item_adds_to_inventory_and_handles_full() {
-        use crate::gamestate::inventory::{ItemID, by_id};
         use crate::interact::InteractFn;
 
         let mut console = TestConsole::new();
@@ -1041,33 +1039,32 @@ mod tests {
 
         // Start empty so the grant lands in slot 0 deterministically.
         let mut inventory = Inventory {
-            items: [None; 8],
+            items: [const { None }; 8],
             unlocks: [false; 4],
         };
-        let give = InteractFn::GiveItem(ItemID(1));
+        let give = InteractFn::GiveItem("ff".to_string());
         assert!(
             walk.execute_interact_fn(&give, &mut console, &mut inventory)
                 .is_none()
         );
         assert_eq!(
-            inventory.items[0].map(|i| i.id),
-            Some(ItemID(1)),
+            inventory.get(0),
+            Some("ff"),
             "item granted to first free slot"
         );
 
         // Fill the rest, then a further grant on a full inventory changes nothing.
-        let filler = by_id(ItemID(2)).unwrap();
         for slot in inventory.items.iter_mut() {
-            *slot = Some(filler);
+            *slot = Some("lm".to_string());
         }
-        let before = inventory.to_save_ids();
+        let before = inventory.to_save();
         walk.execute_interact_fn(
-            &InteractFn::GiveItem(ItemID(3)),
+            &InteractFn::GiveItem("chegg".to_string()),
             &mut console,
             &mut inventory,
         );
         assert_eq!(
-            inventory.to_save_ids(),
+            inventory.to_save(),
             before,
             "full inventory: grant dropped, nothing lost"
         );
