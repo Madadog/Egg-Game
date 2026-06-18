@@ -303,6 +303,12 @@ impl ShellSprites {
 pub struct Shell {
     /// coords are (x, y)
     pub dir: (i8, i8),
+    /// Last non-zero movement sign per axis, each held while that axis is idle.
+    /// `.0` is the sprite's horizontal facing (drives the walk-grid mirror, so a
+    /// vertical-only mover keeps its last left/right look); `.1` is kept symmetric
+    /// but currently unread — anims that must tell side from front use the live
+    /// [`dir`](Self::dir)`.1`. Maintained via [`face`](Self::face).
+    pub sticky_dir: (i8, i8),
     pub hp: u8,
     pub local_hitbox: Hitbox,
     pub pos: Vec2,
@@ -339,10 +345,13 @@ impl Shell {
             };
             return (sprite, 0);
         }
+        // Face by the sticky horizontal (so a vertical-only mover keeps its last
+        // left/right look) and the live vertical (so side-vs-front still tracks
+        // the current heading).
         let sprite = self
             .sprites
             .walk
-            .dir_to_sprite(self.dir)
+            .dir_to_sprite((self.sticky_dir.0, self.dir.1))
             .get_frame(timer as usize)
             .clone();
         (sprite, y_offset)
@@ -385,11 +394,22 @@ impl Shell {
             }
         }
 
-        // Face direction
-        self.dir.1 = dy as i8;
-        self.dir.0 = dx as i8;
+        self.face((dx as i8, dy as i8));
 
         (dx, dy)
+    }
+    /// Set the facing direction, keeping [`sticky_dir`](Self::sticky_dir) (the
+    /// per-axis last non-zero heading) in sync. The single point for changing
+    /// where a shell faces, so the sprite mirror and the literal `dir` can't drift
+    /// apart — used by walking and by cutscene `FacePlayer`.
+    pub fn face(&mut self, dir: (i8, i8)) {
+        self.dir = dir;
+        if dir.0 != 0 {
+            self.sticky_dir.0 = dir.0.signum();
+        }
+        if dir.1 != 0 {
+            self.sticky_dir.1 = dir.1.signum();
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub fn walk(
@@ -523,6 +543,7 @@ impl Shell {
             local_hitbox,
             hp: 3,
             dir: (0, 1),
+            sticky_dir: (0, 1),
             walktime: 0,
             walking: false,
             flip_controls: Axis::None,
@@ -915,5 +936,22 @@ mod tests {
             assert_eq!(flip_of(&critter, (-1, dy)), Flip::Horizontal);
             assert_eq!(flip_of(&critter, (1, dy)), Flip::None);
         }
+    }
+
+    #[test]
+    fn face_keeps_horizontal_through_vertical_moves() {
+        let mut shell = Shell::critter();
+        shell.face((-1, 0)); // face left
+        assert_eq!(shell.sticky_dir.0, -1);
+
+        // A straight-down move holds the horizontal facing, but `dir` stays
+        // literal (it's what the player's interact hitbox would read).
+        shell.face((0, 1));
+        assert_eq!(shell.sticky_dir.0, -1);
+        assert_eq!(shell.dir, (0, 1));
+
+        // Moving right flips the sticky facing back.
+        shell.face((1, 0));
+        assert_eq!(shell.sticky_dir.0, 1);
     }
 }

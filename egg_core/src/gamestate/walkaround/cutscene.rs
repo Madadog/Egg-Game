@@ -256,7 +256,7 @@ impl CutsceneItem {
                     walkaround.player().pet_timer = None;
                 }
             }
-            CutsceneItem::FacePlayer(dir) => walkaround.player().dir = *dir,
+            CutsceneItem::FacePlayer(dir) => walkaround.player().face(*dir),
             CutsceneItem::Wait(frames) => {
                 *frames = frames.saturating_sub(1);
             }
@@ -316,7 +316,7 @@ impl CutsceneItem {
                     entity.pos = *pos;
                 }
             }
-            CutsceneItem::FacePlayer(dir) => walkaround.player().dir = *dir,
+            CutsceneItem::FacePlayer(dir) => walkaround.player().face(*dir),
             CutsceneItem::PetDog(x) => {
                 *x = 91;
                 walkaround.player().pet_timer = None;
