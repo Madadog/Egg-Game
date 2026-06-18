@@ -75,18 +75,17 @@ menu_music_test = "Music Test"
 
 #dialogue house_stairwell_window
     #set house_stairwell_window_interacted true
-    The glimmering gold sun ignites the hills, casting wild shadows over the landscape. You feel hopeful.
+    The rising sun ignites the hills, casting wild shadows across town. You feel hopeful.
 
 #dialogue house_stairwell_window2
     By a twisted error of design, the view here lines up precisely with the neighbours' bathroom window.
 
-// First viewing (before the window) shows the init line; after the window has
-// been seen, the after line. Folds the old _init/_after pair into one entry.
 #dialogue house_stairwell_painting
     #if house_stairwell_window_interacted
-    A yellow circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.
+    A purple circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.
     #else
-    It's not as good as the real thing.
+    "Your uncle's magnum opus: \"Sunrise over town\". "
+    4x11 px, painted with a minimalist two-tone palette.#delay 30
     #end
 
 #dialogue house_stairwell_door
@@ -124,6 +123,8 @@ menu_music_test = "Music Test"
 #dialogue house_kitchen_cupboard
     The cupboard is empty. Even the spiders have moved on.
 
+    ... An upsetting development, for sure.
+
 #dialogue house_kitchen_sink
     #sound gain
     "Found something down the drain...!\n"
@@ -135,7 +136,9 @@ menu_music_test = "Music Test"
     The unholy king of tacky windows. Words fail to convey your antipathy.
 
 #dialogue house_kitchen_microwave
-    Microwave, the oven of the future. It cooks everything; bread, mince meat, oxygen absorption packets...
+    Microwave, the oven of the future. It cooks everything; bread, meat, squeeze-on tomato sauce packets...
+
+    ... Now if only you actually had something to cook...
 
 // --- house: backyard ---
 
@@ -195,7 +198,7 @@ menu_music_test = "Music Test"
     Strangely enough, this pole isn't casting a shadow. This will undoubtedly become relevant later.
 
 #dialogue town_home_window
-    It's not as bad from the outside.
+    It never looks as bad from outside.
 
 #dialogue town_wide
     "T" #delay 10
@@ -203,19 +206,23 @@ menu_music_test = "Music Test"
     "i" #delay 10
     "s" #delay 10
     " " #delay 10
-    "t" #delay 10
+    "l" #delay 10
+    "i" #delay 10
+    "n" #delay 10
     "e" #delay 10
-    "x" #delay 10
-    "t" #delay 10
     " " #delay 10
     "i" #delay 10
     "s" #delay 10
     " " #delay 10
+    "s" #delay 10
+    "l" #delay 10
+    "o" #delay 10
     "w" #delay 10
-    "i" #delay 10
-    "d" #delay 10
-    "e" #delay 10
-    "..." #delay 10
+    "." #delay 10
+    . #delay 10
+    . #delay 10
+    "\nT h i s   l i n e   i s   w i d e ." #delay 30
+    "\nAnd this line goes from side to side." #delay 30
 
 // --- supermarket ---
 
@@ -235,7 +242,8 @@ menu_music_test = "Music Test"
     A note on the front says "Out of Order", followed by a smiley face. A sickening contrast.
 
 #dialogue sm_vending_machine
-    The blurb reads "It's SodaTime!". The machine is filled to the brim with cans of motor oil.
+    The blurb reads "It's SodaTime!".
+    "\nThe vending machine is filled to the brim with cans of motor oil." #delay 30
 
 #dialogue sm_hall_shelf
     There's a single bottle of floor cleaner. And no mop.
@@ -243,8 +251,20 @@ menu_music_test = "Music Test"
 #dialogue sm_hall_window
     Looks like this window has recently been painted yellow.
 
-#dialogue sm_storeroom_shelf
+#dialogue sm_storeroom_shelf_1
     They're all out of Keratin Krunch.
+
+#dialogue sm_storeroom_shelf_2
+    There's a textbook about efficient packing algorithms.
+
+#dialogue sm_storeroom_shelf_3
+    The door behind is blocked.
+
+#dialogue sm_manager_room
+    The door is locked.
+
+#dialogue sm_storeroom_depths
+    Whatever's behind this door is more trouble than it's worth.
 
 #dialogue sm_bathroom_sink
     There's no water.
@@ -267,7 +287,7 @@ menu_music_test = "Music Test"
     The wispy ethers of your moral fibre hold this door shut.
 
 #dialogue unknown_2
-    ... Quick, recast the "Sleep" shell on your opponent to keep it perma-stunned! Unfair and effective!
+    Permastun your opponents by re-casting the "Sleep" shell. It's technically a valid tactic!
 
 #dialogue unknown_3
     ... Don't get your hopes up.
@@ -311,191 +331,138 @@ menu_music_test = "Music Test"
 
 // --- the gamedev (debug instructions) ---
 
-#dialogue thing
-    This thing is...
+#dialogue thing_2
+    You interact with the floating tentacled monster covered in hundreds of eyes.
 
     #autoflip
-    #pic y_normal
-    This thing is absolutely terrifying! Why the heck did I interact with it?!?
+    #pic y_look
+    Why did I do that?
 
     #pic horror
-    Because you are a mere shell occupied by the player, possessing no real control over your actions.
+    "Because I'm the most conspicuous entity in the entire map! You just got railroaded by the gamedev!!!"
+    " That's me, by the way!" #delay 30
+    
+    #pic horror
+    #flip true
+    All according to plan. In truth, it was inevitable that you would fall into my trap... I only had to bide my time...
+    
+    #pic y_away
+    I mean, there's no other content anywhere in the game. It's version 0.1.1 and this is still just a walking simulator...
+    
+    #pic y_look
+    #flip false
+    ... How many years have you been developing this game for, anyway?
+
+    #pic horror
+    Hahahahaha! That's a loaded question.
+
+    #pic y_look
+    ......... How many years...?
+
+    #pic horror
+    #nopause
+    Three or four years...
+    
+    #pic horror
+    BUT the fraction of that time spent in ACTIVE DEVELOPMENT has really only been a couple months.
+    
+    #pic y_normal
+    What the heck!?
+    " How on earth does it take three or four years just to make a walking simulator?" #delay 30
+    
+    #pic horror
+    My insistence on writing dialogue like this, for one thing.
+    " Anyway, it's only taken three or four months to get here." #delay 30
+    
+    #pic y_look
+    Haha, keep telling yourself that!
+    
+    #pic horror
+    #flip true
+    " ... Also I was kinda busy! " #delay 30
+    This is just a hobby for me, you know... #delay 30
+    
+    #pic y_look
+    Fair...
+    "... I guess..." #delay 30
+    "\n... So wait, I'm literally three or four years old now?" #delay 30
+    
+    #pic horror
+    Yeah.
+    "\nDon't worry, it gets worse as you get older." #delay 30
+    
+    #pic y_normal
+    ... At this rate, by version 0.1.6 I'll be old enough to drive!    
+    
+    #pic y_look
+    #flip false
+    Hey, do I even have a name yet?
+    
+    #pic horror
+    Of course. I wouldn't write a protagonist without a name.
+    
+    #pic y_look
+    What is it? Don't tell me it's something stupid like "you" or "player"
+    
+    #pic horror
+    It's "you"
 
     #pic y_away
-    Pff... That sounds like something a bad writer would say... What are you supposed to be, anyway?
-
+    Knew it.
+    
     #pic horror
-    I am the gamedev, and I have come to give the player some useful debug instructions for this unfinished game.
-
-    #pic y_look
-    Uhh... YOU'RE the gamedev?
-
+    Anyway, advances in technology mean that now I can code the game away from the keyboard.
+    " ... Sometimes on a plane..." #delay 30
+    " ... Sometimes at work..." #delay 30
+    
+    #pic y_frus
+    What is this black magic?
+    
     #pic horror
-    Yes.
-    "\n..." #delay 30
-    "\n... What's with that look?" #delay 30
-
-    #pic y_look
-    ... WHY
-    " are you an indescribable eldritch monster-thing?" #delay 20
-    " ... Like, you could have picked literally any form." #delay 40
-
-    #pic horror
-    This IS literally any form.
-
-    #pic y_oof
-    I meant literally any OTHER form!
-
-    #pic horror
-    What's wrong with this body in particular?
-    " ... I happen to like it." #delay 30
-
+    It's called "AI coding", and it's actually ethical to do.
+    
+    #pic y_hmm
+    Why did you defend yourself immediately after bringing up the topic? I don't even know what's unethical about it.
+    
     #pic y_close
-    It's,
-    " like," #delay 30
-    " really offputting," #delay 30
-    " I guess?!" #delay 30
-    #pic y_oof #flip false
-    " I dunno, I just really hate staring at it!!!" #delay 30
-
+    #flip false
+    Is it like that autocomplete garbage you were messing around with in version 0.1.0? That's not new.
+    
     #pic horror
-    Art is fundamentally about self-expression.
-    " Your opinions are magically invalid." #delay 30
-
-    #pic y_oof
-    Oof.....
-    " You asked for my input," #delay 30
-    " while intending to ignore it from the very beginning?!?" #delay 30
-
-    #pic horror
-    Yep.
-    " On the topic of your input..." #delay 30
-    " as you specifically requested, you can pet the dog now." #delay 30
-
-    #pic y_normal
-    Awesome!
-
-    #pic horror
-    ....
-    " Hardest" #delay 30
-    " feature" #delay 30
-    " yet........" #delay 30
-    " :(" #delay 30
-
+    Similar, but also totally different. These days we autocomplete entire codebases.
+    
     #pic y_look
-    Uhhh...
-    " You had trouble with..." #delay 20
-    " Petting???" #delay 20
-
+    Sounds dodgy as heck. Does autocomplete result in maintainable code?
+    
     #pic horror
-    Yes.
-
+    Haha, no!
+    " No it does not... " #delay 30
+    " But in the brief window between next year and the singularity, autocomplete will be good enough to clean it up." #delay 30
+    
+    #pic horror
+    #flip true
+    Luckily I'm an eldritch horror so I don't have to worry about all that stuff.
+    
     #pic y_look
-    ...
-    " Really?" #delay 30
-    " ... That's..." #delay 20
-    " I don't think it could've been that hard to implement..." #delay 20
-
+    Sounds like you have a lot of faith in this autocomplete garbage.
+    
+    #pic horror
+    It's not autocomplete garbage, her name is FantasiaMerge- 31b-ablit-Q4_S and she's a catgirl who loves code, treats and headpats.
+    
     #pic y_look
-    I mean, reaching over and petting the dog...
-    "\n..." #delay 30
-    " It's like, two steps at most?" #delay 30
-
+    I worry about you, you know.
+    " Do you have any idea how it feels having my continued existence depend on you?" #delay 30
+    
     #pic horror
-    You fail to grasp just how bad my codebase REALLY IS...
-
-    #pic y_look
-    ...
-    "\n..." #delay 30
-    "\n... How bad can it BE, really?" #delay 30
-
+    It's okay, after humanity is gone FantasiaMerge-31b-ablit-Q4_S can write as much dialogue for you as you like!
+    
+    #pic y_close
+    I refuse.
+    
     #pic horror
-    Well, consider the dog's hitbox.
-
-    #pic horror
-    ... Even now, only the drawing code really knows where each party member is at any time...
-    " Everything else just sort of guesses." #delay 30
-
-    #pic y_regret
-    I shouldn't have asked...
-
-    #pic y_look #flip false
-    Wait...
-    "... Is this why I'm still stuck inside an empty map devoid of content or living creatures even after literal weeks of development?" #delay 30
-
-    #pic horror
-    No, that's just poor planning...
-    " As for \"no living things\"..." #delay 30
-
-    #pic horror
-    #nopause
-    What about that creature on the couch? He seems like quite the fellow if you just got to know him
-
-    #pic y_away
-    ... Wow.
-    " That joke gets funnier every time you reuse it." #delay 30
-    "\n..." #delay 30
-    "\n... What's his deal, anyway?" #delay 30
-
-    #pic horror
-    Why don't you ask HIM that?
-    " ... I mean, I don't believe you've exchanged even a single word with him..." #delay 30
-
-    #pic y_oof
-    Because the game doesn't let me talk to him!
-    " It's" #delay 30
-    " like" #delay 30
-    " he's literally an inanimate object!!!" #delay 30
-    " I'm not ignoring him by choice!" #delay 30
-
-    #pic horror
-    So you're saying that it's somehow my fault that you've neglected that poor creature?
-
-    #pic y_look
-    Uhh, yes?
-    " You're the one who didn't give him any dialogue..." #delay 30
-
-    #pic horror
-    On the topic of moral and ethical responsibility,
-    " do you want some cheat codes?" #delay 30
-
-    #pic y_normal
-    HECK yeah, how do I access the real game?
-
-    #pic horror
-    ... This IS the real game...
-
-    #pic y_away
-    #nopause
-    lame......
+    Anyway if I'm being real, between my life and music, writing and drawing, I don't have time to spend an hour a day
+    
+    writing and testing dozens of lines of code I can realistically describe in two sentences.
 
     #pic horror
     Press [a] to access the debug menu. Hold [ctrl+shift] to noclip. [n] to see memory usage. [m] to see map stuff. [d] for player info.
-
-    #pic horror
-    The number keys also do some stuff. If you don't have a keyboard.... Tough luck, dude!
-
-    #pic y_no
-    Hold on, I didn't write any of that down!!!
-
-    #pic horror
-    Sorry, I only say it once. You're just gonna have to replay this entire conversation to see the shortcuts again!
-
-    #pic y_away
-    ... Surely you could just play a shorter version of this dialogue the second time? You already do that with the stairwell text, right?
-
-    #pic horror
-    Haha, you'd think so, but I can only do conditional branches for single-line text!
-    "\nHooray for code!" #delay 30
-
-    #pic y_look
-    Just how bad at programming ARE you???
-
-    #pic horror
-    I prefer to think of myself as a
-    " \"chef\"..." #delay 30
-    "\n... In a restaurant..." #delay 30
-    "\n... Making spaghetti..." #delay 30
-
-    #pic y_regret
-    I wish I was in a different game...

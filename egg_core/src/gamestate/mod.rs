@@ -174,12 +174,14 @@ pub enum GameMode {
     Instructions,
     Walkaround,
     Animation,
+    Inventory,
+    SpriteTest,
+
+    // menus
     MainMenu,
     InventoryOptions,
     DebugMenu,
     MapSelect,
-    Inventory,
-    SpriteTest,
 }
 
 /// The startup instructions screen: a brief timer gates the "press any button to

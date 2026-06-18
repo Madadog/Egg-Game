@@ -152,12 +152,12 @@
             {
               "name": "to_x",
               "type": "string",
-              "value": "16"
+              "value": "27"
             },
             {
               "name": "to_y",
               "type": "string",
-              "value": "24"
+              "value": "192"
             },
             {
               "name": "sound",
