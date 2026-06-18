@@ -121,15 +121,32 @@ impl SpriteAnimation {
     }
 }
 
+/// How a sprite set turns a shell's heading into the grid cell it faces — a
+/// property of the *art*, not the entity. A mirror / front-back set wants each
+/// axis read on its own; a 4-way set wants to commit to one axis so a diagonal
+/// doesn't spin it around.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FacingPolicy {
+    /// Sticky horizontal + live vertical: every row and column is meaningful
+    /// ([`sideways`](WalkSprites::sideways), [`front_back`](WalkSprites::front_back)).
+    PerAxis,
+    /// Commit to the axis you start moving along; a diagonal off it doesn't
+    /// re-aim you, and you only switch once that axis goes idle — the natural
+    /// 4-way feel ([`compass`](WalkSprites::compass), hence the player).
+    Committed,
+}
+
 /// Walk animations for each of the eight headings, indexed by the *sign* of the
 /// movement vector via a flattened 3×3 grid — `grid[(dy.signum()+1)*3 +
 /// (dx.signum()+1)]`, rows up/level/down and columns left/centre/right. The
 /// centre cell is the resting/idle pose. Horizontal flip is baked into each cell,
 /// so a humanoid's pre-mirrored west sits in the west cell and a
-/// [`sideways`](Self::sideways) critter mirrors its whole left column.
+/// [`sideways`](Self::sideways) critter mirrors its whole left column. `facing`
+/// decides how a heading resolves to a cell (see [`FacingPolicy`]).
 #[derive(Debug, Clone)]
 pub struct WalkSprites {
     grid: [SpriteAnimation; 9],
+    facing: FacingPolicy,
 }
 impl WalkSprites {
     pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
@@ -137,6 +154,21 @@ impl WalkSprites {
         // noclip's scaled deltas) still buckets into one of the nine cells.
         let ix = |v: i8| (v.signum() + 1) as usize;
         &self.grid[ix(dir.1) * 3 + ix(dir.0)]
+    }
+    /// Resolve the cell direction to display from a shell's live `dir`, sticky
+    /// `sticky_dir`, and committed `axis`, per this set's [`FacingPolicy`].
+    fn lookup_dir(&self, dir: (i8, i8), sticky_dir: (i8, i8), axis: FacingAxis) -> (i8, i8) {
+        match self.facing {
+            // Sticky horizontal holds the mirror through vertical-only moves; live
+            // vertical keeps side-vs-front tracking the current heading.
+            FacingPolicy::PerAxis => (sticky_dir.0, dir.1),
+            // A pure cardinal along the committed axis, so a diagonal never reaches
+            // the grid's diagonal cells and the facing can't flip mid-stride.
+            FacingPolicy::Committed => match axis {
+                FacingAxis::Horizontal => (sticky_dir.0, 0),
+                FacingAxis::Vertical => (0, sticky_dir.1),
+            },
+        }
     }
     /// Four-direction walk: exact horizontals pick east/west, everything else
     /// falls back to north/south — reproducing the old `Compass` buckets. North
@@ -154,6 +186,7 @@ impl WalkSprites {
                 west,          north,         east,
                 south.clone(), south.clone(), south,
             ],
+            facing: FacingPolicy::Committed,
         }
     }
     /// North/south sprites only, no mirroring, for every heading — the static egg.
@@ -165,6 +198,7 @@ impl WalkSprites {
                 north.clone(), north.clone(), north,
                 south.clone(), south.clone(), south,
             ],
+            facing: FacingPolicy::PerAxis,
         }
     }
     /// One look for every heading, mirrored whenever facing left (the whole left
@@ -179,6 +213,7 @@ impl WalkSprites {
                 left.clone(), side.clone(), side.clone(),
                 left,         side.clone(), side,
             ],
+            facing: FacingPolicy::PerAxis,
         }
     }
     /// Humanoid 4-direction walk. North/south are 3-frame strips (idle + 2 walk
@@ -298,6 +333,15 @@ impl ShellSprites {
     }
 }
 
+/// Which axis a [`Committed`](FacingPolicy::Committed) (4-way) sprite is aimed
+/// along. Flips only when that axis goes idle (see [`Shell::face`]), so moving
+/// diagonally off your start direction doesn't spin the sprite around.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FacingAxis {
+    Horizontal,
+    Vertical,
+}
+
 /// A controllable game entity.
 #[derive(Debug, Clone)]
 pub struct Shell {
@@ -305,10 +349,12 @@ pub struct Shell {
     pub dir: (i8, i8),
     /// Last non-zero movement sign per axis, each held while that axis is idle.
     /// `.0` is the sprite's horizontal facing (drives the walk-grid mirror, so a
-    /// vertical-only mover keeps its last left/right look); `.1` is kept symmetric
-    /// but currently unread — anims that must tell side from front use the live
-    /// [`dir`](Self::dir)`.1`. Maintained via [`face`](Self::face).
+    /// vertical-only mover keeps its last left/right look); a `Committed` set also
+    /// reads `.1` for its vertical facing. Maintained via [`face`](Self::face).
     pub sticky_dir: (i8, i8),
+    /// The axis a 4-way sprite is committed to facing along (see [`FacingAxis`]);
+    /// unread by per-axis sets. Maintained via [`face`](Self::face).
+    pub facing_axis: FacingAxis,
     pub hp: u8,
     pub local_hitbox: Hitbox,
     pub pos: Vec2,
@@ -325,8 +371,20 @@ impl Default for Shell {
     }
 }
 impl Shell {
+    /// The direction this shell's sprite faces — the walk-grid cell — after
+    /// applying the sprite set's [`FacingPolicy`] to the live/sticky/committed
+    /// heading. Distinct from [`dir`](Self::dir), which stays literal for movement
+    /// and interaction.
+    pub fn facing_dir(&self) -> (i8, i8) {
+        self.sprites
+            .walk
+            .lookup_dir(self.dir, self.sticky_dir, self.facing_axis)
+    }
     pub fn sprite_options(&self) -> (SpriteOptions, i32) {
-        let timer = if self.dir.1 == 0 {
+        let facing = self.facing_dir();
+        // Anim cadence follows the *shown* facing, not the raw heading, so a
+        // committed side view stays 4fps even while moving diagonally.
+        let timer = if facing.1 == 0 {
             // sideways anim 4fps
             self.walktime.div_ceil(15)
         } else {
@@ -345,13 +403,10 @@ impl Shell {
             };
             return (sprite, 0);
         }
-        // Face by the sticky horizontal (so a vertical-only mover keeps its last
-        // left/right look) and the live vertical (so side-vs-front still tracks
-        // the current heading).
         let sprite = self
             .sprites
             .walk
-            .dir_to_sprite((self.sticky_dir.0, self.dir.1))
+            .dir_to_sprite(facing)
             .get_frame(timer as usize)
             .clone();
         (sprite, y_offset)
@@ -409,6 +464,19 @@ impl Shell {
         }
         if dir.1 != 0 {
             self.sticky_dir.1 = dir.1.signum();
+        }
+        // Commit to the axis we're moving along, switching only once it goes idle,
+        // so a diagonal off your start direction doesn't re-aim a 4-way sprite.
+        let committed_moving = match self.facing_axis {
+            FacingAxis::Horizontal => dir.0 != 0,
+            FacingAxis::Vertical => dir.1 != 0,
+        };
+        if !committed_moving {
+            if dir.0 != 0 {
+                self.facing_axis = FacingAxis::Horizontal;
+            } else if dir.1 != 0 {
+                self.facing_axis = FacingAxis::Vertical;
+            }
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -544,6 +612,7 @@ impl Shell {
             hp: 3,
             dir: (0, 1),
             sticky_dir: (0, 1),
+            facing_axis: FacingAxis::Vertical,
             walktime: 0,
             walking: false,
             flip_controls: Axis::None,
@@ -953,5 +1022,30 @@ mod tests {
         // Moving right flips the sticky facing back.
         shell.face((1, 0));
         assert_eq!(shell.sticky_dir.0, 1);
+    }
+
+    #[test]
+    fn compass_locks_facing_to_initial_axis() {
+        // Humanoid = compass = the player's `Committed` policy.
+        let mut shell = Shell::ellie();
+
+        shell.face((1, 0)); // start moving right
+        assert_eq!(shell.facing_dir(), (1, 0)); // east
+
+        shell.face((1, -1)); // add up: a diagonal off the committed axis
+        assert_eq!(shell.facing_dir(), (1, 0)); // still east, not north
+
+        shell.face((0, -1)); // release right, now purely up
+        assert_eq!(shell.facing_dir(), (0, -1)); // axis released → north
+    }
+
+    #[test]
+    fn sideways_stays_per_axis() {
+        // The critter keeps the per-axis rule: sticky horizontal, live vertical —
+        // unaffected by the committed-axis policy.
+        let mut shell = Shell::critter();
+        shell.face((-1, 0));
+        shell.face((0, 1)); // straight down while last-facing left
+        assert_eq!(shell.facing_dir(), (-1, 1)); // mirror held, vertical live
     }
 }
