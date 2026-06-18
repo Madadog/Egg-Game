@@ -561,7 +561,7 @@ impl WalkaroundState {
         // reassigns the whole `Shell`, which the live borrow would forbid.
         enum Act {
             Player,
-            Drive(i16, i16),
+            Drive { vx: i16, vy: i16, keep_facing: bool },
             Hatch(ShellPreset),
         }
         for shell in self.entities.iter_mut() {
@@ -576,7 +576,11 @@ impl WalkaroundState {
                     } else {
                         (shell.dir.0.into(), shell.dir.1.into())
                     };
-                    Act::Drive(vx, vy)
+                    Act::Drive {
+                        vx,
+                        vy,
+                        keep_facing: false,
+                    }
                 }
                 MoveMode::Egg {
                     timer,
@@ -585,12 +589,20 @@ impl WalkaroundState {
                     if timer.tick() {
                         Act::Hatch(*hatches_into)
                     } else {
-                        Act::Drive(0, 0)
+                        Act::Drive {
+                            vx: 0,
+                            vy: 0,
+                            keep_facing: false,
+                        }
                     }
                 }
                 MoveMode::Amble(state) => {
                     let (vx, vy) = state.step(ctx.rng);
-                    Act::Drive(vx, vy)
+                    Act::Drive {
+                        vx,
+                        vy,
+                        keep_facing: true,
+                    }
                 }
             };
             match act {
@@ -598,9 +610,20 @@ impl WalkaroundState {
                     let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
                     shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
                 }
-                Act::Drive(vx, vy) => {
+                Act::Drive {
+                    vx,
+                    vy,
+                    keep_facing,
+                } => {
+                    let facing = shell.dir.0;
                     let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
+                    // Wanderers keep their horizontal facing through vertical-only
+                    // moves so the mirrored sprite persists; `dir` stays literal
+                    // for the player, whose interact hitbox reads it.
+                    if keep_facing && vx == 0 {
+                        shell.dir.0 = facing;
+                    }
                 }
                 Act::Hatch(preset) => {
                     let pos = shell.pos;

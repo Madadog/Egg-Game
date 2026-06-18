@@ -121,40 +121,64 @@ impl SpriteAnimation {
     }
 }
 
+/// Walk animations for each of the eight headings, indexed by the *sign* of the
+/// movement vector via a flattened 3×3 grid — `grid[(dy.signum()+1)*3 +
+/// (dx.signum()+1)]`, rows up/level/down and columns left/centre/right. The
+/// centre cell is the resting/idle pose. Horizontal flip is baked into each cell,
+/// so a humanoid's pre-mirrored west sits in the west cell and a
+/// [`sideways`](Self::sideways) critter mirrors its whole left column.
 #[derive(Debug, Clone)]
-pub enum WalkSprites {
-    /// Unique sprites for all four directions.
-    Compass {
-        north: SpriteAnimation,
-        south: SpriteAnimation,
-        west: SpriteAnimation,
-        east: SpriteAnimation,
-    },
-    /// North & south sprites only, mirrored for side directions.
-    /// Default: East unmirrored, west mirrored.
-    FrontBack {
-        north: SpriteAnimation,
-        south: SpriteAnimation,
-    },
+pub struct WalkSprites {
+    grid: [SpriteAnimation; 9],
 }
 impl WalkSprites {
     pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
-        match self {
-            WalkSprites::Compass {
-                north,
-                south,
-                west,
-                east,
-            } => match dir {
-                (1, 0) => east,
-                (-1, 0) => west,
-                (_, 1) => south,
-                (_, _) => north,
-            },
-            WalkSprites::FrontBack { north, south } => match dir {
-                (_, 1) => south,
-                (_, _) => north,
-            },
+        // `signum`, not an exact match, so a heading of any magnitude (e.g.
+        // noclip's scaled deltas) still buckets into one of the nine cells.
+        let ix = |v: i8| (v.signum() + 1) as usize;
+        &self.grid[ix(dir.1) * 3 + ix(dir.0)]
+    }
+    /// Four-direction walk: exact horizontals pick east/west, everything else
+    /// falls back to north/south — reproducing the old `Compass` buckets. North
+    /// and south aren't mirrored; `west` should already be the mirror of `east`.
+    #[rustfmt::skip]
+    fn compass(
+        north: SpriteAnimation,
+        south: SpriteAnimation,
+        east: SpriteAnimation,
+        west: SpriteAnimation,
+    ) -> Self {
+        Self {
+            grid: [
+                north.clone(), north.clone(), north.clone(),
+                west,          north,         east,
+                south.clone(), south.clone(), south,
+            ],
+        }
+    }
+    /// North/south sprites only, no mirroring, for every heading — the static egg.
+    #[rustfmt::skip]
+    fn front_back(north: SpriteAnimation, south: SpriteAnimation) -> Self {
+        Self {
+            grid: [
+                north.clone(), north.clone(), north.clone(),
+                north.clone(), north.clone(), north,
+                south.clone(), south.clone(), south,
+            ],
+        }
+    }
+    /// One look for every heading, mirrored whenever facing left (the whole left
+    /// column). Pairs with a sticky horizontal facing (see the walkaround step)
+    /// so straight up/down keeps the last left/right mirror.
+    #[rustfmt::skip]
+    fn sideways(side: SpriteAnimation) -> Self {
+        let left = side.clone().with_flip(Flip::Horizontal);
+        Self {
+            grid: [
+                left.clone(), side.clone(), side.clone(),
+                left.clone(), side.clone(), side.clone(),
+                left,         side.clone(), side,
+            ],
         }
     }
     /// Humanoid 4-direction walk. North/south are 3-frame strips (idle + 2 walk
@@ -167,12 +191,12 @@ impl WalkSprites {
                 .with_loopmode(LoopMode::LoopRange(1, 2))
         };
         let walk = || SpriteAnimation::from_sprite_ids(&[side, side + 1, side, side + 2], 1, 2);
-        Self::Compass {
-            north: strip(south + 3),
-            south: strip(south),
-            west: walk().with_flip(Flip::Horizontal),
-            east: walk(),
-        }
+        Self::compass(
+            strip(south + 3),
+            strip(south),
+            walk(),
+            walk().with_flip(Flip::Horizontal),
+        )
     }
     pub fn ellie() -> Self {
         Self::humanoid(768, 832)
@@ -181,34 +205,25 @@ impl WalkSprites {
         Self::humanoid(2184, 2248)
     }
     pub fn dog() -> Self {
-        Self::Compass {
-            north: SpriteAnimation::from_base_sprite_id(966, 2, 1, 2),
-            south: SpriteAnimation::from_base_sprite_id(964, 2, 1, 2),
-            west: SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_flip(Flip::Horizontal),
-            east: SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_x_offset(8),
-        }
+        Self::compass(
+            SpriteAnimation::from_base_sprite_id(966, 2, 1, 2),
+            SpriteAnimation::from_base_sprite_id(964, 2, 1, 2),
+            SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_x_offset(8),
+            SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_flip(Flip::Horizontal),
+        )
     }
     pub fn bro() -> Self {
         Self::humanoid(896, 902)
     }
-    /// The critter: a single front-facing look (toggling `688`/`689`), shown for
-    /// every direction. There's no left/right art yet, so `FrontBack` doubles the
-    /// front frames into both slots (no horizontal flip) — see the eight-way
-    /// Compass follow-up.
+    /// The critter: a single front-facing look (toggling `688`/`689`), mirrored
+    /// when facing left via [`sideways`](Self::sideways).
     fn critter() -> Self {
-        let walk = || SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1);
-        Self::FrontBack {
-            north: walk(),
-            south: walk(),
-        }
+        Self::sideways(SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1))
     }
     /// A static, unhatched egg (single frame `524`).
     fn egg() -> Self {
-        let egg = || SpriteAnimation::from_sprite_ids(&[524], 1, 1);
-        Self::FrontBack {
-            north: egg(),
-            south: egg(),
-        }
+        let egg = SpriteAnimation::from_sprite_ids(&[524], 1, 1);
+        Self::front_back(egg.clone(), egg)
     }
 }
 
@@ -880,5 +895,25 @@ mod tests {
         let mut state = CreatureState::Walking(Timer(90), Vec2::new(1, -1));
         let steps: Vec<(i16, i16)> = (0..3).map(|_| state.step(&mut rng)).collect();
         assert_eq!(steps, vec![(0, 0), (0, 0), (1, -1)]);
+    }
+
+    #[test]
+    fn eight_way_grid_buckets_and_mirrors() {
+        let flip_of = |w: &WalkSprites, dir| w.dir_to_sprite(dir).get_frame(0).flip.clone();
+
+        // Compass humanoid: east unflipped, west pre-mirrored, and `signum`
+        // buckets any magnitude — so a noclip-scaled heading still faces right.
+        let ellie = WalkSprites::ellie();
+        assert_eq!(flip_of(&ellie, (1, 0)), Flip::None);
+        assert_eq!(flip_of(&ellie, (-1, 0)), Flip::Horizontal);
+        assert_eq!(flip_of(&ellie, (4, 0)), Flip::None);
+
+        // Sideways critter: the whole left column mirrors — including the diagonal
+        // cells a vertical mover lands on via a sticky facing — and nothing else.
+        let critter = WalkSprites::critter();
+        for dy in [-1, 0, 1] {
+            assert_eq!(flip_of(&critter, (-1, dy)), Flip::Horizontal);
+            assert_eq!(flip_of(&critter, (1, dy)), Flip::None);
+        }
     }
 }
