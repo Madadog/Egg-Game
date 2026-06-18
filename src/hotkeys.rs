@@ -211,6 +211,6 @@ pub fn primary_hotkeys(
         info!("------------------------");
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        game.state.gamestate = GameMode::SpriteTest(0);
+        game.state.enter(GameMode::SpriteTest);
     }
 }

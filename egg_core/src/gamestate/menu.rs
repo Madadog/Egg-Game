@@ -22,6 +22,11 @@ pub struct MenuState {
     draw_title: Option<&'static str>,
     back_entry: Option<MenuEntry>,
 }
+impl Default for MenuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl MenuState {
     pub fn new() -> Self {
         Self {
@@ -187,16 +192,21 @@ impl MenuState {
             return None;
         };
         match x {
-            Play => return Some(GameMode::Instructions(0)),
+            Play => return Some(GameMode::Instructions),
             Options => {
                 self.index = 0;
                 self.draw_title = Some("options_title");
                 self.entries = vec![MainMenu, FontSize, AutoDoors, Reset(0)];
                 self.back_entry = Some(MainMenu);
             }
-            MainMenu | ExitToMenu => {
+            // Back to the main menu from the in-place Options sub-screen — same
+            // mode, just reset content.
+            MainMenu => {
                 *self = MenuState::new();
             }
+            // Leaving the inventory's options menu: a real mode change back to
+            // the title's main menu, rebuilt by `enter`.
+            ExitToMenu => return Some(GameMode::MainMenu),
             FontSize => {
                 ctx.save.small_text_on = !ctx.save.small_text_on;
             }
@@ -210,7 +220,7 @@ impl MenuState {
                     *x += 1;
                 } else {
                     *ctx.save = SaveData::default();
-                    return Some(GameMode::Animation(0));
+                    return Some(GameMode::Animation);
                 }
             }
             Inventory => {
@@ -247,12 +257,12 @@ impl MenuState {
                             &mut inventory_ui.inventory,
                         );
                     }
-                    6 => return Some(GameMode::MainMenu(MenuState::debug_options(ctx.script))),
+                    6 => return Some(GameMode::DebugMenu),
                     _ => {}
                 }
             }
             Walk => return Some(GameMode::Walkaround),
-            MapTest => return Some(GameMode::MainMenu(MenuState::map_select(ctx.maps))),
+            MapTest => return Some(GameMode::MapSelect),
             MapSelect(name) => {
                 walkaround_state.load_map_by_name(ctx, name);
             }

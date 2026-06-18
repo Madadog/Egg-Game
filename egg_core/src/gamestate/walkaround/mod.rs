@@ -540,9 +540,7 @@ impl WalkaroundState {
             info!("Attempting interact...");
         }
         if just_pressed(pad.x) {
-            return Some(GameMode::MainMenu(super::menu::MenuState::debug_options(
-                ctx.script,
-            )));
+            return Some(GameMode::DebugMenu);
         }
         if ctx.system.any_btnpr() {
             self.player().flip_controls = Axis::None

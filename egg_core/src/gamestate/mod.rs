@@ -14,16 +14,15 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::system::{Controller, MouseInput, PrintOptions, SCANCODE_COUNT, ScanCode, pressed};
-use log::trace;
+use crate::system::{Controller, MouseInput, PrintOptions, SCANCODE_COUNT, ScanCode};
 
-use self::inventory::{InventoryUi, InventoryUiState};
 use self::walkaround::WalkaroundState;
 use crate::Ctx;
-use crate::debug::DebugInfo;
 use crate::system::{ConsoleApi, ConsoleHelper};
 
-use self::menu::MenuState;
+pub use self::debug::SpriteTest;
+pub use self::intro::IntroAnimation;
+pub use self::menu::MenuState;
 
 mod debug;
 mod intro;
@@ -164,83 +163,51 @@ mod input_tests {
     }
 }
 
-#[derive(Debug)]
+/// The current game mode — a pure tag. Each mode's state lives in its own field
+/// on [`EggState`](crate::EggState) (e.g. [`IntroAnimation`], [`Instructions`],
+/// [`MenuState`], [`SpriteTest`], plus the already-external walkaround/inventory);
+/// dispatch and on-entry setup are [`EggState::step_mode`](crate::EggState) and
+/// [`EggState::enter`](crate::EggState). The four `…Menu`/`…Options` variants all
+/// drive the shared [`MenuState`], differing only in which menu `enter` builds.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GameMode {
-    Instructions(u16),
+    Instructions,
     Walkaround,
-    Animation(u16),
-    MainMenu(MenuState),
+    Animation,
+    MainMenu,
+    InventoryOptions,
+    DebugMenu,
+    MapSelect,
     Inventory,
-    SpriteTest(u32),
+    SpriteTest,
 }
-impl GameMode {
-    pub fn run(
+
+/// The startup instructions screen: a brief timer gates the "press any button to
+/// start" prompt, then it loads the world and hands off to
+/// [`GameMode::Walkaround`].
+#[derive(Debug, Default)]
+pub struct Instructions {
+    timer: u16,
+}
+impl Instructions {
+    pub fn step(
         &mut self,
         ctx: &mut Ctx<impl ConsoleApi>,
-        walkaround_state: &mut WalkaroundState,
-        inventory_ui: &mut InventoryUi,
-        debug_info: &mut DebugInfo,
-        elapsed_frames: i32,
-    ) {
-        trace!("Game state: {self:?}");
-        match self {
-            Self::Instructions(i) => {
-                *i += 1;
-                if (*i > 60 || ctx.save.instructions_read) && ctx.system.any_btnp() {
-                    if ctx.save.instructions_read {
-                        walkaround_state.load_pmem(ctx);
-                    } else {
-                        walkaround_state.new_game(ctx);
-                    }
-                    ctx.save.instructions_read = true;
-                    *self = Self::Walkaround;
-                }
-                draw_instructions(ctx);
+        walkaround: &mut WalkaroundState,
+    ) -> Option<GameMode> {
+        self.timer += 1;
+        let mut next = None;
+        if (self.timer > 60 || ctx.save.instructions_read) && ctx.system.any_btnp() {
+            if ctx.save.instructions_read {
+                walkaround.load_pmem(ctx);
+            } else {
+                walkaround.new_game(ctx);
             }
-            Self::Walkaround => {
-                let next = walkaround_state.step(ctx, inventory_ui);
-                walkaround_state.draw(ctx, debug_info);
-                if let Some(state) = next {
-                    *self = state;
-                }
-            }
-            Self::Animation(x) => {
-                if ctx.save.intro_anim_seen {
-                    *self = Self::MainMenu(MenuState::new());
-                    return;
-                };
-                // Press X to skip cutscene
-                if pressed(ctx.system.controller().b) {
-                    *x += 1000;
-                }
-                if intro::draw_animation(*x, ctx) {
-                    *x += 1;
-                } else {
-                    *self = Self::MainMenu(MenuState::new());
-                }
-            }
-            Self::MainMenu(state) => {
-                let next = state.step_main_menu(ctx, walkaround_state, inventory_ui);
-                state.draw_main_menu(ctx, elapsed_frames);
-                if let Some(x) = next {
-                    *self = x;
-                }
-            }
-            Self::Inventory => {
-                inventory_ui.step(ctx);
-                match inventory_ui.state {
-                    InventoryUiState::Close => *self = Self::Walkaround,
-                    InventoryUiState::Options => {
-                        *self = Self::MainMenu(MenuState::inventory_options())
-                    }
-                    _ => inventory_ui.draw(ctx),
-                }
-            }
-            Self::SpriteTest(x) => {
-                debug::step_sprite_test(ctx, x);
-                debug::draw_sprite_test(ctx, *x);
-            }
+            ctx.save.instructions_read = true;
+            next = Some(GameMode::Walkaround);
         }
+        draw_instructions(ctx);
+        next
     }
 }
 

@@ -9,7 +9,23 @@ use crate::{
     },
 };
 
+use crate::gamestate::GameMode;
+
 const WIDTH: u32 = 32;
+
+/// The sprite-sheet test screen (debug): an index into the sheet, stepped and
+/// drawn by [`step_sprite_test`]/[`draw_sprite_test`].
+#[derive(Debug, Default)]
+pub struct SpriteTest {
+    frame: u32,
+}
+impl SpriteTest {
+    pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) -> Option<GameMode> {
+        step_sprite_test(ctx, &mut self.frame);
+        draw_sprite_test(ctx, self.frame);
+        None
+    }
+}
 
 pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
     ctx.draw.set_palette(&SWEETIE_16);

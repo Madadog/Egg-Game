@@ -36,9 +36,9 @@ use crate::data::script::Script;
 use crate::debug::DebugInfo;
 use crate::dialogue::Message;
 use crate::drawstate::DrawState;
-use crate::gamestate::GameMode;
-use crate::gamestate::inventory::InventoryUi;
+use crate::gamestate::inventory::{InventoryUi, InventoryUiState};
 use crate::gamestate::walkaround::WalkaroundState;
+use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::map::MapStore;
 use crate::rand::Lcg64Xsh32;
 use crate::system::ConsoleApi;
@@ -105,6 +105,15 @@ pub struct EggState {
     pub debug_info: DebugInfo,
     pub time: i32,
     pub inventory_ui: InventoryUi,
+    /// The startup intro animation's state (mode [`GameMode::Animation`]).
+    pub intro: IntroAnimation,
+    /// The startup instructions screen's state (mode [`GameMode::Instructions`]).
+    pub instructions: Instructions,
+    /// The sprite-test debug screen's state (mode [`GameMode::SpriteTest`]).
+    pub sprite_test: SpriteTest,
+    /// The shared menu, driven by the four menu modes ([`GameMode::MainMenu`] &c.);
+    /// [`enter`](Self::enter) rebuilds it to the right flavor on entry.
+    pub menu: MenuState,
     /// Every loaded Tiled map by name — the tile data the game draws,
     /// collides against and edits. The host fills it at asset-load time.
     pub maps: MapStore,
@@ -153,6 +162,21 @@ impl EggState {
                 .load_from_save_ids(self.save.inventory);
         }
         self.time += 1;
+        if let Some(mode) = self.step_mode(system) {
+            self.enter(mode);
+        }
+        // Serialise the live inventory into the save before it is flushed, so an
+        // item the player gained, dropped or reordered this frame persists (the
+        // inverse of `load_from_save_ids` after `load_save` above).
+        self.save.inventory = self.inventory_ui.inventory.to_save_ids();
+        self.flush_save(system);
+    }
+
+    /// Step the active [`GameMode`], dispatching to that mode's state (its `step`,
+    /// and draw where the mode owns one) and returning any requested transition.
+    /// Each mode's state is a field on `self`; the four menu variants all drive
+    /// the shared [`menu`](Self::menu).
+    fn step_mode(&mut self, system: &mut impl system::ConsoleApi) -> Option<GameMode> {
         let mut ctx = Ctx {
             draw: &mut self.draw_state,
             system,
@@ -162,18 +186,58 @@ impl EggState {
             scenes: &self.scenes,
             save: &mut self.save,
         };
-        self.gamestate.run(
-            &mut ctx,
-            &mut self.walkaround,
-            &mut self.inventory_ui,
-            &mut self.debug_info,
-            self.time,
-        );
-        // Serialise the live inventory into the save before it is flushed, so an
-        // item the player gained, dropped or reordered this frame persists (the
-        // inverse of `load_from_save_ids` after `load_save` above).
-        self.save.inventory = self.inventory_ui.inventory.to_save_ids();
-        self.flush_save(system);
+        match self.gamestate {
+            GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
+            GameMode::Walkaround => {
+                let next = self.walkaround.step(&mut ctx, &mut self.inventory_ui);
+                self.walkaround.draw(&mut ctx, &self.debug_info);
+                next
+            }
+            GameMode::Animation => self.intro.step(&mut ctx),
+            GameMode::MainMenu
+            | GameMode::InventoryOptions
+            | GameMode::DebugMenu
+            | GameMode::MapSelect => {
+                let next = self.menu.step_main_menu(
+                    &mut ctx,
+                    &mut self.walkaround,
+                    &mut self.inventory_ui,
+                );
+                self.menu.draw_main_menu(&mut ctx, self.time);
+                next
+            }
+            GameMode::Inventory => {
+                self.inventory_ui.step(&mut ctx);
+                match self.inventory_ui.state {
+                    InventoryUiState::Close => Some(GameMode::Walkaround),
+                    InventoryUiState::Options => Some(GameMode::InventoryOptions),
+                    _ => {
+                        self.inventory_ui.draw(&mut ctx);
+                        None
+                    }
+                }
+            }
+            GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
+        }
+    }
+
+    /// Switch to `mode` and (re)initialise its state. Transient modes reset on
+    /// entry — the menu rebuilds to the flavor the variant names; the intro,
+    /// instructions and sprite-test counters restart — while the persistent world
+    /// and inventory are left untouched. The canonical way to change mode from
+    /// outside (e.g. a host debug hotkey), so the target's state is set up.
+    pub fn enter(&mut self, mode: GameMode) {
+        self.gamestate = mode;
+        match mode {
+            GameMode::Animation => self.intro = IntroAnimation::default(),
+            GameMode::Instructions => self.instructions = Instructions::default(),
+            GameMode::SpriteTest => self.sprite_test = SpriteTest::default(),
+            GameMode::MainMenu => self.menu = MenuState::new(),
+            GameMode::InventoryOptions => self.menu = MenuState::inventory_options(),
+            GameMode::DebugMenu => self.menu = MenuState::debug_options(&self.script),
+            GameMode::MapSelect => self.menu = MenuState::map_select(&self.maps),
+            GameMode::Walkaround | GameMode::Inventory => {}
+        }
     }
 
     /// Load the persisted save from the host's file store, once. Mirrors the
@@ -239,7 +303,11 @@ impl Default for EggState {
             draw_state: DrawState::default(),
             walkaround: WalkaroundState::new(),
             inventory_ui: InventoryUi::new(),
-            gamestate: GameMode::Animation(0),
+            intro: IntroAnimation::default(),
+            instructions: Instructions::default(),
+            sprite_test: SpriteTest::default(),
+            menu: MenuState::new(),
+            gamestate: GameMode::Animation,
             time: 0,
             debug_info: DebugInfo::default(),
             maps: MapStore::default(),

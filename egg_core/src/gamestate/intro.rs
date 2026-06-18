@@ -1,9 +1,36 @@
 use crate::Ctx;
 use crate::data::sound::music::MusicTrack;
 use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
+use crate::gamestate::GameMode;
 use crate::gamestate::menu::draw_title_indexed;
 use crate::system::drawing::{Canvas, EdgePolicy};
-use crate::system::{ConsoleApi, SWEETIE_16};
+use crate::system::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
+
+/// The startup intro animation: a frame counter ticking through
+/// [`draw_animation`] until it finishes (or is skipped with B), then it hands off
+/// to the title's main menu.
+#[derive(Debug, Default)]
+pub struct IntroAnimation {
+    frame: u16,
+}
+impl IntroAnimation {
+    pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) -> Option<GameMode> {
+        // Already played this save — skip straight to the menu.
+        if ctx.save.intro_anim_seen {
+            return Some(GameMode::MainMenu);
+        }
+        // Hold B to fast-forward past the intro.
+        if pressed(ctx.system.controller().b) {
+            self.frame = self.frame.saturating_add(1000);
+        }
+        if draw_animation(self.frame, ctx) {
+            self.frame += 1;
+            None
+        } else {
+            Some(GameMode::MainMenu)
+        }
+    }
+}
 
 pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
     let steps: &[u16] = &[0, 700, 760];
