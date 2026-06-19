@@ -698,6 +698,14 @@ pub struct MapObject {
     /// from the effect kind; override with [`with_trigger`](Self::with_trigger).
     pub trigger: Trigger,
     pub sprite: Option<Vec<AnimFrame>>,
+    /// This object's stable identity within its map — Tiled's per-object id
+    /// ([`TiledObject::id`](crate::data::tmj::TiledObject::id)), carried through
+    /// the parse so a removable object can be recorded durably in the save's
+    /// `taken` set (a positional index would shift when a sibling is added or
+    /// removed). `None` for a runtime/editor-created object that has no id yet;
+    /// the map writer then assigns it a fresh one above every existing id on the
+    /// next save, so survivors never renumber.
+    pub id: Option<usize>,
 }
 
 /// What a [`MapObject`] does when triggered: warp the player, or run an
@@ -719,7 +727,15 @@ impl MapObject {
             effect,
             trigger,
             sprite,
+            id: None,
         }
+    }
+    /// Set this object's stable Tiled [`id`](Self::id) (its identity within the
+    /// map). `None` clears it — a runtime/editor-created object with no durable
+    /// id yet, which the map writer assigns on save.
+    pub fn with_id(mut self, id: Option<usize>) -> Self {
+        self.id = id;
+        self
     }
     /// A warp object: its `hitbox` is the trigger region, `warp` the destination.
     /// Defaults to [`Trigger::Any`] (walk into it or press), per [`MapObject::new`].

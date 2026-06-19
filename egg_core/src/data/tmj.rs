@@ -376,6 +376,16 @@ pub struct Tileset {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TiledObject {
+    /// Tiled's per-object id: unique within the map and **stable across edits**
+    /// — Tiled assigns it once and preserves it through moves, retiles and
+    /// property tweaks; only delete-and-recreate yields a fresh one. The engine
+    /// carries it onto the runtime [`MapObject`](crate::map::MapObject) so a
+    /// removable object has a durable handle to record under in the save's
+    /// `taken` set, rather than a positional index that shifts when a sibling is
+    /// added or removed. Absent in a hand-written or pre-id map ⇒ `0` ("no stable
+    /// id"); the writer then assigns a fresh one on the next save.
+    #[serde(default)]
+    pub id: usize,
     pub x: usize,
     pub y: usize,
     pub width: usize,
@@ -431,7 +441,10 @@ impl TiledObject {
         } else {
             self.to_sprite_only(hitbox)?
         };
-        Some(self.apply_trigger(object))
+        // Carry the stable Tiled id onto the runtime object (0 ⇒ "no id"), so a
+        // removable object keeps a durable handle for the save's `taken` set.
+        let object = self.apply_trigger(object).with_id((self.id != 0).then_some(self.id));
+        Some(object)
     }
     /// Override the object's trigger from an optional `trigger` property
     /// (`"touch"`/`"press"`/`"any"`, case-insensitive), parsed for any object
@@ -1248,9 +1261,20 @@ impl TiledMap {
                     layers.push(layer);
                 }
                 TiledMapLayer::ObjectLayer(object_layer) => {
+                    // Preserve every object's stable id; any id-less object
+                    // (runtime/editor-created, or from a pre-id map) gets a fresh
+                    // id above every existing one, so survivors keep their ids
+                    // when a sibling is added or removed (a positional counter
+                    // would renumber them and break the save's `taken` keys).
+                    let mut next_id = objects.iter().filter_map(|o| o.id).max().unwrap_or(0) + 1;
                     let mut json_objects = Vec::new();
                     for object in objects {
-                        if let Some(value) = object_to_tmj(object, json_objects.len() + 1) {
+                        let id = object.id.unwrap_or_else(|| {
+                            let id = next_id;
+                            next_id += 1;
+                            id
+                        });
+                        if let Some(value) = object_to_tmj(object, id) {
                             json_objects.push(value);
                         } else {
                             dropped += 1;
@@ -1595,6 +1619,66 @@ mod tests {
             &objects2[1].effect,
             ObjectEffect::Interact(Interaction::Dialogue(k)) if k == "mid"
         ));
+    }
+
+    /// Tiled object ids survive parse → [`MapObject`] → serialise and are *not*
+    /// the positional index: dropping a sibling never renumbers the survivors,
+    /// and an id-less (runtime-created) object is assigned a fresh id above every
+    /// existing one rather than colliding — the stability the save's `taken`
+    /// keys rely on.
+    #[test]
+    fn tmj_preserves_and_assigns_object_ids() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {"id": 5, "x": 0, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [{"name": "description", "type": "string", "value": "a"}]},
+                    {"id": 8, "x": 8, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [{"name": "description", "type": "string", "value": "b"}]},
+                    {"id": 3, "x": 16, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [{"name": "description", "type": "string", "value": "c"}]}
+                ]
+            }]
+        }"#;
+        let map: TiledMap = serde_json::from_str(json).unwrap();
+        let objects = map.parse_objects();
+        // Each object carries its own (non-positional) id in file order.
+        assert_eq!(
+            objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![Some(5), Some(8), Some(3)]
+        );
+
+        // Drop the middle object and re-serialise: the survivors keep their ids
+        // (a positional counter would have renumbered them to 1, 2).
+        let trimmed = vec![objects[0].clone(), objects[2].clone()];
+        let reloaded: TiledMap = serde_json::from_str(&map.to_tmj(&trimmed)).unwrap();
+        assert_eq!(
+            reloaded
+                .parse_objects()
+                .iter()
+                .map(|o| o.id)
+                .collect::<Vec<_>>(),
+            vec![Some(5), Some(3)]
+        );
+
+        // An id-less (runtime-created) object is assigned a fresh id above every
+        // existing one — max(5, 8, 3) + 1 = 9 — never colliding with a sibling.
+        let mut with_new = objects.clone();
+        let mut extra = objects[0].clone();
+        extra.id = None;
+        with_new.push(extra);
+        let reloaded2: TiledMap = serde_json::from_str(&map.to_tmj(&with_new)).unwrap();
+        assert_eq!(
+            reloaded2
+                .parse_objects()
+                .iter()
+                .map(|o| o.id)
+                .collect::<Vec<_>>(),
+            vec![Some(5), Some(8), Some(3), Some(9)]
+        );
     }
 
     #[test]
