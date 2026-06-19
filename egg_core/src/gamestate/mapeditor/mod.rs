@@ -138,6 +138,10 @@ enum CycleField {
     Mode,
     Sound,
     Trigger,
+    /// Whether the selected interaction object is a consume-on-interact pickup
+    /// ([`MapObject::removable`](crate::map::MapObject::removable)) — toggled
+    /// no/yes. Interacts tab only (warps are never "taken").
+    Removable,
     /// The selected sprite frame's mirror ([`Flip`]) and 90° rotation
     /// ([`Rotate`]), cycled in place.
     FrameFlip,
@@ -2099,6 +2103,14 @@ impl MapViewer {
                         _ => {}
                     }
                     self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
+                    // Consume-on-interact: does this interaction pick up / vanish?
+                    self.cycle_row(
+                        b,
+                        rows,
+                        CycleField::Removable,
+                        "take",
+                        removable_label(object.removable),
+                    );
                 }
             }
             self.build_sprite_frames(b, rows, object);
@@ -4822,6 +4834,11 @@ impl MapViewer {
                     object.trigger = cycle_trigger(object.trigger);
                 }
             }),
+            CycleField::Removable => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i) {
+                    object.removable = !object.removable;
+                }
+            }),
             CycleField::Flip => self.modify_warp(map, |w| w.flip = cycle_flip(&w.flip)),
             CycleField::Mode => self.modify_warp(map, |w| w.mode = cycle_mode(&w.mode)),
             CycleField::Sound => self.modify_warp(map, |w| w.sound = cycle_sound(&w.sound)),
@@ -6322,7 +6339,11 @@ fn snapshot_eq(a: &ObjSnapshot, b: &ObjSnapshot) -> bool {
         && a.hitbox.y == b.hitbox.y
         && a.hitbox.w == b.hitbox.w
         && a.hitbox.h == b.hitbox.h;
-    same_box && a.trigger == b.trigger && a.sprite == b.sprite && effect_eq(&a.effect, &b.effect)
+    same_box
+        && a.trigger == b.trigger
+        && a.removable == b.removable
+        && a.sprite == b.sprite
+        && effect_eq(&a.effect, &b.effect)
 }
 
 /// Compare two object effects by their editable content (warp fields / dialogue
@@ -6448,6 +6469,11 @@ fn sound_label(sound: &Option<SfxData>) -> &'static str {
         Some(s) if s.id == sound::STAIRS_UP.id => "up",
         Some(_) => "?",
     }
+}
+
+/// Label for the [`CycleField::Removable`] toggle (consume-on-interact pickup).
+fn removable_label(removable: bool) -> &'static str {
+    if removable { "yes" } else { "no" }
 }
 
 fn cycle_flip(axis: &Axis) -> Axis {
@@ -7093,6 +7119,32 @@ mod tests {
         assert_eq!(tiles(&map), vec![10, 20, 30], "button move undone");
         v.redo(&mut map, &mut maps);
         assert_eq!(tiles(&map), vec![10, 30, 20], "button move redone");
+    }
+
+    /// The Interacts tab's `take` toggle flips [`MapObject::removable`] through
+    /// the undo machinery (no ⇄ yes), one undo step per toggle.
+    #[test]
+    fn cycle_toggles_removable() {
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer {
+            selected: Some(0),
+            ..Default::default()
+        };
+        assert!(!map.objects[0].removable);
+        v.cycle(&mut map, CycleField::Removable);
+        assert!(map.objects[0].removable, "toggled on");
+        v.cycle(&mut map, CycleField::Removable);
+        assert!(!map.objects[0].removable, "toggled off");
+        // Each toggle is one undo step.
+        v.cycle(&mut map, CycleField::Removable);
+        v.undo(&mut map, &mut maps);
+        assert!(!map.objects[0].removable, "toggle undone");
+        v.redo(&mut map, &mut maps);
+        assert!(map.objects[0].removable, "toggle redone");
     }
 
     /// The feature-complete frame fields: offset / size / scale / palette-rotate
