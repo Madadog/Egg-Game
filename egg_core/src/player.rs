@@ -16,6 +16,8 @@
 
 use std::mem;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     camera::Camera,
     data::{sound, tmj::TiledMap},
@@ -280,8 +282,13 @@ pub enum MoveMode {
 }
 
 /// Names a [`Shell`] constructor so a preset can be stored as data — e.g. inside
-/// [`MoveMode::Egg`] to record what an egg hatches into.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// [`MoveMode::Egg`] to record what an egg hatches into, or on [`Shell::preset`]
+/// to record what a live entity is for persistence. Serialised as its **name**
+/// (`"critter"`), not an integer tag, so a save survives the eventual migration
+/// of presets from this enum to a runtime-loaded data store (the name becomes the
+/// store key).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ShellPreset {
     Ellie,
     May,
@@ -362,6 +369,13 @@ pub struct Shell {
     pub walktime: u16,
     pub flip_controls: Axis,
     pub pet_timer: Option<u8>,
+    /// The archetype this shell is an instance of (its [`ShellPreset`]). The
+    /// source of truth for the *derived* `sprites`, and the handle entity
+    /// persistence stores to rebuild a shell; an egg carries the preset it will
+    /// hatch into. Held alongside the materialised `sprites` — the maps pattern
+    /// (resolve once, keep the working copy) rather than a per-frame registry
+    /// lookup; `sprites` is the cache, `preset` the key.
+    pub preset: ShellPreset,
     pub sprites: ShellSprites,
     pub move_mode: MoveMode,
 }
@@ -605,8 +619,12 @@ impl Shell {
 
 // presets
 impl Shell {
-    fn preset(local_hitbox: Hitbox, sprites: ShellSprites) -> Self {
+    /// Build a shell of `preset` with its hitbox + (derived) sprites, recording
+    /// the archetype on [`preset`](Self::preset). All the named constructors
+    /// funnel through here, so every shell knows what it is.
+    fn from_preset(preset: ShellPreset, local_hitbox: Hitbox, sprites: ShellSprites) -> Self {
         Self {
+            preset,
             pos: Vec2::new(62, 23),
             local_hitbox,
             hp: 3,
@@ -622,29 +640,31 @@ impl Shell {
         }
     }
     pub fn ellie() -> Self {
-        Self::preset(Hitbox::new(0, 10, 7, 5), ShellSprites::ellie())
+        Self::from_preset(ShellPreset::Ellie, Hitbox::new(0, 10, 7, 5), ShellSprites::ellie())
     }
     pub fn may() -> Self {
-        Self::preset(Hitbox::new(0, 12, 7, 5), ShellSprites::may())
+        Self::from_preset(ShellPreset::May, Hitbox::new(0, 12, 7, 5), ShellSprites::may())
     }
     pub fn dog() -> Self {
-        Self::preset(Hitbox::new(0, 12, 7, 5), ShellSprites::dog())
+        Self::from_preset(ShellPreset::Dog, Hitbox::new(0, 12, 7, 5), ShellSprites::dog())
     }
     pub fn bro() -> Self {
-        Self::preset(Hitbox::new(0, 8, 7, 5), ShellSprites::bro())
+        Self::from_preset(ShellPreset::Bro, Hitbox::new(0, 8, 7, 5), ShellSprites::bro())
     }
     /// A wandering critter — the hatched form. See [`MoveMode::Amble`].
     pub fn critter() -> Self {
-        Self::preset(Hitbox::new(0, 0, 8, 8), ShellSprites::critter())
+        Self::from_preset(ShellPreset::Critter, Hitbox::new(0, 0, 8, 8), ShellSprites::critter())
             .with_move_mode(MoveMode::Amble(CreatureState::Idle(Timer(0))))
     }
-    /// An egg that hatches into `hatches_into` after a fixed delay. See
-    /// [`MoveMode::Egg`].
+    /// An egg that hatches into `hatches_into` after a fixed delay. Its
+    /// [`preset`](Self::preset) *is* `hatches_into` (the archetype it will
+    /// become); the egg-form sprites + [`MoveMode::Egg`] mark that it hasn't yet.
     pub fn egg(hatches_into: ShellPreset) -> Self {
-        Self::preset(Hitbox::new(0, 0, 8, 8), ShellSprites::egg()).with_move_mode(MoveMode::Egg {
-            timer: Timer(255),
-            hatches_into,
-        })
+        Self::from_preset(hatches_into, Hitbox::new(0, 0, 8, 8), ShellSprites::egg())
+            .with_move_mode(MoveMode::Egg {
+                timer: Timer(255),
+                hatches_into,
+            })
     }
 }
 
@@ -974,6 +994,42 @@ mod tests {
             ShellPreset::Dog.build().move_mode,
             MoveMode::Wander
         ));
+    }
+
+    /// Every shell records its archetype on `preset`: the named constructors set
+    /// their own, an egg carries the preset it will hatch into, and `build`
+    /// round-trips it — the handle entity persistence stores to rebuild a shell.
+    #[test]
+    fn shells_carry_their_preset() {
+        assert_eq!(Shell::ellie().preset, ShellPreset::Ellie);
+        assert_eq!(Shell::may().preset, ShellPreset::May);
+        assert_eq!(Shell::dog().preset, ShellPreset::Dog);
+        assert_eq!(Shell::bro().preset, ShellPreset::Bro);
+        assert_eq!(Shell::critter().preset, ShellPreset::Critter);
+        // An egg's archetype is what it becomes.
+        assert_eq!(Shell::egg(ShellPreset::Critter).preset, ShellPreset::Critter);
+        // `build()` produces a shell that reports the same preset.
+        for p in [
+            ShellPreset::Ellie,
+            ShellPreset::May,
+            ShellPreset::Dog,
+            ShellPreset::Bro,
+            ShellPreset::Critter,
+        ] {
+            assert_eq!(p.build().preset, p);
+        }
+    }
+
+    /// `ShellPreset` serialises as its lowercase name, not an integer tag — so a
+    /// save survives the eventual enum→data-store migration (name = store key).
+    #[test]
+    fn shell_preset_serialises_by_name() {
+        assert_eq!(
+            serde_json::to_string(&ShellPreset::Critter).unwrap(),
+            "\"critter\""
+        );
+        let back: ShellPreset = serde_json::from_str("\"ellie\"").unwrap();
+        assert_eq!(back, ShellPreset::Ellie);
     }
 
     #[test]
