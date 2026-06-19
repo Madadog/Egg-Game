@@ -559,6 +559,10 @@ impl WalkaroundState {
         enum Act {
             Player,
             Drive(i16, i16),
+            // The critter gait: move on the third tick like `Drive`, but animate
+            // for the whole Walking state (`walking`) so the sprite cycles
+            // smoothly rather than flickering on the idle ticks between moves.
+            Amble { vx: i16, vy: i16, walking: bool },
             Hatch(ShellPreset),
         }
         for shell in self.entities.iter_mut() {
@@ -587,7 +591,11 @@ impl WalkaroundState {
                 }
                 MoveMode::Amble(state) => {
                     let (vx, vy) = state.step(ctx.rng);
-                    Act::Drive(vx, vy)
+                    Act::Amble {
+                        vx,
+                        vy,
+                        walking: state.is_walking(),
+                    }
                 }
             };
             match act {
@@ -600,6 +608,18 @@ impl WalkaroundState {
                     // horizontal that keeps a vertical-only wanderer's mirror).
                     let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
                     shell.apply_motion::<8>(dx, dy, None);
+                }
+                Act::Amble { vx, vy, walking } => {
+                    let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
+                    shell.pos.x += dx;
+                    shell.pos.y += dy;
+                    // Animate by the Walking *state*, not this tick's motion, so
+                    // the slow every-third-tick gait still cycles smoothly.
+                    if walking {
+                        shell.animate_walk();
+                    } else {
+                        shell.animate_stop();
+                    }
                 }
                 Act::Hatch(preset) => {
                     let pos = shell.pos;

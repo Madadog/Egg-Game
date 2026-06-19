@@ -891,6 +891,12 @@ pub enum CreatureState {
     Walking(Timer, Vec2),
 }
 impl CreatureState {
+    /// Whether the creature is mid-walk (vs idling). The walk animation is driven
+    /// off this *state* rather than the every-third-tick displacement, so the
+    /// gait cycles smoothly instead of flickering on the idle ticks.
+    pub fn is_walking(&self) -> bool {
+        matches!(self, CreatureState::Walking(..))
+    }
     /// Advance one step, returning the intended `(dx, dy)` for the shell to walk
     /// (the caller applies collision). Idle yields no motion and eventually flips
     /// to Walking; Walking nudges one pixel every third tick along its chosen
