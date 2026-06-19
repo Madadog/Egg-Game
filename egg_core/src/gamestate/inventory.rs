@@ -587,6 +587,24 @@ impl InventoryUi {
             |p| p.a() == 0,
         );
     }
+    /// Drop (discard) the held item, or the one under the cursor if none is held,
+    /// removing it from the inventory entirely. No-op outside the Items page.
+    pub fn drop_item(&mut self, system: &mut impl ConsoleApi) {
+        let target = match &self.state {
+            InventoryUiState::Items(current, selected) => {
+                selected.as_ref().map(|(origin, _)| *origin).unwrap_or(*current)
+            }
+            _ => return,
+        };
+        if self.inventory.take(target).is_some() {
+            system.play_sound(sound::ITEM_DOWN);
+            if let InventoryUiState::Items(_, selected) = &mut self.state {
+                *selected = None;
+            }
+        } else {
+            system.play_sound(sound::DENY);
+        }
+    }
     pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
         let ui = self.build_ui(&*ctx);
@@ -643,6 +661,10 @@ impl InventoryUi {
         };
         if just_pressed(pad.b) {
             self.state.back(ctx.system)
+        };
+        // X discards the held / hovered item.
+        if just_pressed(pad.x) {
+            self.drop_item(ctx.system)
         };
     }
 }
