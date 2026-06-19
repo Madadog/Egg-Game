@@ -84,6 +84,9 @@ enum EditField {
     Pitch,
     /// The `add_creatures` Func interaction's spawn count (a `usize`).
     Count,
+    /// The `give_item` Func interaction's item key (the granted item's registry
+    /// key, e.g. `"chegg"`; a free-text string, empty until typed).
+    Item,
     /// The selected object's trigger-hitbox geometry (`i16` px) — the numeric
     /// counterpart to dragging the box. Common to every object kind.
     HitX,
@@ -1926,6 +1929,9 @@ impl MapViewer {
                         }
                         Interaction::Func(InteractFn::AddCreatures(c)) => {
                             self.field_row(b, rows, EditField::Count, "count", &c.to_string())
+                        }
+                        Interaction::Func(InteractFn::GiveItem(key)) => {
+                            self.field_row(b, rows, EditField::Item, "item", key)
                         }
                         // None / toggle_dog / piano have no editable param.
                         _ => {}
@@ -4171,6 +4177,10 @@ impl MapViewer {
                 Some(ObjectEffect::Interact(Interaction::Func(InteractFn::AddCreatures(c)))),
                 EditField::Count,
             ) => c.to_string(),
+            (
+                Some(ObjectEffect::Interact(Interaction::Func(InteractFn::GiveItem(key)))),
+                EditField::Item,
+            ) => key.clone(),
             // Hitbox geometry lives on the object itself, not the effect.
             (_, EditField::HitX) => object.map(|o| o.hitbox.x.to_string()).unwrap_or_default(),
             (_, EditField::HitY) => object.map(|o| o.hitbox.y.to_string()).unwrap_or_default(),
@@ -4382,6 +4392,16 @@ impl MapViewer {
                     });
                 }
             }
+            // The item key is stored verbatim (a free-text registry key, empty
+            // until typed); it's resolved against the item registry when the
+            // object fires. A dropdown of known keys is a future autocomplete.
+            EditField::Item => self.modify_object(map, |map, i| {
+                if let Some(ObjectEffect::Interact(Interaction::Func(InteractFn::GiveItem(key)))) =
+                    map.objects.get_mut(i).map(|o| &mut o.effect)
+                {
+                    *key = buffer.clone();
+                }
+            }),
             // Hitbox geometry: width/height keep a 1px floor so a box stays usable.
             // (X/Y deliberately have no floor — an object may sit at a negative
             // offset.) The field is selected inside the closure, where `o` exists.
@@ -5787,8 +5807,9 @@ fn interaction_kind_label(i: &Interaction) -> &'static str {
 
 /// Advance an interaction to the next kind, preserving a sensible default param.
 /// Cycle: none → dialogue → toggle_dog → piano → note → add_creatures →
-/// cutscene → none. `origin` seeds a fresh `piano` (it sounds the note under its
-/// own position).
+/// give_item → cutscene → none. `origin` seeds a fresh `piano` (it sounds the
+/// note under its own position); a fresh `give_item` starts with an empty item
+/// key (typed into the `item` field).
 fn cycle_interaction(current: &Interaction, origin: Vec2) -> Interaction {
     match current {
         Interaction::None => Interaction::Dialogue(String::new()),
@@ -5796,7 +5817,10 @@ fn cycle_interaction(current: &Interaction, origin: Vec2) -> Interaction {
         Interaction::Func(InteractFn::ToggleDog) => Interaction::Func(InteractFn::Piano(origin)),
         Interaction::Func(InteractFn::Piano(_)) => Interaction::Func(InteractFn::Note(0)),
         Interaction::Func(InteractFn::Note(_)) => Interaction::Func(InteractFn::AddCreatures(0)),
-        Interaction::Func(InteractFn::AddCreatures(_)) => Interaction::Cutscene(String::new()),
+        Interaction::Func(InteractFn::AddCreatures(_)) => {
+            Interaction::Func(InteractFn::GiveItem(String::new()))
+        }
+        Interaction::Func(InteractFn::GiveItem(_)) => Interaction::Cutscene(String::new()),
         // Pet (no `func` name) can't be authored; cycle it back to none.
         Interaction::Func(_) => Interaction::None,
         Interaction::Cutscene(_) => Interaction::None,
@@ -7425,7 +7449,8 @@ mod tests {
     }
 
     /// Cycling an interaction reaches every authorable kind — the GUI's way to
-    /// place Func interactions (toggle_dog / piano / note / add_creatures).
+    /// place Func interactions (toggle_dog / piano / note / add_creatures /
+    /// give_item).
     #[test]
     fn interaction_kind_cycles_through_func_variants() {
         let o = Vec2::new(5, 7);
@@ -7440,6 +7465,8 @@ mod tests {
         assert!(matches!(i, Interaction::Func(InteractFn::Note(0))));
         i = cycle_interaction(&i, o);
         assert!(matches!(i, Interaction::Func(InteractFn::AddCreatures(0))));
+        i = cycle_interaction(&i, o);
+        assert!(matches!(i, Interaction::Func(InteractFn::GiveItem(ref k)) if k.is_empty()));
         i = cycle_interaction(&i, o);
         assert!(matches!(i, Interaction::Cutscene(_)));
         i = cycle_interaction(&i, o);
