@@ -214,6 +214,9 @@ enum EditAction {
     },
     /// Two layers in `source` were swapped (move up / down) — self-inverse.
     LayerSwap { source: String, a: usize, b: usize },
+    /// A layer in `source` was drag-reordered from index `from` to index `to`
+    /// (remove + re-insert). Undo moves it back (`to` → `from`); redo replays it.
+    LayerMove { source: String, from: usize, to: usize },
     /// A layer at `index` in `source` was renamed (also the FG/BG toggle, which
     /// flips the `fg` name prefix).
     LayerRename {
@@ -354,10 +357,14 @@ enum EditorKey {
     DeleteObject,
     /// Select animation frame `n` of the selected object's sprite for editing.
     SpriteFrame(usize),
-    /// Append / remove a frame, or set the selected frame's tile from the palette
-    /// brush — the object's animated-sprite controls.
+    /// Append / remove a frame, move the selected frame earlier / later in the
+    /// animation, or set the selected frame's tile from the palette brush — the
+    /// object's animated-sprite controls. (Frames also drag-reorder; the buttons
+    /// are the click/keyboard counterpart, mirroring the Layers panel.)
     SpriteAddFrame,
     SpriteDelFrame,
+    SpriteFrameUp,
+    SpriteFrameDown,
     SpriteFromBrush,
     /// The live animated preview box of the selected object's sprite.
     SpritePreview,
@@ -575,6 +582,16 @@ enum PalDrag {
     },
 }
 
+/// A reorderable list in the editor's panels, identifying which one a
+/// [`CanvasDrag::Reorder`] is rearranging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReorderList {
+    /// The Layers panel's layer rows (the active bg / fg list per [`MapViewer::fg`]).
+    Layers,
+    /// The Objects panel's sprite animation frames for the selected object.
+    SpriteFrames,
+}
+
 /// A manual press-drag the editor's hit-testing owns across frames (distinct from
 /// the dock's own [`DragState`]). The palette and a panel scroll bar are never
 /// grabbed at once — only one keyed surface is hit per frame — so they share one
@@ -588,6 +605,16 @@ enum CanvasDrag {
     /// A panel scroll-bar drag: the panel index plus the grab offset within the
     /// thumb, so the thumb tracks the cursor rather than snapping under it.
     Scrollbar { idx: usize, grab: i16 },
+    /// A list row lifted for drag-reordering. `from` is the grabbed item's index
+    /// in `list`; `at` is the row the cursor currently hovers (where a release
+    /// drops it), re-read each frame. They stay equal until the cursor moves to
+    /// another row, so a press-and-release in place is an ordinary click
+    /// (select), not a reorder.
+    Reorder {
+        list: ReorderList,
+        from: usize,
+        at: usize,
+    },
 }
 
 /// The Select tool's marquee: a rectangle of tiles on the active layer, in tile
@@ -1086,6 +1113,136 @@ impl MapViewer {
         ) as i16;
         self.dock.set_scroll(idx, scroll.clamp(0, overflow));
         true
+    }
+
+    /// Advance an active list drag-reorder (layers or sprite frames). Re-reads
+    /// the row under the cursor each frame so the drop target tracks the cursor
+    /// (sticky to the last valid row when hovering a gap or the toolbar), and on
+    /// release commits the move — a no-op if dropped back on the grabbed row, so
+    /// a plain click stays a select.
+    fn step_reorder_drag(
+        &mut self,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        cursor: Vec2,
+        up: bool,
+    ) {
+        let CanvasDrag::Reorder { list, from, at } = self.canvas_drag else {
+            return;
+        };
+        // Borrow ends before the mutation below.
+        let at = self.hovered_reorder_index(cursor, map, maps, list).unwrap_or(at);
+        if up {
+            self.canvas_drag = CanvasDrag::None;
+            if at != from {
+                match list {
+                    ReorderList::Layers => self.reorder_layer_to(map, maps, from, at),
+                    ReorderList::SpriteFrames => self.reorder_sprite_frame_to(map, from, at),
+                }
+            }
+        } else {
+            self.canvas_drag = CanvasDrag::Reorder { list, from, at };
+        }
+    }
+
+    /// The index of the `list` row under `cursor`, by the same front-to-back
+    /// panel pick `step_mouse_input` uses — so a drop reads whichever row the
+    /// cursor is over regardless of panel placement / scroll. `None` when the
+    /// cursor is off the list (a gap, the toolbar, another panel), which the
+    /// caller treats as "hold the last target".
+    fn hovered_reorder_index(
+        &self,
+        cursor: Vec2,
+        map: &MapInfo,
+        maps: &MapStore,
+        list: ReorderList,
+    ) -> Option<usize> {
+        for &(idx, rect) in self.dock.solved.rects.iter().rev() {
+            let ui = self.build_panel(idx, rect, map, maps);
+            if let Some(key) = self.hit_panel(idx, rect, &ui, cursor) {
+                return match (list, key) {
+                    // The eye column shares a layer row, so it counts as a target.
+                    (ReorderList::Layers, EditorKey::Layer(i) | EditorKey::LayerVis(i)) => Some(i),
+                    (ReorderList::SpriteFrames, EditorKey::SpriteFrame(i)) => Some(i),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
+    /// Drag-reorder the active layer list: slide the layer shown at display row
+    /// `from` to display row `to`, translating to the store's layer indices and
+    /// recording one [`EditAction::LayerMove`]. The collision layer is protected
+    /// inside [`TiledMap::reorder_layer`].
+    fn reorder_layer_to(&mut self, map: &mut MapInfo, maps: &mut MapStore, from: usize, to: usize) {
+        let list = if self.fg { &map.fg_layers } else { &map.layers };
+        let (Some(src_from), Some(src_to)) = (
+            list.get(from).map(|l| l.source_layer),
+            list.get(to).map(|l| l.source_layer),
+        ) else {
+            return;
+        };
+        if let Some((a, b)) = maps
+            .get_mut(&map.source)
+            .and_then(|tm| tm.reorder_layer(src_from, src_to))
+        {
+            self.record(EditAction::LayerMove {
+                source: map.source.clone(),
+                from: a,
+                to: b,
+            });
+            // Follow the dropped layer (clamped; the re-derive settles the row).
+            self.layer_index = to.min(self.layer_list_len(map).saturating_sub(1));
+            self.pending_reload = true;
+        }
+    }
+
+    /// Drag- or button-reorder the selected object's sprite frames: move the
+    /// frame at `from` to index `to`, recorded as one object [`EditAction::Modify`]
+    /// (via [`modify_object`](Self::modify_object)). The frame selection follows.
+    fn reorder_sprite_frame_to(&mut self, map: &mut MapInfo, from: usize, to: usize) {
+        self.modify_object(map, |map, i| {
+            if let Some(frames) = map.objects.get_mut(i).and_then(|o| o.sprite.as_mut())
+                && from < frames.len()
+                && to < frames.len()
+            {
+                let frame = frames.remove(from);
+                frames.insert(to, frame);
+            }
+        });
+        self.sprite_frame = to.min(self.sprite_frame_count(map).saturating_sub(1));
+    }
+
+    /// Move the selected sprite frame one step earlier (`up`) or later in the
+    /// animation — the click/keyboard counterpart to dragging a frame row.
+    fn move_sprite_frame(&mut self, map: &mut MapInfo, up: bool) {
+        let Some(cur) = self.current_frame(map) else {
+            return;
+        };
+        let n = self.sprite_frame_count(map);
+        let to = if up {
+            cur.checked_sub(1)
+        } else {
+            (cur + 1 < n).then_some(cur + 1)
+        };
+        if let Some(to) = to {
+            self.reorder_sprite_frame_to(map, cur, to);
+        }
+    }
+
+    /// The active drag-reorder's `(from, at)` rows if it's rearranging `list`,
+    /// else `None` — read by the list builders to recolour the grabbed and
+    /// drop-target rows.
+    fn reorder_drag(&self, list: ReorderList) -> Option<(usize, usize)> {
+        match self.canvas_drag {
+            CanvasDrag::Reorder {
+                list: l,
+                from,
+                at,
+            } if l == list => Some((from, at)),
+            _ => None,
+        }
     }
 
     /// A small always-on toolbar — undo / redo / save — pinned to the world's
@@ -1657,6 +1814,9 @@ impl MapViewer {
         );
         rows.push(b.row(1.0, [up, dn, ren, fg]).id());
 
+        // A layer drag in progress recolours the grabbed row (grey) and the row
+        // it would drop onto (green); see `reorder_drag`.
+        let drag = self.reorder_drag(ReorderList::Layers);
         let store = maps.get(&map.source);
         for (i, layer) in layers.iter().enumerate() {
             // Eye toggles visibility; the name selects the layer (sticky, by
@@ -1706,6 +1866,8 @@ impl MapViewer {
                 .grow(1.0)
                 .fill_if(renaming, 14)
                 .fill_if(!renaming && i == self.layer_index, 15)
+                .fill_if(drag.is_some_and(|(from, _)| i == from), 13)
+                .fill_if(drag.is_some_and(|(from, at)| i == at && at != from), 11)
                 .key(EditorKey::Layer(i))
                 .id();
             rows.push(b.row(1.0, [eye, name]).id());
@@ -1968,19 +2130,29 @@ impl MapViewer {
             );
         }
         let sel = self.sprite_frame.min(frames.len().saturating_sub(1));
+        // A frame drag in progress recolours the grabbed row (grey) and the row
+        // it would drop onto (green); see `reorder_drag`.
+        let drag = self.reorder_drag(ReorderList::SpriteFrames);
         for (fi, frame) in frames.iter().enumerate() {
             rows.push(
                 b.text(format!("{fi}: t{} d{}", frame.spr_id, frame.duration))
                     .small(true)
                     .full_width(7.0)
                     .fill_if(fi == sel, 15)
+                    .fill_if(drag.is_some_and(|(from, _)| fi == from), 13)
+                    .fill_if(drag.is_some_and(|(from, at)| fi == at && at != from), 11)
                     .key(EditorKey::SpriteFrame(fi))
                     .id(),
             );
         }
+        // Add / remove, then move the selected frame earlier / later — the
+        // click counterpart to dragging a frame row (reorder needs >1 frame).
+        let multi = frames.len() > 1;
         let add = Self::action_button(b, "+frm", 11, true, EditorKey::SpriteAddFrame);
         let del = Self::action_button(b, "-frm", 8, !frames.is_empty(), EditorKey::SpriteDelFrame);
-        rows.push(b.row(1.0, [add, del]).id());
+        let up = Self::action_button(b, "^", 12, multi, EditorKey::SpriteFrameUp);
+        let dn = Self::action_button(b, "v", 12, multi, EditorKey::SpriteFrameDown);
+        rows.push(b.row(1.0, [add, del, up, dn]).id());
         if let Some(frame) = frames.get(sel) {
             self.field_row(
                 b,
@@ -2459,6 +2631,15 @@ impl MapViewer {
                 }
                 self.pending_reload = true;
             }
+            // Undo a move by sliding the layer back from `to` to `from`. The
+            // stored indices are already collision-clamped, so this re-applies
+            // exactly with no further clamping.
+            EditAction::LayerMove { source, from, to } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.reorder_layer(*to, *from);
+                }
+                self.pending_reload = true;
+            }
             EditAction::LayerRename {
                 source,
                 index,
@@ -2528,6 +2709,12 @@ impl MapViewer {
             EditAction::LayerSwap { source, a, b } => {
                 if let Some(tm) = maps.get_mut(source) {
                     tm.swap_layers(*a, *b);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerMove { source, from, to } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.reorder_layer(*from, *to);
                 }
                 self.pending_reload = true;
             }
@@ -2736,6 +2923,9 @@ impl MapViewer {
         } else if matches!(self.canvas_drag, CanvasDrag::Palette(_)) {
             // A palette drag (pan / tile-pick / scroll bar) owns the mouse.
             self.step_palette_drag(&mouse);
+        } else if matches!(self.canvas_drag, CanvasDrag::Reorder { .. }) {
+            // A list drag-reorder (layers / sprite frames) owns the mouse.
+            self.step_reorder_drag(map, maps, cursor, released(mouse.left));
         } else if self.step_drag(&mouse, screen) {
             // A panel drag (move / tear-off / resize) owns the mouse this frame —
             // suppress panel and canvas input so it can't paint or re-select.
@@ -3060,9 +3250,20 @@ impl MapViewer {
             }
             // Sticky select: a click sets the active layer (and stays — no
             // hover-select, and the canvas tool isn't changed; see `panel_tool`).
+            // The press also arms a drag-reorder (except on the protected
+            // collision layer, which can't move); a release in place is just the
+            // select, a drag onto another row reorders (see `step_reorder_drag`).
             EditorKey::Layer(i) => {
                 if click {
                     self.layer_index = i;
+                    // The protected collision layer (bg #0) can't be dragged.
+                    if self.fg || i != 0 {
+                        self.canvas_drag = CanvasDrag::Reorder {
+                            list: ReorderList::Layers,
+                            from: i,
+                            at: i,
+                        };
+                    }
                 }
             }
             // The eye toggles that layer's visibility (and selects it).
@@ -3233,10 +3434,17 @@ impl MapViewer {
                     self.delete_object(map);
                 }
             }
+            // Select the frame for editing, and arm a drag-reorder (a release in
+            // place is just the select; a drag onto another frame row reorders).
             EditorKey::SpriteFrame(fi) => {
                 if click {
                     self.sprite_frame = fi;
                     self.stop_editing();
+                    self.canvas_drag = CanvasDrag::Reorder {
+                        list: ReorderList::SpriteFrames,
+                        from: fi,
+                        at: fi,
+                    };
                 }
             }
             EditorKey::SpriteAddFrame => {
@@ -3247,6 +3455,16 @@ impl MapViewer {
             EditorKey::SpriteDelFrame => {
                 if click {
                     self.del_sprite_frame(map);
+                }
+            }
+            EditorKey::SpriteFrameUp => {
+                if click {
+                    self.move_sprite_frame(map, true);
+                }
+            }
+            EditorKey::SpriteFrameDown => {
+                if click {
+                    self.move_sprite_frame(map, false);
                 }
             }
             EditorKey::SpriteFromBrush => {
@@ -6824,6 +7042,59 @@ mod tests {
         assert_eq!(frames(&map)[0].spr_id, 30);
     }
 
+    /// Sprite frames reorder by button (^/v) and by the drag-commit path, each one
+    /// undo step (an object `Modify`), with the frame selection following the move.
+    #[test]
+    fn sprite_frames_reorder_and_undo() {
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            objects: vec![MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer {
+            selected: Some(0),
+            ..Default::default()
+        };
+        let tiles = |map: &MapInfo| {
+            map.objects[0]
+                .sprite
+                .clone()
+                .unwrap_or_default()
+                .iter()
+                .map(|f| f.spr_id)
+                .collect::<Vec<_>>()
+        };
+        // Three frames: tiles 10, 20, 30.
+        for t in [10u16, 20, 30] {
+            v.selected_tile = t as usize;
+            v.add_sprite_frame(&mut map);
+        }
+        assert_eq!(tiles(&map), vec![10, 20, 30]);
+        assert_eq!(v.sprite_frame, 2, "the last add stays selected");
+
+        // ^ moves the selected frame (30, index 2) one earlier; selection follows.
+        v.move_sprite_frame(&mut map, true);
+        assert_eq!(tiles(&map), vec![10, 30, 20]);
+        assert_eq!(v.sprite_frame, 1);
+        // ^ at the top edge would underflow — it's a no-op.
+        v.sprite_frame = 0;
+        v.move_sprite_frame(&mut map, true);
+        assert_eq!(tiles(&map), vec![10, 30, 20], "no-op past the top");
+
+        // The drag-commit path moves frame 0 to index 2 (the layers between slide).
+        v.reorder_sprite_frame_to(&mut map, 0, 2);
+        assert_eq!(tiles(&map), vec![30, 20, 10]);
+        assert_eq!(v.sprite_frame, 2, "selection follows the dropped frame");
+
+        // Each reorder is a single undo step.
+        v.undo(&mut map, &mut maps);
+        assert_eq!(tiles(&map), vec![10, 30, 20], "drag move undone");
+        v.undo(&mut map, &mut maps);
+        assert_eq!(tiles(&map), vec![10, 20, 30], "button move undone");
+        v.redo(&mut map, &mut maps);
+        assert_eq!(tiles(&map), vec![10, 30, 20], "button move redone");
+    }
+
     /// The feature-complete frame fields: offset / size / scale / palette-rotate
     /// (size & scale floored to 1, palette mod-16), flip + rotate cycles, and the
     /// `Option<u8>` transparent / outline (a number sets it, an empty buffer
@@ -7060,6 +7331,61 @@ mod tests {
         });
         v.commit_edit(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+    }
+
+    /// Drag-reordering a layer: a display-row move translates to the store's layer
+    /// indices, records one undoable `LayerMove`, protects the collision layer, and
+    /// round-trips through undo / redo.
+    #[test]
+    fn layer_drag_reorder_translates_and_undoes() {
+        use crate::data::tmj::TiledMap;
+        let mut maps = MapStore::default();
+        let mut tm = TiledMap::blank_modern(4, 4);
+        tm.add_tile_layer("a");
+        tm.add_tile_layer("b");
+        maps.insert("m", tm);
+        // bg display rows mirror the store's tile layers: 0=collision, 1="Layer 1",
+        // 2="a", 3="b" (source_layer == display index here).
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: (0..4)
+                .map(|src| LayerInfo {
+                    source_layer: src,
+                    ..LayerInfo::DEFAULT_LAYER
+                })
+                .collect(),
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+        let order = |maps: &MapStore| {
+            (0..4)
+                .map(|i| maps.get("m").unwrap().layer_name(i).unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&maps), ["collision", "Layer 1", "a", "b"]);
+
+        // Drag display row 3 ("b") up to row 1: the layers between slide down.
+        v.reorder_layer_to(&mut map, &mut maps, 3, 1);
+        assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"]);
+        assert!(v.pending_reload, "a reorder re-derives the display list");
+        assert!(v.history.can_undo(), "the drag is one undo step");
+
+        v.undo(&mut map, &mut maps);
+        assert_eq!(order(&maps), ["collision", "Layer 1", "a", "b"], "undone");
+        v.redo(&mut map, &mut maps);
+        assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "redone");
+
+        // Dragging the protected collision layer (row 0) is refused — no change.
+        v.reorder_layer_to(&mut map, &mut maps, 0, 2);
+        assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "collision stays put");
+        // ...and it records nothing: the next undo reverts the earlier reorder
+        // rather than a no-op the refused drag would have stacked on top.
+        v.undo(&mut map, &mut maps);
+        assert_eq!(
+            order(&maps),
+            ["collision", "Layer 1", "a", "b"],
+            "undo skips the refused move"
+        );
     }
 
     /// The warp-target picker steps through `[same-map] + existing maps` and

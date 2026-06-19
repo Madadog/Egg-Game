@@ -1118,6 +1118,40 @@ impl TiledMap {
         Some((idx, other))
     }
 
+    /// Move the layer at `from` to land at index `to` (remove + re-insert,
+    /// sliding the layers between), the multi-step counterpart to
+    /// [`move_layer`](Self::move_layer)'s single neighbour swap — used by the
+    /// editor's drag-reorder. Never moves the collision (first tile) layer, and
+    /// clamps `to` so the dragged layer can't slip across the collision layer
+    /// (which must stay first among the tile layers); the clamp keeps
+    /// [`collision_layer`](Self::collision_layer)'s index fixed. Returns the
+    /// effective `(from, to)` actually applied (for undo), or `None` if out of
+    /// range or nothing moved.
+    pub fn reorder_layer(&mut self, from: usize, to: usize) -> Option<(usize, usize)> {
+        let n = self.layers.len();
+        if from >= n {
+            return None;
+        }
+        let mut to = to.min(n - 1);
+        if let Some(c) = self.collision_layer() {
+            if from == c {
+                return None;
+            }
+            // Stay on `from`'s side of the collision layer so it stays put.
+            if from < c {
+                to = to.min(c - 1);
+            } else {
+                to = to.max(c + 1);
+            }
+        }
+        if from == to {
+            return None;
+        }
+        let layer = self.layers.remove(from);
+        self.layers.insert(to.min(self.layers.len()), layer);
+        Some((from, to))
+    }
+
     /// The `image` paths of every image layer, in file order — the list the
     /// host walks to know which PNGs to load for this map. Each path is as
     /// authored (relative to the map file); the host resolves it under `maps/`.
@@ -2035,6 +2069,52 @@ mod tests {
         m.add_tile_layer("third");
         m.move_layer(2, true); // swap "third" up with "extra"
         assert_eq!(names(&m), vec!["collision", "third", "extra", "objects"]);
+    }
+
+    /// Drag-reorder (`reorder_layer`): a multi-slot move slides the layers
+    /// between, the collision layer stays put, a move across it clamps, and the
+    /// op cleanly inverts (the undo direction).
+    #[test]
+    fn reorder_layer_moves_and_protects_collision() {
+        fn names(m: &TiledMap) -> Vec<&str> {
+            m.layers
+                .iter()
+                .filter_map(|l| match l {
+                    TiledMapLayer::TileLayer(t) => Some(t.name.as_str()),
+                    TiledMapLayer::ObjectLayer(o) => Some(o.name.as_str()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        let mut m = TiledMap::blank_modern(4, 4);
+        m.add_tile_layer("a");
+        m.add_tile_layer("b");
+        // [collision, "Layer 1", a, b, objects], collision at 0.
+        assert_eq!(names(&m), vec!["collision", "Layer 1", "a", "b", "objects"]);
+
+        // Slide "b" (3) up to index 1: the layers between shift down.
+        assert_eq!(m.reorder_layer(3, 1), Some((3, 1)));
+        assert_eq!(names(&m), vec!["collision", "b", "Layer 1", "a", "objects"]);
+        assert_eq!(m.collision_layer(), Some(0));
+
+        // Invert it (the undo direction): "b" is now at 1, move it back to 3.
+        assert_eq!(m.reorder_layer(1, 3), Some((1, 3)));
+        assert_eq!(names(&m), vec!["collision", "Layer 1", "a", "b", "objects"]);
+
+        // Moving the collision layer is refused outright.
+        assert_eq!(m.reorder_layer(0, 2), None);
+        // Dropping onto/above the collision slot clamps to just below it, so
+        // collision stays first (here a no-op: "Layer 1" is already at 1).
+        assert_eq!(m.reorder_layer(1, 0), None);
+        assert_eq!(names(&m), vec!["collision", "Layer 1", "a", "b", "objects"]);
+        // From a deeper layer the clamp still lands it just under collision.
+        assert_eq!(m.reorder_layer(3, 0), Some((3, 1)));
+        assert_eq!(names(&m), vec!["collision", "b", "Layer 1", "a", "objects"]);
+
+        // Degenerate / out-of-range moves do nothing.
+        assert_eq!(m.reorder_layer(2, 2), None);
+        assert_eq!(m.reorder_layer(9, 1), None);
     }
 
     /// The Setup panel's data ops: bg_colour / camera_stick round-trip through the
