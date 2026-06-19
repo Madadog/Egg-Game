@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::Ctx;
 use crate::animation::Animation;
 use crate::data::save::SaveData;
@@ -25,6 +27,13 @@ mod cutscene;
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
     pub entities: Vec<Shell>,
+    /// Non-player entities parked by map name while the player is on another
+    /// map. The player (`entities[0]`) travels across maps; `entities[1..]`
+    /// belong to `current_map` and are swapped through here on every change in
+    /// [`load_map`](Self::load_map), so creatures stay on the map that spawned
+    /// them instead of bleeding into the next one. In-memory only for now — a
+    /// later pass persists it (see the per-map save design).
+    map_entities: BTreeMap<String, Vec<Shell>>,
     pub companion_trail: CompanionTrail<16>,
     pub companion_list: CompanionList,
     pub map_animations: Vec<Animation>,
@@ -63,6 +72,7 @@ impl WalkaroundState {
                 move_mode: MoveMode::Player,
                 ..Default::default()
             }],
+            map_entities: BTreeMap::new(),
             companion_trail: CompanionTrail::new(),
             companion_list: CompanionList::new(),
             map_animations: Vec::new(),
@@ -142,6 +152,22 @@ impl WalkaroundState {
         // Defensive: a debug map switch mid-narration must not carry a pending
         // teleport onto the new map.
         self.pending_warp = None;
+
+        // Swap per-map entities: park the leaving map's non-player entities
+        // (`entities[1..]`) under its name and restore the entering map's, so
+        // creatures stay on the map that spawned them. The player (`entities[0]`)
+        // travels — its position is already set by the warp. Same-map reloads and
+        // the unnamed initial map are skipped, so neither parks a stray entry.
+        let old_source = self.current_map.source.clone();
+        let new_source = map_set.source.clone();
+        if old_source != new_source {
+            let leaving = self.entities.drain(1..).collect::<Vec<_>>();
+            if !old_source.is_empty() {
+                self.map_entities.insert(old_source, leaving);
+            }
+            let arriving = self.map_entities.remove(&new_source).unwrap_or_default();
+            self.entities.extend(arriving);
+        }
 
         self.current_map = map_set;
 
@@ -999,6 +1025,51 @@ mod tests {
             walk.pending_warp.is_none(),
             "pending warp dropped on map load"
         );
+    }
+
+    /// `load_map` swaps non-player entities per map: the leaving map's creatures
+    /// park under its name and the entering map's are restored, while the player
+    /// (`entities[0]`) travels. Creatures spawned on one map no longer bleed into
+    /// the next, and a same-map reload doesn't disturb the live list.
+    #[test]
+    fn load_map_swaps_per_map_entities() {
+        let mut console = TestConsole::new();
+        let mut walk = WalkaroundState::new();
+        let named = |name: &str| MapInfo {
+            source: name.to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            ..MapInfo::default()
+        };
+        // Identify creatures by position so a restore proves identity, not count.
+        let creature_xs =
+            |w: &WalkaroundState| w.entities[1..].iter().map(|s| s.pos.x).collect::<Vec<_>>();
+
+        // On map "a": mark the player, then spawn two creatures at known spots.
+        walk.load_map(&mut console, named("a"));
+        walk.player().pos = Vec2::new(42, 7);
+        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(11, 0)));
+        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(22, 0)));
+        assert_eq!(creature_xs(&walk), vec![11, 22]);
+
+        // Warp to "b": a's creatures park; only the player travels.
+        walk.load_map(&mut console, named("b"));
+        assert_eq!(walk.entities.len(), 1, "first-visit b has no creatures");
+        assert_eq!(walk.player().pos, Vec2::new(42, 7), "player carried across");
+
+        // Spawn one creature on "b".
+        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(99, 0)));
+
+        // Back to "a": its two creatures return in order; b's parks.
+        walk.load_map(&mut console, named("a"));
+        assert_eq!(creature_xs(&walk), vec![11, 22], "a's creatures restored");
+
+        // Return to "b": its single creature is still parked and restored.
+        walk.load_map(&mut console, named("b"));
+        assert_eq!(creature_xs(&walk), vec![99], "b's creature restored");
+
+        // A same-map reload leaves the live entities untouched (no spurious swap).
+        walk.load_map(&mut console, named("b"));
+        assert_eq!(creature_xs(&walk), vec![99], "same-map reload is a no-op");
     }
 
     /// `sync_map_animations` mirrors live editor edits into the cached object
