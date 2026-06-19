@@ -88,7 +88,7 @@ impl Div<i16> for Vec2 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hitbox {
     pub x: i16,
     pub y: i16,

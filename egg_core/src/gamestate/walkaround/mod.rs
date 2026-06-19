@@ -324,10 +324,36 @@ impl WalkaroundState {
         save.current_map_name = Some(new_map.to_string());
         save.player_x = pos.x;
         save.player_y = pos.y;
+        // Snapshot per-map creatures: the already-parked maps, plus the map the
+        // player is on now — its live non-player `entities[1..]` under its own
+        // name. Keyed by `current_map.source` (where those entities *are*), not
+        // `new_map`: at a warp this runs before the destination loads, so the live
+        // entities still belong to the current map. Sprites ride along in memory
+        // but are skipped on serialise (rebuilt from each shell's preset on load).
+        let mut parked = self.map_entities.clone();
+        let here = &self.current_map.source;
+        if !here.is_empty() {
+            parked.insert(here.clone(), self.entities[1..].to_vec());
+        }
+        save.map_entities = parked;
     }
 
     pub fn load_pmem<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) {
         let save = ctx.save.clone();
+        // Drop any live non-player entities and current-map identity first, so a
+        // mid-game reload (the debug hotkey) can't park stale creatures over the
+        // restored set when the map loads below.
+        self.entities.truncate(1);
+        self.current_map = MapInfo::default();
+        // Restore parked per-map creatures before the map loads, so the load_map
+        // swap pulls the current map's creatures back into `entities`. Their
+        // sprites were skipped in the save — rebuild each from its preset.
+        self.map_entities = save.map_entities;
+        for shells in self.map_entities.values_mut() {
+            for shell in shells.iter_mut() {
+                shell.reattach_sprites();
+            }
+        }
         // A save with no map name (a pre-name save, whose only map field was the
         // numeric `current_map` we no longer read) falls back to the bedroom —
         // where [`new_game`](Self::new_game) starts, so a save with a lost
@@ -1112,6 +1138,36 @@ mod tests {
         // A same-map reload leaves the live entities untouched (no spurious swap).
         walk.load_map(&mut console, named("b"));
         assert_eq!(creature_xs(&walk), vec![99], "same-map reload is a no-op");
+    }
+
+    /// `save()` snapshots per-map creatures into the save: the current map's live
+    /// non-player entities under its name, plus the already-parked maps.
+    #[test]
+    fn save_gathers_per_map_entities() {
+        let mut console = TestConsole::new();
+        let mut walk = WalkaroundState::new();
+        let mut save = SaveData::default();
+        let town = MapInfo {
+            source: "town".to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            ..MapInfo::default()
+        };
+        walk.load_map(&mut console, town);
+        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(5, 0)));
+        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(6, 0)));
+        // A different map already has a parked creature.
+        walk.map_entities.insert(
+            "field".to_string(),
+            vec![Shell::critter().with_pos(Vec2::new(7, 0))],
+        );
+
+        walk.save("town", &mut save);
+        // The current map's live creatures are captured under its name...
+        let town_xs: Vec<i16> = save.map_entities["town"].iter().map(|s| s.pos.x).collect();
+        assert_eq!(town_xs, vec![5, 6]);
+        // ...and the already-parked map rides along untouched.
+        assert_eq!(save.map_entities["field"].len(), 1);
+        assert_eq!(save.map_entities["field"][0].pos.x, 7);
     }
 
     /// Interacting with a removable object consumes it: `take_object` records it

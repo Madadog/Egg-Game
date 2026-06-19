@@ -264,7 +264,7 @@ impl WalkSprites {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MoveMode {
     Player,
     /// Memoryless wander: a small chance each step to re-pick a random heading,
@@ -343,14 +343,20 @@ impl ShellSprites {
 /// Which axis a [`Committed`](FacingPolicy::Committed) (4-way) sprite is aimed
 /// along. Flips only when that axis goes idle (see [`Shell::face`]), so moving
 /// diagonally off your start direction doesn't spin the sprite around.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FacingAxis {
     Horizontal,
     Vertical,
 }
 
 /// A controllable game entity.
-#[derive(Debug, Clone)]
+///
+/// `PartialEq`/`Eq` deliberately ignore `sprites` (hand-written below): the
+/// sprites are *derived* from `preset` and skipped in serialisation, so they're
+/// never the deciding factor in whether the save changed. Entity persistence
+/// (de)serialises every field except `sprites`, which is reattached from the
+/// `preset` on load (see [`reattach_sprites`](Self::reattach_sprites)).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shell {
     /// coords are (x, y)
     pub dir: (i8, i8),
@@ -376,9 +382,34 @@ pub struct Shell {
     /// (resolve once, keep the working copy) rather than a per-frame registry
     /// lookup; `sprites` is the cache, `preset` the key.
     pub preset: ShellPreset,
+    /// Derived from [`preset`](Self::preset), so it's skipped in serialisation
+    /// (a placeholder is parsed, then [`reattach_sprites`](Self::reattach_sprites)
+    /// rebuilds the real set on load) rather than baking the art into every save.
+    #[serde(skip, default = "ShellSprites::ellie")]
     pub sprites: ShellSprites,
     pub move_mode: MoveMode,
 }
+
+impl PartialEq for Shell {
+    /// Compares every field **except** `sprites` — they're derived from `preset`
+    /// (equal presets ⇒ equal sprites) and skipped in serialisation, so comparing
+    /// them is redundant work that can't change whether the save file differs.
+    fn eq(&self, other: &Self) -> bool {
+        self.dir == other.dir
+            && self.sticky_dir == other.sticky_dir
+            && self.facing_axis == other.facing_axis
+            && self.hp == other.hp
+            && self.local_hitbox == other.local_hitbox
+            && self.pos == other.pos
+            && self.walking == other.walking
+            && self.walktime == other.walktime
+            && self.flip_controls == other.flip_controls
+            && self.pet_timer == other.pet_timer
+            && self.preset == other.preset
+            && self.move_mode == other.move_mode
+    }
+}
+impl Eq for Shell {}
 impl Default for Shell {
     fn default() -> Self {
         Self::ellie()
@@ -441,6 +472,17 @@ impl Shell {
     }
     pub fn with_move_mode(self, move_mode: MoveMode) -> Self {
         Self { move_mode, ..self }
+    }
+    /// Rebuild the (serialisation-skipped) [`sprites`](Self::sprites) from this
+    /// shell's archetype after it's loaded from a save, where `sprites` came back
+    /// as a placeholder. An unhatched egg keeps its egg sprites (its current
+    /// form); anything else takes its [`preset`](Self::preset)'s.
+    pub fn reattach_sprites(&mut self) {
+        self.sprites = if matches!(self.move_mode, MoveMode::Egg { .. }) {
+            ShellSprites::egg()
+        } else {
+            self.preset.build().sprites
+        };
     }
     pub fn replace(&mut self, shell: Shell) {
         *self = shell.with_pos(self.pos).with_move_mode(self.move_mode);
@@ -905,7 +947,7 @@ impl CompanionList {
 /// spell, and back. The unhatched phase lives in [`MoveMode::Egg`], not here —
 /// these critters are spawned (as eggs) by the `add_creatures` interaction, see
 /// [`crate::interact::InteractFn::AddCreatures`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CreatureState {
     Idle(Timer),
     Walking(Timer, Vec2),
@@ -950,7 +992,7 @@ impl CreatureState {
 }
 
 /// A small countdown in fixed steps, saturating at zero.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timer(pub u8);
 
 impl Timer {
@@ -1030,6 +1072,52 @@ mod tests {
         );
         let back: ShellPreset = serde_json::from_str("\"ellie\"").unwrap();
         assert_eq!(back, ShellPreset::Ellie);
+    }
+
+    /// A shell serialises every field but its (derived) sprites, and
+    /// `reattach_sprites` rebuilds them from the preset on the way back — so a
+    /// persisted creature keeps its position/state and looks right again.
+    #[test]
+    fn shell_serde_skips_and_reattaches_sprites() {
+        let mut critter = Shell::critter().with_pos(Vec2::new(40, 7));
+        critter.walktime = 5;
+        let json = serde_json::to_string(&critter).unwrap();
+        assert!(!json.contains("sprites"), "derived sprites are not serialised");
+
+        let mut back: Shell = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.preset, ShellPreset::Critter);
+        assert_eq!(back.pos, Vec2::new(40, 7));
+        assert_eq!(back.walktime, 5);
+        assert!(matches!(back.move_mode, MoveMode::Amble(_)));
+        // Sprites round-trip via the preset, not the bytes (compared by Debug,
+        // since `ShellSprites` has no `PartialEq`).
+        back.reattach_sprites();
+        assert_eq!(
+            format!("{:?}", back.sprites),
+            format!("{:?}", Shell::critter().sprites),
+            "sprites rebuilt from the preset"
+        );
+    }
+
+    /// An unhatched egg reattaches its *egg* sprites (its current form), not the
+    /// hatched form of the preset it will become.
+    #[test]
+    fn egg_reattaches_egg_sprites_not_hatched_form() {
+        let json = serde_json::to_string(&Shell::egg(ShellPreset::Dog)).unwrap();
+        let mut back: Shell = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.preset, ShellPreset::Dog, "archetype is what it becomes");
+        assert!(matches!(back.move_mode, MoveMode::Egg { .. }));
+        back.reattach_sprites();
+        assert_eq!(
+            format!("{:?}", back.sprites),
+            format!("{:?}", ShellSprites::egg()),
+            "an unhatched egg keeps its egg sprites"
+        );
+        assert_ne!(
+            format!("{:?}", back.sprites),
+            format!("{:?}", Shell::dog().sprites),
+            "not the hatched dog's sprites"
+        );
     }
 
     #[test]

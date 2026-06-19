@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::animation::AnimFrame;
 use crate::system::MapOptions;
 use crate::{
@@ -900,7 +902,7 @@ impl Warp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Axis {
     None,
     X,

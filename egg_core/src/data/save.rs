@@ -1,6 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+
+use crate::player::Shell;
 
 /// The path the engine persists progress under. The engine names the file; a
 /// host routes it to whatever user-data backend it has (a file on native, a
@@ -83,6 +85,16 @@ pub struct SaveData {
 
     /// Number of times the game has saved
     pub save_count: u32,
+
+    /// Non-player entities (creatures) parked by map name — the persisted form of
+    /// the runtime [`WalkaroundState::map_entities`](crate::gamestate::walkaround::WalkaroundState),
+    /// folded together with the current map's live `entities[1..]` at save time so
+    /// creatures resume on the map that spawned them. Each [`Shell`] round-trips
+    /// every field but its (derived) `sprites`, which are rebuilt from the
+    /// `preset` on load. Last field so the autosave diff short-circuits on the
+    /// cheap scalars before walking it. Absent in older saves ⇒ empty.
+    #[serde(default)]
+    pub map_entities: BTreeMap<String, Vec<Shell>>,
 }
 
 /// The starting inventory a fresh save (and a save written before items were
@@ -133,6 +145,7 @@ impl Default for SaveData {
             player_x: 0,
             player_y: 0,
             save_count: 0,
+            map_entities: BTreeMap::new(),
         }
     }
 }
@@ -179,6 +192,8 @@ impl SaveData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::player::ShellPreset;
+    use crate::position::Vec2;
 
     /// A pre-name save carries the long-removed numeric `current_map` field and
     /// no `current_map_name` key at all; it must still deserialise (the unknown
@@ -223,12 +238,20 @@ mod tests {
         data.set_flag("house_stairwell_window_interacted", true);
         data.set_flag("met_the_dog", true);
         data.mark_taken("town", 7);
+        data.map_entities.insert(
+            "town".to_string(),
+            vec![Shell::critter().with_pos(Vec2::new(9, 9))],
+        );
         let json = serde_json::to_string_pretty(&data).expect("serialise");
         let parsed: SaveData = serde_json::from_str(&json).expect("deserialise");
+        // Equal despite the round-tripped creature's sprites coming back as a
+        // placeholder — `Shell`'s equality ignores the (derived, skipped) sprites.
         assert_eq!(data, parsed);
         assert!(parsed.flag("house_stairwell_window_interacted"));
         assert!(parsed.flag("met_the_dog"));
         assert!(parsed.is_taken("town", 7));
+        assert_eq!(parsed.map_entities["town"][0].pos, Vec2::new(9, 9));
+        assert_eq!(parsed.map_entities["town"][0].preset, ShellPreset::Critter);
     }
 
     /// `set_flag`/`flag` insert and remove names, and an unset name reads false.
@@ -282,5 +305,15 @@ mod tests {
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert!(save.taken.is_empty());
         assert!(!save.is_taken("town", 1));
+    }
+
+    /// A save written before per-map entities has no `map_entities` key; it must
+    /// still load, with no parked creatures.
+    #[test]
+    fn old_save_without_map_entities_loads_empty() {
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        value.as_object_mut().unwrap().remove("map_entities");
+        let save: SaveData = serde_json::from_value(value).expect("old save still loads");
+        assert!(save.map_entities.is_empty());
     }
 }
