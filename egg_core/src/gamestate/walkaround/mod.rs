@@ -181,10 +181,18 @@ impl WalkaroundState {
     /// sheet (`ctx.draw`, for modern colliders), the loaded maps, and the
     /// console (camera/audio setup) straight off `ctx`.
     pub fn load_map_by_name<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, name: &str) {
-        let Some(map_info) = map_by_name(&ctx.draw.indexed_sprites, name, ctx.maps) else {
+        let Some(mut map_info) = map_by_name(&ctx.draw.indexed_sprites, name, ctx.maps) else {
             info!("load_map_by_name: unknown map {name:?}");
             return;
         };
+        // Drop removable objects already consumed in this save, so a picked-up
+        // item stays gone across reloads. Done here in the gameplay loader (which
+        // has the save), not in `load_map`, so the editor's raw loads still show
+        // every object regardless of save state. An id-less removable can't have
+        // been recorded as taken, so it always survives the filter.
+        map_info
+            .objects
+            .retain(|o| !o.removable || !o.id.is_some_and(|id| ctx.save.is_taken(name, id)));
         self.load_map(ctx.system, map_info);
     }
     pub fn cam_x(&self) -> i32 {
@@ -452,6 +460,37 @@ impl WalkaroundState {
                 }
             }
         }
+    }
+
+    /// Consume a just-fired [`removable`](crate::map::MapObject::removable) object
+    /// at index `i`: record it in the save's `taken` set by its stable
+    /// [`id`](crate::map::MapObject::id) — so every later
+    /// [`load_map_by_name`](Self::load_map_by_name) of this map filters it out —
+    /// then drop it from the live map so it vanishes at once. A no-op for a
+    /// non-removable object; an id-less removable still vanishes for the session
+    /// but can't be persisted (it returns on the next load).
+    fn take_object(&mut self, i: usize, save: &mut SaveData) {
+        let object = &self.current_map.objects[i];
+        if !object.removable {
+            return;
+        }
+        if let Some(id) = object.id {
+            save.mark_taken(&self.current_map.source, id);
+        }
+        self.remove_object(i);
+    }
+
+    /// Remove the object at index `i` from the live map, keeping the parallel
+    /// per-object caches aligned: the edge latch [`inside_objects`](Self::inside_objects)
+    /// (1:1 with objects) drops the same slot, and the sprite animations are
+    /// resynced (a sprited object leaving changes their count — see
+    /// [`sync_map_animations`](Self::sync_map_animations)).
+    fn remove_object(&mut self, i: usize) {
+        self.current_map.objects.remove(i);
+        if i < self.inside_objects.len() {
+            self.inside_objects.remove(i);
+        }
+        self.sync_map_animations();
     }
 
     pub fn step<S: ConsoleApi>(
@@ -747,6 +786,9 @@ impl WalkaroundState {
                 unreachable!("interact_hit only records Interact effects");
             };
             self.fire_interaction(ctx, &interaction, &mut inventory_ui.inventory);
+            // A removable object is consumed by the interaction: record it taken
+            // (by stable id) and drop it from the live map so it vanishes now.
+            self.take_object(i, ctx.save);
         } else if interact {
             // No map object matched: fall back to the companions, checked against
             // the facing hitbox in order (today's chain ordering — companions
@@ -1070,6 +1112,46 @@ mod tests {
         // A same-map reload leaves the live entities untouched (no spurious swap).
         walk.load_map(&mut console, named("b"));
         assert_eq!(creature_xs(&walk), vec![99], "same-map reload is a no-op");
+    }
+
+    /// Interacting with a removable object consumes it: `take_object` records it
+    /// in the save's `taken` set by stable id (so a later `load_map_by_name`
+    /// filters it) and drops it from the live map at once, keeping the edge latch
+    /// aligned. A non-removable object is left untouched.
+    #[test]
+    fn take_object_records_and_vanishes_removable() {
+        let mut console = TestConsole::new();
+        let mut walk = WalkaroundState::new();
+        let mut save = SaveData::default();
+
+        // A named map: a removable pickup (stable id 5) then a plain sign.
+        let pickup = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "key")
+            .with_id(Some(5))
+            .with_removable(true);
+        let sign = MapObject::dialogue(Hitbox::new(8, 0, 8, 8), "sign");
+        let map = MapInfo {
+            source: "town".to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            objects: vec![pickup, sign],
+            ..MapInfo::default()
+        };
+        walk.load_map(&mut console, map);
+        assert_eq!(walk.inside_objects.len(), 2);
+
+        // Consume the pickup: recorded taken by map#id, and gone from the map.
+        walk.take_object(0, &mut save);
+        assert!(save.is_taken("town", 5), "pickup recorded under map#id");
+        assert_eq!(walk.current_map.objects.len(), 1, "pickup vanished now");
+        assert_eq!(walk.inside_objects.len(), 1, "edge latch stays aligned");
+        assert_eq!(
+            walk.current_map.objects[0].hitbox.x, 8,
+            "the plain sign is what remains"
+        );
+
+        // The remaining (non-removable) object is a no-op for take_object.
+        walk.take_object(0, &mut save);
+        assert_eq!(walk.current_map.objects.len(), 1, "non-removable untouched");
+        assert_eq!(save.taken.len(), 1, "no spurious taken entry");
     }
 
     /// `sync_map_animations` mirrors live editor edits into the cached object

@@ -27,6 +27,18 @@ pub struct SaveData {
     #[serde(default)]
     pub flags: BTreeSet<String>,
 
+    /// Stable ids of removable interactables the player has consumed (pickups),
+    /// keyed `"<map>#<object id>"` — see
+    /// [`MapObject::removable`](crate::map::MapObject::removable). Mirrors
+    /// [`flags`](Self::flags): only taken entries are stored, presence means
+    /// taken, an absent key reads as "still there". Kept separate from `flags` so
+    /// a pickup needs no authored flag name and never pollutes the `#flag`
+    /// vocabulary an editor autocompletes. An edit that *deletes and recreates* an
+    /// object changes its [`id`](crate::map::MapObject::id) and leaves a harmless
+    /// dangling entry; ordinary edits keep the id, so the pickup stays taken.
+    #[serde(default)]
+    pub taken: BTreeSet<String>,
+
     // House
     pub dog_fed: bool,
     pub living_room_seen: bool,
@@ -103,6 +115,7 @@ impl Default for SaveData {
             instructions_read: false,
             manual_doors: false,
             flags: BTreeSet::new(),
+            taken: BTreeSet::new(),
             dog_fed: false,
             living_room_seen: false,
             egg_count: 0,
@@ -142,6 +155,24 @@ impl SaveData {
     /// Read a named story flag. An undeclared/unset name reads as `false`.
     pub fn flag(&self, name: &str) -> bool {
         self.flags.contains(name)
+    }
+
+    /// The [`taken`](Self::taken) key a removable object is recorded under: its
+    /// map name and stable [`id`](crate::map::MapObject::id), joined so the same
+    /// local id on two different maps never collides.
+    fn taken_key(map: &str, id: usize) -> String {
+        format!("{map}#{id}")
+    }
+
+    /// Record a removable object (by map name + stable id) as consumed, so every
+    /// later load of that map filters it out.
+    pub fn mark_taken(&mut self, map: &str, id: usize) {
+        self.taken.insert(Self::taken_key(map, id));
+    }
+
+    /// Whether a removable object (by map name + stable id) has been consumed.
+    pub fn is_taken(&self, map: &str, id: usize) -> bool {
+        self.taken.contains(&Self::taken_key(map, id))
     }
 }
 
@@ -191,11 +222,13 @@ mod tests {
         };
         data.set_flag("house_stairwell_window_interacted", true);
         data.set_flag("met_the_dog", true);
+        data.mark_taken("town", 7);
         let json = serde_json::to_string_pretty(&data).expect("serialise");
         let parsed: SaveData = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(data, parsed);
         assert!(parsed.flag("house_stairwell_window_interacted"));
         assert!(parsed.flag("met_the_dog"));
+        assert!(parsed.is_taken("town", 7));
     }
 
     /// `set_flag`/`flag` insert and remove names, and an unset name reads false.
@@ -223,5 +256,31 @@ mod tests {
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert!(save.flags.is_empty());
         assert!(!save.flag("anything"));
+    }
+
+    /// `mark_taken`/`is_taken` record and read consumed removable pickups by map
+    /// name + stable id, and the same local id on two maps never collides (the
+    /// key folds in the map name).
+    #[test]
+    fn taken_marks_and_reads_per_map() {
+        let mut save = SaveData::default();
+        assert!(!save.is_taken("town", 5));
+        save.mark_taken("town", 5);
+        assert!(save.is_taken("town", 5));
+        // The same id on another map, and a different id on the same map, are
+        // both independent — so two pickups never alias.
+        assert!(!save.is_taken("supermarket", 5));
+        assert!(!save.is_taken("town", 6));
+    }
+
+    /// A save written before `taken` existed has no `taken` key; it must still
+    /// load, with nothing taken (every removable pickup intact).
+    #[test]
+    fn old_save_without_taken_loads_empty() {
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        value.as_object_mut().unwrap().remove("taken");
+        let save: SaveData = serde_json::from_value(value).expect("old save still loads");
+        assert!(save.taken.is_empty());
+        assert!(!save.is_taken("town", 1));
     }
 }

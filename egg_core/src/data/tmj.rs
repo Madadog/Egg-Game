@@ -442,9 +442,22 @@ impl TiledObject {
             self.to_sprite_only(hitbox)?
         };
         // Carry the stable Tiled id onto the runtime object (0 ⇒ "no id"), so a
-        // removable object keeps a durable handle for the save's `taken` set.
-        let object = self.apply_trigger(object).with_id((self.id != 0).then_some(self.id));
+        // removable object keeps a durable handle for the save's `taken` set,
+        // and the `removable` marker that opts it into that consume-on-interact
+        // behaviour.
+        let object = self
+            .apply_trigger(object)
+            .with_id((self.id != 0).then_some(self.id))
+            .with_removable(self.is_removable());
         Some(object)
+    }
+    /// Whether a `removable` property marks this object as a consume-on-interact
+    /// pickup (see [`MapObject::removable`](crate::map::MapObject::removable)).
+    /// Authored as the string `"true"` — consistent with the other string
+    /// properties — so any other/absent value reads as `false`. Inverse of the
+    /// `removable` emission in [`object_to_tmj`].
+    fn is_removable(&self) -> bool {
+        self.prop("removable") == Some("true")
     }
     /// Override the object's trigger from an optional `trigger` property
     /// (`"touch"`/`"press"`/`"any"`, case-insensitive), parsed for any object
@@ -672,6 +685,13 @@ fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
         && let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut)
     {
         properties.push(prop_str("trigger", object.trigger.name()));
+    }
+    // The `removable` marker round-trips the parse ([`TiledObject::is_removable`]),
+    // emitted only when set so a normal object's file stays byte-stable.
+    if object.removable
+        && let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut)
+    {
+        properties.push(prop_str("removable", "true"));
     }
     Some(value)
 }
@@ -1678,6 +1698,46 @@ mod tests {
                 .map(|o| o.id)
                 .collect::<Vec<_>>(),
             vec![Some(5), Some(8), Some(3), Some(9)]
+        );
+    }
+
+    /// The `removable` marker round-trips parse → [`MapObject`] → serialise: a
+    /// flagged object parses `removable == true` and re-emits the property, while
+    /// an unflagged sibling stays `false` and carries nothing.
+    #[test]
+    fn tmj_round_trips_removable_marker() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {"id": 1, "x": 0, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [
+                        {"name": "description", "type": "string", "value": "key"},
+                        {"name": "removable", "type": "string", "value": "true"}
+                     ]},
+                    {"id": 2, "x": 8, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [{"name": "description", "type": "string", "value": "sign"}]}
+                ]
+            }]
+        }"#;
+        let map: TiledMap = serde_json::from_str(json).unwrap();
+        let objects = map.parse_objects();
+        assert_eq!(
+            objects.iter().map(|o| o.removable).collect::<Vec<_>>(),
+            vec![true, false]
+        );
+        // The marker survives a serialise → reparse cycle, still only on the
+        // flagged object.
+        let reloaded: TiledMap = serde_json::from_str(&map.to_tmj(&objects)).unwrap();
+        assert_eq!(
+            reloaded
+                .parse_objects()
+                .iter()
+                .map(|o| o.removable)
+                .collect::<Vec<_>>(),
+            vec![true, false]
         );
     }
 

@@ -706,6 +706,14 @@ pub struct MapObject {
     /// the map writer then assigns it a fresh one above every existing id on the
     /// next save, so survivors never renumber.
     pub id: Option<usize>,
+    /// Whether interacting with this object *consumes* it: a pickup that vanishes
+    /// once taken and stays gone. On interaction the engine records it (by
+    /// [`id`](Self::id)) in the save's `taken` set and drops it from the live map;
+    /// every later load of this map filters it back out (see
+    /// [`load_map_by_name`](crate::gamestate::walkaround::WalkaroundState::load_map_by_name)).
+    /// Authored as a `removable` object property; only meaningful for interaction
+    /// objects (warps fire on touch and are never "taken").
+    pub removable: bool,
 }
 
 /// What a [`MapObject`] does when triggered: warp the player, or run an
@@ -728,6 +736,7 @@ impl MapObject {
             trigger,
             sprite,
             id: None,
+            removable: false,
         }
     }
     /// Set this object's stable Tiled [`id`](Self::id) (its identity within the
@@ -735,6 +744,12 @@ impl MapObject {
     /// id yet, which the map writer assigns on save.
     pub fn with_id(mut self, id: Option<usize>) -> Self {
         self.id = id;
+        self
+    }
+    /// Mark whether interacting with this object consumes it (see
+    /// [`removable`](Self::removable)).
+    pub fn with_removable(mut self, removable: bool) -> Self {
+        self.removable = removable;
         self
     }
     /// A warp object: its `hitbox` is the trigger region, `warp` the destination.
