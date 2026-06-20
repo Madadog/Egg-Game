@@ -1,6 +1,6 @@
 //! Bevy asset wrappers for the script-domain text files. The language script
 //! (`script/<lang>.eggtext` or `.json`) parses into [`egg_core`]'s [`ScriptFile`];
-//! the cutscene file (`script/main.eggscene`) parses into its [`SceneFile`]
+//! the cutscene file (`data/main.eggscene`) parses into its [`SceneFile`]
 //! registry. Both go through the async asset pipeline (so they work on web too),
 //! mirroring [`crate::tiled`], and are installed into the console by the
 //! asset-load loop — dialogue via `Script::set_base`, cutscenes via
@@ -16,7 +16,7 @@ use std::io::{Error, ErrorKind};
 #[derive(Clone, Asset, TypePath)]
 pub struct ScriptAsset(pub ScriptFile);
 
-/// The parsed cutscene registry (`script/main.eggscene`) — a separate asset
+/// The parsed cutscene registry (`data/main.eggscene`) — a separate asset
 /// from [`ScriptAsset`] because it parses into a different type and is a single,
 /// language-independent file (no per-language overlay).
 #[derive(Clone, Asset, TypePath)]

@@ -215,7 +215,7 @@ pub struct GameAssets {
     /// subset of these that loaded cleanly.
     pub map_names: Vec<String>,
     pub script: Handle<ScriptAsset>,
-    /// The cutscene registry (`script/main.eggscene`), loaded and installed
+    /// The cutscene registry (`data/main.eggscene`), loaded and installed
     /// alongside the language script — a separate, language-independent file.
     pub scenes: Handle<SceneAsset>,
     /// The image-layer PNGs the loaded maps reference, collected in phase 2 once
@@ -238,7 +238,7 @@ impl GameAssets {
                 .collect(),
             map_names: manifest.maps.clone(),
             script: assets.load("script/en.eggtext"),
-            scenes: assets.load("script/main.eggscene"),
+            scenes: assets.load("data/main.eggscene"),
             map_images: None,
         }
     }

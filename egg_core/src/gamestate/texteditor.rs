@@ -1,5 +1,5 @@
 //! A full-window raw text editor for the script DSL files (`script/en.eggtext`
-//! and `script/main.eggscene`), hosted per extra view (toggled with F2; F1
+//! and `data/main.eggscene`), hosted per extra view (toggled with F2; F1
 //! returns to the walkaround/map editor — see the frontend's multi-window views).
 //!
 //! It edits the real source bytes — no structured re-emit — so comments and
@@ -41,7 +41,7 @@ use crate::system::{
 /// known files (matching the startup asset loads). No host directory enumeration
 /// exists, so the file switch (Ctrl+O) toggles between exactly these.
 const EGGTEXT_PATH: &str = "script/en.eggtext";
-const EGGSCENE_PATH: &str = "script/main.eggscene";
+const EGGSCENE_PATH: &str = "data/main.eggscene";
 
 /// Row pitch / caret height in framebuffer px. The bitmap font is 8 px tall; 7
 /// keeps lines tight without glyphs touching.
@@ -2711,7 +2711,7 @@ title = Hello
 
 #cutscene outro
   music none";
-        let mut ed = editor_with("script/main.eggscene", src);
+        let mut ed = editor_with("data/main.eggscene", src);
         ed.rebuild_outline();
         let got: Vec<(usize, Option<&str>)> = ed
             .outline

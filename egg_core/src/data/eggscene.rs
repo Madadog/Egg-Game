@@ -432,7 +432,7 @@ mod tests {
     /// text that re-parses to the identical registry.
     #[test]
     fn emit_round_trips_every_shipped_cutscene() {
-        let file = parse(include_str!("../../../assets/script/main.eggscene")).expect("parse main");
+        let file = parse(include_str!("../../../assets/data/main.eggscene")).expect("parse main");
         assert!(
             !file.cutscenes.is_empty(),
             "expected shipped cutscenes to test"

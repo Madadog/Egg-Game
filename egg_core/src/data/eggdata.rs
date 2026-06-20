@@ -1,5 +1,5 @@
-//! `.eggdata` — the runtime game-data format (TOML): the **item registry** and
-//! the creature **[`ShellPreset`](crate::player::ShellPreset) definitions**.
+//! Game data — the runtime `data.toml` file (plain TOML): the **item registry**
+//! and the creature **[`ShellPreset`](crate::player::ShellPreset) definitions**.
 //! Language-invariant data, the way maps and cutscenes are (names/descriptions
 //! stay in the script as `item_<key>` lists) — loaded from `assets/data/` at
 //! startup the way the script and maps are, rather than baked into Rust.
@@ -36,11 +36,11 @@ use crate::position::Hitbox;
 use crate::system::Flip;
 
 /// Where the host stores the game-data file, resolved under the asset root
-/// (`assets/data/game.eggdata`) the same way [`SAVE_PATH`](crate::data::save::SAVE_PATH)
+/// (`assets/data/data.toml`) the same way [`SAVE_PATH`](crate::data::save::SAVE_PATH)
 /// and the script/map paths are.
-pub const DATA_PATH: &str = "data/game.eggdata";
+pub const DATA_PATH: &str = "data/data.toml";
 
-/// A parsed `.eggdata` file: the whole game's language-invariant data. Both
+/// A parsed `data.toml` file: the whole game's language-invariant data. Both
 /// sections default to empty, so a file may carry only `[items]` (as the shipped
 /// one does today) or only `[presets]`, and an absent section is simply empty.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -56,7 +56,7 @@ pub struct DataFile {
     pub presets: BTreeMap<String, PresetDef>,
 }
 
-/// Parse a `.eggdata` document. A malformed file is the caller's to tolerate
+/// Parse a `data.toml` document. A malformed file is the caller's to tolerate
 /// (the engine logs and falls back to its built-in defaults — garbage tolerance,
 /// like the save).
 pub fn parse(src: &str) -> Result<DataFile, toml::de::Error> {
@@ -296,7 +296,7 @@ mod tests {
     use super::*;
     use crate::player::{Shell, ShellSprites};
 
-    /// The built-in presets as `.eggdata`, hand-mirrored from the `Shell::<x>()`
+    /// The built-in presets as `data.toml`, hand-mirrored from the `Shell::<x>()`
     /// constructors in `player.rs`. The tests below prove these rebuild the exact
     /// same sprites/hitboxes — i.e. that the format faithfully captures the code.
     fn builtin_preset(name: &str) -> PresetDef {
@@ -362,7 +362,7 @@ mod tests {
         }
     }
 
-    /// Each built-in preset, expressed as `.eggdata` and rebuilt, reproduces the
+    /// Each built-in preset, expressed as `data.toml` and rebuilt, reproduces the
     /// hand-written constructor's sprites and hitbox exactly — the guarantee that
     /// lets presets move to data without changing how any shell looks. (Sprites
     /// compared by `Debug`, as `ShellSprites` has no `PartialEq`.)
@@ -387,7 +387,7 @@ mod tests {
         }
     }
 
-    /// A populated `.eggdata` (items + every built-in preset) survives a
+    /// A populated `data.toml` (items + every built-in preset) survives a
     /// TOML serialise/parse round trip unchanged — the format the file is
     /// authored in and the engine loads through.
     #[test]

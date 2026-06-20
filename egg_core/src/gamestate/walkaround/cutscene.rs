@@ -548,7 +548,7 @@ mod tests {
     fn from_def_builds_a_playable_cutscene_from_the_shipped_pet_dog() {
         // The shipped `pet_dog` block builds without panicking and yields the same
         // stage shape it was authored with (proving the registry -> build path).
-        let scenes = eggscene::parse(include_str!("../../../../assets/script/main.eggscene"))
+        let scenes = eggscene::parse(include_str!("../../../../assets/data/main.eggscene"))
             .expect("parse main.eggscene");
         let def = scenes.get_cutscene("pet_dog").expect("pet_dog defined");
         let cutscene = Cutscene::from_def(def);

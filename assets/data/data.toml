@@ -1,8 +1,8 @@
-# Runtime game data, in the `.eggdata` TOML format (see egg_core::data::eggdata).
+# Game data, in plain TOML (parsed by egg_core::data::eggdata).
 #
-# Language-invariant, like maps and cutscenes: an item's display name and
-# description are TEXT, so they live in the script as the `item_<key>` list
-# (script/en.eggtext), not here. Only the gameplay-relevant bits are here.
+# Language-invariant — like the cutscenes in main.eggscene alongside this file.
+# An item's display name and description are TEXT, so they live in the script as
+# the `item_<key>` list (script/en.eggtext), not here; only gameplay data is here.
 #
 # `[items.<key>]` — one entry per item, keyed by the id saves store and
 # interactions name (InteractFn::GiveItem). `sprite` is its sheet sprite id.

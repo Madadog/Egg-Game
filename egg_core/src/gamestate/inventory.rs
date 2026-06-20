@@ -23,7 +23,7 @@ pub struct ItemDef {
 /// names). Loaded game data, threaded through [`Ctx::items`](crate::Ctx::items)
 /// like `maps`/`script`/`scenes`.
 ///
-/// The shipped item set is loaded from `assets/data/game.eggdata` at boot (see
+/// The shipped item set is loaded from `assets/data/data.toml` at boot (see
 /// [`from_data`](Self::from_data) and [`EggState::load_data`](crate::EggState::load_data)),
 /// the way maps/script/scenes moved out to their own files. [`Default`] is the
 /// built-in fallback for a missing/garbage file (and for headless/test use).
@@ -37,7 +37,7 @@ impl GameItems {
             items: std::collections::HashMap::new(),
         }
     }
-    /// Build the registry from parsed `.eggdata` items — the loaded source that
+    /// Build the registry from parsed `data.toml` items — the loaded source that
     /// supersedes [`Default`] once the host installs it at boot.
     pub fn from_data(items: &std::collections::BTreeMap<String, ItemDef>) -> Self {
         Self {

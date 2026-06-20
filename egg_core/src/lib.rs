@@ -62,7 +62,7 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// mutating [`EggState::script`] directly (see [`EggState::set_language`]).
     pub script: &'a Script,
     /// The loaded cutscene registry (a SEPARATE, language-independent file —
-    /// `assets/script/main.eggscene`). Held apart from [`script`](Self::script)
+    /// `assets/data/main.eggscene`). Held apart from [`script`](Self::script)
     /// because choreography is not translated; a `dialogue` *step* still refers
     /// to a script key resolved at play time. Read-only here.
     pub scenes: &'a SceneFile,
@@ -150,7 +150,7 @@ pub struct EggState {
     pub script: Script,
     /// The loaded cutscene registry, threaded into every state through
     /// [`Ctx::scenes`]. The host installs it at asset-load time from
-    /// `assets/script/main.eggscene` (see [`EggState::set_scenes`]); it is a
+    /// `assets/data/main.eggscene` (see [`EggState::set_scenes`]); it is a
     /// single, language-independent file, so unlike [`script`](Self::script) it
     /// has no per-language overlay. Gameplay only reads it.
     pub scenes: SceneFile,
@@ -293,7 +293,7 @@ impl EggState {
         true
     }
 
-    /// Load the game-data file (`assets/data/game.eggdata`) from the host's file
+    /// Load the game-data file (`assets/data/data.toml`) from the host's file
     /// store, once, installing the item registry it defines (a full replace, so
     /// the file is the source of truth). Mirrors [`load_save`](Self::load_save):
     /// a missing file is ignored silently and a malformed one logs, either way
@@ -341,7 +341,7 @@ impl EggState {
         }
     }
     /// Install the loaded cutscene registry (parsed from
-    /// `assets/script/main.eggscene`). Called once at startup by the host's asset
+    /// `assets/data/main.eggscene`). Called once at startup by the host's asset
     /// loop, and again when the file is re-saved in-editor — mirroring
     /// [`Script::set_base`] for dialogue.
     pub fn set_scenes(&mut self, scenes: SceneFile) {
