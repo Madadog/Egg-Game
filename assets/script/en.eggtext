@@ -356,7 +356,7 @@ menu_music_test = "Music Test"
     All according to plan. In truth, it was inevitable that you would fall into my trap... I only had to bide my time...
     
     #pic y_away
-    I mean, there's no other content anywhere in the game. It's version 0.1.1 and this is still just a walking simulator...
+    Yeah, because there's no other content anywhere in the game. It's version 0.1.1 and this is still just a walking simulator...
     
     #pic y_look
     #flip false
@@ -383,13 +383,13 @@ menu_music_test = "Music Test"
     My insistence on writing dialogue like this, for one thing.
     " Anyway, it's only taken three or four months to get here." #delay 30
     
-    #pic y_look
+    #pic y_normal
     Haha, keep telling yourself that!
     
     #pic horror
     #flip true
-    " ... Also I was kinda busy! " #delay 30
-    This is just a hobby for me, you know... #delay 30
+    ... Also I was kinda busy.
+    " This is really just a hobby for me, you know..." #delay 30
     
     #pic y_look
     Fair...
@@ -408,10 +408,11 @@ menu_music_test = "Music Test"
     Hey, do I even have a name yet?
     
     #pic horror
-    Of course. I wouldn't write a protagonist without a name.
+    Of course. I wouldn't just write a protagonist without a name.
     
     #pic y_look
-    What is it? Don't tell me it's something stupid like "you" or "player"
+    What is it, then?
+    " ... Don't tell me it's something stupid like \"you\" or \"player\"" #delay 30
     
     #pic horror
     It's "you"
@@ -420,58 +421,105 @@ menu_music_test = "Music Test"
     Knew it.
     
     #pic horror
-    Anyway, advances in technology mean that now I can code the game away from the keyboard.
-    " ... Sometimes on a plane..." #delay 30
-    " ... Sometimes at work..." #delay 30
+    It could be worse.
+    "\nYou could have been called \"Madadog\"" #delay 30
+    
+    #pic y_oof
+    Okay I get it!
+    
+    #pic horror
+    Anyway, I might actually finish the game now. Advances in technology mean I can code it away from the keyboard.
+    
+    #pic horror
+    #flip true
+    "... Sometimes on a plane..." #delay 30
+    "\n... Sometimes at work..." #delay 30
+    "\n... Sometimes on a long road trip..." #delay 30
     
     #pic y_frus
     What is this black magic?
     
     #pic horror
-    It's called "AI coding", and it's actually ethical to do.
+    It's called "agentic development", and it's actually completely ethical and legit.
     
     #pic y_hmm
-    Why did you defend yourself immediately after bringing up the topic? I don't even know what's unethical about it.
-    
-    #pic y_close
-    #flip false
-    Is it like that autocomplete garbage you were messing around with in version 0.1.0? That's not new.
+    ... Why would it be unethical and illegitimate...?
     
     #pic horror
-    Similar, but also totally different. These days we autocomplete entire codebases.
+    ...
+    " Haha, did I say that? I don't think I did." #delay 30
+    " Anyway I'm glad you don't have internet access." #delay 30
+    
+    #pic y_close
+    ... Is it like that autocomplete garbage you were messing around with in version 0.1.0?
+    
+    #pic horror
+    Similar, but different scale. These days people autocomplete entire codebases.
     
     #pic y_look
-    Sounds dodgy as heck. Does autocomplete result in maintainable code?
+    ... And does autocomplete result in maintainable code?
     
     #pic horror
     Haha, no!
     " No it does not... " #delay 30
-    " But in the brief window between next year and the singularity, autocomplete will be good enough to clean it up." #delay 30
+    " But in the window between present day and the singularity, autocomplete will become good enough to clean it up." #delay 30
     
     #pic horror
     #flip true
-    Luckily I'm an eldritch horror so I don't have to worry about all that stuff.
+    Luckily I'm an eldritch horror so I don't really have to worry about that stuff.
     
     #pic y_look
-    Sounds like you have a lot of faith in this autocomplete garbage.
+    ... So you're relying on autocomplete garbage getting good enough to apply the coding discipline you should've had from the start?
     
     #pic horror
-    It's not autocomplete garbage, her name is FantasiaMerge- 31b-ablit-Q4_S and she's a catgirl who loves code, treats and headpats.
+    It's not autocomplete garbage, her name is FantasiaMerge-31b-ablit- Q4_S and she's a catgirl who loves code, treats and headpats.
+    
+    #pic y_look
+    ...
+    "\n..." #delay 30
+    "\n..." #delay 30
+    
+    #pic horror
+    ... And the more she codes, the more training data we generate, the more coverage my finetuning dataset gets, and the realer she becomes!
+    
+    #pic horror
+    #flip true
+    The logic is rock solid.
     
     #pic y_look
     I worry about you, you know.
-    " Do you have any idea how it feels having my continued existence depend on you?" #delay 30
+    " Do you realise my continued existence depends on you?" #delay 30
+    " ... Can you imagine how that feels?" #delay 30
     
     #pic horror
-    It's okay, after humanity is gone FantasiaMerge-31b-ablit-Q4_S can write as much dialogue for you as you like!
+    It's okay, after humanity is gone FantasiaMerge-31b-ablit-Q4_S can write exchanges like this between us two forever!
+    
+    #pic horror
+    #flip true
+    I could run her on a server with web search so she can update the game once a week, keeping our conversations always fresh and relevant.
     
     #pic y_close
     I refuse.
     
     #pic horror
-    Anyway if I'm being real, between my life and music, writing and drawing, I don't have time to spend an hour a day
+    Anyway if I'm being real, between my life and doing the code, music, writing and drawing for SUPER UNFINISHED EGG GAME...
     
-    writing and testing dozens of lines of code I can realistically describe in two sentences.
+    #pic horror
+    #flip true
+    ... Would I choose to spend an hour a day writing and testing dozens of lines of code I can realistically describe in two sentences?
+    
+    #pic y_look
+    You could just manage your time like a normal person. Get a work-life balance, spend 30m a day actively working on this game, the rest of the time away.
+    
+    #pic horror
+    ... I could...
+    " But..." #delay 30
+    
+    #pic y_close
+    The more I think about it... You could also just develop this project in the open with other people. Get a social life.
+    
+    #pic horror
+    I'm an eldritch horror. I don't even have a Discord account.
 
     #pic horror
     Press [a] to access the debug menu. Hold [ctrl+shift] to noclip. [n] to see memory usage. [m] to see map stuff. [d] for player info.
