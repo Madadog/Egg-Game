@@ -719,18 +719,20 @@ fn step_state(
     if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ShiftLeft) {
         let pos = game.state.walkaround.player().pos;
         let rand = game.state.rng.rand_u8();
-        let mut new = if rand < 64 {
-            egg_core::player::Shell::ellie()
+        let id = if rand < 64 {
+            egg_core::player::PresetId::ellie()
         } else if rand < 128 {
-            egg_core::player::Shell::dog()
+            egg_core::player::PresetId::dog()
         } else if rand < 192 {
-            egg_core::player::Shell::bro()
+            egg_core::player::PresetId::bro()
         } else {
-            egg_core::player::Shell::may()
+            egg_core::player::PresetId::may()
         };
-        new.pos = pos;
-        game.state.walkaround.entities.push(new);
-        info!("we have {} entities", game.state.walkaround.entities.len());
+        if let Some(mut new) = game.state.presets.spawn(&id) {
+            new.pos = pos;
+            game.state.walkaround.entities.push(new);
+            info!("we have {} entities", game.state.walkaround.entities.len());
+        }
     } else if keys.pressed(KeyCode::Digit3) && keys.pressed(KeyCode::ControlLeft) {
         let pos = game.state.walkaround.player().pos;
         for e in game.state.walkaround.entities.iter_mut() {

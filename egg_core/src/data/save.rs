@@ -192,7 +192,8 @@ impl SaveData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::ShellPreset;
+    use crate::data::eggdata::Presets;
+    use crate::player::PresetId;
     use crate::position::Vec2;
 
     /// A pre-name save carries the long-removed numeric `current_map` field and
@@ -240,7 +241,12 @@ mod tests {
         data.mark_taken("town", 7);
         data.map_entities.insert(
             "town".to_string(),
-            vec![Shell::critter().with_pos(Vec2::new(9, 9))],
+            vec![
+                Presets::builtin()
+                    .spawn(&PresetId::critter())
+                    .unwrap()
+                    .with_pos(Vec2::new(9, 9)),
+            ],
         );
         let json = serde_json::to_string_pretty(&data).expect("serialise");
         let parsed: SaveData = serde_json::from_str(&json).expect("deserialise");
@@ -251,7 +257,7 @@ mod tests {
         assert!(parsed.flag("met_the_dog"));
         assert!(parsed.is_taken("town", 7));
         assert_eq!(parsed.map_entities["town"][0].pos, Vec2::new(9, 9));
-        assert_eq!(parsed.map_entities["town"][0].preset, ShellPreset::Critter);
+        assert_eq!(parsed.map_entities["town"][0].preset, PresetId::critter());
     }
 
     /// `set_flag`/`flag` insert and remove names, and an unset name reads false.

@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::gamestate::inventory::ItemDef;
 use crate::player::{
-    CreatureState, LoopMode, MoveMode, ShellSprites, SpriteAnimation, Timer, WalkSprites,
+    CreatureState, LoopMode, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer,
+    WalkSprites,
 };
 use crate::position::Hitbox;
 use crate::system::Flip;
@@ -67,6 +68,50 @@ pub fn parse(src: &str) -> Result<DataFile, toml::de::Error> {
 /// a one-off "dump the built-ins" helper) writes.
 pub fn to_toml(data: &DataFile) -> Result<String, toml::ser::Error> {
     toml::to_string_pretty(data)
+}
+
+/// The runtime creature registry: every [`PresetDef`] keyed by its
+/// [`PresetId`]. Built from the embedded `data.toml` ([`builtin`](Self::builtin))
+/// and re-derived from the runtime file at boot ([`from_data`](Self::from_data)),
+/// then threaded through gameplay as [`Ctx::presets`](crate::Ctx::presets) the
+/// way `items`/`maps`/`script` are. The lookup is the `presets[id]` the spawn
+/// sites want; an absent id is a clean `None`, not a panic.
+#[derive(Debug, Clone)]
+pub struct Presets {
+    defs: std::collections::HashMap<PresetId, PresetDef>,
+}
+impl Presets {
+    /// The built-ins: the shipped `data.toml`, embedded at compile time, so the
+    /// registry is never empty (web/headless/missing runtime file) and the file
+    /// is the single source of the creature definitions. Panics only if the
+    /// *shipped* file is malformed — a build-time-checked invariant.
+    pub fn builtin() -> Self {
+        let file = parse(include_str!("../../../assets/data/data.toml"))
+            .expect("shipped data.toml parses");
+        Self::from_data(&file)
+    }
+    /// Build from a parsed [`DataFile`]'s presets, keyed by [`PresetId`]. The file
+    /// is authoritative: an id it omits is absent here (the data-driven set), with
+    /// [`builtin`](Self::builtin) standing in only when there is no runtime file.
+    pub fn from_data(file: &DataFile) -> Self {
+        Self {
+            defs: file
+                .presets
+                .iter()
+                .map(|(name, def)| (PresetId::new(name), def.clone()))
+                .collect(),
+        }
+    }
+    /// The definition filed under `id`, or `None` if the data doesn't define it.
+    pub fn get(&self, id: &PresetId) -> Option<&PresetDef> {
+        self.defs.get(id)
+    }
+    /// Spawn a fresh [`Shell`] of `id` — the `presets[id]` lookup — or `None` for
+    /// an unknown id. The caller decides what an unknown id means (log + fall
+    /// back, or skip).
+    pub fn spawn(&self, id: &PresetId) -> Option<Shell> {
+        self.get(id).map(|def| def.build_shell(id))
+    }
 }
 
 /// One creature archetype: its collision box, wander behaviour, the extra
@@ -109,6 +154,11 @@ impl PresetDef {
     /// The [`MoveMode`] this preset spawns with.
     pub fn move_mode(&self) -> MoveMode {
         self.move_mode.build()
+    }
+    /// Spawn a [`Shell`] of this preset, stamped with `id`. The store's
+    /// [`Presets::spawn`] funnel.
+    pub fn build_shell(&self, id: &PresetId) -> Shell {
+        Shell::from_parts(id.clone(), self.hitbox(), self.build_sprites(), self.move_mode())
     }
 }
 
@@ -294,7 +344,7 @@ fn flip_is_none(f: &Flip) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::{Shell, ShellSprites};
+    use crate::player::{MoveMode, PresetId};
 
     /// The built-in presets as `data.toml`, hand-mirrored from the `Shell::<x>()`
     /// constructors in `player.rs`. The tests below prove these rebuild the exact
@@ -362,29 +412,33 @@ mod tests {
         }
     }
 
-    /// Each built-in preset, expressed as `data.toml` and rebuilt, reproduces the
-    /// hand-written constructor's sprites and hitbox exactly — the guarantee that
-    /// lets presets move to data without changing how any shell looks. (Sprites
-    /// compared by `Debug`, as `ShellSprites` has no `PartialEq`.)
+    /// `Presets::builtin` embeds the shipped data and spawns each built-in with
+    /// the right archetype, hitbox and behaviour — the data is the source of the
+    /// shells. An unknown id is a clean miss.
     #[test]
-    fn presets_rebuild_the_builtin_constructors() {
-        let cases: [(&str, ShellSprites, Shell); 5] = [
-            ("ellie", ShellSprites::ellie(), Shell::ellie()),
-            ("may", ShellSprites::may(), Shell::may()),
-            ("dog", ShellSprites::dog(), Shell::dog()),
-            ("bro", ShellSprites::bro(), Shell::bro()),
-            ("critter", ShellSprites::critter(), Shell::critter()),
-        ];
-        for (name, sprites, shell) in cases {
-            let def = builtin_preset(name);
+    fn builtin_presets_spawn_the_creatures() {
+        let presets = Presets::builtin();
+        for name in ["ellie", "may", "bro", "critter", "dog"] {
+            let id = PresetId::new(name);
+            let shell = presets.spawn(&id).unwrap_or_else(|| panic!("spawn {name}"));
+            assert_eq!(shell.preset, id, "{name} stamps its id");
             assert_eq!(
-                format!("{:?}", def.build_sprites()),
-                format!("{sprites:?}"),
-                "{name}: data-built sprites match the constructor",
+                shell.local_hitbox,
+                builtin_preset(name).hitbox(),
+                "{name} hitbox",
             );
-            assert_eq!(def.hitbox(), shell.local_hitbox, "{name}: hitbox matches");
-            assert_eq!(def.move_mode(), shell.move_mode, "{name}: move_mode matches");
         }
+        // The critter ambles; the others wander.
+        assert!(matches!(
+            presets.spawn(&PresetId::critter()).unwrap().move_mode,
+            MoveMode::Amble(_)
+        ));
+        assert!(matches!(
+            presets.spawn(&PresetId::dog()).unwrap().move_mode,
+            MoveMode::Wander
+        ));
+        // An unknown id is a clean miss, not a panic.
+        assert!(presets.spawn(&PresetId::new("nope")).is_none());
     }
 
     /// A populated `data.toml` (items + every built-in preset) survives a
@@ -425,5 +479,19 @@ sprite = 514
     #[test]
     fn malformed_data_is_an_error() {
         assert!(parse("items = [not a table]").is_err());
+    }
+
+    /// The shipped `data.toml` parses, and its hand-written compact form lands
+    /// the same structure the canonical (round-trip-validated) defs do — so
+    /// `Presets::builtin` (which embeds this file) gets the real built-ins.
+    #[test]
+    fn shipped_data_toml_parses_to_the_builtins() {
+        let data = parse(include_str!("../../../assets/data/data.toml"))
+            .expect("shipped data.toml parses");
+        assert_eq!(data.items.len(), 3);
+        assert_eq!(data.items["chegg"].sprite, 524);
+        for n in ["ellie", "may", "bro", "critter", "dog"] {
+            assert_eq!(&data.presets[n], &builtin_preset(n), "preset {n} matches canonical");
+        }
     }
 }

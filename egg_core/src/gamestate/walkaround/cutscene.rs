@@ -224,7 +224,7 @@ impl CutsceneItem {
                 let shell = if let Some(entity) = walkaround.entities.get_mut(*i) {
                     entity
                 } else {
-                    walkaround.entities.push(Shell::ellie());
+                    walkaround.entities.push(Shell::default());
                     *i = walkaround.entities.len() - 1;
                     walkaround.entities.last_mut().unwrap()
                 };
@@ -367,6 +367,7 @@ mod tests {
         scenes: eggscene::SceneFile,
         save: SaveData,
         items: crate::gamestate::inventory::GameItems,
+        presets: crate::data::eggdata::Presets,
         walk: WalkaroundState,
     }
     impl Harness {
@@ -380,6 +381,7 @@ mod tests {
                 scenes: eggscene::SceneFile::default(),
                 save: SaveData::default(),
                 items: crate::gamestate::inventory::GameItems::default(),
+                presets: crate::data::eggdata::Presets::builtin(),
                 walk: WalkaroundState::new(),
             }
         }
@@ -406,6 +408,7 @@ mod tests {
             scenes: &h.scenes,
             save: &mut h.save,
             items: &h.items,
+            presets: &h.presets,
         };
         item.advance(&mut ctx, &mut walk);
         h.walk = walk;
@@ -503,6 +506,7 @@ mod tests {
                 scenes: &h.scenes,
                 save: &mut h.save,
                 items: &h.items,
+                presets: &h.presets,
             };
             cutscene.skip(&mut ctx, &mut walk);
         }

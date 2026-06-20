@@ -235,28 +235,6 @@ impl WalkSprites {
             walk().with_flip(Flip::Horizontal),
         )
     }
-    pub fn ellie() -> Self {
-        Self::humanoid(768, 832)
-    }
-    pub fn may() -> Self {
-        Self::humanoid(2184, 2248)
-    }
-    pub fn dog() -> Self {
-        Self::compass(
-            SpriteAnimation::from_base_sprite_id(966, 2, 1, 2),
-            SpriteAnimation::from_base_sprite_id(964, 2, 1, 2),
-            SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_x_offset(8),
-            SpriteAnimation::from_base_sprite_id(960, 2, 2, 2).with_flip(Flip::Horizontal),
-        )
-    }
-    pub fn bro() -> Self {
-        Self::humanoid(896, 902)
-    }
-    /// The critter: a single front-facing look (toggling `688`/`689`), mirrored
-    /// when facing left via [`sideways`](Self::sideways).
-    fn critter() -> Self {
-        Self::sideways(SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1))
-    }
     /// A static, unhatched egg (single frame `524`).
     fn egg() -> Self {
         let egg = SpriteAnimation::from_sprite_ids(&[524], 1, 1);
@@ -264,47 +242,69 @@ impl WalkSprites {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum MoveMode {
     Player,
     /// Memoryless wander: a small chance each step to re-pick a random heading,
     /// otherwise keep the current one. Used by NPC shells.
     Wander,
     /// Inert until `timer` drains, then the shell *becomes* `hatches_into` in
-    /// place (keeping its position) — an egg hatching into any [`ShellPreset`].
+    /// place (keeping its position) — an egg hatching into any preset. The
+    /// `PresetId` makes this (and so `MoveMode`) no longer `Copy`.
     Egg {
         timer: Timer,
-        hatches_into: ShellPreset,
+        hatches_into: PresetId,
     },
     /// Dwell wander: commit to a random heading for a spell, idle for a spell,
     /// repeat — the critter gait (see [`CreatureState`]).
     Amble(CreatureState),
 }
 
-/// Names a [`Shell`] constructor so a preset can be stored as data — e.g. inside
-/// [`MoveMode::Egg`] to record what an egg hatches into, or on [`Shell::preset`]
-/// to record what a live entity is for persistence. Serialised as its **name**
-/// (`"critter"`), not an integer tag, so a save survives the eventual migration
-/// of presets from this enum to a runtime-loaded data store (the name becomes the
-/// store key).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShellPreset {
-    Ellie,
-    May,
-    Dog,
-    Bro,
-    Critter,
+/// The data-store key identifying a creature archetype: the name a
+/// [`PresetDef`](crate::data::eggdata::PresetDef) is filed under in
+/// [`Presets`](crate::data::eggdata::Presets), and what a [`Shell::preset`] / an
+/// egg's [`MoveMode::Egg`] records for persistence. Stored and serialised as a
+/// bare string (`"critter"`), so a save is just the name and survives the
+/// creature set changing in `data.toml`.
+///
+/// A typo'd or data-removed id is caught at the (fallible) store lookup, not at
+/// compile time — the price of an open, data-defined set (vs. the old closed
+/// enum). The constants below name the built-ins engine code spawns directly.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PresetId(pub String);
+
+impl PresetId {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn ellie() -> Self {
+        Self::new("ellie")
+    }
+    pub fn may() -> Self {
+        Self::new("may")
+    }
+    pub fn dog() -> Self {
+        Self::new("dog")
+    }
+    pub fn bro() -> Self {
+        Self::new("bro")
+    }
+    pub fn critter() -> Self {
+        Self::new("critter")
+    }
 }
-impl ShellPreset {
-    pub fn build(self) -> Shell {
-        match self {
-            ShellPreset::Ellie => Shell::ellie(),
-            ShellPreset::May => Shell::may(),
-            ShellPreset::Dog => Shell::dog(),
-            ShellPreset::Bro => Shell::bro(),
-            ShellPreset::Critter => Shell::critter(),
-        }
+impl std::fmt::Display for PresetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl From<&str> for PresetId {
+    fn from(s: &str) -> Self {
+        Self::new(s)
     }
 }
 
@@ -320,23 +320,14 @@ impl ShellSprites {
             others: vec![SpriteAnimation::from_sprite_ids(other_ids, w, h)],
         }
     }
-    pub fn ellie() -> Self {
-        Self::new(WalkSprites::ellie(), &[774, 775], 1, 2)
-    }
-    pub fn may() -> Self {
-        Self::new(WalkSprites::may(), &[2251, 2252], 1, 2)
-    }
-    pub fn dog() -> Self {
-        Self::new(WalkSprites::dog(), &[968, 970], 2, 2)
-    }
-    pub fn bro() -> Self {
-        Self::new(WalkSprites::bro(), &[905, 906], 1, 2)
-    }
-    pub fn critter() -> Self {
-        Self::new(WalkSprites::critter(), &[688], 1, 1)
-    }
     pub fn egg() -> Self {
         Self::new(WalkSprites::egg(), &[524], 1, 1)
+    }
+    /// A minimal stand-in for a shell whose real sprites are (re)attached from
+    /// its preset later — the `#[serde(skip)]` default and the fallback for an
+    /// unknown preset id. Reuses the egg's static look.
+    pub fn placeholder() -> Self {
+        Self::egg()
     }
 }
 
@@ -375,17 +366,17 @@ pub struct Shell {
     pub walktime: u16,
     pub flip_controls: Axis,
     pub pet_timer: Option<u8>,
-    /// The archetype this shell is an instance of (its [`ShellPreset`]). The
-    /// source of truth for the *derived* `sprites`, and the handle entity
+    /// The archetype this shell is an instance of (its [`PresetId`]). The store
+    /// key the *derived* `sprites` resolve from, and the handle entity
     /// persistence stores to rebuild a shell; an egg carries the preset it will
     /// hatch into. Held alongside the materialised `sprites` — the maps pattern
     /// (resolve once, keep the working copy) rather than a per-frame registry
     /// lookup; `sprites` is the cache, `preset` the key.
-    pub preset: ShellPreset,
+    pub preset: PresetId,
     /// Derived from [`preset`](Self::preset), so it's skipped in serialisation
     /// (a placeholder is parsed, then [`reattach_sprites`](Self::reattach_sprites)
     /// rebuilds the real set on load) rather than baking the art into every save.
-    #[serde(skip, default = "ShellSprites::ellie")]
+    #[serde(skip, default = "ShellSprites::placeholder")]
     pub sprites: ShellSprites,
     pub move_mode: MoveMode,
 }
@@ -411,8 +402,14 @@ impl PartialEq for Shell {
 }
 impl Eq for Shell {}
 impl Default for Shell {
+    /// The built-in `ellie`, spawned from the embedded `data.toml`. Used for the
+    /// player entity (with `move_mode` overridden to [`MoveMode::Player`]) and as
+    /// a benign fallback. Cheap enough — only called at construction, never per
+    /// frame; a deserialised shell's `sprites` use [`ShellSprites::placeholder`].
     fn default() -> Self {
-        Self::ellie()
+        crate::data::eggdata::Presets::builtin()
+            .spawn(&PresetId::ellie())
+            .expect("built-in presets define `ellie`")
     }
 }
 impl Shell {
@@ -476,16 +473,20 @@ impl Shell {
     /// Rebuild the (serialisation-skipped) [`sprites`](Self::sprites) from this
     /// shell's archetype after it's loaded from a save, where `sprites` came back
     /// as a placeholder. An unhatched egg keeps its egg sprites (its current
-    /// form); anything else takes its [`preset`](Self::preset)'s.
-    pub fn reattach_sprites(&mut self) {
+    /// form); anything else resolves its [`preset`](Self::preset) in `presets`,
+    /// falling back to a placeholder if the data no longer defines that id.
+    pub fn reattach_sprites(&mut self, presets: &crate::data::eggdata::Presets) {
         self.sprites = if matches!(self.move_mode, MoveMode::Egg { .. }) {
             ShellSprites::egg()
         } else {
-            self.preset.build().sprites
+            presets
+                .get(&self.preset)
+                .map(|def| def.build_sprites())
+                .unwrap_or_else(ShellSprites::placeholder)
         };
     }
     pub fn replace(&mut self, shell: Shell) {
-        *self = shell.with_pos(self.pos).with_move_mode(self.move_mode);
+        *self = shell.with_pos(self.pos).with_move_mode(self.move_mode.clone());
     }
     pub fn hitbox(&self) -> Hitbox {
         self.local_hitbox.offset(self.pos)
@@ -661,10 +662,17 @@ impl Shell {
 
 // presets
 impl Shell {
-    /// Build a shell of `preset` with its hitbox + (derived) sprites, recording
-    /// the archetype on [`preset`](Self::preset). All the named constructors
-    /// funnel through here, so every shell knows what it is.
-    fn from_preset(preset: ShellPreset, local_hitbox: Hitbox, sprites: ShellSprites) -> Self {
+    /// Assemble a shell from its archetype id and the parts a preset resolves to
+    /// (hitbox, derived sprites, spawn behaviour), recording the id on
+    /// [`preset`](Self::preset). The single funnel the data store
+    /// ([`Presets::spawn`](crate::data::eggdata::Presets::spawn)) and the built-in
+    /// [`egg`](Self::egg) build through, so every shell knows what it is.
+    pub fn from_parts(
+        preset: PresetId,
+        local_hitbox: Hitbox,
+        sprites: ShellSprites,
+        move_mode: MoveMode,
+    ) -> Self {
         Self {
             preset,
             pos: Vec2::new(62, 23),
@@ -678,35 +686,23 @@ impl Shell {
             flip_controls: Axis::None,
             pet_timer: None,
             sprites,
-            move_mode: MoveMode::Wander,
+            move_mode,
         }
     }
-    pub fn ellie() -> Self {
-        Self::from_preset(ShellPreset::Ellie, Hitbox::new(0, 10, 7, 5), ShellSprites::ellie())
-    }
-    pub fn may() -> Self {
-        Self::from_preset(ShellPreset::May, Hitbox::new(0, 12, 7, 5), ShellSprites::may())
-    }
-    pub fn dog() -> Self {
-        Self::from_preset(ShellPreset::Dog, Hitbox::new(0, 12, 7, 5), ShellSprites::dog())
-    }
-    pub fn bro() -> Self {
-        Self::from_preset(ShellPreset::Bro, Hitbox::new(0, 8, 7, 5), ShellSprites::bro())
-    }
-    /// A wandering critter — the hatched form. See [`MoveMode::Amble`].
-    pub fn critter() -> Self {
-        Self::from_preset(ShellPreset::Critter, Hitbox::new(0, 0, 8, 8), ShellSprites::critter())
-            .with_move_mode(MoveMode::Amble(CreatureState::Idle(Timer(0))))
-    }
-    /// An egg that hatches into `hatches_into` after a fixed delay. Its
-    /// [`preset`](Self::preset) *is* `hatches_into` (the archetype it will
-    /// become); the egg-form sprites + [`MoveMode::Egg`] mark that it hasn't yet.
-    pub fn egg(hatches_into: ShellPreset) -> Self {
-        Self::from_preset(hatches_into, Hitbox::new(0, 0, 8, 8), ShellSprites::egg())
-            .with_move_mode(MoveMode::Egg {
+    /// An egg that hatches into `hatches_into` after a fixed delay. The egg form
+    /// is built-in (not a `data.toml` preset): static egg sprites + a tiny
+    /// hitbox, with the target archetype recorded on both [`preset`](Self::preset)
+    /// and [`MoveMode::Egg`] so the hatch can spawn it from the store.
+    pub fn egg(hatches_into: PresetId) -> Self {
+        Self::from_parts(
+            hatches_into.clone(),
+            Hitbox::new(0, 0, 8, 8),
+            ShellSprites::egg(),
+            MoveMode::Egg {
                 timer: Timer(255),
                 hatches_into,
-            })
+            },
+        )
     }
 }
 
@@ -1018,60 +1014,51 @@ mod tests {
         assert_eq!(list.interact(&trail).len(), 1);
     }
 
+    /// Spawn a built-in shell from the embedded `data.toml` — the data is the
+    /// only source of creatures now (the walk-grid tests build `WalkSprites`
+    /// straight from the pattern constructors instead).
+    fn spawn(name: &str) -> Shell {
+        crate::data::eggdata::Presets::builtin()
+            .spawn(&PresetId::new(name))
+            .unwrap_or_else(|| panic!("built-in `{name}`"))
+    }
+
     #[test]
     fn critter_preset_ambles_and_egg_carries_its_target() {
         assert!(matches!(
-            Shell::critter().move_mode,
+            spawn("critter").move_mode,
             MoveMode::Amble(CreatureState::Idle(_))
         ));
-        assert!(matches!(
-            Shell::egg(ShellPreset::Critter).move_mode,
-            MoveMode::Egg {
-                hatches_into: ShellPreset::Critter,
-                ..
-            }
-        ));
-        // `build` round-trips a preset back to its shell (here a Wander NPC).
-        assert!(matches!(
-            ShellPreset::Dog.build().move_mode,
-            MoveMode::Wander
-        ));
+        // An egg is in Egg mode and carries what it will become.
+        let egg = Shell::egg(PresetId::critter());
+        assert_eq!(egg.preset, PresetId::critter());
+        assert!(matches!(egg.move_mode, MoveMode::Egg { .. }));
+        // The store spawns a wandering NPC for a non-critter preset.
+        assert!(matches!(spawn("dog").move_mode, MoveMode::Wander));
     }
 
-    /// Every shell records its archetype on `preset`: the named constructors set
-    /// their own, an egg carries the preset it will hatch into, and `build`
-    /// round-trips it — the handle entity persistence stores to rebuild a shell.
+    /// Every shell records its archetype on `preset`: the store stamps the id it
+    /// spawned, and an egg carries the preset it will hatch into — the handle
+    /// entity persistence stores to rebuild a shell.
     #[test]
     fn shells_carry_their_preset() {
-        assert_eq!(Shell::ellie().preset, ShellPreset::Ellie);
-        assert_eq!(Shell::may().preset, ShellPreset::May);
-        assert_eq!(Shell::dog().preset, ShellPreset::Dog);
-        assert_eq!(Shell::bro().preset, ShellPreset::Bro);
-        assert_eq!(Shell::critter().preset, ShellPreset::Critter);
-        // An egg's archetype is what it becomes.
-        assert_eq!(Shell::egg(ShellPreset::Critter).preset, ShellPreset::Critter);
-        // `build()` produces a shell that reports the same preset.
-        for p in [
-            ShellPreset::Ellie,
-            ShellPreset::May,
-            ShellPreset::Dog,
-            ShellPreset::Bro,
-            ShellPreset::Critter,
-        ] {
-            assert_eq!(p.build().preset, p);
+        for name in ["ellie", "may", "dog", "bro", "critter"] {
+            assert_eq!(spawn(name).preset, PresetId::new(name), "{name} stamps its id");
         }
+        // An egg's archetype is what it becomes.
+        assert_eq!(Shell::egg(PresetId::critter()).preset, PresetId::critter());
     }
 
-    /// `ShellPreset` serialises as its lowercase name, not an integer tag — so a
-    /// save survives the eventual enum→data-store migration (name = store key).
+    /// `PresetId` serialises as a bare string (`"critter"`), so a save is just the
+    /// name and survives the creature set changing in `data.toml`.
     #[test]
-    fn shell_preset_serialises_by_name() {
+    fn preset_id_serialises_as_a_bare_string() {
         assert_eq!(
-            serde_json::to_string(&ShellPreset::Critter).unwrap(),
+            serde_json::to_string(&PresetId::critter()).unwrap(),
             "\"critter\""
         );
-        let back: ShellPreset = serde_json::from_str("\"ellie\"").unwrap();
-        assert_eq!(back, ShellPreset::Ellie);
+        let back: PresetId = serde_json::from_str("\"ellie\"").unwrap();
+        assert_eq!(back, PresetId::ellie());
     }
 
     /// A shell serialises every field but its (derived) sprites, and
@@ -1079,22 +1066,23 @@ mod tests {
     /// persisted creature keeps its position/state and looks right again.
     #[test]
     fn shell_serde_skips_and_reattaches_sprites() {
-        let mut critter = Shell::critter().with_pos(Vec2::new(40, 7));
+        let presets = crate::data::eggdata::Presets::builtin();
+        let mut critter = spawn("critter").with_pos(Vec2::new(40, 7));
         critter.walktime = 5;
         let json = serde_json::to_string(&critter).unwrap();
         assert!(!json.contains("sprites"), "derived sprites are not serialised");
 
         let mut back: Shell = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.preset, ShellPreset::Critter);
+        assert_eq!(back.preset, PresetId::critter());
         assert_eq!(back.pos, Vec2::new(40, 7));
         assert_eq!(back.walktime, 5);
         assert!(matches!(back.move_mode, MoveMode::Amble(_)));
         // Sprites round-trip via the preset, not the bytes (compared by Debug,
         // since `ShellSprites` has no `PartialEq`).
-        back.reattach_sprites();
+        back.reattach_sprites(&presets);
         assert_eq!(
             format!("{:?}", back.sprites),
-            format!("{:?}", Shell::critter().sprites),
+            format!("{:?}", spawn("critter").sprites),
             "sprites rebuilt from the preset"
         );
     }
@@ -1103,11 +1091,12 @@ mod tests {
     /// hatched form of the preset it will become.
     #[test]
     fn egg_reattaches_egg_sprites_not_hatched_form() {
-        let json = serde_json::to_string(&Shell::egg(ShellPreset::Dog)).unwrap();
+        let presets = crate::data::eggdata::Presets::builtin();
+        let json = serde_json::to_string(&Shell::egg(PresetId::dog())).unwrap();
         let mut back: Shell = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.preset, ShellPreset::Dog, "archetype is what it becomes");
+        assert_eq!(back.preset, PresetId::dog(), "archetype is what it becomes");
         assert!(matches!(back.move_mode, MoveMode::Egg { .. }));
-        back.reattach_sprites();
+        back.reattach_sprites(&presets);
         assert_eq!(
             format!("{:?}", back.sprites),
             format!("{:?}", ShellSprites::egg()),
@@ -1115,7 +1104,7 @@ mod tests {
         );
         assert_ne!(
             format!("{:?}", back.sprites),
-            format!("{:?}", Shell::dog().sprites),
+            format!("{:?}", spawn("dog").sprites),
             "not the hatched dog's sprites"
         );
     }
@@ -1143,14 +1132,14 @@ mod tests {
 
         // Compass humanoid: east unflipped, west pre-mirrored, and `signum`
         // buckets any magnitude — so a noclip-scaled heading still faces right.
-        let ellie = WalkSprites::ellie();
+        let ellie = WalkSprites::humanoid(768, 832);
         assert_eq!(flip_of(&ellie, (1, 0)), Flip::None);
         assert_eq!(flip_of(&ellie, (-1, 0)), Flip::Horizontal);
         assert_eq!(flip_of(&ellie, (4, 0)), Flip::None);
 
         // Sideways critter: the whole left column mirrors — including the diagonal
         // cells a vertical mover lands on via a sticky facing — and nothing else.
-        let critter = WalkSprites::critter();
+        let critter = WalkSprites::sideways(SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1));
         for dy in [-1, 0, 1] {
             assert_eq!(flip_of(&critter, (-1, dy)), Flip::Horizontal);
             assert_eq!(flip_of(&critter, (1, dy)), Flip::None);
@@ -1159,7 +1148,7 @@ mod tests {
 
     #[test]
     fn face_keeps_horizontal_through_vertical_moves() {
-        let mut shell = Shell::critter();
+        let mut shell = spawn("critter");
         shell.face((-1, 0)); // face left
         assert_eq!(shell.sticky_dir.0, -1);
 
@@ -1177,7 +1166,7 @@ mod tests {
     #[test]
     fn compass_locks_facing_to_initial_axis() {
         // Humanoid = compass = the player's `Committed` policy.
-        let mut shell = Shell::ellie();
+        let mut shell = spawn("ellie");
 
         shell.face((1, 0)); // start moving right
         assert_eq!(shell.facing_dir(), (1, 0)); // east
@@ -1193,7 +1182,7 @@ mod tests {
     fn sideways_stays_per_axis() {
         // The critter keeps the per-axis rule: sticky horizontal, live vertical —
         // unaffected by the committed-axis policy.
-        let mut shell = Shell::critter();
+        let mut shell = spawn("critter");
         shell.face((-1, 0));
         shell.face((0, 1)); // straight down while last-facing left
         assert_eq!(shell.facing_dir(), (-1, 1)); // mirror held, vertical live

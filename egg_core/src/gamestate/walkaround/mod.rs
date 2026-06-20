@@ -8,7 +8,7 @@ use crate::debug::DebugInfo;
 use crate::interact::{InteractFn, Interaction};
 use crate::map::{Axis, MapInfo, ObjectEffect, map_by_name};
 use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, Shell, ShellPreset};
+use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, PresetId, Shell};
 use crate::position::{Collider, Vec2};
 use crate::system::PrintOptions;
 use crate::system::{
@@ -264,7 +264,7 @@ impl WalkaroundState {
             InteractFn::AddCreatures(x) => {
                 let pos = self.player_ref().pos;
                 self.entities
-                    .extend((0..=*x).map(|_| Shell::egg(ShellPreset::Critter).with_pos(pos)));
+                    .extend((0..=*x).map(|_| Shell::egg(PresetId::critter()).with_pos(pos)));
                 None
             }
             InteractFn::GiveItem(key) => {
@@ -351,7 +351,7 @@ impl WalkaroundState {
         self.map_entities = save.map_entities;
         for shells in self.map_entities.values_mut() {
             for shell in shells.iter_mut() {
-                shell.reattach_sprites();
+                shell.reattach_sprites(ctx.presets);
             }
         }
         // A save with no map name (a pre-name save, whose only map field was the
@@ -657,7 +657,7 @@ impl WalkaroundState {
             // for the whole Walking state (`walking`) so the sprite cycles
             // smoothly rather than flickering on the idle ticks between moves.
             Amble { vx: i16, vy: i16, walking: bool },
-            Hatch(ShellPreset),
+            Hatch(PresetId),
         }
         for shell in self.entities.iter_mut() {
             let act = match &mut shell.move_mode {
@@ -678,7 +678,7 @@ impl WalkaroundState {
                     hatches_into,
                 } => {
                     if timer.tick() {
-                        Act::Hatch(*hatches_into)
+                        Act::Hatch(hatches_into.clone())
                     } else {
                         Act::Drive(0, 0)
                     }
@@ -717,7 +717,14 @@ impl WalkaroundState {
                 }
                 Act::Hatch(preset) => {
                     let pos = shell.pos;
-                    *shell = preset.build().with_pos(pos);
+                    *shell = ctx
+                        .presets
+                        .spawn(&preset)
+                        .unwrap_or_else(|| {
+                            log::warn!("egg hatches into unknown preset `{preset}`; using default");
+                            Shell::default()
+                        })
+                        .with_pos(pos);
                 }
             }
         }
@@ -1030,6 +1037,14 @@ mod tests {
     use crate::position::Hitbox;
     use crate::system::test_console::TestConsole;
 
+    /// Spawn a built-in critter from the embedded data (the data is the only
+    /// source of creatures now).
+    fn critter() -> Shell {
+        crate::data::eggdata::Presets::builtin()
+            .spawn(&PresetId::critter())
+            .unwrap()
+    }
+
     /// A minimal loadable map: one default layer (so `load_map` doesn't panic on
     /// an empty layer list) plus the given objects.
     fn map_with_objects(objects: Vec<MapObject>) -> MapInfo {
@@ -1118,8 +1133,8 @@ mod tests {
         // On map "a": mark the player, then spawn two creatures at known spots.
         walk.load_map(&mut console, named("a"));
         walk.player().pos = Vec2::new(42, 7);
-        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(11, 0)));
-        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(22, 0)));
+        walk.spawn_shell(critter().with_pos(Vec2::new(11, 0)));
+        walk.spawn_shell(critter().with_pos(Vec2::new(22, 0)));
         assert_eq!(creature_xs(&walk), vec![11, 22]);
 
         // Warp to "b": a's creatures park; only the player travels.
@@ -1128,7 +1143,7 @@ mod tests {
         assert_eq!(walk.player().pos, Vec2::new(42, 7), "player carried across");
 
         // Spawn one creature on "b".
-        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(99, 0)));
+        walk.spawn_shell(critter().with_pos(Vec2::new(99, 0)));
 
         // Back to "a": its two creatures return in order; b's parks.
         walk.load_map(&mut console, named("a"));
@@ -1156,12 +1171,12 @@ mod tests {
             ..MapInfo::default()
         };
         walk.load_map(&mut console, town);
-        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(5, 0)));
-        walk.spawn_shell(Shell::critter().with_pos(Vec2::new(6, 0)));
+        walk.spawn_shell(critter().with_pos(Vec2::new(5, 0)));
+        walk.spawn_shell(critter().with_pos(Vec2::new(6, 0)));
         // A different map already has a parked creature.
         walk.map_entities.insert(
             "field".to_string(),
-            vec![Shell::critter().with_pos(Vec2::new(7, 0))],
+            vec![critter().with_pos(Vec2::new(7, 0))],
         );
 
         walk.save("town", &mut save);

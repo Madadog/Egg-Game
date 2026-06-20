@@ -538,6 +538,7 @@ pub fn update_views(
                     scenes: &g.state.scenes,
                     save: &mut g.state.save,
                     items: &g.state.items,
+                    presets: &g.state.presets,
                 };
                 g.state.walkaround.load_map_by_name(&mut ctx, &name);
             }
@@ -619,6 +620,7 @@ pub fn update_views(
                     scenes: &g.state.scenes,
                     save: &mut g.state.save,
                     items: &g.state.items,
+                    presets: &g.state.presets,
                 };
                 g.state.walkaround.draw_world(
                     &mut ctx,

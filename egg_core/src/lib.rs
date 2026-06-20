@@ -30,6 +30,7 @@ pub mod rand;
 pub mod system;
 pub mod ui;
 
+use crate::data::eggdata::Presets;
 use crate::data::eggscene::{CutsceneDef, SceneFile};
 use crate::data::save::{SAVE_PATH, SaveData};
 use crate::data::script::Script;
@@ -74,6 +75,9 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// The loaded item registry (sprite per item key). Loaded game data like
     /// [`maps`](Self::maps)/[`script`](Self::script); read-only here.
     pub items: &'a GameItems,
+    /// The loaded creature registry (preset defs by [`PresetId`](crate::player::PresetId)).
+    /// Loaded game data like [`items`](Self::items); read-only here.
+    pub presets: &'a Presets,
 }
 
 impl<S: ConsoleApi> Ctx<'_, S> {
@@ -136,11 +140,14 @@ pub struct EggState {
     /// Every loaded Tiled map by name — the tile data the game draws,
     /// collides against and edits. The host fills it at asset-load time.
     pub maps: MapStore,
-    /// The loaded item registry (sprite per item key), threaded into every
-    /// state through [`Ctx::items`]. Loaded game data like [`maps`](Self::maps);
-    /// currently the hard-coded [`GameItems::default`], a future `.eggitems`
-    /// file will fill it at asset-load time.
+    /// The loaded item registry (sprite per item key), threaded into every state
+    /// through [`Ctx::items`]. Loaded from `data.toml` at boot (see
+    /// [`load_data`](Self::load_data)); [`GameItems::default`] is the fallback.
     pub items: GameItems,
+    /// The loaded creature registry (preset defs), threaded into every state via
+    /// [`Ctx::presets`]. Defaults to the embedded built-ins ([`Presets::builtin`]);
+    /// [`load_data`](Self::load_data) re-derives it from the runtime `data.toml`.
+    pub presets: Presets,
     /// The game's RNG, threaded into every state through [`Ctx::rng`].
     pub rng: Lcg64Xsh32,
     /// The loaded UI labels + dialogue, threaded into every state through
@@ -216,6 +223,7 @@ impl EggState {
             scenes: &self.scenes,
             save: &mut self.save,
             items: &self.items,
+            presets: &self.presets,
         };
         match self.gamestate {
             GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
@@ -320,7 +328,10 @@ impl EggState {
             .map_err(|e| e.to_string())
             .and_then(|s| eggdata::parse(s).map_err(|e| e.to_string()))
         {
-            Ok(data) => self.items = GameItems::from_data(&data.items),
+            Ok(data) => {
+                self.items = GameItems::from_data(&data.items);
+                self.presets = eggdata::Presets::from_data(&data);
+            }
             Err(e) => log::error!("Failed to parse game data ({}): {e}", eggdata::DATA_PATH),
         }
     }
@@ -375,6 +386,7 @@ impl Default for EggState {
             debug_info: DebugInfo::default(),
             maps: MapStore::default(),
             items: GameItems::default(),
+            presets: Presets::builtin(),
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
             scenes: SceneFile::default(),
@@ -607,6 +619,7 @@ mod tests {
                     scenes: &state.scenes,
                     save: &mut state.save,
                     items: &state.items,
+                    presets: &state.presets,
                 };
                 returned = menu.click(Some(index), &mut ctx, &mut walk, &mut inv);
             }

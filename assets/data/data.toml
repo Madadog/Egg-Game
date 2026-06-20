@@ -4,13 +4,14 @@
 # An item's display name and description are TEXT, so they live in the script as
 # the `item_<key>` list (script/en.eggtext), not here; only gameplay data is here.
 #
-# `[items.<key>]` — one entry per item, keyed by the id saves store and
-# interactions name (InteractFn::GiveItem). `sprite` is its sheet sprite id.
-#
-# Creature presets (`[presets.<name>]`) are a planned section of this same file;
-# the schema is defined and validated (egg_core::data::eggdata) but presets are
-# still constructed from code for now — to be authored here once the walk-sprite
-# tooling lands.
+# This file is the single source of the item and creature definitions: it is
+# embedded at build time as the engine's default (Presets::builtin /
+# GameItems::builtin) and re-read at runtime so edits take effect without a
+# recompile.
+
+# --- items ---
+# `[items.<key>]`, keyed by the id saves store and interactions name
+# (InteractFn::GiveItem). `sprite` is its sheet sprite id.
 
 [items.ff]
 sprite = 513
@@ -20,3 +21,43 @@ sprite = 514
 
 [items.chegg]
 sprite = 524
+
+# --- creature presets ---
+# `[presets.<name>]`, keyed by the name a save/egg stores. `hitbox = [x,y,w,h]`,
+# `move_mode = "wander"|"amble"` (default wander), `others` is the non-walk
+# (petting) strip. `walk` is one pattern:
+#   walk.humanoid   = { south, side }            (north derived south+3, west mirrors east)
+#   walk.sideways   = { ids, w, h }              (mirrored facing left)
+#   walk.front_back = { north, south }           (AnimSpec each, no mirroring)
+#   walk.compass.{north,south,east,west}         (AnimSpec each — the explicit hatch)
+# AnimSpec = { ids=[..], w, h } or { base, len, w, h }, plus optional
+#   flip = "Horizontal"|"Vertical", x_offset = N, loop_mode = ...
+
+[presets.ellie]
+hitbox = [0, 10, 7, 5]
+others = { ids = [774, 775], w = 1, h = 2 }
+walk.humanoid = { south = 768, side = 832 }
+
+[presets.may]
+hitbox = [0, 12, 7, 5]
+others = { ids = [2251, 2252], w = 1, h = 2 }
+walk.humanoid = { south = 2184, side = 2248 }
+
+[presets.bro]
+hitbox = [0, 8, 7, 5]
+others = { ids = [905, 906], w = 1, h = 2 }
+walk.humanoid = { south = 896, side = 902 }
+
+[presets.critter]
+hitbox = [0, 0, 8, 8]
+move_mode = "amble"
+others = { ids = [688], w = 1, h = 1 }
+walk.sideways = { ids = [688, 689], w = 1, h = 1 }
+
+[presets.dog]
+hitbox = [0, 12, 7, 5]
+others = { ids = [968, 970], w = 2, h = 2 }
+walk.compass.north = { base = 966, len = 2, w = 1, h = 2 }
+walk.compass.south = { base = 964, len = 2, w = 1, h = 2 }
+walk.compass.east = { base = 960, len = 2, w = 2, h = 2, x_offset = 8 }
+walk.compass.west = { base = 960, len = 2, w = 2, h = 2, flip = "Horizontal" }

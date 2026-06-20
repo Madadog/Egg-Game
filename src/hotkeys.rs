@@ -156,19 +156,19 @@ pub fn primary_hotkeys(
     }
     // Shift+digit: swap player one for a preset shell.
     if keys.pressed(KeyCode::ShiftLeft) {
-        use egg_core::player::Shell;
-        let swap = if keys.just_pressed(KeyCode::Digit1) {
-            Some(Shell::ellie())
+        use egg_core::player::PresetId;
+        let id = if keys.just_pressed(KeyCode::Digit1) {
+            Some(PresetId::ellie())
         } else if keys.just_pressed(KeyCode::Digit2) {
-            Some(Shell::may())
+            Some(PresetId::may())
         } else if keys.just_pressed(KeyCode::Digit4) {
-            Some(Shell::dog())
+            Some(PresetId::dog())
         } else if keys.just_pressed(KeyCode::Digit5) {
-            Some(Shell::bro())
+            Some(PresetId::bro())
         } else {
             None
         };
-        if let Some(shell) = swap {
+        if let Some(shell) = id.and_then(|id| game.state.presets.spawn(&id)) {
             game.state.walkaround.player().replace(shell);
         }
     }
