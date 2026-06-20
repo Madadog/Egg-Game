@@ -176,7 +176,7 @@ impl WalkSprites {
     /// falls back to north/south — reproducing the old `Compass` buckets. North
     /// and south aren't mirrored; `west` should already be the mirror of `east`.
     #[rustfmt::skip]
-    fn compass(
+    pub(crate) fn compass(
         north: SpriteAnimation,
         south: SpriteAnimation,
         east: SpriteAnimation,
@@ -193,7 +193,7 @@ impl WalkSprites {
     }
     /// North/south sprites only, no mirroring, for every heading — the static egg.
     #[rustfmt::skip]
-    fn front_back(north: SpriteAnimation, south: SpriteAnimation) -> Self {
+    pub(crate) fn front_back(north: SpriteAnimation, south: SpriteAnimation) -> Self {
         Self {
             grid: [
                 north.clone(), north.clone(), north.clone(),
@@ -207,7 +207,7 @@ impl WalkSprites {
     /// column). Pairs with a sticky horizontal facing (see the walkaround step)
     /// so straight up/down keeps the last left/right mirror.
     #[rustfmt::skip]
-    fn sideways(side: SpriteAnimation) -> Self {
+    pub(crate) fn sideways(side: SpriteAnimation) -> Self {
         let left = side.clone().with_flip(Flip::Horizontal);
         Self {
             grid: [
@@ -222,7 +222,7 @@ impl WalkSprites {
     /// frames, looping the walk pair); the north strip sits 3 tiles after
     /// `south`. The side-on walk cycles `[s, s+1, s, s+2]` from `side`, west
     /// mirrored from east.
-    fn humanoid(south: i32, side: i32) -> Self {
+    pub(crate) fn humanoid(south: i32, side: i32) -> Self {
         let strip = |base| {
             SpriteAnimation::from_base_sprite_id(base, 3, 1, 2)
                 .with_loopmode(LoopMode::LoopRange(1, 2))

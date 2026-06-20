@@ -165,6 +165,9 @@ pub struct EggState {
     /// once; it guards that read so a frame's edits aren't clobbered by a
     /// reload on the next frame.
     save_loaded: bool,
+    /// False until [`load_data`](Self::load_data) has installed the game-data
+    /// file (the item registry) once; guards that one-time read like `save_loaded`.
+    data_loaded: bool,
     /// The last [`SaveData`] flushed to storage. [`flush_save`](Self::flush_save)
     /// diffs the live save against this so it only writes when something changed.
     last_flushed_save: SaveData,
@@ -175,6 +178,9 @@ impl EggState {
         // after every state has had a chance to mutate it — so the same frame
         // that changes progress also writes it, and exit-time saving needs no
         // special host hook.
+        // Install the game-data file (item registry) before the save's inventory
+        // is rehydrated against it below, so saved keys validate against it.
+        self.load_data(system);
         let loaded = self.load_save(system);
         // On the one frame the save is read from storage, rebuild the live
         // inventory from its persisted item keys (the inverse of the sync before
@@ -287,6 +293,38 @@ impl EggState {
         true
     }
 
+    /// Load the game-data file (`assets/data/game.eggdata`) from the host's file
+    /// store, once, installing the item registry it defines (a full replace, so
+    /// the file is the source of truth). Mirrors [`load_save`](Self::load_save):
+    /// a missing file is ignored silently and a malformed one logs, either way
+    /// leaving the built-in [`GameItems::default`] in place. Called at the top of
+    /// [`run`](Self::run) so the registry is ready before the save's inventory is
+    /// rehydrated against it.
+    ///
+    /// Cross-platform note: on native the host serves asset paths through the
+    /// file store, so this reads the real file; on web the file store is
+    /// user-data only (`localStorage`), so the read returns nothing and the
+    /// built-in default stands. Reading this asset on web means routing it
+    /// through the engine's async asset pipeline (as the script/maps do) — a
+    /// follow-up, harmless while the shipped file matches the default.
+    pub fn load_data(&mut self, system: &mut impl system::ConsoleApi) {
+        use crate::data::eggdata;
+        if self.data_loaded {
+            return;
+        }
+        self.data_loaded = true;
+        let Some(bytes) = system.read_file(eggdata::DATA_PATH) else {
+            return;
+        };
+        match std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|s| eggdata::parse(s).map_err(|e| e.to_string()))
+        {
+            Ok(data) => self.items = GameItems::from_data(&data.items),
+            Err(e) => log::error!("Failed to parse game data ({}): {e}", eggdata::DATA_PATH),
+        }
+    }
+
     /// Flush the save to the host's file store when it differs from the last
     /// value written. A serialisation failure logs and skips — a failed save
     /// never crashes the game.
@@ -343,6 +381,7 @@ impl Default for EggState {
             pending_language: None,
             save: SaveData::default(),
             save_loaded: false,
+            data_loaded: false,
             last_flushed_save: SaveData::default(),
         }
     }
@@ -412,6 +451,49 @@ mod tests {
         let mut state = EggState::default();
         state.load_save(&mut console);
         assert_eq!(state.save, SaveData::default());
+    }
+
+    /// `load_data` reads the game-data file from the host store and installs its
+    /// item registry over the built-in default (a full replace), runs once, and
+    /// leaves the default in place when the file is absent or malformed.
+    #[test]
+    fn load_data_installs_items_and_runs_once() {
+        use crate::data::eggdata::DATA_PATH;
+
+        // No file: the built-in default (ff/lm/chegg) stays.
+        let mut console = TestConsole::new();
+        let mut state = EggState::default();
+        state.load_data(&mut console);
+        assert!(state.items.contains("ff"));
+        assert!(!state.items.contains("widget"));
+
+        // A valid file replaces the registry with exactly what it defines.
+        let mut console = TestConsole::new();
+        console.files.insert(
+            DATA_PATH.to_string(),
+            b"[items.widget]\nsprite = 700\n".to_vec(),
+        );
+        let mut state = EggState::default();
+        state.load_data(&mut console);
+        assert_eq!(state.items.get("widget").map(|d| d.sprite), Some(700));
+        // The file is the source of truth: a default it omits is gone.
+        assert!(!state.items.contains("ff"));
+
+        // The guard makes it run once: a later store change isn't re-read.
+        console
+            .files
+            .insert(DATA_PATH.to_string(), b"[items.other]\nsprite = 1\n".to_vec());
+        state.load_data(&mut console);
+        assert!(!state.items.contains("other"));
+
+        // Malformed bytes -> fall back to the default registry (logs, no panic).
+        let mut console = TestConsole::new();
+        console
+            .files
+            .insert(DATA_PATH.to_string(), b"items = [not a table]".to_vec());
+        let mut state = EggState::default();
+        state.load_data(&mut console);
+        assert!(state.items.contains("ff"));
     }
 
     /// The inventory survives a full save→load cycle through the real sync

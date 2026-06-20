@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     Ctx,
     data::sound,
@@ -11,7 +13,7 @@ use crate::{
 /// they live in the script (the `item_<key>` list, read via
 /// [`Ctx::item_name`](crate::Ctx::item_name) /
 /// [`Ctx::item_desc`](crate::Ctx::item_desc)).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDef {
     pub sprite: i32,
 }
@@ -21,9 +23,10 @@ pub struct ItemDef {
 /// names). Loaded game data, threaded through [`Ctx::items`](crate::Ctx::items)
 /// like `maps`/`script`/`scenes`.
 ///
-/// The canonical item set lives in [`Default`] for now; a future `.eggitems`
-/// data file will replace that hard-coded default, the way maps/script/scenes
-/// moved out to their own files.
+/// The shipped item set is loaded from `assets/data/game.eggdata` at boot (see
+/// [`from_data`](Self::from_data) and [`EggState::load_data`](crate::EggState::load_data)),
+/// the way maps/script/scenes moved out to their own files. [`Default`] is the
+/// built-in fallback for a missing/garbage file (and for headless/test use).
 #[derive(Debug, Clone)]
 pub struct GameItems {
     items: std::collections::HashMap<String, ItemDef>,
@@ -32,6 +35,13 @@ impl GameItems {
     pub fn new() -> Self {
         Self {
             items: std::collections::HashMap::new(),
+        }
+    }
+    /// Build the registry from parsed `.eggdata` items — the loaded source that
+    /// supersedes [`Default`] once the host installs it at boot.
+    pub fn from_data(items: &std::collections::BTreeMap<String, ItemDef>) -> Self {
+        Self {
+            items: items.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         }
     }
     pub fn add(&mut self, key: &str, sprite: i32) -> &mut Self {

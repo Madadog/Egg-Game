@@ -1,0 +1,22 @@
+# Runtime game data, in the `.eggdata` TOML format (see egg_core::data::eggdata).
+#
+# Language-invariant, like maps and cutscenes: an item's display name and
+# description are TEXT, so they live in the script as the `item_<key>` list
+# (script/en.eggtext), not here. Only the gameplay-relevant bits are here.
+#
+# `[items.<key>]` — one entry per item, keyed by the id saves store and
+# interactions name (InteractFn::GiveItem). `sprite` is its sheet sprite id.
+#
+# Creature presets (`[presets.<name>]`) are a planned section of this same file;
+# the schema is defined and validated (egg_core::data::eggdata) but presets are
+# still constructed from code for now — to be authored here once the walk-sprite
+# tooling lands.
+
+[items.ff]
+sprite = 513
+
+[items.lm]
+sprite = 514
+
+[items.chegg]
+sprite = 524
