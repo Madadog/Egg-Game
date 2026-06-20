@@ -583,7 +583,7 @@ impl WalkaroundState {
             return None;
         }
 
-        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.keyp(ScanCode::Ctrl) {
+        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.key(ScanCode::Ctrl) {
             self.load_pmem(ctx);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
@@ -617,6 +617,9 @@ impl WalkaroundState {
             }
             if just_pressed(pad.b) {
                 self.dialogue.skip(ctx.system, ctx.save);
+            }
+            if ctx.system.keyp(ScanCode::Q) && ctx.system.key(ScanCode::Ctrl) {
+                self.dialogue.close();
             }
         }
         if just_pressed(pad.a) && self.dialogue.is_line_done() {
