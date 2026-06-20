@@ -463,4 +463,107 @@ mod tests {
         // The reloaded slots match the originals item-for-item.
         assert_eq!(loaded.inventory_ui.inventory.to_save(), filled);
     }
+
+    /// Erasing the save (the Options menu's "lose data" action) resets the LIVE
+    /// inventory back to the default starting items — not just `SaveData`. This is
+    /// the regression: the live inventory lives on `EggState.inventory_ui`, a field
+    /// the erase used to leave alone, and `run` re-syncs it into the save at the end
+    /// of every frame, so a stale inventory would be written straight back over the
+    /// freshly-erased default. Drives the real erase through the public
+    /// [`MenuState::click`] path (Options → Reset → confirm), then runs `run`'s own
+    /// serialise-before-flush + `flush_save`, and asserts the live inventory, the
+    /// in-memory save and the on-disk save are all the defaults.
+    #[test]
+    fn erase_resets_live_inventory_to_defaults() {
+        // `MenuState`/`GameMode` are already imported at module scope (the `use
+        // super::*;` above pulls in the parent's `gamestate::{MenuState, …}`).
+        let mut console = TestConsole::new();
+        let mut state = EggState::default();
+        state.load_save(&mut console); // no file: leaves the default save.
+
+        // Dirty the live inventory and some other progress, so the erase has
+        // something to actually undo and the post-erase flush has a diff to write.
+        assert!(state.inventory_ui.inventory.add("ff".into()));
+        assert!(state.inventory_ui.inventory.add("lm".into()));
+        state.inventory_ui.inventory.unlocks = [true; 4];
+        state.save.egg_count = 99;
+        assert_ne!(
+            state.inventory_ui.inventory.to_save(),
+            SaveData::default().inventory,
+            "inventory dirtied for the test"
+        );
+
+        // Persist that dirtied state to disk first (as ordinary play would, via
+        // `run`'s serialise-before-flush), so a real save file with the old items
+        // exists — and so the post-erase flush below has a genuine diff to write
+        // (`flush_save` is diff-gated against the last flush).
+        state.save.inventory = state.inventory_ui.inventory.to_save();
+        state.flush_save(&mut console);
+        assert!(console.files.contains_key(SAVE_PATH), "dirty save written");
+
+        // Drive the menu through its public `click` API, exactly as `step_mode`
+        // does: open Options (installs the sub-screen whose entries end in Reset),
+        // then click Reset twice — the first arms the confirm, the second erases.
+        // `Options` sits at index 1 of the main menu; `Reset` is the last of the
+        // four Options entries (index 3). Each click builds a fresh `Ctx`
+        // split-borrowing the same `EggState` fields (it borrows mutably, so it
+        // can't outlive the call) and hands the walkaround + inventory_ui in
+        // alongside, the way `step_mode` does.
+        state.menu = MenuState::new();
+        let mut returned = None;
+        for index in [1, 3, 3] {
+            let mut walk = std::mem::take(&mut state.walkaround);
+            let mut inv = std::mem::take(&mut state.inventory_ui);
+            let mut menu = std::mem::take(&mut state.menu);
+            {
+                let mut ctx = Ctx {
+                    draw: &mut state.draw_state,
+                    system: &mut console,
+                    maps: &mut state.maps,
+                    rng: &mut state.rng,
+                    script: &state.script,
+                    scenes: &state.scenes,
+                    save: &mut state.save,
+                    items: &state.items,
+                };
+                returned = menu.click(Some(index), &mut ctx, &mut walk, &mut inv);
+            }
+            state.walkaround = walk;
+            state.inventory_ui = inv;
+            state.menu = menu;
+        }
+        // The erase requests the intro (a fresh game), confirming it fired.
+        assert_eq!(returned, Some(GameMode::Animation), "erase fired");
+
+        // The live inventory is back to the default starting items immediately…
+        assert_eq!(
+            state.inventory_ui.inventory.to_save(),
+            SaveData::default().inventory,
+            "live inventory reset to the starting items"
+        );
+        // …and the rest of `InventoryUi` is fresh too (the unlocks we dirtied).
+        assert_eq!(state.inventory_ui.inventory.unlocks, [false; 4]);
+        // The in-memory save is the default (egg_count cleared as well).
+        assert_eq!(state.save, SaveData::default(), "save zeroed");
+
+        // Now run the two lines `run` performs after `step_mode`: serialise the
+        // live inventory back into the save, then flush. This is the exact path the
+        // bug exploited — with the fix the synced-back inventory is the default, so
+        // the persisted save stays erased rather than re-acquiring the old items.
+        state.save.inventory = state.inventory_ui.inventory.to_save();
+        state.flush_save(&mut console);
+
+        assert_eq!(
+            state.save.inventory,
+            SaveData::default().inventory,
+            "post-sync save inventory is the starting items, not the stale ones"
+        );
+        let bytes = console.files.get(SAVE_PATH).expect("erase flushed to disk");
+        let on_disk: SaveData = serde_json::from_slice(bytes).expect("valid json");
+        assert_eq!(
+            on_disk,
+            SaveData::default(),
+            "the erased default is what persists across a restart"
+        );
+    }
 }

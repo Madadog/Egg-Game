@@ -220,6 +220,18 @@ impl MenuState {
                     *x += 1;
                 } else {
                     *ctx.save = SaveData::default();
+                    // Erasing zeroes the save, but the LIVE inventory lives on
+                    // `EggState.inventory_ui` (a separate field), and `run`
+                    // re-syncs `save.inventory = inventory_ui…to_save()` at the
+                    // end of every frame — so without this the stale items would
+                    // be written straight back over the just-erased default and
+                    // the erase undone. Rebuild it to the fresh starting items
+                    // (ff/lm/chegg), matching `new_game`'s `*self = Self::new()`
+                    // for the walkaround. (The walkaround itself, including its
+                    // parked `map_entities`, is reset by `new_game` on the
+                    // ensuing fresh-game path, and no `save()` runs between here
+                    // and there to re-gather stale creatures.)
+                    *inventory_ui = crate::gamestate::inventory::InventoryUi::new();
                     return Some(GameMode::Animation);
                 }
             }
