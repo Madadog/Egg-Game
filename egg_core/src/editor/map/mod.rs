@@ -2103,16 +2103,11 @@ impl MapViewer {
                     rows.push(b.row(2.0, [open, place]).id());
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
-                    self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
-                    self.cycle_row(b, rows, CycleField::Mode, "mode", mode_label(&w.mode));
-                    self.cycle_row(b, rows, CycleField::Sound, "snd", sound_label(&w.sound));
-                    self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
-                    let narr = w.narration.as_deref().unwrap_or("-");
-                    self.field_row(b, rows, EditField::Narration, "narr", narr);
-                    // Click-to-place destination preview: a rendered map of the
-                    // warp target with the player at the landing point. Drawn over
-                    // this box (see `draw_warp_preview`); clicks land here. Last so
-                    // it (not the essential fields) is what overflows a short panel.
+                    // Click-to-place destination preview, grouped right under the
+                    // destination map/coords + open/place buttons above it: a
+                    // rendered map of the warp target with the player at the landing
+                    // point. Drawn over this box (see `draw_warp_preview`); clicks
+                    // land here.
                     self.header_row(b, rows, "land:", 7.0);
                     rows.push(
                         b.boxed([])
@@ -2122,6 +2117,13 @@ impl MapViewer {
                             .key(EditorKey::WarpPreview)
                             .id(),
                     );
+                    // Warp behaviour, below the destination group.
+                    self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
+                    self.cycle_row(b, rows, CycleField::Mode, "mode", mode_label(&w.mode));
+                    self.cycle_row(b, rows, CycleField::Sound, "snd", sound_label(&w.sound));
+                    self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
+                    let narr = w.narration.as_deref().unwrap_or("-");
+                    self.field_row(b, rows, EditField::Narration, "narr", narr);
                 }
                 ObjectEffect::Interact(interaction) => {
                     // Interaction kind (click to cycle) + its one editable param.
