@@ -14,14 +14,12 @@ use bevy::asset::RenderAssetUsages;
 use bevy::platform::collections::HashMap as BevyHashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use egg_core::{
-    data::sound::music::MusicTrack,
-    gamestate::EggInput,
-    system::{
-        ConsoleApi, Controller, Font, HEIGHT, MouseInput, ScanCode, SfxOptions, WIDTH,
-        drawing::image::{IndexedImage, RgbaImage},
-    },
+use egg_core::data::sound::music::MusicTrack;
+use egg_core::platform::{
+    ConsoleApi, Controller, EggInput, HEIGHT, MouseInput, ScanCode, SfxOptions, WIDTH,
 };
+use egg_core::render::Font;
+use egg_core::render::image::{IndexedImage, RgbaImage};
 
 use crate::{EggGame, ScaleMode};
 
@@ -103,7 +101,7 @@ impl FantasyConsole {
 
     /// Convert a Bevy RGBA sprite-sheet `Image` into the engine's [`RgbaImage`].
     /// Host-side asset plumbing: the result is stored on
-    /// [`DrawState`](egg_core::drawstate::DrawState), the single owner of the
+    /// [`DrawState`](egg_core::draw_state::DrawState), the single owner of the
     /// sheets, by `load_assets`.
     pub fn sprites_from_image(sheet: &Image) -> RgbaImage {
         RgbaImage::from_vec(
@@ -119,7 +117,7 @@ impl FantasyConsole {
     /// Convert an RGBA sprite sheet to indexed form by matching each pixel
     /// against `palette`. Pixels that don't match a palette entry become
     /// index 0. Host-side: the palette-matching policy is the host's, and the
-    /// result is stored on [`DrawState`](egg_core::drawstate::DrawState).
+    /// result is stored on [`DrawState`](egg_core::draw_state::DrawState).
     pub fn indexed_sprites_from_image(sheet: &Image, palette: &[[u8; 3]]) -> IndexedImage {
         let width = sheet.size().x as usize;
         let height = sheet.size().y as usize;
@@ -204,7 +202,7 @@ impl ConsoleApi for FantasyConsole {
         names
     }
 
-    fn sfx(&mut self, sfx_id: &str, opts: egg_core::system::SfxOptions) {
+    fn sfx(&mut self, sfx_id: &str, opts: egg_core::platform::SfxOptions) {
         self.sounds.insert(sfx_id.to_string(), opts);
     }
 

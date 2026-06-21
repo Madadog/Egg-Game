@@ -1,14 +1,14 @@
 //! Game data — the runtime `data.toml` file (plain TOML): the **item registry**
-//! and the creature **[`ShellPreset`](crate::player::ShellPreset) definitions**.
+//! and the creature **[`ShellPreset`](crate::world::player::ShellPreset) definitions**.
 //! Language-invariant data, the way maps and cutscenes are (names/descriptions
 //! stay in the script as `item_<key>` lists) — loaded from `assets/data/` at
 //! startup the way the script and maps are, rather than baked into Rust.
 //!
 //! ## Why this shape
-//! The format mirrors the *constructors* in [`crate::player`]
+//! The format mirrors the *constructors* in [`crate::world::player`]
 //! (`humanoid`/`compass`/`sideways`/`front_back`), **not** the expanded runtime
-//! [`WalkSprites`](crate::player::WalkSprites). The runtime form is a flattened
-//! 9-cell grid of per-frame [`SpriteOptions`](crate::system::SpriteOptions);
+//! [`WalkSprites`](crate::world::player::WalkSprites). The runtime form is a flattened
+//! 9-cell grid of per-frame [`SpriteOptions`](crate::render::SpriteOptions);
 //! serialising that would be enormous and unauthorable. The patterns already are
 //! the authoring vocabulary, so a preset is the pattern plus its sprite ids —
 //! terse enough to hand-write (the second-class path) and exactly what a future
@@ -16,8 +16,8 @@
 //!
 //! ## Status
 //! [`items`](DataFile::items) are the live source today
-//! ([`GameItems::from_data`](crate::gamestate::inventory::GameItems::from_data),
-//! installed at boot by [`EggState::load_data`](crate::EggState::load_data)).
+//! ([`GameItems::from_data`], installed at boot by
+//! [`EggState::load_data`](crate::EggState::load_data)).
 //! The preset schema below is complete and round-trip-validated against the
 //! built-in constructors (see the tests), but presets are not yet the runtime
 //! source: every spawn site still constructs from code. Making presets data-
@@ -28,18 +28,72 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::gamestate::inventory::ItemDef;
-use crate::player::{
+use crate::geometry::Hitbox;
+use crate::render::Flip;
+use crate::world::player::{
     CreatureState, LoopMode, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer,
     WalkSprites,
 };
-use crate::position::Hitbox;
-use crate::system::Flip;
 
 /// Where the host stores the game-data file, resolved under the asset root
 /// (`assets/data/data.toml`) the same way [`SAVE_PATH`](crate::data::save::SAVE_PATH)
 /// and the script/map paths are.
 pub const DATA_PATH: &str = "data/data.toml";
+
+/// The fixed, gameplay-relevant data for one item — currently just which sprite
+/// draws it. Its display name and description are NOT here: those are text, so
+/// they live in the script (the `item_<key>` list, read via
+/// [`Ctx::item_name`](crate::Ctx::item_name) /
+/// [`Ctx::item_desc`](crate::Ctx::item_desc)).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemDef {
+    pub sprite: i32,
+}
+
+/// The registry of every item the game knows about, keyed by the persistent
+/// string id a save stores (and an [`InteractFn`](crate::world::interact::InteractFn)
+/// names). Loaded game data, threaded through [`Ctx::items`](crate::Ctx::items)
+/// like `maps`/`script`/`scenes`.
+///
+/// The shipped item set is loaded from `assets/data/data.toml` at boot (see
+/// [`from_data`](Self::from_data) and [`EggState::load_data`](crate::EggState::load_data)),
+/// the way maps/script/scenes moved out to their own files. [`Default`] is the
+/// built-in fallback for a missing/garbage file (and for headless/test use).
+#[derive(Debug, Clone)]
+pub struct GameItems {
+    items: std::collections::HashMap<String, ItemDef>,
+}
+impl GameItems {
+    pub fn new() -> Self {
+        Self {
+            items: std::collections::HashMap::new(),
+        }
+    }
+    /// Build the registry from parsed `data.toml` items — the loaded source that
+    /// supersedes [`Default`] once the host installs it at boot.
+    pub fn from_data(items: &std::collections::BTreeMap<String, ItemDef>) -> Self {
+        Self {
+            items: items.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        }
+    }
+    pub fn add(&mut self, key: &str, sprite: i32) -> &mut Self {
+        self.items.insert(key.to_string(), ItemDef { sprite });
+        self
+    }
+    pub fn get(&self, key: &str) -> Option<&ItemDef> {
+        self.items.get(key)
+    }
+    pub fn contains(&self, key: &str) -> bool {
+        self.items.contains_key(key)
+    }
+}
+impl Default for GameItems {
+    fn default() -> Self {
+        let mut i = Self::new();
+        i.add("ff", 513).add("lm", 514).add("chegg", 524);
+        i
+    }
+}
 
 /// A parsed `data.toml` file: the whole game's language-invariant data. Both
 /// sections default to empty, so a file may carry only `[items]` (as the shipped
@@ -47,10 +101,10 @@ pub const DATA_PATH: &str = "data/data.toml";
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DataFile {
     /// The item registry, keyed by the persistent item id a save stores
-    /// (`"ff"`, `"lm"`, …). Built into [`GameItems`](crate::gamestate::inventory::GameItems).
+    /// (`"ff"`, `"lm"`, …). Built into [`GameItems`].
     #[serde(default)]
     pub items: BTreeMap<String, ItemDef>,
-    /// Creature presets, keyed by the [`ShellPreset`](crate::player::ShellPreset)
+    /// Creature presets, keyed by the [`ShellPreset`](crate::world::player::ShellPreset)
     /// name a save stores (`"ellie"`, `"critter"`, …). Schema-complete and
     /// validated; not yet the runtime source (see the module docs).
     #[serde(default)]
@@ -116,7 +170,7 @@ impl Presets {
 
 /// One creature archetype: its collision box, wander behaviour, the extra
 /// (non-walk) animations, and how its walk grid is built. Mirrors a
-/// `Shell::<preset>()` constructor in [`crate::player`].
+/// `Shell::<preset>()` constructor in [`crate::world::player`].
 ///
 /// Field order matters for TOML serialisation: the scalar/array values
 /// (`hitbox`, `move_mode`) come before the sub-table fields (`others`, `walk`),
@@ -130,7 +184,7 @@ pub struct PresetDef {
     #[serde(default, skip_serializing_if = "PresetMove::is_default")]
     pub move_mode: PresetMove,
     /// Non-walk animations (today just the petting sprite), as a single sprite
-    /// strip — the `other_ids` of [`ShellSprites`](crate::player::ShellSprites).
+    /// strip — the `other_ids` of [`ShellSprites`](crate::world::player::ShellSprites).
     pub others: SpriteSet,
     /// How the eight-heading walk grid is built (see [`WalkSpec`]).
     pub walk: WalkSpec,
@@ -163,7 +217,7 @@ impl PresetDef {
 }
 
 /// A run of sprite ids drawn at a fixed cell size — the `(ids, w, h)` triple the
-/// [`ShellSprites`](crate::player::ShellSprites) `others` strip is built from.
+/// [`ShellSprites`](crate::world::player::ShellSprites) `others` strip is built from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpriteSet {
     pub ids: Vec<i32>,
@@ -177,7 +231,7 @@ impl SpriteSet {
 }
 
 /// How a preset's eight-heading walk grid is built, one variant per authoring
-/// pattern in [`WalkSprites`](crate::player::WalkSprites). Externally tagged
+/// pattern in [`WalkSprites`](crate::world::player::WalkSprites). Externally tagged
 /// (TOML's best-supported enum form): the variant name is the table key, e.g.
 /// `walk = { humanoid = { south = 768, side = 832 } }`.
 ///
@@ -208,7 +262,7 @@ pub enum WalkSpec {
 }
 impl WalkSpec {
     /// Build the runtime walk grid, dispatching to the matching
-    /// [`WalkSprites`](crate::player::WalkSprites) constructor.
+    /// [`WalkSprites`](crate::world::player::WalkSprites) constructor.
     pub fn build(&self) -> WalkSprites {
         match self {
             WalkSpec::Humanoid { south, side } => WalkSprites::humanoid(*south, *side),
@@ -229,7 +283,7 @@ impl WalkSpec {
 }
 
 /// One animation as data: either an explicit `ids` list or a `base`+`len` strip
-/// (the two [`SpriteAnimation`](crate::player::SpriteAnimation) sources), drawn
+/// (the two [`SpriteAnimation`](crate::world::player::SpriteAnimation) sources), drawn
 /// at `w`×`h`, with optional `flip`, `x_offset` and `loop_mode` modifiers. Used
 /// for the explicit [`WalkSpec::Compass`] cells.
 ///
@@ -280,7 +334,7 @@ impl AnimSpec {
 }
 
 /// The wander behaviour a preset spawns with — the data form of the relevant
-/// [`MoveMode`](crate::player::MoveMode) variants. (`Egg`/`Player` aren't preset
+/// [`MoveMode`](crate::world::player::MoveMode) variants. (`Egg`/`Player` aren't preset
 /// spawn states, so they're not here.)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -303,7 +357,7 @@ impl PresetMove {
     }
 }
 
-/// The data form of [`LoopMode`](crate::player::LoopMode): an animation's loop
+/// The data form of [`LoopMode`](crate::world::player::LoopMode): an animation's loop
 /// behaviour. Inclusive `start`/`end` for the ranged variant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -344,7 +398,7 @@ fn flip_is_none(f: &Flip) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::{MoveMode, PresetId};
+    use crate::world::player::{MoveMode, PresetId};
 
     /// The built-in presets as `data.toml`, hand-mirrored from the `Shell::<x>()`
     /// constructors in `player.rs`. The tests below prove these rebuild the exact

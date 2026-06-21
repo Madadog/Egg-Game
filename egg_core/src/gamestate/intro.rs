@@ -1,10 +1,10 @@
 use crate::Ctx;
 use crate::data::sound::music::MusicTrack;
-use crate::drawstate::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
+use crate::draw_state::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::GameMode;
 use crate::gamestate::menu::draw_title_indexed;
-use crate::system::drawing::{Canvas, EdgePolicy};
-use crate::system::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
+use crate::render::{Canvas, EdgePolicy};
+use crate::platform::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
 
 /// The startup intro animation: a frame counter ticking through
 /// [`draw_animation`] until it finishes (or is skipped with B), then it hands off

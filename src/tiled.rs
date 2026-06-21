@@ -1,6 +1,6 @@
 //! Bevy-side plumbing for the engine's data files: Tiled maps (`.tmj`) and the
 //! game asset manifest (`.manifest`). The codecs themselves ([`TiledMap`] and
-//! [`GameManifest`]) live in `egg_core::data::tmj`; this module only wraps them
+//! [`GameManifest`]) live in `egg_core::data::tiled`; this module only wraps them
 //! for the asset system, since Bevy's derives can't live on the
 //! engine-agnostic types. Each loader does the byte-level read and hands the
 //! bytes to the shared engine codec.
@@ -9,7 +9,7 @@ use bevy::{
     asset::{AssetApp, AssetLoader, LoadContext, io::Reader},
     prelude::{Asset, Plugin, TypePath},
 };
-use egg_core::data::tmj::{self, GameManifest, TiledMap};
+use egg_core::data::tiled::{self, GameManifest, TiledMap};
 
 /// Asset wrapper around the engine's [`TiledMap`].
 #[derive(Asset, TypePath)]
@@ -46,7 +46,7 @@ impl AssetLoader for TiledMapLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        let map = tmj::from_json(&bytes)?;
+        let map = tiled::from_json(&bytes)?;
         if map.tilesets.len() > 1 {
             bevy::log::warn!(
                 "{} has {} tilesets: `to_tmj` re-adds only the first firstgid, so tile edits saved through the in-game editor will corrupt gids for multi-tileset maps",
@@ -80,7 +80,7 @@ impl AssetLoader for ManifestLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        Ok(ManifestAsset(tmj::manifest_from_json(&bytes)?))
+        Ok(ManifestAsset(tiled::manifest_from_json(&bytes)?))
     }
 
     fn extensions(&self) -> &[&str] {

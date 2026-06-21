@@ -14,154 +14,20 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::system::{Controller, MouseInput, PrintOptions, SCANCODE_COUNT, ScanCode};
+use crate::render::PrintOptions;
 
 use self::walkaround::WalkaroundState;
 use crate::Ctx;
-use crate::system::{ConsoleApi, ConsoleHelper};
+use crate::platform::{ConsoleApi, ConsoleHelper};
 
-pub use self::debug::SpriteTest;
 pub use self::intro::IntroAnimation;
 pub use self::menu::MenuState;
+pub use self::sprite_test::SpriteTest;
 
-mod debug;
 mod intro;
-pub mod inventory;
-// Public so a host can give an extra walkaround window its own `MapViewer`
-// (the in-game map editor) instance — see the frontend's multi-window views.
-pub mod mapeditor;
 mod menu;
-/// The reusable line-editing buffer ([`text_field::TextField`]) shared by the map
-/// editor's property fields and the multi-line [`texteditor`].
-mod text_field;
-/// A full-window raw text editor for the `.eggtext`/`.eggscene` script files,
-/// hosted per extra view — see the frontend's multi-window views.
-pub mod texteditor;
+mod sprite_test;
 pub mod walkaround;
-
-#[derive(Clone, Debug)]
-pub struct EggInput {
-    pub controllers: [Controller; 4],
-    pub keyboard: [bool; SCANCODE_COUNT],
-    pub previous_keyboard: [bool; SCANCODE_COUNT],
-    /// Consecutive fixed steps each scancode has been held (0 while up), advanced
-    /// in [`refresh`](Self::refresh) — drives [`key_repeat`](Self::key_repeat).
-    pub held: [u16; SCANCODE_COUNT],
-    pub mouse: MouseInput,
-    pub typed_chars: Vec<char>,
-}
-impl Default for EggInput {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EggInput {
-    pub fn new() -> Self {
-        Self {
-            controllers: [Controller::default(); 4],
-            keyboard: [false; SCANCODE_COUNT],
-            previous_keyboard: [false; SCANCODE_COUNT],
-            held: [0; SCANCODE_COUNT],
-            mouse: MouseInput::default(),
-            typed_chars: Vec::with_capacity(8),
-        }
-    }
-    pub fn press_key(&mut self, key: ScanCode) {
-        if let Some(down) = self.keyboard.get_mut(key.index()) {
-            *down = true;
-        }
-    }
-    pub fn push_char(&mut self, c: char) {
-        self.typed_chars.push(c);
-    }
-    pub fn refresh(&mut self) {
-        // Advance the per-key hold counters from the frame that just ended — the
-        // `keyboard` array still holds it here, before the clear below.
-        for (held, &down) in self.held.iter_mut().zip(&self.keyboard) {
-            *held = if down { held.saturating_add(1) } else { 0 };
-        }
-        self.previous_keyboard = self.keyboard;
-        self.mouse.step();
-        for controller in &mut self.controllers {
-            controller.step();
-        }
-        self.keyboard = [false; SCANCODE_COUNT];
-        self.typed_chars.clear();
-    }
-    pub fn key_chars(&self) -> &[char] {
-        &self.typed_chars
-    }
-    /// Index a per-scancode array by `key`, yielding the type's default (`false` /
-    /// `0`) for an out-of-range scancode. `ScanCode::index()` is always in range,
-    /// so this just keeps every lookup panic-free behind one helper.
-    fn at<T: Copy + Default>(array: &[T], key: ScanCode) -> T {
-        array.get(key.index()).copied().unwrap_or_default()
-    }
-    /// Whether `key` is down this frame.
-    pub fn key(&self, key: ScanCode) -> bool {
-        Self::at(&self.keyboard, key)
-    }
-    /// Whether `key` was down on the previous frame.
-    fn was_down(&self, key: ScanCode) -> bool {
-        Self::at(&self.previous_keyboard, key)
-    }
-    /// Fixed steps `key` has been held (0 while up).
-    fn held_steps(&self, key: ScanCode) -> u16 {
-        Self::at(&self.held, key)
-    }
-    /// True only on the frame `key` goes down (down now, up last frame).
-    pub fn keyp(&self, key: ScanCode) -> bool {
-        self.key(key) && !self.was_down(key)
-    }
-    /// Edge-or-repeat: true on the initial press, then — while still held — again
-    /// every `rate` fixed steps after an initial `delay` (both in fixed steps).
-    /// `delay`/`rate` are per-call so different consumers can tune their cadence.
-    pub fn key_repeat(&self, key: ScanCode, delay: u16, rate: u16) -> bool {
-        if !self.key(key) {
-            return false;
-        }
-        let held = self.held_steps(key);
-        if held == 0 {
-            return true;
-        }
-        held >= delay && (held - delay).is_multiple_of(rate.max(1))
-    }
-}
-
-#[cfg(test)]
-mod input_tests {
-    use super::*;
-
-    /// `key_repeat` fires on the press frame, then — once held past `delay` — every
-    /// `rate` fixed steps, and never while the key is up. One frame = `refresh()`
-    /// (advances the hold counter from last frame, clears `keyboard`) then a press.
-    #[test]
-    fn key_repeat_fires_on_press_then_after_delay_at_rate() {
-        let mut input = EggInput::new();
-        let k = ScanCode::Backspace;
-        let (delay, rate) = (3u16, 2u16);
-
-        let mut fired = Vec::new();
-        for frame in 0..10 {
-            input.refresh();
-            input.press_key(k);
-            if input.key_repeat(k, delay, rate) {
-                fired.push(frame);
-            }
-        }
-        // Initial press at 0, then held reaches `delay` (3) and repeats every `rate`.
-        assert_eq!(fired, vec![0, 3, 5, 7, 9]);
-
-        // A held key that's no longer pressed this frame never repeats…
-        input.refresh();
-        assert!(!input.key_repeat(k, delay, rate));
-        // …and after release the counter resets, so a fresh press fires again.
-        input.refresh();
-        input.press_key(k);
-        assert!(input.key_repeat(k, delay, rate));
-    }
-}
 
 /// The current game mode — a pure tag. Each mode's state lives in its own field
 /// on [`EggState`](crate::EggState) (e.g. [`IntroAnimation`], [`Instructions`],
@@ -214,9 +80,9 @@ impl Instructions {
 }
 
 pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
-    use crate::drawstate::LayerId;
-    use crate::system::drawing::image::RgbaImage;
-    use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+    use crate::draw_state::LayerId;
+    use crate::render::image::RgbaImage;
+    use crate::render::{Canvas, EdgePolicy, Transform};
     let small_text = ctx.save.small_text_on;
     let title = ctx.label("instructions_title");
     let instructions = ctx.label("instructions");
@@ -235,7 +101,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
         // at the base width). `d` vertically centres the 136-tall design (0 at the
         // base height), so the box rides the middle of a taller window.
         let cw = canvas.width() as i32;
-        let d = (canvas.height() as i32 - crate::system::HEIGHT) / 2;
+        let d = (canvas.height() as i32 - crate::platform::HEIGHT) / 2;
         canvas.outlined_rect(6, 15 + d, cw - 12, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17 + d, cw - 16, 96, colour_1);
         ctx.system.print_to_shadow(

@@ -1,4 +1,4 @@
-use crate::system::SfxOptions;
+use crate::platform::SfxOptions;
 
 #[derive(Debug, Clone)]
 pub struct SfxData {
@@ -115,7 +115,7 @@ pub mod music {
     /// A music track, identified by name — its file stem under `assets/music/`,
     /// which the host loads as `music/<id>.ogg`. The set of real tracks is
     /// discovered from that directory at runtime (see
-    /// [`ConsoleApi::music_tracks`](crate::system::ConsoleApi::music_tracks)); a
+    /// [`ConsoleApi::music_tracks`](crate::platform::ConsoleApi::music_tracks)); a
     /// map (via its `music` property) or the title sequence refers to one by name.
     #[derive(Debug, Clone)]
     pub struct MusicTrack {

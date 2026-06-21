@@ -1,8 +1,7 @@
 pub mod eggdata;
-pub mod eggscene;
-pub mod eggtext;
 pub mod portraits;
 pub mod save;
+pub mod scene;
 pub mod script;
 pub mod sound;
-pub mod tmj;
+pub mod tiled;

@@ -156,7 +156,7 @@ pub fn primary_hotkeys(
     }
     // Shift+digit: swap player one for a preset shell.
     if keys.pressed(KeyCode::ShiftLeft) {
-        use egg_core::player::PresetId;
+        use egg_core::world::player::PresetId;
         let id = if keys.just_pressed(KeyCode::Digit1) {
             Some(PresetId::ellie())
         } else if keys.just_pressed(KeyCode::Digit2) {

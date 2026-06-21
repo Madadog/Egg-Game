@@ -1,28 +1,28 @@
 use std::collections::BTreeMap;
 
 use crate::Ctx;
-use crate::animation::Animation;
 use crate::data::save::SaveData;
 use crate::data::sound;
 use crate::debug::DebugInfo;
-use crate::interact::{InteractFn, Interaction};
-use crate::map::{Axis, MapInfo, ObjectEffect, map_by_name};
-use crate::particles::{Particle, ParticleDraw, ParticleList};
-use crate::player::{Companion, CompanionList, CompanionTrail, MoveMode, PresetId, Shell};
-use crate::position::{Collider, Vec2};
-use crate::system::PrintOptions;
-use crate::system::{
-    ConsoleApi, ConsoleHelper, DrawParams, ScanCode, dpad_delta, just_pressed, pressed,
-};
-use crate::{camera::Camera, dialogue::Dialogue, gamestate::GameMode};
+use crate::editor::map::MapViewer;
+use crate::geometry::{Collider, Vec2};
+use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
+use crate::render::{DrawParams, PrintOptions};
+use crate::ui::dialogue::Dialogue;
+use crate::world::animation::Animation;
+use crate::world::camera::Camera;
+use crate::world::interact::{InteractFn, Interaction};
+use crate::world::map::{Axis, MapInfo, ObjectEffect, map_by_name};
+use crate::world::particles::{Particle, ParticleDraw, ParticleList};
+use crate::world::player::{Companion, CompanionList, CompanionTrail, MoveMode, PresetId, Shell};
+use crate::gamestate::GameMode;
 use log::info;
 
 use self::cutscene::Cutscene;
-
-use super::inventory::{Inventory, InventoryUi};
-use super::mapeditor::MapViewer;
+use self::inventory::{Inventory, InventoryUi};
 
 mod cutscene;
+pub mod inventory;
 
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
@@ -41,6 +41,11 @@ pub struct WalkaroundState {
     pub current_map: MapInfo,
     pub map_viewer: MapViewer,
     pub dialogue: Dialogue,
+    /// The player's bag and its on-screen view. Lives here (rather than on
+    /// [`EggState`](crate::EggState)) because the inventory is part of the
+    /// walkaround: the world opens it, the inventory mode dispatches into it, and
+    /// it round-trips through the save with the rest of the walkaround's state.
+    pub inventory_ui: InventoryUi,
     pub particles: ParticleList,
     pub cutscene: Option<Cutscene>,
     pub bg_colour: u8,
@@ -57,7 +62,7 @@ pub struct WalkaroundState {
     /// `Some` the whole object scan/apply is skipped, so the player standing in
     /// the warp's hitbox with the box open can't re-fire it. Cleared on apply and
     /// defensively in [`load_map`](Self::load_map).
-    pending_warp: Option<crate::map::Warp>,
+    pending_warp: Option<crate::world::map::Warp>,
 }
 impl Default for WalkaroundState {
     fn default() -> Self {
@@ -80,6 +85,7 @@ impl WalkaroundState {
             current_map: MapInfo::default(),
             map_viewer: MapViewer::primary(),
             dialogue: Dialogue::default(),
+            inventory_ui: InventoryUi::new(),
             particles: ParticleList::new(),
             cutscene: None,
             bg_colour: 0,
@@ -201,7 +207,7 @@ impl WalkaroundState {
     pub fn cam_y(&self) -> i32 {
         self.camera.pos.y.into()
     }
-    pub fn cam_state(&mut self) -> &mut crate::camera::CameraBounds {
+    pub fn cam_state(&mut self) -> &mut crate::world::camera::CameraBounds {
         &mut self.camera.bounds
     }
     /// Function that does everything. No anti-pattern here. Returns an optional
@@ -209,7 +215,7 @@ impl WalkaroundState {
     /// the console it plays sounds through. State-driven conditionals (the old
     /// stairwell window/painting pair) no longer live here — they are dialogue
     /// objects whose `#set`/`#if` directives drive the named save flags during
-    /// playback (see [`crate::data::eggtext`]), so this stays pure behaviour and
+    /// playback (see [`crate::data::script::eggtext`]), so this stays pure behaviour and
     /// needs no `save`.
     pub fn execute_interact_fn(
         &mut self,
@@ -421,7 +427,7 @@ impl WalkaroundState {
     /// destination. Does **not** play the warp sound — that fires once at trigger
     /// time (see [`fire_warp`](Self::fire_warp)), so the narrated and un-narrated
     /// paths play it at the same moment and the deferred apply stays silent.
-    fn apply_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::map::Warp) {
+    fn apply_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::world::map::Warp) {
         self.player().pos = warp.target();
         self.player().flip_controls = warp.flip;
         self.companion_trail
@@ -438,7 +444,7 @@ impl WalkaroundState {
     /// [`pending_warp`](Self::pending_warp) for the box-close apply, or teleport
     /// straight away. The narrated branch resolves the dialogue exactly as the
     /// interaction path does.
-    fn fire_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::map::Warp) {
+    fn fire_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::world::map::Warp) {
         if let Some(sound) = &warp.sound {
             ctx.system.play_sound(sound.clone());
         }
@@ -488,9 +494,9 @@ impl WalkaroundState {
         }
     }
 
-    /// Consume a just-fired [`removable`](crate::map::MapObject::removable) object
+    /// Consume a just-fired [`removable`](crate::world::map::MapObject::removable) object
     /// at index `i`: record it in the save's `taken` set by its stable
-    /// [`id`](crate::map::MapObject::id) — so every later
+    /// [`id`](crate::world::map::MapObject::id) — so every later
     /// [`load_map_by_name`](Self::load_map_by_name) of this map filters it out —
     /// then drop it from the live map so it vanishes at once. A no-op for a
     /// non-removable object; an id-less removable still vanishes for the session
@@ -519,11 +525,7 @@ impl WalkaroundState {
         self.sync_map_animations();
     }
 
-    pub fn step<S: ConsoleApi>(
-        &mut self,
-        ctx: &mut Ctx<S>,
-        inventory_ui: &mut InventoryUi,
-    ) -> Option<GameMode> {
+    pub fn step<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> Option<GameMode> {
         // While the primary map editor is open, mirror live frame edits into the
         // cached animations before advancing them, so the in-world sprite updates
         // too. (An extra view's editor is synced by the host — see
@@ -587,13 +589,13 @@ impl WalkaroundState {
             self.load_pmem(ctx);
         }
         if ctx.system.keyp(ScanCode::Digit6) {
-            ctx.draw.set_palette(&crate::system::SWEETIE_16);
+            ctx.draw.set_palette(&crate::platform::SWEETIE_16);
         }
         if ctx.system.keyp(ScanCode::Digit7) {
-            ctx.draw.set_palette(&crate::system::NIGHT_16);
+            ctx.draw.set_palette(&crate::platform::NIGHT_16);
         }
         if ctx.system.keyp(ScanCode::Digit8) {
-            ctx.draw.set_palette(&crate::system::B_W);
+            ctx.draw.set_palette(&crate::platform::B_W);
         }
 
         // Get keyboard inputs
@@ -604,7 +606,7 @@ impl WalkaroundState {
         if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
-                inventory_ui.open(ctx.system);
+                self.inventory_ui.open(ctx.system);
                 return Some(GameMode::Inventory);
             }
         } else {
@@ -763,9 +765,9 @@ impl WalkaroundState {
         // `load_map_by_name` replaces the very vec we scan, so the scan must
         // finish (and not borrow the vec) before we apply.
         //
-        // The firing rule composes three axes (see [`crate::map::MapObject`]):
-        // the object's authored [`Trigger`](crate::map::Trigger) decides the
-        // touch vs. press paths; a warp's [`WarpMode`](crate::map::WarpMode) plus
+        // The firing rule composes three axes (see [`crate::world::map::MapObject`]):
+        // the object's authored [`Trigger`](crate::world::map::Trigger) decides the
+        // touch vs. press paths; a warp's [`WarpMode`](crate::world::map::WarpMode) plus
         // the player's `manual_doors` preference can suppress a warp's touch path;
         // narration is orthogonal. Interactions' touch path is *edge-triggered*
         // (fires on entering the hitbox, via `inside_objects`) so a step-on
@@ -821,7 +823,11 @@ impl WalkaroundState {
             else {
                 unreachable!("interact_hit only records Interact effects");
             };
-            self.fire_interaction(ctx, &interaction, &mut inventory_ui.inventory);
+            // The bag now lives on `self`, so lift it out for the duration of the
+            // call (which also borrows `self` mutably) and put it straight back.
+            let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
+            self.fire_interaction(ctx, &interaction, &mut inventory);
+            self.inventory_ui.inventory = inventory;
             // A removable object is consumed by the interaction: record it taken
             // (by stable id) and drop it from the live map so it vanishes now.
             self.take_object(i, ctx.save);
@@ -832,7 +838,9 @@ impl WalkaroundState {
             for companion in self.companion_list.interact(&self.companion_trail) {
                 if interact_hitbox.touches(companion.hitbox) {
                     if let ObjectEffect::Interact(interaction) = companion.effect {
-                        self.fire_interaction(ctx, &interaction, &mut inventory_ui.inventory);
+                        let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
+                        self.fire_interaction(ctx, &interaction, &mut inventory);
+                        self.inventory_ui.inventory = inventory;
                     }
                     break;
                 }
@@ -874,7 +882,7 @@ impl WalkaroundState {
         editor: &MapViewer,
         debug_info: &DebugInfo,
     ) {
-        use crate::drawstate::LayerId::*;
+        use crate::draw_state::LayerId::*;
 
         let cam_x = i32::from(camera_pos.x);
         let cam_y = i32::from(camera_pos.y);
@@ -1012,12 +1020,12 @@ impl WalkaroundState {
     /// world build so the caller chooses the destination surface — the main
     /// window uses `system.output_image()`, an extra view its own framebuffer.
     pub fn composite_into(
-        draw_state: &mut crate::drawstate::DrawState,
-        output: &mut crate::system::drawing::image::RgbaImage,
+        draw_state: &mut crate::draw_state::DrawState,
+        output: &mut crate::render::image::RgbaImage,
     ) {
-        use crate::drawstate::LayerId::*;
-        use crate::system::drawing::image::RgbaImage;
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+        use crate::draw_state::LayerId::*;
+        use crate::render::image::RgbaImage;
+        use crate::render::{Canvas, EdgePolicy, Transform};
 
         output.blit::<RgbaImage>(
             0,
@@ -1033,9 +1041,9 @@ impl WalkaroundState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::{LayerInfo, MapObject, Trigger, Warp};
-    use crate::position::Hitbox;
-    use crate::system::test_console::TestConsole;
+    use crate::world::map::{LayerInfo, MapObject, Trigger, Warp};
+    use crate::geometry::Hitbox;
+    use crate::platform::test_console::TestConsole;
 
     /// Spawn a built-in critter from the embedded data (the data is the only
     /// source of creatures now).
@@ -1233,7 +1241,7 @@ mod tests {
     /// rebuilds only when the set of sprited objects changes.
     #[test]
     fn sync_map_animations_reflects_live_edits() {
-        use crate::animation::AnimFrame;
+        use crate::world::animation::AnimFrame;
         let frame = |id: u16| AnimFrame {
             spr_id: id,
             ..AnimFrame::default()
@@ -1279,7 +1287,7 @@ mod tests {
     /// no-op (no panic, no items lost).
     #[test]
     fn give_item_adds_to_inventory_and_handles_full() {
-        use crate::interact::InteractFn;
+        use crate::world::interact::InteractFn;
 
         let mut console = TestConsole::new();
         let mut walk = WalkaroundState::new();

@@ -27,11 +27,11 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::window::{WindowClosed, WindowRef};
 
-use egg_core::drawstate::DrawState;
-use egg_core::gamestate::EggInput;
-use egg_core::gamestate::mapeditor::MapViewer;
-use egg_core::gamestate::texteditor::{TextEditor, TextOpenReq};
-use egg_core::position::Vec2 as EggVec2;
+use egg_core::draw_state::DrawState;
+use egg_core::platform::EggInput;
+use egg_core::editor::map::MapViewer;
+use egg_core::editor::text::{TextEditor, TextOpenReq};
+use egg_core::geometry::Vec2 as EggVec2;
 
 use crate::EggGame;
 use crate::fantasy_console::{MIN_FB_H, MIN_FB_W, new_screen_image};
@@ -86,8 +86,8 @@ pub enum ViewMode {
 /// Internal resolution each extra view *starts* at (the base resolution). The
 /// framebuffer then follows the window — like the main window's Mirror mode —
 /// at the view's base pixel ratio ([`VIEW_SCALE`]).
-const VIEW_W: u32 = egg_core::system::WIDTH as u32;
-const VIEW_H: u32 = egg_core::system::HEIGHT as u32;
+const VIEW_W: u32 = egg_core::platform::WIDTH as u32;
+const VIEW_H: u32 = egg_core::platform::HEIGHT as u32;
 
 /// The view's base pixel ratio (window px per framebuffer px): the spawn
 /// resolution is the base resolution at this ratio, so a new view looks exactly
@@ -121,7 +121,7 @@ pub struct ViewWindow {
     /// GPU texture this view's framebuffer is blitted into each frame.
     pub image: Handle<Image>,
     /// This view's final composited frame (size `VIEW_W`×`VIEW_H`).
-    pub output: egg_core::system::drawing::image::RgbaImage,
+    pub output: egg_core::render::image::RgbaImage,
     /// This view's private layer canvases (never the main `EggState.draw_state`).
     pub draw_state: DrawState,
     /// Independent free camera, panned by the arrow keys while focused.
@@ -234,7 +234,7 @@ pub fn spawn_view(
         camera,
         sprite,
         image,
-        output: egg_core::system::drawing::image::RgbaImage::new(VIEW_W, VIEW_H),
+        output: egg_core::render::image::RgbaImage::new(VIEW_W, VIEW_H),
         draw_state,
         free_cam: start_cam,
         editor: MapViewer::default(),
@@ -472,13 +472,13 @@ pub fn update_views(
             let g = &mut *game;
             views.views[i].text_editor.step(&mut g.system, fb_w, fb_h);
             if let Some(source) = views.views[i].text_editor.pending_script.take() {
-                match egg_core::data::eggtext::parse(&source) {
+                match egg_core::data::script::eggtext::parse(&source) {
                     Ok(file) => g.state.script.set_base(file),
                     Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
                 }
             }
             if let Some(source) = views.views[i].text_editor.pending_scene.take() {
-                match egg_core::data::eggscene::parse(&source) {
+                match egg_core::data::scene::parse(&source) {
                     Ok(file) => g.state.set_scenes(file),
                     Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
                 }
@@ -549,7 +549,7 @@ pub fn update_views(
             if views.views[i].editor.pending_reload {
                 views.views[i].editor.pending_reload = false;
                 let name = g.state.walkaround.current_map.source.clone();
-                let fresh = egg_core::map::map_by_name(
+                let fresh = egg_core::world::map::map_by_name(
                     &views.views[i].draw_state.indexed_sprites,
                     &name,
                     &g.state.maps,
@@ -578,7 +578,7 @@ pub fn update_views(
         let target = view_fb_size(window.width(), window.height(), view.scale);
         if (view.output.width(), view.output.height()) != target {
             view.draw_state.resize(target.0, target.1);
-            view.output = egg_core::system::drawing::image::RgbaImage::new(target.0, target.1);
+            view.output = egg_core::render::image::RgbaImage::new(target.0, target.1);
             if let Some(image) = images.get_mut(&view.image) {
                 *image = new_screen_image(target.0, target.1);
             }

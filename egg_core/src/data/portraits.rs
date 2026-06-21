@@ -1,6 +1,6 @@
-use crate::drawstate::{DrawState, LayerId, palette_map_rotate};
-use crate::position::Vec2;
-use crate::system::SpriteOptions;
+use crate::draw_state::{DrawState, LayerId, palette_map_rotate};
+use crate::geometry::Vec2;
+use crate::render::SpriteOptions;
 
 #[derive(Debug, Clone)]
 pub struct Portrait {

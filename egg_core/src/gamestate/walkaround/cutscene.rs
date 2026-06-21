@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::Ctx;
-use crate::data::eggscene::{CutsceneDef, StepDef};
+use crate::data::scene::{CutsceneDef, StepDef};
 use crate::data::sound::music::MusicTrack;
 use crate::data::sound::{self, SfxData};
-use crate::player::Shell;
-use crate::position::Vec2;
-use crate::system::{ConsoleApi, ConsoleHelper, just_pressed, pressed};
+use crate::world::player::Shell;
+use crate::geometry::Vec2;
+use crate::platform::{ConsoleApi, ConsoleHelper, just_pressed, pressed};
 
 use super::WalkaroundState;
 
@@ -348,13 +348,13 @@ impl CutsceneItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::eggscene;
     use crate::data::save::SaveData;
+    use crate::data::scene;
     use crate::data::script::Script;
-    use crate::drawstate::DrawState;
-    use crate::map::MapStore;
+    use crate::draw_state::DrawState;
+    use crate::world::map::MapStore;
     use crate::rand::Lcg64Xsh32;
-    use crate::system::test_console::TestConsole;
+    use crate::platform::test_console::TestConsole;
 
     /// Everything a [`Ctx`] borrows, owned in one place so a test can hand out a
     /// fresh `Ctx` each frame (it borrows mutably, so it can't outlive a frame).
@@ -364,9 +364,9 @@ mod tests {
         maps: MapStore,
         rng: Lcg64Xsh32,
         script: Script,
-        scenes: eggscene::SceneFile,
+        scenes: scene::SceneFile,
         save: SaveData,
-        items: crate::gamestate::inventory::GameItems,
+        items: crate::data::eggdata::GameItems,
         presets: crate::data::eggdata::Presets,
         walk: WalkaroundState,
     }
@@ -378,9 +378,9 @@ mod tests {
                 maps: MapStore::default(),
                 rng: Lcg64Xsh32::default(),
                 script: Script::new(),
-                scenes: eggscene::SceneFile::default(),
+                scenes: scene::SceneFile::default(),
                 save: SaveData::default(),
-                items: crate::gamestate::inventory::GameItems::default(),
+                items: crate::data::eggdata::GameItems::default(),
                 presets: crate::data::eggdata::Presets::builtin(),
                 walk: WalkaroundState::new(),
             }
@@ -389,7 +389,7 @@ mod tests {
         fn with_dialogue(mut self, key: &str, line: &str) -> Self {
             let src = format!("#dialogue {key}\n    {line}");
             self.script
-                .set_base(crate::data::eggtext::parse(&src).unwrap());
+                .set_base(crate::data::script::eggtext::parse(&src).unwrap());
             self
         }
     }
@@ -486,7 +486,7 @@ mod tests {
         // dialogue: skip applies the end position, fires the flag, and closes the
         // box, all at once, leaving the cutscene done.
         let mut h = Harness::new().with_dialogue("hi", "Hello.");
-        let def: eggscene::CutsceneDef = vec![
+        let def: scene::CutsceneDef = vec![
             vec![StepDef::Move(Vec2::new(40, 50))],
             vec![
                 StepDef::SetFlag("done".into(), true),
@@ -552,7 +552,7 @@ mod tests {
     fn from_def_builds_a_playable_cutscene_from_the_shipped_pet_dog() {
         // The shipped `pet_dog` block builds without panicking and yields the same
         // stage shape it was authored with (proving the registry -> build path).
-        let scenes = eggscene::parse(include_str!("../../../../assets/data/main.eggscene"))
+        let scenes = scene::parse(include_str!("../../../../assets/data/main.eggscene"))
             .expect("parse main.eggscene");
         let def = scenes.get_cutscene("pet_dog").expect("pet_dog defined");
         let cutscene = Cutscene::from_def(def);

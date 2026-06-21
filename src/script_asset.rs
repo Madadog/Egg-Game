@@ -9,7 +9,7 @@
 use bevy::asset::AssetLoader;
 use bevy::asset::io::Reader;
 use bevy::prelude::*;
-use egg_core::data::eggscene::SceneFile;
+use egg_core::data::scene::SceneFile;
 use egg_core::data::script::ScriptFile;
 use std::io::{Error, ErrorKind};
 
@@ -56,7 +56,7 @@ impl AssetLoader for ScriptLoader {
         let file: ScriptFile = if is_eggtext {
             let text =
                 std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-            egg_core::data::eggtext::parse(text)
+            egg_core::data::script::eggtext::parse(text)
                 .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?
         } else {
             serde_json::from_slice(&bytes)?
@@ -86,7 +86,7 @@ impl AssetLoader for SceneLoader {
         reader.read_to_end(&mut bytes).await?;
         let text =
             std::str::from_utf8(&bytes).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        let file = egg_core::data::eggscene::parse(text)
+        let file = egg_core::data::scene::parse(text)
             .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
         Ok(SceneAsset(file))
     }

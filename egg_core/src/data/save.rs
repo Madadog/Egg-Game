@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::player::Shell;
+use crate::world::player::Shell;
 
 /// The path the engine persists progress under. The engine names the file; a
 /// host routes it to whatever user-data backend it has (a file on native, a
@@ -22,7 +22,7 @@ pub struct SaveData {
 
     /// Named story flags, the open-ended replacement for the old packed
     /// bitfields and one-off typed bools: dialogue toggles them with `#set` and
-    /// branches on them with `#if` (see [`crate::data::eggtext`]), and the
+    /// branches on them with `#if` (see [`crate::data::script::eggtext`]), and the
     /// vocabulary the script declares (`#flag NAME`) is what an in-game editor
     /// autocompletes against. Only set flags are stored, so an absent name reads
     /// as `false` and old saves simply lack any flag they never set.
@@ -31,12 +31,12 @@ pub struct SaveData {
 
     /// Stable ids of removable interactables the player has consumed (pickups),
     /// keyed `"<map>#<object id>"` — see
-    /// [`MapObject::removable`](crate::map::MapObject::removable). Mirrors
+    /// [`MapObject::removable`](crate::world::map::MapObject::removable). Mirrors
     /// [`flags`](Self::flags): only taken entries are stored, presence means
     /// taken, an absent key reads as "still there". Kept separate from `flags` so
     /// a pickup needs no authored flag name and never pollutes the `#flag`
     /// vocabulary an editor autocompletes. An edit that *deletes and recreates* an
-    /// object changes its [`id`](crate::map::MapObject::id) and leaves a harmless
+    /// object changes its [`id`](crate::world::map::MapObject::id) and leaves a harmless
     /// dangling entry; ordinary edits keep the id, so the pickup stays taken.
     #[serde(default)]
     pub taken: BTreeSet<String>,
@@ -67,9 +67,9 @@ pub struct SaveData {
 
     /// Inventory slots, each holding an item key (`None` = empty slot). The
     /// default seeds the three starting items (ff/lm/chegg), matching the live
-    /// [`Inventory::new`](crate::gamestate::inventory::Inventory::new); a key the
+    /// [`Inventory::new`](crate::gamestate::walkaround::inventory::Inventory::new); a key the
     /// item registry no longer knows is dropped on load (garbage tolerance, see
-    /// [`Inventory::load_from_save`](crate::gamestate::inventory::Inventory::load_from_save)).
+    /// [`Inventory::load_from_save`](crate::gamestate::walkaround::inventory::Inventory::load_from_save)).
     #[serde(default = "default_inventory")]
     pub inventory: [Option<String>; 8],
 
@@ -99,7 +99,7 @@ pub struct SaveData {
 
 /// The starting inventory a fresh save (and a save written before items were
 /// keyed) carries: the three default items, matching
-/// [`Inventory::new`](crate::gamestate::inventory::Inventory::new). Used as both
+/// [`Inventory::new`](crate::gamestate::walkaround::inventory::Inventory::new). Used as both
 /// the [`SaveData::default`] inventory and the `serde` default for the field, so
 /// an old save lacking the key reads back the original starting items (the old
 /// `[1,2,3,4,5,6,7,8]` resolved to exactly these, ids 4–8 being unknown).
@@ -171,7 +171,7 @@ impl SaveData {
     }
 
     /// The [`taken`](Self::taken) key a removable object is recorded under: its
-    /// map name and stable [`id`](crate::map::MapObject::id), joined so the same
+    /// map name and stable [`id`](crate::world::map::MapObject::id), joined so the same
     /// local id on two different maps never collides.
     fn taken_key(map: &str, id: usize) -> String {
         format!("{map}#{id}")
@@ -193,8 +193,8 @@ impl SaveData {
 mod tests {
     use super::*;
     use crate::data::eggdata::Presets;
-    use crate::player::PresetId;
-    use crate::position::Vec2;
+    use crate::world::player::PresetId;
+    use crate::geometry::Vec2;
 
     /// A pre-name save carries the long-removed numeric `current_map` field and
     /// no `current_map_name` key at all; it must still deserialise (the unknown

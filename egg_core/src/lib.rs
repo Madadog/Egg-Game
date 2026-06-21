@@ -14,35 +14,31 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-pub mod animation;
-pub mod camera;
 pub mod data;
 pub mod debug;
-pub mod dialogue;
-pub mod drawstate;
+pub mod draw_state;
+pub mod editor;
 pub mod gamestate;
-pub mod interact;
-pub mod map;
-pub mod particles;
-pub mod player;
-pub mod position;
+pub mod geometry;
+pub mod platform;
 pub mod rand;
-pub mod system;
+pub mod render;
 pub mod ui;
+pub mod world;
 
-use crate::data::eggdata::Presets;
-use crate::data::eggscene::{CutsceneDef, SceneFile};
+use crate::data::eggdata::{GameItems, Presets};
 use crate::data::save::{SAVE_PATH, SaveData};
+use crate::data::scene::{CutsceneDef, SceneFile};
 use crate::data::script::Script;
+use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
-use crate::dialogue::Message;
-use crate::drawstate::DrawState;
-use crate::gamestate::inventory::{GameItems, InventoryUi, InventoryUiState};
+use crate::draw_state::DrawState;
 use crate::gamestate::walkaround::WalkaroundState;
+use crate::gamestate::walkaround::inventory::InventoryUiState;
 use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
-use crate::map::MapStore;
+use crate::platform::ConsoleApi;
 use crate::rand::Lcg64Xsh32;
-use crate::system::ConsoleApi;
+use crate::world::map::MapStore;
 
 /// The shared world every game state steps and draws against — the layer
 /// canvases, the console, the loaded maps, and the loaded text — passed as one
@@ -75,7 +71,7 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// The loaded item registry (sprite per item key). Loaded game data like
     /// [`maps`](Self::maps)/[`script`](Self::script); read-only here.
     pub items: &'a GameItems,
-    /// The loaded creature registry (preset defs by [`PresetId`](crate::player::PresetId)).
+    /// The loaded creature registry (preset defs by [`PresetId`](crate::world::player::PresetId)).
     /// Loaded game data like [`items`](Self::items); read-only here.
     pub presets: &'a Presets,
 }
@@ -127,7 +123,6 @@ pub struct EggState {
     pub walkaround: WalkaroundState,
     pub debug_info: DebugInfo,
     pub time: i32,
-    pub inventory_ui: InventoryUi,
     /// The startup intro animation's state (mode [`GameMode::Animation`]).
     pub intro: IntroAnimation,
     /// The startup instructions screen's state (mode [`GameMode::Instructions`]).
@@ -180,7 +175,7 @@ pub struct EggState {
     last_flushed_save: SaveData,
 }
 impl EggState {
-    pub fn run(&mut self, system: &mut impl system::ConsoleApi) {
+    pub fn run(&mut self, system: &mut impl platform::ConsoleApi) {
         // Pull the persisted save in before any state reads it, and flush it out
         // after every state has had a chance to mutate it — so the same frame
         // that changes progress also writes it, and exit-time saving needs no
@@ -194,7 +189,8 @@ impl EggState {
         // `flush_save` below), so what the player picked up last run is restored
         // before any state draws the inventory.
         if loaded {
-            self.inventory_ui
+            self.walkaround
+                .inventory_ui
                 .inventory
                 .load_from_save(&self.save.inventory, &self.items);
         }
@@ -205,7 +201,7 @@ impl EggState {
         // Serialise the live inventory into the save before it is flushed, so an
         // item the player gained, dropped or reordered this frame persists (the
         // inverse of `load_from_save` after `load_save` above).
-        self.save.inventory = self.inventory_ui.inventory.to_save();
+        self.save.inventory = self.walkaround.inventory_ui.inventory.to_save();
         self.flush_save(system);
     }
 
@@ -213,7 +209,7 @@ impl EggState {
     /// and draw where the mode owns one) and returning any requested transition.
     /// Each mode's state is a field on `self`; the four menu variants all drive
     /// the shared [`menu`](Self::menu).
-    fn step_mode(&mut self, system: &mut impl system::ConsoleApi) -> Option<GameMode> {
+    fn step_mode(&mut self, system: &mut impl platform::ConsoleApi) -> Option<GameMode> {
         let mut ctx = Ctx {
             draw: &mut self.draw_state,
             system,
@@ -228,7 +224,7 @@ impl EggState {
         match self.gamestate {
             GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
             GameMode::Walkaround => {
-                let next = self.walkaround.step(&mut ctx, &mut self.inventory_ui);
+                let next = self.walkaround.step(&mut ctx);
                 self.walkaround.draw(&mut ctx, &self.debug_info);
                 next
             }
@@ -237,21 +233,17 @@ impl EggState {
             | GameMode::InventoryOptions
             | GameMode::DebugMenu
             | GameMode::MapSelect => {
-                let next = self.menu.step_main_menu(
-                    &mut ctx,
-                    &mut self.walkaround,
-                    &mut self.inventory_ui,
-                );
+                let next = self.menu.step_main_menu(&mut ctx, &mut self.walkaround);
                 self.menu.draw_main_menu(&mut ctx, self.time);
                 next
             }
             GameMode::Inventory => {
-                self.inventory_ui.step(&mut ctx);
-                match self.inventory_ui.state {
+                self.walkaround.inventory_ui.step(&mut ctx);
+                match self.walkaround.inventory_ui.state {
                     InventoryUiState::Close => Some(GameMode::Walkaround),
                     InventoryUiState::Options => Some(GameMode::InventoryOptions),
                     _ => {
-                        self.inventory_ui.draw(&mut ctx);
+                        self.walkaround.inventory_ui.draw(&mut ctx);
                         None
                     }
                 }
@@ -286,7 +278,7 @@ impl EggState {
     /// an unchanged file. Returns `true` on the one call that actually performs
     /// the read, so [`run`](Self::run) can rebuild the live inventory from the
     /// freshly loaded save exactly once.
-    pub fn load_save(&mut self, system: &mut impl system::ConsoleApi) -> bool {
+    pub fn load_save(&mut self, system: &mut impl platform::ConsoleApi) -> bool {
         if self.save_loaded {
             return false;
         }
@@ -315,7 +307,7 @@ impl EggState {
     /// built-in default stands. Reading this asset on web means routing it
     /// through the engine's async asset pipeline (as the script/maps do) — a
     /// follow-up, harmless while the shipped file matches the default.
-    pub fn load_data(&mut self, system: &mut impl system::ConsoleApi) {
+    pub fn load_data(&mut self, system: &mut impl platform::ConsoleApi) {
         use crate::data::eggdata;
         if self.data_loaded {
             return;
@@ -339,7 +331,7 @@ impl EggState {
     /// Flush the save to the host's file store when it differs from the last
     /// value written. A serialisation failure logs and skips — a failed save
     /// never crashes the game.
-    pub fn flush_save(&mut self, system: &mut impl system::ConsoleApi) {
+    pub fn flush_save(&mut self, system: &mut impl platform::ConsoleApi) {
         if self.save == self.last_flushed_save {
             return;
         }
@@ -376,7 +368,6 @@ impl Default for EggState {
         EggState {
             draw_state: DrawState::default(),
             walkaround: WalkaroundState::new(),
-            inventory_ui: InventoryUi::new(),
             intro: IntroAnimation::default(),
             instructions: Instructions::default(),
             sprite_test: SpriteTest::default(),
@@ -403,7 +394,7 @@ impl Default for EggState {
 mod tests {
     use super::*;
     use crate::data::save::SAVE_PATH;
-    use crate::system::test_console::TestConsole;
+    use crate::platform::test_console::TestConsole;
 
     /// `flush_save` writes the save (as pretty JSON, under [`SAVE_PATH`]) only
     /// when it differs from the last flush — an unchanged save is a no-op so the
@@ -516,7 +507,7 @@ mod tests {
     /// [`SaveData::inventory`] and the host's file store via [`TestConsole`].
     #[test]
     fn inventory_round_trips_through_save_and_load() {
-        use crate::gamestate::inventory::Inventory;
+        use crate::gamestate::walkaround::inventory::Inventory;
 
         let mut console = TestConsole::new();
 
@@ -527,8 +518,8 @@ mod tests {
         // Grant a fourth item so the live inventory differs from the default
         // save (whose `inventory` default is the three starting items) — this is
         // what makes the diff-gated `flush_save` below actually write a file.
-        assert!(source.inventory_ui.inventory.add("ff".into()));
-        let filled = source.inventory_ui.inventory.to_save();
+        assert!(source.walkaround.inventory_ui.inventory.add("ff".into()));
+        let filled = source.walkaround.inventory_ui.inventory.to_save();
         assert_ne!(
             filled,
             [const { None }; 8],
@@ -536,34 +527,35 @@ mod tests {
         );
 
         // Serialise-before-flush (the line `run` performs) then write to storage.
-        source.save.inventory = source.inventory_ui.inventory.to_save();
+        source.save.inventory = source.walkaround.inventory_ui.inventory.to_save();
         source.flush_save(&mut console);
         assert!(console.files.contains_key(SAVE_PATH), "save was written");
 
         // A fresh state with a *cleared* inventory loads the stored save and
         // repopulates from it (the lines `run` performs on the load frame).
         let mut loaded = EggState::default();
-        loaded.inventory_ui.inventory = Inventory {
+        loaded.walkaround.inventory_ui.inventory = Inventory {
             items: [const { None }; 8],
             unlocks: [false; 4],
         };
         let did_load = loaded.load_save(&mut console);
         assert!(did_load, "the stored save is read once");
         loaded
+            .walkaround
             .inventory_ui
             .inventory
             .load_from_save(&loaded.save.inventory, &loaded.items);
 
         // The reloaded slots match the originals item-for-item.
-        assert_eq!(loaded.inventory_ui.inventory.to_save(), filled);
+        assert_eq!(loaded.walkaround.inventory_ui.inventory.to_save(), filled);
     }
 
     /// Erasing the save (the Options menu's "lose data" action) resets the LIVE
     /// inventory back to the default starting items — not just `SaveData`. This is
-    /// the regression: the live inventory lives on `EggState.inventory_ui`, a field
-    /// the erase used to leave alone, and `run` re-syncs it into the save at the end
-    /// of every frame, so a stale inventory would be written straight back over the
-    /// freshly-erased default. Drives the real erase through the public
+    /// the regression: the live inventory lives on `WalkaroundState.inventory_ui`,
+    /// which the erase used to leave alone, and `run` re-syncs it into the save at
+    /// the end of every frame, so a stale inventory would be written straight back
+    /// over the freshly-erased default. Drives the real erase through the public
     /// [`MenuState::click`] path (Options → Reset → confirm), then runs `run`'s own
     /// serialise-before-flush + `flush_save`, and asserts the live inventory, the
     /// in-memory save and the on-disk save are all the defaults.
@@ -577,12 +569,12 @@ mod tests {
 
         // Dirty the live inventory and some other progress, so the erase has
         // something to actually undo and the post-erase flush has a diff to write.
-        assert!(state.inventory_ui.inventory.add("ff".into()));
-        assert!(state.inventory_ui.inventory.add("lm".into()));
-        state.inventory_ui.inventory.unlocks = [true; 4];
+        assert!(state.walkaround.inventory_ui.inventory.add("ff".into()));
+        assert!(state.walkaround.inventory_ui.inventory.add("lm".into()));
+        state.walkaround.inventory_ui.inventory.unlocks = [true; 4];
         state.save.egg_count = 99;
         assert_ne!(
-            state.inventory_ui.inventory.to_save(),
+            state.walkaround.inventory_ui.inventory.to_save(),
             SaveData::default().inventory,
             "inventory dirtied for the test"
         );
@@ -591,7 +583,7 @@ mod tests {
         // `run`'s serialise-before-flush), so a real save file with the old items
         // exists — and so the post-erase flush below has a genuine diff to write
         // (`flush_save` is diff-gated against the last flush).
-        state.save.inventory = state.inventory_ui.inventory.to_save();
+        state.save.inventory = state.walkaround.inventory_ui.inventory.to_save();
         state.flush_save(&mut console);
         assert!(console.files.contains_key(SAVE_PATH), "dirty save written");
 
@@ -601,13 +593,12 @@ mod tests {
         // `Options` sits at index 1 of the main menu; `Reset` is the last of the
         // four Options entries (index 3). Each click builds a fresh `Ctx`
         // split-borrowing the same `EggState` fields (it borrows mutably, so it
-        // can't outlive the call) and hands the walkaround + inventory_ui in
-        // alongside, the way `step_mode` does.
+        // can't outlive the call) and hands the walkaround in alongside (the bag
+        // now lives on the walkaround), the way `step_mode` does.
         state.menu = MenuState::new();
         let mut returned = None;
         for index in [1, 3, 3] {
             let mut walk = std::mem::take(&mut state.walkaround);
-            let mut inv = std::mem::take(&mut state.inventory_ui);
             let mut menu = std::mem::take(&mut state.menu);
             {
                 let mut ctx = Ctx {
@@ -621,10 +612,9 @@ mod tests {
                     items: &state.items,
                     presets: &state.presets,
                 };
-                returned = menu.click(Some(index), &mut ctx, &mut walk, &mut inv);
+                returned = menu.click(Some(index), &mut ctx, &mut walk);
             }
             state.walkaround = walk;
-            state.inventory_ui = inv;
             state.menu = menu;
         }
         // The erase requests the intro (a fresh game), confirming it fired.
@@ -632,12 +622,12 @@ mod tests {
 
         // The live inventory is back to the default starting items immediately…
         assert_eq!(
-            state.inventory_ui.inventory.to_save(),
+            state.walkaround.inventory_ui.inventory.to_save(),
             SaveData::default().inventory,
             "live inventory reset to the starting items"
         );
         // …and the rest of `InventoryUi` is fresh too (the unlocks we dirtied).
-        assert_eq!(state.inventory_ui.inventory.unlocks, [false; 4]);
+        assert_eq!(state.walkaround.inventory_ui.inventory.unlocks, [false; 4]);
         // The in-memory save is the default (egg_count cleared as well).
         assert_eq!(state.save, SaveData::default(), "save zeroed");
 
@@ -645,7 +635,7 @@ mod tests {
         // live inventory back into the save, then flush. This is the exact path the
         // bug exploited — with the fix the synced-back inventory is the default, so
         // the persisted save stays erased rather than re-acquiring the old items.
-        state.save.inventory = state.inventory_ui.inventory.to_save();
+        state.save.inventory = state.walkaround.inventory_ui.inventory.to_save();
         state.flush_save(&mut console);
 
         assert_eq!(

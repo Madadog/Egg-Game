@@ -1,19 +1,19 @@
-use crate::system::PrintOptions;
-use crate::system::SpriteOptions;
+use crate::render::PrintOptions;
+use crate::render::SpriteOptions;
 
 use crate::Ctx;
-use crate::camera::CameraBounds;
 use crate::data::save::SaveData;
 use crate::data::script::Script;
 use crate::data::sound;
-use crate::dialogue::print_options;
-use crate::map::MapStore;
-use crate::system::{ConsoleApi, ConsoleHelper, just_pressed};
-use crate::ui::{Ui, UiBuilder};
+use crate::platform::{ConsoleApi, ConsoleHelper, just_pressed};
+use crate::ui::dialogue::print_options;
+use crate::ui::layout::{Ui, UiBuilder};
+use crate::world::camera::CameraBounds;
+use crate::world::map::MapStore;
 
 use super::GameMode;
-use super::inventory::InventoryUi;
 use super::walkaround::WalkaroundState;
+use super::walkaround::inventory::InventoryUi;
 
 #[derive(Debug)]
 pub struct MenuState {
@@ -84,7 +84,6 @@ impl MenuState {
         &mut self,
         ctx: &mut Ctx<impl ConsoleApi>,
         walkaround_state: &mut WalkaroundState,
-        inventory_ui: &mut InventoryUi,
     ) -> Option<GameMode> {
         let old_index = self.index;
         let entries = self.entries.len();
@@ -121,7 +120,7 @@ impl MenuState {
         };
         if action {
             ctx.system.play_sound(sound::INTERACT);
-            self.click(index, ctx, walkaround_state, inventory_ui)
+            self.click(index, ctx, walkaround_state)
         } else {
             None
         }
@@ -168,7 +167,7 @@ impl MenuState {
         // Shift the entries down by the same `d` as the title (0 at the base
         // height), so the title+menu block stays vertically centred — and keeps
         // its canonical gap below the title — at any framebuffer height.
-        let d = (sh - crate::system::HEIGHT) / 2;
+        let d = (sh - crate::platform::HEIGHT) / 2;
         let root = builder
             .column(0.0, rows)
             .size(screen.0, screen.1)
@@ -181,7 +180,6 @@ impl MenuState {
         index: Option<usize>,
         ctx: &mut Ctx<impl ConsoleApi>,
         walkaround_state: &mut WalkaroundState,
-        inventory_ui: &mut InventoryUi,
     ) -> Option<GameMode> {
         use MenuEntry::*;
         let x = if let Some(index) = index {
@@ -221,22 +219,23 @@ impl MenuState {
                 } else {
                     *ctx.save = SaveData::default();
                     // Erasing zeroes the save, but the LIVE inventory lives on
-                    // `EggState.inventory_ui` (a separate field), and `run`
-                    // re-syncs `save.inventory = inventory_ui…to_save()` at the
-                    // end of every frame — so without this the stale items would
-                    // be written straight back over the just-erased default and
-                    // the erase undone. Rebuild it to the fresh starting items
-                    // (ff/lm/chegg), matching `new_game`'s `*self = Self::new()`
-                    // for the walkaround. (The walkaround itself, including its
-                    // parked `map_entities`, is reset by `new_game` on the
-                    // ensuing fresh-game path, and no `save()` runs between here
-                    // and there to re-gather stale creatures.)
-                    *inventory_ui = crate::gamestate::inventory::InventoryUi::new();
+                    // `walkaround_state.inventory_ui`, and `run` re-syncs
+                    // `save.inventory = inventory_ui…to_save()` at the end of every
+                    // frame — so without this the stale items would be written
+                    // straight back over the just-erased default and the erase
+                    // undone. Rebuild it to the fresh starting items (ff/lm/chegg),
+                    // matching `new_game`'s `*self = Self::new()` for the
+                    // walkaround. (The walkaround itself, including its parked
+                    // `map_entities`, is reset by `new_game` on the ensuing
+                    // fresh-game path, and no `save()` runs between here and there
+                    // to re-gather stale creatures.)
+                    walkaround_state.inventory_ui = InventoryUi::new();
                     return Some(GameMode::Animation);
                 }
             }
             Inventory => {
-                inventory_ui.state = crate::gamestate::inventory::InventoryUiState::PageSelect(2);
+                walkaround_state.inventory_ui.state =
+                    crate::gamestate::walkaround::inventory::InventoryUiState::PageSelect(2);
                 return Some(GameMode::Inventory);
             }
             _Space => {}
@@ -244,30 +243,36 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        ctx.draw.set_palette(&crate::system::SWEETIE_16);
+                        ctx.draw.set_palette(&crate::platform::SWEETIE_16);
                     }
                     1 => {
-                        ctx.draw.set_palette(&crate::system::NIGHT_16);
+                        ctx.draw.set_palette(&crate::platform::NIGHT_16);
                     }
                     2 => {
-                        ctx.draw.set_palette(&crate::system::B_W);
+                        ctx.draw.set_palette(&crate::platform::B_W);
                     }
                     3 => {
                         *walk.cam_state() = CameraBounds::free();
                     }
                     4 => {
+                        // The bag lives on `walk`, which `execute_interact_fn` also
+                        // borrows mutably, so lift it out and put it straight back.
+                        let mut inventory = std::mem::take(&mut walk.inventory_ui.inventory);
                         walk.execute_interact_fn(
-                            &crate::interact::InteractFn::ToggleDog,
+                            &crate::world::interact::InteractFn::ToggleDog,
                             ctx.system,
-                            &mut inventory_ui.inventory,
+                            &mut inventory,
                         );
+                        walk.inventory_ui.inventory = inventory;
                     }
                     5 => {
+                        let mut inventory = std::mem::take(&mut walk.inventory_ui.inventory);
                         walk.execute_interact_fn(
-                            &crate::interact::InteractFn::AddCreatures(1),
+                            &crate::world::interact::InteractFn::AddCreatures(1),
                             ctx.system,
-                            &mut inventory_ui.inventory,
+                            &mut inventory,
                         );
+                        walk.inventory_ui.inventory = inventory;
                     }
                     6 => return Some(GameMode::DebugMenu),
                     _ => {}
@@ -289,14 +294,14 @@ impl MenuState {
     }
     fn hover(
         &self,
-        draw_state: &mut crate::drawstate::DrawState,
+        draw_state: &mut crate::draw_state::DrawState,
         system: &mut impl ConsoleApi,
         script: &Script,
         small_text: bool,
         index: usize,
     ) {
-        use crate::drawstate::LayerId::*;
-        use crate::system::drawing::Canvas;
+        use crate::draw_state::LayerId::*;
+        use crate::render::Canvas;
         use MenuEntry::*;
         if let Reset(_) = self.entries[index] {
             let c2 = draw_state.colour(2);
@@ -323,9 +328,9 @@ impl MenuState {
         }
     }
     pub fn draw_main_menu(&self, ctx: &mut Ctx<impl ConsoleApi>, elapsed_frames: i32) {
-        use crate::drawstate::LayerId::*;
-        use crate::system::drawing::image::RgbaImage;
-        use crate::system::drawing::{Canvas, EdgePolicy, Transform};
+        use crate::draw_state::LayerId::*;
+        use crate::render::image::RgbaImage;
+        use crate::render::{Canvas, EdgePolicy, Transform};
 
         let c0 = ctx.draw.colour(0);
         ctx.draw.rgba(BG).fill(c0);
@@ -336,7 +341,7 @@ impl MenuState {
             // framebuffer (`d` = 0 at the base height, so the canonical look is
             // unchanged), keeping the title's canonical gap above the entries —
             // `build_ui` shifts the entries by the same `d`.
-            let d = (ctx.draw.size().1 - crate::system::HEIGHT) / 2;
+            let d = (ctx.draw.size().1 - crate::platform::HEIGHT) / 2;
             draw_title_rgba(
                 ctx.draw,
                 ctx.system,
@@ -431,7 +436,7 @@ impl MenuEntry {
 /// canvas, returning the measured title width. The egg icon is blitted
 /// separately by each caller — the indexed and RGBA paths differ.
 #[allow(clippy::too_many_arguments)]
-fn draw_title_text<C: crate::system::drawing::Canvas>(
+fn draw_title_text<C: crate::render::Canvas>(
     canvas: &mut C,
     system: &impl ConsoleApi,
     script: &Script,
@@ -478,8 +483,8 @@ fn draw_title_text<C: crate::system::drawing::Canvas>(
 /// sheet for the egg icon.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_title_indexed(
-    canvas: &mut crate::system::drawing::image::IndexedImage,
-    indexed_sprites: &crate::system::drawing::image::IndexedImage,
+    canvas: &mut crate::render::image::IndexedImage,
+    indexed_sprites: &crate::render::image::IndexedImage,
     system: &impl ConsoleApi,
     script: &Script,
     y: i32,
@@ -505,14 +510,14 @@ pub fn draw_title_indexed(
 
 /// RGBA-canvas variant of the title screen, used by the migrated main menu.
 pub fn draw_title_rgba(
-    draw_state: &mut crate::drawstate::DrawState,
+    draw_state: &mut crate::draw_state::DrawState,
     system: &impl ConsoleApi,
     script: &Script,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    use crate::drawstate::{LayerId::*, PALETTE_MAP_IDENTITY};
+    use crate::draw_state::{LayerId::*, PALETTE_MAP_IDENTITY};
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
     draw_title_text(draw_state.rgba(BG), system, script, y, game_title, c2, c14);

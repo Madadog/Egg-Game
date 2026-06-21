@@ -3,10 +3,10 @@ use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use egg_core::EggState;
 
-use egg_core::data::tmj::TiledMap;
-use egg_core::gamestate::texteditor::TextEditor;
-use egg_core::system::ConsoleApi;
-use egg_core::system::{HEIGHT, ScanCode, WIDTH};
+use egg_core::data::tiled::TiledMap;
+use egg_core::editor::text::TextEditor;
+use egg_core::platform::ConsoleApi;
+use egg_core::platform::{HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{
     ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture,
 };
@@ -194,7 +194,7 @@ pub struct MapImage {
     /// `MapStore` key of the map this image belongs to.
     pub map_name: String,
     /// Path as authored in the `.tmj` (relative to the map file) — the key
-    /// [`egg_core::data::tmj::TiledMap::attach_image`] matches on.
+    /// [`egg_core::data::tiled::TiledMap::attach_image`] matches on.
     pub rel_path: String,
     pub handle: Handle<Image>,
 }
@@ -227,7 +227,7 @@ impl GameAssets {
     /// Expand a loaded [`GameManifest`] into concrete asset handles: each map
     /// stem → `maps/<name>.tmj`, plus the fixed font/sheet/script. Kicks off
     /// loading all of them.
-    fn from_manifest(assets: &AssetServer, manifest: &egg_core::data::tmj::GameManifest) -> Self {
+    fn from_manifest(assets: &AssetServer, manifest: &egg_core::data::tiled::GameManifest) -> Self {
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
@@ -438,7 +438,7 @@ fn load_assets(
 /// Attach the decoded image-layer pixels to `map` (keyed `name`) before it's
 /// inserted into the store: for each [`MapImage`] of this map that loaded, the
 /// Bevy `Image` is converted to the engine's `RgbaImage` and handed to
-/// [`egg_core::data::tmj::TiledMap::attach_image`]. An image that failed to load
+/// [`egg_core::data::tiled::TiledMap::attach_image`]. An image that failed to load
 /// (no entry in `images`) is logged and skipped — its layer keeps no pixels, so
 /// it simply doesn't draw and contributes empty collision.
 fn attach_map_images(
@@ -492,16 +492,16 @@ fn poll_language_change(
 /// Draw a centred status overlay (Paused / Fast-Forward) onto the screen.
 fn draw_overlay(game: &mut EggGame, text: &str) {
     let colour =
-        egg_core::system::drawing::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
+        egg_core::render::image::Rgba::from_rgb(game.state.draw_state.palettes[0][12]);
     let system = &mut game.system;
-    egg_core::system::print_to_with_font(
+    egg_core::render::print_to_with_font(
         &system.font,
         &mut system.output_screen,
         text,
         100,
         62,
         colour,
-        egg_core::system::PrintOptions::default(),
+        egg_core::render::PrintOptions::default(),
     );
 }
 
@@ -665,13 +665,13 @@ fn step_state(
         let (w, h) = (g.system.width(), g.system.height());
         g.text_editor.step(&mut g.system, w, h);
         if let Some(source) = g.text_editor.pending_script.take() {
-            match egg_core::data::eggtext::parse(&source) {
+            match egg_core::data::script::eggtext::parse(&source) {
                 Ok(file) => g.state.script.set_base(file),
                 Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
             }
         }
         if let Some(source) = g.text_editor.pending_scene.take() {
-            match egg_core::data::eggscene::parse(&source) {
+            match egg_core::data::scene::parse(&source) {
                 Ok(file) => g.state.set_scenes(file),
                 Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
             }
@@ -720,13 +720,13 @@ fn step_state(
         let pos = game.state.walkaround.player().pos;
         let rand = game.state.rng.rand_u8();
         let id = if rand < 64 {
-            egg_core::player::PresetId::ellie()
+            egg_core::world::player::PresetId::ellie()
         } else if rand < 128 {
-            egg_core::player::PresetId::dog()
+            egg_core::world::player::PresetId::dog()
         } else if rand < 192 {
-            egg_core::player::PresetId::bro()
+            egg_core::world::player::PresetId::bro()
         } else {
-            egg_core::player::PresetId::may()
+            egg_core::world::player::PresetId::may()
         };
         if let Some(mut new) = game.state.presets.spawn(&id) {
             new.pos = pos;
@@ -738,7 +738,7 @@ fn step_state(
         for e in game.state.walkaround.entities.iter_mut() {
             let normalised = e.pos - pos;
             let (x, y) = (normalised.x as f32 * 0.9, normalised.y as f32 * 0.9);
-            e.pos = egg_core::position::Vec2::new(x as i16, y as i16) + pos;
+            e.pos = egg_core::geometry::Vec2::new(x as i16, y as i16) + pos;
         }
     } else if keys.pressed(KeyCode::Digit3) {
         if game.state.walkaround.entities.len() > 1 {
