@@ -10,7 +10,6 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Inventory {
     pub items: [Option<String>; 8],
-    pub unlocks: [bool; 4],
 }
 impl Default for Inventory {
     fn default() -> Self {
@@ -31,7 +30,6 @@ impl Inventory {
                 None,
                 None,
             ],
-            unlocks: [false; 4],
         }
     }
     pub fn swap(&mut self, a: usize, b: usize) {
@@ -440,6 +438,28 @@ impl InventoryUi {
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(&*ctx);
         ui.draw(ctx.draw, ctx.system, FG);
+
+        // Unlock emblems: each shell whose story flag is set shows its icon
+        // (sprite `10 + slot index`) centred on its 16×16 egg. `rect` resolves
+        // the egg slots only on the Eggs page, so this is a no-op elsewhere.
+        let shell_unlocks = ctx.save.shell_flags();
+        for (i, unlocked) in shell_unlocks.iter().enumerate() {
+            if *unlocked && let Some(slot) = ui.rect(InvKey::Egg(i)) {
+                ctx.draw.spr(
+                    FG,
+                    &PALETTE_MAP_IDENTITY,
+                    10 + i as i32,
+                    i32::from(slot.x) + (i32::from(slot.w) - 8) / 2,
+                    i32::from(slot.y) + (i32::from(slot.h) - 8) / 2,
+                    SpriteOptions {
+                        w: 1,
+                        h: 1,
+                        transparent: Some(0),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
 
         // ...then overlay the state-specific bits using the laid-out rects.
         match &self.state {

@@ -170,6 +170,20 @@ impl SaveData {
         self.flags.contains(name)
     }
 
+    /// The four shell story flags in their canonical (declaration) order — the
+    /// unlock state of the four Eggs-page shell slots (index `0..4`). Each gates
+    /// the emblem (sprite `10 + index`) drawn centred on that egg once its shell
+    /// is unlocked. The single source of truth for "shell N unlocked"; the bag
+    /// reads it at draw time rather than storing a duplicate.
+    pub fn shell_flags(&self) -> [bool; 4] {
+        [
+            self.shell_key,
+            self.shell_curiosity,
+            self.shell_matryoshka,
+            self.shell_monster,
+        ]
+    }
+
     /// The [`taken`](Self::taken) key a removable object is recorded under: its
     /// map name and stable [`id`](crate::world::map::MapObject::id), joined so the same
     /// local id on two different maps never collides.
@@ -274,6 +288,20 @@ mod tests {
         save.set_flag("seen_sunrise", false);
         assert!(!save.flag("seen_sunrise"));
         assert!(save.flags.is_empty());
+    }
+
+    /// `shell_flags` returns the four shell flags in declaration order, pinning
+    /// the Eggs-page emblem mapping (slot index `i` → sprite `10 + i`) to the
+    /// right shell. If the field order or this method ever drift apart, the
+    /// wrong emblem would render on the wrong egg.
+    #[test]
+    fn shell_flags_are_ordered() {
+        let mut save = SaveData::default();
+        assert_eq!(save.shell_flags(), [false; 4]);
+        save.shell_curiosity = true; // second flag → index 1
+        assert_eq!(save.shell_flags(), [false, true, false, false]);
+        save.shell_monster = true; // fourth flag → index 3
+        assert_eq!(save.shell_flags(), [false, true, false, true]);
     }
 
     /// A save written before `flags` existed has no `flags` key at all; it must

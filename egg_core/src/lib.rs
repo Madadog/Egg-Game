@@ -522,7 +522,6 @@ mod tests {
         let mut loaded = EggState::default();
         loaded.walkaround.inventory_ui.inventory = Inventory {
             items: [const { None }; 8],
-            unlocks: [false; 4],
         };
         let did_load = loaded.load_save(&mut console);
         assert!(did_load, "the stored save is read once");
@@ -557,7 +556,6 @@ mod tests {
         // something to actually undo and the post-erase flush has a diff to write.
         assert!(state.walkaround.inventory_ui.inventory.add("ff".into()));
         assert!(state.walkaround.inventory_ui.inventory.add("lm".into()));
-        state.walkaround.inventory_ui.inventory.unlocks = [true; 4];
         state.save.egg_count = 99;
         assert_ne!(
             state.walkaround.inventory_ui.inventory.to_save(),
@@ -612,8 +610,6 @@ mod tests {
             SaveData::default().inventory,
             "live inventory reset to the starting items"
         );
-        // …and the rest of `InventoryUi` is fresh too (the unlocks we dirtied).
-        assert_eq!(state.walkaround.inventory_ui.inventory.unlocks, [false; 4]);
         // The in-memory save is the default (egg_count cleared as well).
         assert_eq!(state.save, SaveData::default(), "save zeroed");
 

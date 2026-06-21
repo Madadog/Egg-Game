@@ -1353,7 +1353,6 @@ mod tests {
         // Start empty so the grant lands in slot 0 deterministically.
         let mut inventory = Inventory {
             items: [const { None }; 8],
-            unlocks: [false; 4],
         };
         let give = InteractFn::GiveItem("ff".to_string());
         assert!(
