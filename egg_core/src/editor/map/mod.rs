@@ -21,7 +21,9 @@ use crate::platform::{
     ConsoleApi, ConsoleHelper, MouseInput, ScanCode, just_pressed, pressed,
 };
 use crate::render::image::{Rgba, RgbaImage};
-use crate::render::{Canvas, EdgePolicy, Flip, MapOptions, Rotate, SpriteOptions, Transform};
+use crate::render::{
+    Canvas, DrawParams, EdgePolicy, Flip, MapOptions, Rotate, SpriteOptions, Transform,
+};
 use crate::ui::dialogue::Dialogue;
 use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};
 use crate::world::animation::AnimFrame;
@@ -373,6 +375,12 @@ enum EditorKey {
     /// Open the selected warp's destination map in the editor, centred on the
     /// landing point. A no-op for a same-map warp (no destination to load).
     OpenWarpDest,
+    /// Open the fullscreen warp-destination placement overlay (the "place" button).
+    WarpPreviewOpen,
+    /// Confirm the fullscreen placement — commit the working landing point.
+    WarpPreviewOk,
+    /// Cancel the fullscreen placement — leave the warp untouched.
+    WarpPreviewCancel,
     Field(EditField),
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
@@ -446,6 +454,33 @@ const THUMB_H: f32 = 22.0;
 /// The selected warp's destination preview box height, px. Its width fills the
 /// Objects panel, so floating/widening that panel grows the click target.
 const WARP_PREVIEW_H: f32 = 64.0;
+
+/// Arrow-key pan speed (map px/frame) for the fullscreen warp-preview overlay;
+/// holding Shift uses the faster one.
+const WARP_CAM_PAN: i16 = 2;
+const WARP_CAM_PAN_FAST: i16 = 6;
+
+/// An open fullscreen warp-destination placement session (see
+/// [`MapViewer::open_warp_preview`]). The destination map renders 1:1 offset by
+/// `camera`; `point` is the working landing, committed to the warp only on
+/// confirm so a cancel leaves it untouched.
+#[derive(Debug, Clone)]
+struct WarpPreview {
+    /// Index into the current map's `objects` of the warp being placed.
+    object: usize,
+    /// The destination map's name (the warp's target, or the current map for a
+    /// same-map warp). Resolved once on open.
+    dest: String,
+    /// Working landing point, destination-map pixels. Committed on confirm.
+    point: Vec2,
+    /// Camera top-left, destination-map pixels — the 1:1 render's pan offset.
+    camera: Vec2,
+    /// Placement is gated on this until the mouse releases once, so the click that
+    /// opened the overlay can't instantly drop the landing under the button.
+    armed: bool,
+    /// `(cursor, camera)` captured at a right-button press, for grab-drag panning.
+    pan_anchor: Option<(Vec2, Vec2)>,
+}
 /// Side (px) of the square animated-sprite preview box in the Objects panel.
 const SPRITE_PREVIEW_PX: f32 = 40.0;
 /// Height (px) of a panel's pinned title bar — the `full_width(7.0)` title row.
@@ -749,6 +784,11 @@ pub struct MapViewer {
     /// the camera centres on after loading — a warp's landing point, so opening a
     /// warp's destination frames where it lands.
     pub pending_open: Option<(String, Option<Vec2>)>,
+    /// An open fullscreen warp-destination placement session (fully modal): preview
+    /// the selected warp's destination 1:1, pan, click to set its landing, then
+    /// confirm or cancel. `None` when not placing. See
+    /// [`open_warp_preview`](Self::open_warp_preview).
+    warp_preview: Option<WarpPreview>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -795,7 +835,7 @@ impl MapViewer {
     /// True while a text field is capturing keyboard input — the host suppresses
     /// its global debug hotkeys so typed dialogue keys don't trigger them.
     pub fn is_typing(&self) -> bool {
-        self.editing.is_some() || self.maps_dialog.is_typing()
+        self.editing.is_some() || self.maps_dialog.is_typing() || self.warp_preview.is_some()
     }
 
     /// The field currently focused for text entry, if any.
@@ -2057,7 +2097,10 @@ impl MapViewer {
                     // landing point. Disabled for a same-map warp (no `map`).
                     let open =
                         Self::action_button(b, "open", 11, w.map.is_some(), EditorKey::OpenWarpDest);
-                    rows.push(b.row(2.0, [open]).id());
+                    // Fullscreen 1:1 placement overlay (works for same-map warps too).
+                    let place =
+                        Self::action_button(b, "place", 11, true, EditorKey::WarpPreviewOpen);
+                    rows.push(b.row(2.0, [open, place]).id());
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
@@ -2817,6 +2860,14 @@ impl MapViewer {
             self.load_layout(system);
         }
 
+        // A fullscreen warp-destination placement session is fully modal: it draws
+        // over the editor and captures all input until confirmed or cancelled.
+        if self.warp_preview.is_some() {
+            self.dock.recompute(screen);
+            self.step_warp_preview(system, map, maps, screen);
+            return;
+        }
+
         if self.maps_dialog.is_active() {
             // A modal map dialog (new / rename / delete) captures all input.
             self.step_maps_dialog(system, maps);
@@ -3230,6 +3281,249 @@ impl MapViewer {
         }
     }
 
+    /// Open the fullscreen warp-destination placement overlay for the selected
+    /// warp: render its destination map 1:1, centred on the current landing, so
+    /// you pan and click to place the landing against the real geometry. A no-op
+    /// if no warp is selected or its destination map can't be resolved.
+    fn open_warp_preview(&mut self, map: &MapInfo, maps: &MapStore) {
+        let Some(i) = self.selected else { return };
+        let Some(ObjectEffect::Warp(w)) = map.objects.get(i).map(|o| &o.effect) else {
+            return;
+        };
+        // A same-map warp previews the current map; otherwise the named target.
+        let dest = w.map.clone().unwrap_or_else(|| map.source.clone());
+        let Some(tiled) = maps.get(&dest) else { return };
+        let (fw, fh) = ((tiled.width as i16 * 8).max(1), (tiled.height as i16 * 8).max(1));
+        let (sw, sh) = self.dock.solved.screen;
+        // Centre on the landing, then clamp so the map stays framed.
+        let camera = Vec2::new(
+            clamp_camera(w.to.x - sw / 2, fw, sw),
+            clamp_camera(w.to.y - sh / 2, fh, sh),
+        );
+        self.warp_preview = Some(WarpPreview {
+            object: i,
+            dest,
+            point: w.to,
+            camera,
+            armed: false,
+            pan_anchor: None,
+        });
+    }
+
+    /// Step the fullscreen placement overlay (fully modal). Arrows or right-drag
+    /// pan; left-click/drag sets the landing; Z/Enter confirm, X/Esc cancel. The
+    /// warp is untouched until confirm. Self-closes if the warp or its destination
+    /// map vanishes mid-session.
+    fn step_warp_preview(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        screen: (f32, f32),
+    ) {
+        let Some(mut pv) = self.warp_preview.clone() else { return };
+        // Self-heal: still a warp, and its destination map still resolves.
+        let still_warp = matches!(
+            map.objects.get(pv.object).map(|o| &o.effect),
+            Some(ObjectEffect::Warp(_))
+        );
+        let dims = maps
+            .get(&pv.dest)
+            .filter(|_| still_warp)
+            .map(|t| ((t.width as i16 * 8).max(1), (t.height as i16 * 8).max(1)));
+        let Some((fw, fh)) = dims else {
+            self.warp_preview = None;
+            return;
+        };
+        let (sw, sh) = (screen.0 as i16, screen.1 as i16);
+
+        // Z/Enter commit the working point; X/Esc discard (warp untouched).
+        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+            self.warp_preview = None;
+            return;
+        }
+        if system.keyp(ScanCode::Return) || system.keyp(ScanCode::Z) {
+            self.commit_warp_preview(&pv, map);
+            return;
+        }
+
+        let mouse = system.mouse();
+        let cursor = mouse.pos();
+        // The Confirm/Cancel buttons win a click over the map beneath them.
+        if just_pressed(mouse.left) {
+            match self.build_warp_preview_ui().hit_at(0, 0, cursor) {
+                Some(EditorKey::WarpPreviewOk) => {
+                    self.commit_warp_preview(&pv, map);
+                    return;
+                }
+                Some(EditorKey::WarpPreviewCancel) => {
+                    self.warp_preview = None;
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Arrow keys pan (held = continuous; Shift = faster).
+        let step = if system.key(ScanCode::Shift) {
+            WARP_CAM_PAN_FAST
+        } else {
+            WARP_CAM_PAN
+        };
+        if system.key(ScanCode::Left) { pv.camera.x -= step; }
+        if system.key(ScanCode::Right) { pv.camera.x += step; }
+        if system.key(ScanCode::Up) { pv.camera.y -= step; }
+        if system.key(ScanCode::Down) { pv.camera.y += step; }
+        // Right-drag grabs and pans the map (left stays for placement).
+        if just_pressed(mouse.right) {
+            pv.pan_anchor = Some((cursor, pv.camera));
+        }
+        if let Some((anchor_cursor, anchor_cam)) = pv.pan_anchor {
+            if mouse.right[0] {
+                pv.camera.x = anchor_cam.x + (anchor_cursor.x - cursor.x);
+                pv.camera.y = anchor_cam.y + (anchor_cursor.y - cursor.y);
+            } else {
+                pv.pan_anchor = None;
+            }
+        }
+        pv.camera.x = clamp_camera(pv.camera.x, fw, sw);
+        pv.camera.y = clamp_camera(pv.camera.y, fh, sh);
+
+        // The click that opened the overlay stays held into these first frames;
+        // arm placement only once it has released, so the opening click can't drop
+        // the landing under the "place" button.
+        pv.armed |= !mouse.left[0];
+        // Left-click/drag on the map sets the landing: screen px + camera = map px
+        // (the inverse of the 1:1 render), clamped to bounds. Not while pan-dragging.
+        if pv.armed && mouse.left[0] && pv.pan_anchor.is_none() {
+            pv.point.x = (cursor.x + pv.camera.x).clamp(0, fw - 1);
+            pv.point.y = (cursor.y + pv.camera.y).clamp(0, fh - 1);
+        }
+        self.warp_preview = Some(pv);
+    }
+
+    /// Commit the placement: write the working landing to the warp (one undo step)
+    /// and close the overlay.
+    fn commit_warp_preview(&mut self, pv: &WarpPreview, map: &mut MapInfo) {
+        let point = pv.point;
+        self.modify_warp(map, |w| w.to = point);
+        self.warp_preview = None;
+    }
+
+    /// The overlay chrome: a top `WARP PREVIEW` banner and a bottom bar (hint +
+    /// confirm/cancel buttons). Built once and shared by the hit pass (in
+    /// [`step_warp_preview`]) and the draw pass so the buttons can't disagree.
+    fn build_warp_preview_ui(&self) -> Ui<EditorKey> {
+        let (sw, sh) = self.dock.solved.screen;
+        let mut b = UiBuilder::new();
+        let banner = b
+            .text("WARP PREVIEW")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(8.0)
+            .fill(8)
+            .id();
+        let hint = b
+            .text("drag = place   arrows/right-drag = pan   Z = ok   X = cancel")
+            .small(true)
+            .color(13)
+            .grow(1.0)
+            .id();
+        let ok = b
+            .text("confirm")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(7.0)
+            .outlined(11, 11)
+            .key(EditorKey::WarpPreviewOk)
+            .id();
+        let cancel = b
+            .text("cancel")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(7.0)
+            .outlined(8, 8)
+            .key(EditorKey::WarpPreviewCancel)
+            .id();
+        let bottom = b.row(2.0, [hint, ok, cancel]).pad(1.0).id();
+        let spacer = b.spacer(0.0).grow(1.0).id();
+        let root = b
+            .column(0.0, [banner, spacer, bottom])
+            .size(sw as f32, sh as f32)
+            .id();
+        b.finish(root, (sw as f32, sh as f32))
+    }
+
+    /// Draw the fullscreen placement overlay: the destination map rendered 1:1 (the
+    /// live-world layer path) at the pan camera, its objects as static frame-0
+    /// sprites + kind-coloured hitbox markers, the landing avatar + crosshair, and
+    /// the chrome on top.
+    fn draw_warp_preview_fullscreen(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        maps: &MapStore,
+    ) {
+        let Some(pv) = self.warp_preview.as_ref() else { return };
+        let cam = pv.camera;
+        let Some(tiled) = maps.get(&pv.dest) else { return };
+        // `info` borrows the sprite sheet, so resolve it before the mutable draws.
+        let Some(info) = map_by_name(&draw_state.indexed_sprites, &pv.dest, maps) else {
+            return;
+        };
+
+        // Live-world draw order at native scale, offset by the camera.
+        let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
+        draw_state.rgba(LayerId::BG).fill(bg);
+        info.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+
+        // The destination's objects, so you place against real geometry: each
+        // object's static frame-0 sprite (if any) + a kind-coloured hitbox marker
+        // (warps 12, interactables 14).
+        for object in &info.objects {
+            if let Some(frame) = object.sprite.as_ref().and_then(|f| f.first()) {
+                DrawParams::new(
+                    frame.spr_id.into(),
+                    i32::from(frame.pos.x) + i32::from(object.hitbox.x) - i32::from(cam.x),
+                    i32::from(frame.pos.y) + i32::from(object.hitbox.y) - i32::from(cam.y),
+                    frame.options.clone(),
+                    frame.outline_colour,
+                    frame.palette_rotate,
+                )
+                .draw_to(draw_state, LayerId::BG);
+            }
+            let marker = if matches!(object.effect, ObjectEffect::Warp(_)) { 12 } else { 14 };
+            object
+                .hitbox
+                .offset_xy(-cam.x, -cam.y)
+                .draw(draw_state, LayerId::BG, marker);
+        }
+
+        // The landing avatar via the live sprite path, then fg layers, then the
+        // avatar's collision hitbox.
+        let player = Shell::default().with_pos(pv.point);
+        player.draw_params(cam).draw_to(draw_state, LayerId::BG);
+        info.draw_fg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+        player
+            .hitbox()
+            .offset_xy(-cam.x, -cam.y)
+            .draw(draw_state, LayerId::BG, 11);
+
+        // Crosshair on the exact landing pixel.
+        let mark = draw_state.colour(8);
+        let (cx, cy) = (i32::from(pv.point.x - cam.x), i32::from(pv.point.y - cam.y));
+        let arm = 4;
+        let layer = draw_state.rgba(LayerId::BG);
+        layer.line(cx - arm, cy, cx + arm, cy, mark);
+        layer.line(cx, cy - arm, cx, cy + arm, mark);
+
+        self.build_warp_preview_ui()
+            .draw_at(0, 0, draw_state, system, LayerId::BG);
+    }
+
     fn handle_panel(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -3525,6 +3819,14 @@ impl MapViewer {
                     self.open_selected_warp_dest(&map.objects);
                 }
             }
+            EditorKey::WarpPreviewOpen => {
+                if click {
+                    self.open_warp_preview(map, maps);
+                }
+            }
+            // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
+            // (it's modal), so they never arrive through the normal panel dispatch.
+            EditorKey::WarpPreviewOk | EditorKey::WarpPreviewCancel => {}
             // Press on a panel's scroll bar: begin a thumb drag, capturing the grab
             // offset so the thumb tracks the cursor rather than snapping under it.
             EditorKey::PanelScroll(pidx) => {
@@ -4398,6 +4700,8 @@ impl MapViewer {
     fn reset_for_new_map(&mut self) {
         self.history.clear();
         self.stop_editing();
+        // A placement session indexes the old map's objects; drop it.
+        self.warp_preview = None;
         self.selected = None;
         self.sprite_frame = 0;
         self.preview_frame = 0;
@@ -5305,6 +5609,11 @@ impl MapViewer {
         if !self.focused {
             return;
         }
+        // A fullscreen warp-destination placement session draws over everything.
+        if self.warp_preview.is_some() {
+            self.draw_warp_preview_fullscreen(draw_state, system, maps);
+            return;
+        }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
         self.draw_grid(draw_state, system, map, maps, camera_pos);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
@@ -6097,6 +6406,17 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// Frame a 1:1 map preview: clamp a camera coordinate (top-left, map px) so the
+/// map stays in view — pan within `[0, content - view]` when the map is larger
+/// than the viewport, pin to a centred negative offset when it's smaller.
+fn clamp_camera(v: i16, content: i16, view: i16) -> i16 {
+    if content <= view {
+        -((view - content) / 2)
+    } else {
+        v.clamp(0, content - view)
+    }
+}
+
 /// Render map `name` 1:1 at the map origin (no camera) into a fresh image, using
 /// the live sprite sheet from `draw_state`. The same per-layer render as the
 /// world: tile layers via the sheet, image layers blitted. Returns the image and
@@ -6610,6 +6930,88 @@ mod tests {
         let same_map = vec![warp(None, Vec2::new(1, 1))];
         ed.open_selected_warp_dest(&same_map);
         assert_eq!(ed.pending_open, None, "same-map warp queues no open");
+    }
+
+    /// `clamp_camera` keeps a 1:1 map framed: a map larger than the view pans
+    /// within `[0, content - view]`; a smaller one pins to a centred negative
+    /// offset (so it sits in the middle, not the corner).
+    #[test]
+    fn clamp_camera_pans_large_and_centres_small() {
+        // Larger than the view: clamp into bounds.
+        assert_eq!(clamp_camera(-5, 200, 100), 0);
+        assert_eq!(clamp_camera(150, 200, 100), 100); // content - view
+        assert_eq!(clamp_camera(40, 200, 100), 40); // within bounds, untouched
+        // Smaller than the view: pinned centred, ignoring the requested value.
+        assert_eq!(clamp_camera(999, 60, 100), -20); // -((100 - 60) / 2)
+    }
+
+    /// Opening seeds the placement session from the selected warp; committing
+    /// writes the working landing to the warp and closes; cancelling (dropping the
+    /// session) leaves the warp untouched — nothing is written until commit.
+    #[test]
+    fn warp_preview_opens_commits_and_cancels() {
+        let mut store = MapStore::default();
+        store.insert("dest", TiledMap::blank_modern(20, 15)); // 160×120 px
+        let mut map = MapInfo {
+            source: "home".to_string(),
+            ..MapInfo::default()
+        };
+        map.objects.push(MapObject::warp(
+            Hitbox::new(0, 0, 8, 8),
+            Warp::new(Some("dest"), Vec2::new(40, 24)),
+        ));
+        let mut ed = MapViewer::primary();
+        ed.selected = Some(0);
+
+        ed.open_warp_preview(&map, &store);
+        let pv = ed.warp_preview.clone().expect("opened a session");
+        assert_eq!(pv.dest, "dest");
+        assert_eq!(pv.point, Vec2::new(40, 24), "seeded from the warp's landing");
+
+        // Commit a moved point: writes it to the warp and closes.
+        let mut moved = pv;
+        moved.point = Vec2::new(50, 30);
+        ed.commit_warp_preview(&moved, &mut map);
+        assert!(ed.warp_preview.is_none(), "commit closes the session");
+        let ObjectEffect::Warp(w) = &map.objects[0].effect else {
+            panic!("still a warp");
+        };
+        assert_eq!(w.to, Vec2::new(50, 30), "committed the moved landing");
+
+        // Re-open then cancel (drop the session): the warp keeps its value.
+        ed.open_warp_preview(&map, &store);
+        ed.warp_preview = None;
+        let ObjectEffect::Warp(w) = &map.objects[0].effect else {
+            panic!("still a warp");
+        };
+        assert_eq!(w.to, Vec2::new(50, 30), "cancel leaves the warp untouched");
+    }
+
+    /// The modal step self-closes if the destination map vanishes mid-session, so
+    /// a deleted target can't strand the editor in a placement view.
+    #[test]
+    fn warp_preview_self_closes_when_target_missing() {
+        use crate::platform::test_console::TestConsole;
+        let mut store = MapStore::default();
+        store.insert("dest", TiledMap::blank_modern(20, 15));
+        let mut map = MapInfo::default();
+        map.objects.push(MapObject::warp(
+            Hitbox::new(0, 0, 8, 8),
+            Warp::new(Some("dest"), Vec2::new(1, 1)),
+        ));
+        let mut ed = MapViewer::primary();
+        ed.selected = Some(0);
+        ed.open_warp_preview(&map, &store);
+        assert!(ed.warp_preview.is_some());
+
+        // Step with a store that no longer has the destination: the session closes.
+        let mut empty = MapStore::default();
+        let mut console = TestConsole::new();
+        ed.step_warp_preview(&mut console, &mut map, &mut empty, (200.0, 150.0));
+        assert!(
+            ed.warp_preview.is_none(),
+            "self-closes when the destination map is missing"
+        );
     }
 
     /// Pushing a new action clears any redo future: a fresh edit invalidates the
