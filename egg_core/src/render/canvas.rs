@@ -24,6 +24,14 @@ pub enum Rotate {
     By270,
 }
 
+impl Rotate {
+    /// Whether this is the default (no rotation) — the serde
+    /// `skip_serializing_if` guard for [`SpriteOptions`](crate::render::SpriteOptions).
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Rotate::None)
+    }
+}
+
 /// Discrete transform applied to `src` during a blit: flip, 90-degree rotate,
 /// integer upscale. Order is flip -> rotate -> scale, and `(dx, dy)` anchors
 /// the top-left of the transformed bounding box on the destination (TIC-80

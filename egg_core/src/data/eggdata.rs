@@ -1,38 +1,32 @@
 //! Game data — the runtime `data.toml` file (plain TOML): the **item registry**
-//! and the creature **[`ShellPreset`](crate::world::player::ShellPreset) definitions**.
-//! Language-invariant data, the way maps and cutscenes are (names/descriptions
-//! stay in the script as `item_<key>` lists) — loaded from `assets/data/` at
-//! startup the way the script and maps are, rather than baked into Rust.
+//! and the creature **[`PresetDef`] definitions**. Language-invariant data, the
+//! way maps and cutscenes are (names/descriptions stay in the script as
+//! `item_<key>` lists) — loaded from `assets/data/` at startup the way the script
+//! and maps are, rather than baked into Rust.
 //!
 //! ## Why this shape
-//! The format mirrors the *constructors* in [`crate::world::player`]
-//! (`humanoid`/`compass`/`sideways`/`front_back`), **not** the expanded runtime
-//! [`WalkSprites`](crate::world::player::WalkSprites). The runtime form is a flattened
-//! 9-cell grid of per-frame [`SpriteOptions`](crate::render::SpriteOptions);
-//! serialising that would be enormous and unauthorable. The patterns already are
-//! the authoring vocabulary, so a preset is the pattern plus its sprite ids —
-//! terse enough to hand-write (the second-class path) and exactly what a future
-//! walk-sprite GUI would manipulate (the first-class path).
+//! A preset's `walk` **is** the runtime [`WalkSprites`](crate::world::player::WalkSprites):
+//! a preset deserialises straight into it — the flattened 9-cell grid of per-frame
+//! [`SpriteOptions`](crate::render::SpriteOptions) plus its facing policy, in full.
+//! There is no shorthand "pattern" layer between the file and the runtime; what
+//! ships is exactly what the game reads. The grid is verbose (defaulted frame
+//! fields are elided, but nine cells is nine cells), which is the deliberate
+//! trade: this format is GUI-emitted and the transparency was chosen over terse
+//! hand-authoring.
 //!
 //! ## Status
-//! [`items`](DataFile::items) are the live source today
-//! ([`GameItems::from_data`], installed at boot by
-//! [`EggState::load_data`](crate::EggState::load_data)).
-//! The preset schema below is complete and round-trip-validated against the
-//! built-in constructors (see the tests), but presets are not yet the runtime
-//! source: every spawn site still constructs from code. Making presets data-
-//! driven means threading a store through those spawn sites and pairs with the
-//! walk-sprite authoring GUI — a deliberate follow-up, not this layer.
+//! Both [`items`](DataFile::items) and [`presets`](DataFile::presets) are the live
+//! source ([`GameItems::from_data`] / [`Presets::from_data`], installed at boot by
+//! [`EggState::load_data`](crate::EggState::load_data)). The embedded shipped file
+//! is the built-in default ([`Presets::builtin`]).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::Hitbox;
-use crate::render::Flip;
 use crate::world::player::{
-    CreatureState, LoopMode, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer,
-    WalkSprites,
+    CreatureState, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer, WalkSprites,
 };
 
 /// Where the host stores the game-data file, resolved under the asset root
@@ -169,8 +163,8 @@ impl Presets {
 }
 
 /// One creature archetype: its collision box, wander behaviour, the extra
-/// (non-walk) animations, and how its walk grid is built. Mirrors a
-/// `Shell::<preset>()` constructor in [`crate::world::player`].
+/// (non-walk) animations, and its walk grid. Mirrors a `Shell::<preset>()`
+/// constructor in [`crate::world::player`].
 ///
 /// Field order matters for TOML serialisation: the scalar/array values
 /// (`hitbox`, `move_mode`) come before the sub-table fields (`others`, `walk`),
@@ -186,8 +180,9 @@ pub struct PresetDef {
     /// Non-walk animations (today just the petting sprite), as a single sprite
     /// strip — the `other_ids` of [`ShellSprites`](crate::world::player::ShellSprites).
     pub others: SpriteSet,
-    /// How the eight-heading walk grid is built (see [`WalkSpec`]).
-    pub walk: WalkSpec,
+    /// The eight-heading walk grid, deserialised straight into the runtime
+    /// [`WalkSprites`] — the nine cells and facing policy in full, no shorthand.
+    pub walk: WalkSprites,
 }
 
 impl PresetDef {
@@ -196,12 +191,11 @@ impl PresetDef {
         let [x, y, w, h] = self.hitbox;
         Hitbox::new(x, y, w, h)
     }
-    /// The full [`ShellSprites`] for this preset — the walk grid plus the
-    /// `others` strip. Reuses the same [`WalkSprites`] constructors the built-in
-    /// presets do, so a data-built shell is byte-for-byte the code-built one.
+    /// The full [`ShellSprites`] for this preset — the walk grid (cloned straight
+    /// from the deserialised [`WalkSprites`]) plus the `others` strip.
     pub fn build_sprites(&self) -> ShellSprites {
         ShellSprites {
-            walk: self.walk.build(),
+            walk: self.walk.clone(),
             others: vec![self.others.build()],
         }
     }
@@ -230,109 +224,6 @@ impl SpriteSet {
     }
 }
 
-/// How a preset's eight-heading walk grid is built, one variant per authoring
-/// pattern in [`WalkSprites`](crate::world::player::WalkSprites). Externally tagged
-/// (TOML's best-supported enum form): the variant name is the table key, e.g.
-/// `walk = { humanoid = { south = 768, side = 832 } }`.
-///
-/// `Humanoid`/`Sideways`/`FrontBack` are the terse patterns (just sprite ids);
-/// `Compass` is the explicit escape hatch — four hand-specified [`AnimSpec`]
-/// cells — for art that doesn't fit a pattern (the dog, and whatever the future
-/// GUI authors).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WalkSpec {
-    /// Humanoid four-direction walk: south/side base sprite ids (north is derived
-    /// `south + 3`, west mirrors east). See [`WalkSprites::humanoid`].
-    Humanoid { south: i32, side: i32 },
-    /// One look for every heading, mirrored when facing left. See
-    /// [`WalkSprites::sideways`].
-    Sideways { ids: Vec<i32>, w: i32, h: i32 },
-    /// Explicit four-direction walk: each cardinal animation given in full. See
-    /// [`WalkSprites::compass`].
-    Compass {
-        north: AnimSpec,
-        south: AnimSpec,
-        east: AnimSpec,
-        west: AnimSpec,
-    },
-    /// North/south only, no mirroring, for every heading. See
-    /// [`WalkSprites::front_back`].
-    FrontBack { north: AnimSpec, south: AnimSpec },
-}
-impl WalkSpec {
-    /// Build the runtime walk grid, dispatching to the matching
-    /// [`WalkSprites`](crate::world::player::WalkSprites) constructor.
-    pub fn build(&self) -> WalkSprites {
-        match self {
-            WalkSpec::Humanoid { south, side } => WalkSprites::humanoid(*south, *side),
-            WalkSpec::Sideways { ids, w, h } => {
-                WalkSprites::sideways(SpriteAnimation::from_sprite_ids(ids, *w, *h))
-            }
-            WalkSpec::Compass {
-                north,
-                south,
-                east,
-                west,
-            } => WalkSprites::compass(north.build(), south.build(), east.build(), west.build()),
-            WalkSpec::FrontBack { north, south } => {
-                WalkSprites::front_back(north.build(), south.build())
-            }
-        }
-    }
-}
-
-/// One animation as data: either an explicit `ids` list or a `base`+`len` strip
-/// (the two [`SpriteAnimation`](crate::world::player::SpriteAnimation) sources), drawn
-/// at `w`×`h`, with optional `flip`, `x_offset` and `loop_mode` modifiers. Used
-/// for the explicit [`WalkSpec::Compass`] cells.
-///
-/// Exactly one of `ids` / `base` is meaningful: `base` present ⇒ a strip,
-/// otherwise the `ids` list. (The format is GUI-emitted and round-trip-tested,
-/// so this is a documented convention rather than a type-level guarantee.)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AnimSpec {
-    /// Explicit per-frame sprite ids (used when `base` is absent).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ids: Vec<i32>,
-    /// Strip start id; with `len`, expands to `base, base+w, …` (one frame per
-    /// `w`). Mutually exclusive with `ids`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base: Option<i32>,
-    /// Number of frames in a `base` strip.
-    #[serde(default = "one_i32")]
-    pub len: i32,
-    pub w: i32,
-    pub h: i32,
-    /// Horizontal/vertical mirror baked into every frame (e.g. a mirrored west).
-    #[serde(default, skip_serializing_if = "flip_is_none")]
-    pub flip: Flip,
-    /// Per-frame draw x-offset (the dog's wide east look uses `8`).
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub x_offset: i32,
-    /// Loop behaviour; absent ⇒ loop the whole strip.
-    #[serde(default, skip_serializing_if = "LoopSpec::is_default")]
-    pub loop_mode: LoopSpec,
-}
-impl AnimSpec {
-    fn build(&self) -> SpriteAnimation {
-        let mut anim = match self.base {
-            Some(base) => SpriteAnimation::from_base_sprite_id(base, self.len, self.w, self.h),
-            None => SpriteAnimation::from_sprite_ids(&self.ids, self.w, self.h),
-        };
-        if !flip_is_none(&self.flip) {
-            anim = anim.with_flip(self.flip.clone());
-        }
-        if self.x_offset != 0 {
-            anim = anim.with_x_offset(self.x_offset);
-        }
-        if !self.loop_mode.is_default() {
-            anim = anim.with_loopmode(self.loop_mode.build());
-        }
-        anim
-    }
-}
-
 /// The wander behaviour a preset spawns with — the data form of the relevant
 /// [`MoveMode`](crate::world::player::MoveMode) variants. (`Egg`/`Player` aren't preset
 /// spawn states, so they're not here.)
@@ -357,130 +248,33 @@ impl PresetMove {
     }
 }
 
-/// The data form of [`LoopMode`](crate::world::player::LoopMode): an animation's loop
-/// behaviour. Inclusive `start`/`end` for the ranged variant.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LoopSpec {
-    /// Loop the whole strip.
-    #[default]
-    Loop,
-    /// Play once, then loop only `start..=end`.
-    LoopRange { start: usize, end: usize },
-    /// Play to the last frame and hold it.
-    Hold,
-}
-impl LoopSpec {
-    fn is_default(&self) -> bool {
-        matches!(self, LoopSpec::Loop)
-    }
-    fn build(&self) -> LoopMode {
-        match self {
-            LoopSpec::Loop => LoopMode::Loop,
-            LoopSpec::LoopRange { start, end } => LoopMode::LoopRange(*start, *end),
-            LoopSpec::Hold => LoopMode::Hold,
-        }
-    }
-}
-
-// --- serde skip-serializing helpers (keep authored/dumped TOML free of default noise) ---
-
-fn one_i32() -> i32 {
-    1
-}
-fn is_zero(n: &i32) -> bool {
-    *n == 0
-}
-fn flip_is_none(f: &Flip) -> bool {
-    matches!(f, Flip::None)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::player::{MoveMode, PresetId};
-
-    /// The built-in presets as `data.toml`, hand-mirrored from the `Shell::<x>()`
-    /// constructors in `player.rs`. The tests below prove these rebuild the exact
-    /// same sprites/hitboxes — i.e. that the format faithfully captures the code.
-    fn builtin_preset(name: &str) -> PresetDef {
-        match name {
-            "ellie" => PresetDef {
-                hitbox: [0, 10, 7, 5],
-                move_mode: PresetMove::Wander,
-                others: SpriteSet { ids: vec![774, 775], w: 1, h: 2 },
-                walk: WalkSpec::Humanoid { south: 768, side: 832 },
-            },
-            "may" => PresetDef {
-                hitbox: [0, 12, 7, 5],
-                move_mode: PresetMove::Wander,
-                others: SpriteSet { ids: vec![2251, 2252], w: 1, h: 2 },
-                walk: WalkSpec::Humanoid { south: 2184, side: 2248 },
-            },
-            "bro" => PresetDef {
-                hitbox: [0, 8, 7, 5],
-                move_mode: PresetMove::Wander,
-                others: SpriteSet { ids: vec![905, 906], w: 1, h: 2 },
-                walk: WalkSpec::Humanoid { south: 896, side: 902 },
-            },
-            "critter" => PresetDef {
-                hitbox: [0, 0, 8, 8],
-                move_mode: PresetMove::Amble,
-                others: SpriteSet { ids: vec![688], w: 1, h: 1 },
-                walk: WalkSpec::Sideways { ids: vec![688, 689], w: 1, h: 1 },
-            },
-            "dog" => PresetDef {
-                hitbox: [0, 12, 7, 5],
-                move_mode: PresetMove::Wander,
-                others: SpriteSet { ids: vec![968, 970], w: 2, h: 2 },
-                walk: WalkSpec::Compass {
-                    north: AnimSpec { base: Some(966), len: 2, w: 1, h: 2, ..anim_default() },
-                    south: AnimSpec { base: Some(964), len: 2, w: 1, h: 2, ..anim_default() },
-                    east: AnimSpec { base: Some(960), len: 2, w: 2, h: 2, x_offset: 8, ..anim_default() },
-                    west: AnimSpec {
-                        base: Some(960),
-                        len: 2,
-                        w: 2,
-                        h: 2,
-                        flip: Flip::Horizontal,
-                        ..anim_default()
-                    },
-                },
-            },
-            other => panic!("no built-in preset {other:?}"),
-        }
-    }
-
-    /// `AnimSpec` has no `Default` (it carries required `w`/`h`); this fills the
-    /// optional fields so the built-ins above can use struct-update syntax.
-    fn anim_default() -> AnimSpec {
-        AnimSpec {
-            ids: Vec::new(),
-            base: None,
-            len: 1,
-            w: 1,
-            h: 1,
-            flip: Flip::None,
-            x_offset: 0,
-            loop_mode: LoopSpec::Loop,
-        }
-    }
+    use crate::render::Flip;
+    use crate::world::player::{MoveMode, PresetId, Shell};
 
     /// `Presets::builtin` embeds the shipped data and spawns each built-in with
     /// the right archetype, hitbox and behaviour — the data is the source of the
     /// shells. An unknown id is a clean miss.
     #[test]
     fn builtin_presets_spawn_the_creatures() {
+        // The shipped local (un-offset) hitboxes, pinned here so a stray edit to
+        // `data.toml` is caught.
+        let hitboxes = [
+            ("ellie", [0, 10, 7, 5]),
+            ("may", [0, 12, 7, 5]),
+            ("bro", [0, 8, 7, 5]),
+            ("critter", [0, 0, 8, 8]),
+            ("dog", [0, 12, 7, 5]),
+        ];
         let presets = Presets::builtin();
-        for name in ["ellie", "may", "bro", "critter", "dog"] {
+        for (name, hitbox) in hitboxes {
             let id = PresetId::new(name);
             let shell = presets.spawn(&id).unwrap_or_else(|| panic!("spawn {name}"));
             assert_eq!(shell.preset, id, "{name} stamps its id");
-            assert_eq!(
-                shell.local_hitbox,
-                builtin_preset(name).hitbox(),
-                "{name} hitbox",
-            );
+            let [x, y, w, h] = hitbox;
+            assert_eq!(shell.local_hitbox, Hitbox::new(x, y, w, h), "{name} hitbox");
         }
         // The critter ambles; the others wander.
         assert!(matches!(
@@ -495,24 +289,19 @@ mod tests {
         assert!(presets.spawn(&PresetId::new("nope")).is_none());
     }
 
-    /// A populated `data.toml` (items + every built-in preset) survives a
-    /// TOML serialise/parse round trip unchanged — the format the file is
-    /// authored in and the engine loads through.
+    /// The shipped `data.toml` (items + every built-in preset, walk grids in
+    /// full) survives a TOML serialise/parse round trip unchanged — the format
+    /// the file is authored in and the engine loads through.
     #[test]
     fn toml_round_trips_data_file() {
-        let mut data = DataFile::default();
-        data.items.insert("ff".into(), ItemDef { sprite: 513 });
-        data.items.insert("chegg".into(), ItemDef { sprite: 524 });
-        for name in ["ellie", "may", "dog", "bro", "critter"] {
-            data.presets.insert(name.into(), builtin_preset(name));
-        }
+        let data = parse(include_str!("../../../assets/data/data.toml"))
+            .expect("shipped data.toml parses");
         let toml = to_toml(&data).expect("serialise");
         let parsed = parse(&toml).expect("parse");
         assert_eq!(data, parsed);
     }
 
-    /// The terse patterns omit their defaulted modifiers, and a `[presets]`-less
-    /// file (only `[items]`, as shipped today) parses with no presets.
+    /// A `[presets]`-less file (only `[items]`) parses with no presets.
     #[test]
     fn items_only_file_parses_with_empty_presets() {
         let src = "\
@@ -535,17 +324,65 @@ sprite = 514
         assert!(parse("items = [not a table]").is_err());
     }
 
-    /// The shipped `data.toml` parses, and its hand-written compact form lands
-    /// the same structure the canonical (round-trip-validated) defs do — so
-    /// `Presets::builtin` (which embeds this file) gets the real built-ins.
+    /// The shipped `data.toml` parses to the expected items, and its walk grids
+    /// resolve to the right cells — the permanent regression that pins the
+    /// behaviour the old pattern builders used to produce, now that the grids are
+    /// authored in full. A heading `(dx, dy)` buckets to a grid cell via
+    /// [`WalkSprites::dir_to_sprite`](crate::world::player::WalkSprites::dir_to_sprite);
+    /// `frame` picks the frame within that cell's animation.
     #[test]
-    fn shipped_data_toml_parses_to_the_builtins() {
-        let data = parse(include_str!("../../../assets/data/data.toml"))
-            .expect("shipped data.toml parses");
-        assert_eq!(data.items.len(), 3);
-        assert_eq!(data.items["chegg"].sprite, 524);
-        for n in ["ellie", "may", "bro", "critter", "dog"] {
-            assert_eq!(&data.presets[n], &builtin_preset(n), "preset {n} matches canonical");
-        }
+    fn shipped_data_toml_resolves_the_right_cells() {
+        let presets = Presets::builtin();
+        assert_eq!(presets.defs.len(), 5, "five built-in presets");
+
+        // The shipped items.
+        let items = parse(include_str!("../../../assets/data/data.toml"))
+            .expect("shipped data.toml parses")
+            .items;
+        assert_eq!(items.len(), 3);
+        assert_eq!(items["chegg"].sprite, 524);
+
+        let spawn = |name: &str| presets.spawn(&PresetId::new(name)).unwrap();
+        // `(dx, dy)` heading -> the resolved frame of its grid cell.
+        let frame = |shell: &Shell, dir: (i8, i8), i: usize| {
+            shell.sprites.walk.dir_to_sprite(dir).get_frame(i).clone()
+        };
+
+        // ellie (humanoid): south strip starts at 768, north at 771; both are
+        // 1×2 and loop their walk pair (so frame 0 is the idle, frame 1 the first
+        // walk frame). West is the east strip mirrored.
+        let ellie = spawn("ellie");
+        assert_eq!(frame(&ellie, (0, 1), 0).id, 768, "ellie south[0]");
+        assert_eq!(frame(&ellie, (0, 1), 1).id, 769, "ellie south[1]");
+        assert_eq!(frame(&ellie, (0, -1), 0).id, 771, "ellie north[0]");
+        assert_eq!(frame(&ellie, (1, 0), 0).flip, Flip::None, "ellie east unflipped");
+        assert_eq!(
+            frame(&ellie, (-1, 0), 0).flip,
+            Flip::Horizontal,
+            "ellie west mirrored",
+        );
+
+        // critter (sideways): side ids [688, 689]; the left column is mirrored,
+        // the right column is not.
+        let critter = spawn("critter");
+        assert_eq!(frame(&critter, (1, 0), 0).id, 688, "critter side[0]");
+        assert_eq!(frame(&critter, (1, 0), 1).id, 689, "critter side[1]");
+        assert_eq!(frame(&critter, (1, 0), 0).flip, Flip::None, "critter right unflipped");
+        assert_eq!(
+            frame(&critter, (-1, 0), 0).flip,
+            Flip::Horizontal,
+            "critter left mirrored",
+        );
+
+        // dog (compass): the east look is the wide (2-tile) sprite drawn with an
+        // x_offset of 8; west is the same sprite mirrored, no offset.
+        let dog = spawn("dog");
+        let east = frame(&dog, (1, 0), 0);
+        assert_eq!(east.id, 960, "dog east id");
+        assert_eq!(east.x_offset, 8, "dog east x_offset");
+        assert_eq!(east.flip, Flip::None, "dog east unflipped");
+        let west = frame(&dog, (-1, 0), 0);
+        assert_eq!(west.flip, Flip::Horizontal, "dog west mirrored");
+        assert_eq!(west.x_offset, 0, "dog west has no offset");
     }
 }

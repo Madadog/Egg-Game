@@ -125,6 +125,11 @@ pub enum Flip {
 }
 
 impl Flip {
+    /// Whether this is the default (no mirror) — the serde
+    /// `skip_serializing_if` guard for [`SpriteOptions`].
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Flip::None)
+    }
     /// Whether this flip mirrors horizontally.
     pub const fn x(&self) -> bool {
         matches!(self, Flip::Horizontal | Flip::Both)
@@ -147,21 +152,21 @@ pub use super::Rotate;
 pub struct SpriteOptions {
     #[serde(default)]
     pub id: i32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub x_offset: i32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub y_offset: i32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transparent: Option<u8>,
-    #[serde(default = "one_i32")]
+    #[serde(default = "one_i32", skip_serializing_if = "is_one")]
     pub scale: i32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Flip::is_none")]
     pub flip: Flip,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Rotate::is_none")]
     pub rotate: Rotate,
-    #[serde(default = "one_i32")]
+    #[serde(default = "one_i32", skip_serializing_if = "is_one")]
     pub w: i32,
-    #[serde(default = "one_i32")]
+    #[serde(default = "one_i32", skip_serializing_if = "is_one")]
     pub h: i32,
 }
 
@@ -169,6 +174,14 @@ pub struct SpriteOptions {
 /// `1` (a 1×1 unscaled sprite), not `0`.
 fn one_i32() -> i32 {
     1
+}
+/// Serde `skip_serializing_if` guards: keep a defaulted offset (`0`) or a
+/// defaulted `scale`/`w`/`h` (`1`) out of the dumped/authored TOML.
+fn is_zero(n: &i32) -> bool {
+    *n == 0
+}
+fn is_one(n: &i32) -> bool {
+    *n == 1
 }
 impl SpriteOptions {
     pub const fn default() -> Self {

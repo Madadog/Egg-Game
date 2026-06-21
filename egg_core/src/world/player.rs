@@ -27,7 +27,8 @@ use crate::world::camera::Camera;
 use crate::world::interact::Interaction;
 use crate::world::map::{Axis, LayerInfo, MapInfo, MapObject};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LoopMode {
     #[default]
     Loop,
@@ -35,6 +36,11 @@ pub enum LoopMode {
     Hold,
 }
 impl LoopMode {
+    /// Whether this is the default (`Loop`) — the serde `skip_serializing_if`
+    /// guard that keeps a default loopmode out of the authored/dumped TOML.
+    fn is_default(&self) -> bool {
+        matches!(self, LoopMode::Loop)
+    }
     pub fn loop_index(&self, index: usize, len: usize) -> usize {
         debug_assert!(len > 0);
         match self {
@@ -60,9 +66,10 @@ impl LoopMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpriteAnimation {
     frames: Vec<SpriteOptions>,
+    #[serde(default, skip_serializing_if = "LoopMode::is_default")]
     loopmode: LoopMode,
 }
 
@@ -126,14 +133,15 @@ impl SpriteAnimation {
 /// property of the *art*, not the entity. A mirror / front-back set wants each
 /// axis read on its own; a 4-way set wants to commit to one axis so a diagonal
 /// doesn't spin it around.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum FacingPolicy {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FacingPolicy {
     /// Sticky horizontal + live vertical: every row and column is meaningful
-    /// ([`sideways`](WalkSprites::sideways), [`front_back`](WalkSprites::front_back)).
+    /// (a mirror/front-back set).
     PerAxis,
     /// Commit to the axis you start moving along; a diagonal off it doesn't
     /// re-aim you, and you only switch once that axis goes idle — the natural
-    /// 4-way feel ([`compass`](WalkSprites::compass), hence the player).
+    /// 4-way feel (the player and the dog).
     Committed,
 }
 
@@ -141,10 +149,15 @@ enum FacingPolicy {
 /// movement vector via a flattened 3×3 grid — `grid[(dy.signum()+1)*3 +
 /// (dx.signum()+1)]`, rows up/level/down and columns left/centre/right. The
 /// centre cell is the resting/idle pose. Horizontal flip is baked into each cell,
-/// so a humanoid's pre-mirrored west sits in the west cell and a
-/// [`sideways`](Self::sideways) critter mirrors its whole left column. `facing`
-/// decides how a heading resolves to a cell (see [`FacingPolicy`]).
-#[derive(Debug, Clone)]
+/// so a humanoid's pre-mirrored west sits in the west cell and a sideways critter
+/// mirrors its whole left column. `facing` decides how a heading resolves to a
+/// cell (see [`FacingPolicy`]).
+///
+/// This is the authored form: a preset's `walk` in `data.toml` deserialises
+/// straight into one of these — the nine cells and the facing policy in full, no
+/// shorthand pattern layer. Verbose on purpose (the format is GUI-emitted), so
+/// what ships is exactly what the runtime reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WalkSprites {
     grid: [SpriteAnimation; 9],
     facing: FacingPolicy,
@@ -171,73 +184,16 @@ impl WalkSprites {
             },
         }
     }
-    /// Four-direction walk: exact horizontals pick east/west, everything else
-    /// falls back to north/south — reproducing the old `Compass` buckets. North
-    /// and south aren't mirrored; `west` should already be the mirror of `east`.
-    #[rustfmt::skip]
-    pub(crate) fn compass(
-        north: SpriteAnimation,
-        south: SpriteAnimation,
-        east: SpriteAnimation,
-        west: SpriteAnimation,
-    ) -> Self {
-        Self {
-            grid: [
-                north.clone(), north.clone(), north.clone(),
-                west,          north,         east,
-                south.clone(), south.clone(), south,
-            ],
-            facing: FacingPolicy::Committed,
-        }
-    }
-    /// North/south sprites only, no mirroring, for every heading — the static egg.
-    #[rustfmt::skip]
-    pub(crate) fn front_back(north: SpriteAnimation, south: SpriteAnimation) -> Self {
-        Self {
-            grid: [
-                north.clone(), north.clone(), north.clone(),
-                north.clone(), north.clone(), north,
-                south.clone(), south.clone(), south,
-            ],
-            facing: FacingPolicy::PerAxis,
-        }
-    }
-    /// One look for every heading, mirrored whenever facing left (the whole left
-    /// column). Pairs with a sticky horizontal facing (see the walkaround step)
-    /// so straight up/down keeps the last left/right mirror.
-    #[rustfmt::skip]
-    pub(crate) fn sideways(side: SpriteAnimation) -> Self {
-        let left = side.clone().with_flip(Flip::Horizontal);
-        Self {
-            grid: [
-                left.clone(), side.clone(), side.clone(),
-                left.clone(), side.clone(), side.clone(),
-                left,         side.clone(), side,
-            ],
-            facing: FacingPolicy::PerAxis,
-        }
-    }
-    /// Humanoid 4-direction walk. North/south are 3-frame strips (idle + 2 walk
-    /// frames, looping the walk pair); the north strip sits 3 tiles after
-    /// `south`. The side-on walk cycles `[s, s+1, s, s+2]` from `side`, west
-    /// mirrored from east.
-    pub(crate) fn humanoid(south: i32, side: i32) -> Self {
-        let strip = |base| {
-            SpriteAnimation::from_base_sprite_id(base, 3, 1, 2)
-                .with_loopmode(LoopMode::LoopRange(1, 2))
-        };
-        let walk = || SpriteAnimation::from_sprite_ids(&[side, side + 1, side, side + 2], 1, 2);
-        Self::compass(
-            strip(south + 3),
-            strip(south),
-            walk(),
-            walk().with_flip(Flip::Horizontal),
-        )
-    }
-    /// A static, unhatched egg (single frame `524`).
+    /// A static, unhatched egg: the single frame `524` in every one of the nine
+    /// cells, per-axis facing (it never mirrors or animates). Built inline — the
+    /// one walk grid still constructed in code; every other creature's grid is
+    /// authored in `data.toml` and deserialised straight into a [`WalkSprites`].
     fn egg() -> Self {
         let egg = SpriteAnimation::from_sprite_ids(&[524], 1, 1);
-        Self::front_back(egg.clone(), egg)
+        Self {
+            grid: std::array::from_fn(|_| egg.clone()),
+            facing: FacingPolicy::PerAxis,
+        }
     }
 }
 
@@ -1015,11 +971,39 @@ mod tests {
 
     /// Spawn a built-in shell from the embedded `data.toml` — the data is the
     /// only source of creatures now (the walk-grid tests build `WalkSprites`
-    /// straight from the pattern constructors instead).
+    /// fixtures directly, see [`grid`], since the pattern constructors are gone).
     fn spawn(name: &str) -> Shell {
         crate::data::eggdata::Presets::builtin()
             .spawn(&PresetId::new(name))
             .unwrap_or_else(|| panic!("built-in `{name}`"))
+    }
+
+    /// Build a [`WalkSprites`] fixture from an explicit 3×3 grid — one
+    /// single-frame animation per cell (its sprite `id` and `flip`), in
+    /// `dir_to_sprite` order (up row, level row, down row; left/centre/right) —
+    /// plus a facing policy. The builder-free way these tests pin grid bucketing
+    /// and facing-policy behaviour now the shorthand pattern constructors are gone.
+    fn grid(cells: [(i32, Flip); 9], facing: FacingPolicy) -> WalkSprites {
+        let cell = |(id, flip): (i32, Flip)| {
+            SpriteAnimation::from_sprite_ids(&[id], 1, 1).with_flip(flip)
+        };
+        WalkSprites {
+            grid: cells.map(cell),
+            facing,
+        }
+    }
+
+    /// A shell wearing a given walk grid, started facing down on the vertical
+    /// axis (the [`Shell::from_parts`] defaults) — lets the facing-policy tests
+    /// drive [`Shell::face`]/[`Shell::facing_dir`] on an explicit fixture rather
+    /// than a `data.toml` preset.
+    fn shell_with(walk: WalkSprites) -> Shell {
+        let mut shell = spawn("critter");
+        shell.sprites.walk = walk;
+        shell.dir = (0, 1);
+        shell.sticky_dir = (0, 1);
+        shell.facing_axis = FacingAxis::Vertical;
+        shell
     }
 
     #[test]
@@ -1128,17 +1112,36 @@ mod tests {
     #[test]
     fn eight_way_grid_buckets_and_mirrors() {
         let flip_of = |w: &WalkSprites, dir| w.dir_to_sprite(dir).get_frame(0).flip.clone();
+        let n = || Flip::None;
+        let h = || Flip::Horizontal;
 
-        // Compass humanoid: east unflipped, west pre-mirrored, and `signum`
-        // buckets any magnitude — so a noclip-scaled heading still faces right.
-        let ellie = WalkSprites::humanoid(768, 832);
+        // A humanoid-shaped grid (the ellie/may/bro layout): the level row is
+        // [west-mirrored, idle, east], so east is unflipped, west pre-mirrored,
+        // and `signum` buckets any magnitude — a noclip-scaled heading still
+        // faces right.
+        let ellie = grid(
+            [
+                (771, n()), (771, n()), (771, n()),
+                (832, h()), (771, n()), (832, n()),
+                (768, n()), (768, n()), (768, n()),
+            ],
+            FacingPolicy::Committed,
+        );
         assert_eq!(flip_of(&ellie, (1, 0)), Flip::None);
         assert_eq!(flip_of(&ellie, (-1, 0)), Flip::Horizontal);
         assert_eq!(flip_of(&ellie, (4, 0)), Flip::None);
 
-        // Sideways critter: the whole left column mirrors — including the diagonal
-        // cells a vertical mover lands on via a sticky facing — and nothing else.
-        let critter = WalkSprites::sideways(SpriteAnimation::from_sprite_ids(&[688, 689], 1, 1));
+        // A sideways-shaped grid (the critter layout): the whole left column
+        // mirrors — including the diagonal cells a vertical mover lands on via a
+        // sticky facing — and nothing else.
+        let critter = grid(
+            [
+                (688, h()), (688, n()), (688, n()),
+                (688, h()), (688, n()), (688, n()),
+                (688, h()), (688, n()), (688, n()),
+            ],
+            FacingPolicy::PerAxis,
+        );
         for dy in [-1, 0, 1] {
             assert_eq!(flip_of(&critter, (-1, dy)), Flip::Horizontal);
             assert_eq!(flip_of(&critter, (1, dy)), Flip::None);
@@ -1164,8 +1167,11 @@ mod tests {
 
     #[test]
     fn compass_locks_facing_to_initial_axis() {
-        // Humanoid = compass = the player's `Committed` policy.
-        let mut shell = spawn("ellie");
+        // A `Committed` grid (the player/humanoid policy): `facing_dir` resolves
+        // off the committed axis, so the cell contents don't matter — only the
+        // policy does.
+        let uniform = std::array::from_fn(|_| (0, Flip::None));
+        let mut shell = shell_with(grid(uniform, FacingPolicy::Committed));
 
         shell.face((1, 0)); // start moving right
         assert_eq!(shell.facing_dir(), (1, 0)); // east
@@ -1179,9 +1185,10 @@ mod tests {
 
     #[test]
     fn sideways_stays_per_axis() {
-        // The critter keeps the per-axis rule: sticky horizontal, live vertical —
+        // A `PerAxis` grid (the critter policy): sticky horizontal, live vertical —
         // unaffected by the committed-axis policy.
-        let mut shell = spawn("critter");
+        let uniform = std::array::from_fn(|_| (0, Flip::None));
+        let mut shell = shell_with(grid(uniform, FacingPolicy::PerAxis));
         shell.face((-1, 0));
         shell.face((0, 1)); // straight down while last-facing left
         assert_eq!(shell.facing_dir(), (-1, 1)); // mirror held, vertical live

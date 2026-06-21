@@ -8,10 +8,38 @@
 # embedded at build time as the engine's default (Presets::builtin /
 # GameItems::builtin) and re-read at runtime so edits take effect without a
 # recompile.
-
+#
 # --- items ---
 # `[items.<key>]`, keyed by the id saves store and interactions name
 # (InteractFn::GiveItem). `sprite` is its sheet sprite id.
+#
+# --- creature presets ---
+# `[presets.<name>]`, keyed by the name a save/egg stores. Fields:
+#   hitbox    = [x, y, w, h]              local (un-offset) collision box
+#   move_mode = "wander" | "amble"       spawn behaviour (default "wander")
+#   others    = { ids, w, h }            the non-walk (petting) sprite strip
+#   walk      = the runtime WalkSprites, in full (see below)
+#
+# `walk` deserialises straight into the runtime walk grid — there is no shorthand
+# "pattern" layer; what ships is exactly what the game reads (the format is
+# GUI-emitted, so the verbosity is deliberate). It is:
+#   walk.facing = "per_axis" | "committed"
+#       per_axis  = sticky horizontal, live vertical (mirror / front-back art)
+#       committed = lock to the axis you start on (4-way art, e.g. the player)
+#   walk.grid   = the 9 heading cells, in row-major order of the movement sign:
+#       [ up-left,   up,     up-right,
+#         left,      idle,   right,
+#         down-left, down,   down-right ]
+#       indexed `grid[(dy.signum()+1)*3 + (dx.signum()+1)]`; the centre is idle.
+#   Each cell is one animation: `frames` (a list of sprite frames) plus an
+#   optional `loopmode` (absent = loop the whole strip; `{ loop_range = [a, b] }`
+#   plays once then loops a..=b; `"hold"` holds the last frame). Each frame is a
+#   SpriteOptions: `id` (sheet sprite), `w`/`h` (tile footprint, default 1),
+#   `transparent` (colour-key index), and optional `flip`/`x_offset`/`y_offset`/
+#   `scale`/`rotate`. Defaulted fields are omitted.
+
+[items.chegg]
+sprite = 524
 
 [items.ff]
 sprite = 513
@@ -19,45 +47,934 @@ sprite = 513
 [items.lm]
 sprite = 514
 
-[items.chegg]
-sprite = 524
-
-# --- creature presets ---
-# `[presets.<name>]`, keyed by the name a save/egg stores. `hitbox = [x,y,w,h]`,
-# `move_mode = "wander"|"amble"` (default wander), `others` is the non-walk
-# (petting) strip. `walk` is one pattern:
-#   walk.humanoid   = { south, side }            (north derived south+3, west mirrors east)
-#   walk.sideways   = { ids, w, h }              (mirrored facing left)
-#   walk.front_back = { north, south }           (AnimSpec each, no mirroring)
-#   walk.compass.{north,south,east,west}         (AnimSpec each — the explicit hatch)
-# AnimSpec = { ids=[..], w, h } or { base, len, w, h }, plus optional
-#   flip = "Horizontal"|"Vertical", x_offset = N, loop_mode = ...
-
-[presets.ellie]
-hitbox = [0, 10, 7, 5]
-others = { ids = [774, 775], w = 1, h = 2 }
-walk.humanoid = { south = 768, side = 832 }
-
-[presets.may]
-hitbox = [0, 12, 7, 5]
-others = { ids = [2251, 2252], w = 1, h = 2 }
-walk.humanoid = { south = 2184, side = 2248 }
-
 [presets.bro]
-hitbox = [0, 8, 7, 5]
-others = { ids = [905, 906], w = 1, h = 2 }
-walk.humanoid = { south = 896, side = 902 }
+hitbox = [
+    0,
+    8,
+    7,
+    5,
+]
+
+[presets.bro.others]
+ids = [
+    905,
+    906,
+]
+w = 1
+h = 2
+
+[presets.bro.walk]
+facing = "committed"
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 899
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 900
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 901
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 899
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 900
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 901
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 899
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 900
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 901
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 902
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 903
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 902
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 904
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 899
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 900
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 901
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 902
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 903
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 902
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 904
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 896
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 897
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 898
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 896
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 897
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 898
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.bro.walk.grid]]
+
+[[presets.bro.walk.grid.frames]]
+id = 896
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 897
+transparent = 0
+h = 2
+
+[[presets.bro.walk.grid.frames]]
+id = 898
+transparent = 0
+h = 2
+
+[presets.bro.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
 
 [presets.critter]
-hitbox = [0, 0, 8, 8]
+hitbox = [
+    0,
+    0,
+    8,
+    8,
+]
 move_mode = "amble"
-others = { ids = [688], w = 1, h = 1 }
-walk.sideways = { ids = [688, 689], w = 1, h = 1 }
+
+[presets.critter.others]
+ids = [688]
+w = 1
+h = 1
+
+[presets.critter.walk]
+facing = "per_axis"
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+flip = "Horizontal"
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
+
+[[presets.critter.walk.grid]]
+
+[[presets.critter.walk.grid.frames]]
+id = 688
+transparent = 0
+
+[[presets.critter.walk.grid.frames]]
+id = 689
+transparent = 0
 
 [presets.dog]
-hitbox = [0, 12, 7, 5]
-others = { ids = [968, 970], w = 2, h = 2 }
-walk.compass.north = { base = 966, len = 2, w = 1, h = 2 }
-walk.compass.south = { base = 964, len = 2, w = 1, h = 2 }
-walk.compass.east = { base = 960, len = 2, w = 2, h = 2, x_offset = 8 }
-walk.compass.west = { base = 960, len = 2, w = 2, h = 2, flip = "Horizontal" }
+hitbox = [
+    0,
+    12,
+    7,
+    5,
+]
+
+[presets.dog.others]
+ids = [
+    968,
+    970,
+]
+w = 2
+h = 2
+
+[presets.dog.walk]
+facing = "committed"
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 966
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 967
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 966
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 967
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 966
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 967
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 960
+transparent = 0
+flip = "Horizontal"
+w = 2
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 962
+transparent = 0
+flip = "Horizontal"
+w = 2
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 966
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 967
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 960
+x_offset = 8
+transparent = 0
+w = 2
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 962
+x_offset = 8
+transparent = 0
+w = 2
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 964
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 965
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 964
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 965
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid]]
+
+[[presets.dog.walk.grid.frames]]
+id = 964
+transparent = 0
+h = 2
+
+[[presets.dog.walk.grid.frames]]
+id = 965
+transparent = 0
+h = 2
+
+[presets.ellie]
+hitbox = [
+    0,
+    10,
+    7,
+    5,
+]
+
+[presets.ellie.others]
+ids = [
+    774,
+    775,
+]
+w = 1
+h = 2
+
+[presets.ellie.walk]
+facing = "committed"
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 771
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 772
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 773
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 771
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 772
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 773
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 771
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 772
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 773
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 832
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 833
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 832
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 834
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 771
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 772
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 773
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 832
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 833
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 832
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 834
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 768
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 769
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 770
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 768
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 769
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 770
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.ellie.walk.grid]]
+
+[[presets.ellie.walk.grid.frames]]
+id = 768
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 769
+transparent = 0
+h = 2
+
+[[presets.ellie.walk.grid.frames]]
+id = 770
+transparent = 0
+h = 2
+
+[presets.ellie.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[presets.may]
+hitbox = [
+    0,
+    12,
+    7,
+    5,
+]
+
+[presets.may.others]
+ids = [
+    2251,
+    2252,
+]
+w = 1
+h = 2
+
+[presets.may.walk]
+facing = "committed"
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2187
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2188
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2189
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2187
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2188
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2189
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2187
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2188
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2189
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2248
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2249
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2248
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2250
+transparent = 0
+flip = "Horizontal"
+h = 2
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2187
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2188
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2189
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2248
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2249
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2248
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2250
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2184
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2185
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2186
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2184
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2185
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2186
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
+
+[[presets.may.walk.grid]]
+
+[[presets.may.walk.grid.frames]]
+id = 2184
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2185
+transparent = 0
+h = 2
+
+[[presets.may.walk.grid.frames]]
+id = 2186
+transparent = 0
+h = 2
+
+[presets.may.walk.grid.loopmode]
+loop_range = [
+    1,
+    2,
+]
