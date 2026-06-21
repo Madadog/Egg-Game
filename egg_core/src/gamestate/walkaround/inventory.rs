@@ -204,6 +204,20 @@ impl InventoryUi {
         system.play_sound(sound::INTERACT);
         self.state = InventoryUiState::PageSelect(0);
     }
+    /// Whether the bag overlay is currently up. The walkaround consults this to
+    /// decide whether to run the overlay step (and composite it over the world);
+    /// `Close` is the one state that means "not open".
+    pub fn is_open(&self) -> bool {
+        !matches!(self.state, InventoryUiState::Close)
+    }
+    /// The per-overlay freeze seam: whether an open overlay pauses the walkaround
+    /// sim. The bag freezes it (so opening the inventory stops the world the way
+    /// the map editor does), so this is `true`. A future non-pausing overlay
+    /// (e.g. a HUD that coexists with a moving world) would return `false`,
+    /// taking the fall-through path where the world still steps.
+    pub fn pauses(&self) -> bool {
+        true
+    }
     pub fn click(&mut self, system: &mut impl ConsoleApi) {
         match &mut self.state {
             InventoryUiState::PageSelect(_) => self.state.change(system),

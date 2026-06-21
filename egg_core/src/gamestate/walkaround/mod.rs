@@ -19,7 +19,8 @@ use crate::gamestate::GameMode;
 use log::info;
 
 use self::cutscene::Cutscene;
-use self::inventory::{Inventory, InventoryUi};
+use self::inventory::{Inventory, InventoryUi, InventoryUiState};
+use crate::data::eggdata::GameItems;
 
 mod cutscene;
 pub mod inventory;
@@ -525,6 +526,38 @@ impl WalkaroundState {
         self.sync_map_animations();
     }
 
+    /// Step the open bag overlay and translate its state into an optional mode
+    /// transition. Drives the inventory's own input/step, then maps: `Close`
+    /// resumes the world next frame (no transition — we're already in
+    /// Walkaround, and the overlay guard simply stops firing once it reads
+    /// closed); `Options` leaves to the shared options menu; any other state is
+    /// "still browsing", drawn over the world by [`draw`](Self::draw). Relocated
+    /// here from the old `GameMode::Inventory` dispatch arm — the bag is now an
+    /// overlay the walkaround owns, not a top-level mode.
+    fn step_inventory(&mut self, ctx: &mut Ctx<impl ConsoleApi>) -> Option<GameMode> {
+        self.inventory_ui.step(ctx);
+        match self.inventory_ui.state {
+            InventoryUiState::Close => None,
+            InventoryUiState::Options => Some(GameMode::InventoryOptions),
+            _ => None,
+        }
+    }
+
+    /// Rehydrate the bag's inventory from a save's persisted item keys. The save
+    /// round-trip is encapsulated behind the walkaround (the bag lives here), so
+    /// [`run`](crate::EggState::run) reaches it through this rather than the
+    /// inventory's internals.
+    pub fn load_inventory(&mut self, saved: &[Option<String>; 8], items: &GameItems) {
+        self.inventory_ui.inventory.load_from_save(saved, items);
+    }
+
+    /// Snapshot the bag's inventory as the persistent `[Option<String>; 8]` a
+    /// save stores. The inverse of [`load_inventory`](Self::load_inventory);
+    /// like it, the save round-trip is encapsulated behind the walkaround.
+    pub fn snapshot_inventory(&self) -> [Option<String>; 8] {
+        self.inventory_ui.inventory.to_save()
+    }
+
     pub fn step<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> Option<GameMode> {
         // While the primary map editor is open, mirror live frame edits into the
         // cached animations before advancing them, so the in-world sprite updates
@@ -585,6 +618,20 @@ impl WalkaroundState {
             return None;
         }
 
+        // The bag is an overlay on the walkaround: while it's open, step it
+        // instead of the world. A pausing overlay (the bag returns `true` from
+        // `pauses`) early-returns here so the world sim is frozen — opening the
+        // inventory stops the world the same way the map editor does. The
+        // fall-through (a non-pausing overlay) is left structurally present but
+        // unexercised: the bag is the only overlay today and it pauses, so a
+        // non-pausing overlay would step here and then let the world step too.
+        if self.inventory_ui.is_open() {
+            let trans = self.step_inventory(ctx);
+            if self.inventory_ui.pauses() {
+                return trans;
+            }
+        }
+
         if ctx.system.keyp(ScanCode::Digit5) && ctx.system.key(ScanCode::Ctrl) {
             self.load_pmem(ctx);
         }
@@ -606,8 +653,11 @@ impl WalkaroundState {
         if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
+                // Open the bag overlay in place. No mode change: the overlay
+                // guard above (which `is_open` now sees as true) drives it from
+                // the next frame, and `draw` composites it over the world.
                 self.inventory_ui.open(ctx.system);
-                return Some(GameMode::Inventory);
+                return None;
             }
         } else {
             if self.dialogue.characters == 0 {
@@ -863,6 +913,14 @@ impl WalkaroundState {
         // output (avoiding a borrow conflict with the console).
         self.draw_world(ctx, self.camera.pos, &self.map_viewer, debug_info);
         WalkaroundState::composite_into(ctx.draw, ctx.system.output_image());
+        // The bag overlay: drawn last, over the just-composited world, so it
+        // reads as an inventory on top of the (frozen) world rather than its own
+        // screen. `InventoryUi::draw` builds its panel on the FG layer and
+        // composites BG+FG into the output itself, so the world stays visible
+        // beneath it.
+        if self.inventory_ui.is_open() {
+            self.inventory_ui.draw(ctx);
+        }
     }
 
     /// Render the walkaround world from an arbitrary `camera_pos` into
@@ -1322,6 +1380,209 @@ mod tests {
             inventory.to_save(),
             before,
             "full inventory: grant dropped, nothing lost"
+        );
+    }
+
+    /// All the owned game-data a [`Ctx`] borrows, built from the embedded
+    /// defaults so a `step` can run end-to-end in a unit test. Kept as one struct
+    /// so a test owns the backing storage while `with_ctx` hands out the
+    /// short-lived `Ctx` of borrows into it.
+    struct CtxParts {
+        draw: crate::draw_state::DrawState,
+        maps: crate::world::map::MapStore,
+        rng: crate::rand::Lcg64Xsh32,
+        script: crate::data::script::Script,
+        scenes: crate::data::scene::SceneFile,
+        save: SaveData,
+        items: GameItems,
+        presets: crate::data::eggdata::Presets,
+    }
+    impl CtxParts {
+        fn new() -> Self {
+            Self {
+                draw: crate::draw_state::DrawState::default(),
+                maps: crate::world::map::MapStore::default(),
+                rng: crate::rand::Lcg64Xsh32::default(),
+                script: crate::data::script::Script::new(),
+                scenes: crate::data::scene::SceneFile::default(),
+                save: SaveData::default(),
+                items: GameItems::default(),
+                presets: crate::data::eggdata::Presets::builtin(),
+            }
+        }
+    }
+
+    /// Run `f` with a live [`Ctx`] split-borrowing `console` + `parts`, the same
+    /// shape `EggState::step_mode` builds. Lets a test drive the real `step`
+    /// (input, overlay, world sim) rather than only the isolated helpers.
+    fn with_ctx<R>(
+        console: &mut TestConsole,
+        parts: &mut CtxParts,
+        f: impl FnOnce(&mut Ctx<TestConsole>) -> R,
+    ) -> R {
+        let mut ctx = Ctx {
+            draw: &mut parts.draw,
+            system: console,
+            maps: &mut parts.maps,
+            rng: &mut parts.rng,
+            script: &parts.script,
+            scenes: &parts.scenes,
+            save: &mut parts.save,
+            items: &parts.items,
+            presets: &parts.presets,
+        };
+        f(&mut ctx)
+    }
+
+    /// Set a one-frame rising edge on the primary controller's B button (down
+    /// now, up last frame), so a single `step` sees `just_pressed(pad.b)` once.
+    fn press_b(console: &mut TestConsole) {
+        console.controllers[0].b = [true, false];
+    }
+
+    /// Pressing the bag button opens the inventory overlay in place: `step`
+    /// requests no mode change (the bag is no longer a `GameMode`) and the
+    /// overlay reads open afterwards. The next frame the overlay guard takes over.
+    #[test]
+    fn bag_button_opens_overlay_in_place() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+        // The bag starts closed for this test (new walkarounds open it on
+        // PageSelect, so close it explicitly to prove the B-press is what opens).
+        walk.inventory_ui.state = InventoryUiState::Close;
+        assert!(!walk.inventory_ui.is_open(), "bag starts closed");
+
+        press_b(&mut console);
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+
+        assert_eq!(trans, None, "opening the bag is not a mode transition");
+        assert!(walk.inventory_ui.is_open(), "the bag overlay is now open");
+    }
+
+    /// While the bag overlay is open it freezes the walkaround sim: a `step` with
+    /// a movement input held neither moves the player nor advances a wandering
+    /// creature — the overlay guard early-returns before the entity loop. (The
+    /// bag pauses, so the world is skipped entirely that frame.)
+    #[test]
+    fn open_bag_freezes_the_world() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+
+        // Park the player at a known spot and add a creature that would wander.
+        walk.player().pos = Vec2::new(40, 40);
+        let mut creature = critter();
+        creature.move_mode = MoveMode::Wander;
+        creature.pos = Vec2::new(80, 40);
+        walk.spawn_shell(creature);
+
+        // Open the bag, then hold "right" and step: a pausing overlay is up, so
+        // nothing in the world should move.
+        walk.inventory_ui.open(&mut console);
+        assert!(walk.inventory_ui.is_open());
+        console.controllers[0].right = [true, true];
+
+        let player_before = walk.player_ref().pos;
+        let creature_before = walk.entities[1].pos;
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+
+        assert_eq!(trans, None, "browsing the open bag drives no transition");
+        assert_eq!(
+            walk.player_ref().pos,
+            player_before,
+            "player frozen while the bag is open"
+        );
+        assert_eq!(
+            walk.entities[1].pos, creature_before,
+            "creatures frozen while the bag is open"
+        );
+    }
+
+    /// Closing the bag (its state goes to `Close`) lets the world resume: with
+    /// the overlay closed, the next `step` runs the world sim again, so a held
+    /// movement input moves the player.
+    #[test]
+    fn closing_bag_resumes_the_world() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+        walk.player().pos = Vec2::new(40, 40);
+
+        // Bag closed -> overlay guard is inert; a held "right" moves the player.
+        walk.inventory_ui.state = InventoryUiState::Close;
+        console.controllers[0].right = [true, true];
+
+        let before = walk.player_ref().pos;
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+
+        assert!(
+            walk.player_ref().pos.x > before.x,
+            "with the bag closed the world resumes and the player moves"
+        );
+    }
+
+    /// `step_inventory` translates the overlay's `Options` state into the
+    /// `InventoryOptions` mode transition — the one case where browsing the bag
+    /// leaves the walkaround (to the shared options menu).
+    #[test]
+    fn step_inventory_requests_options_menu() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+
+        // Land directly on the Options page; `step_inventory`'s own
+        // `inventory_ui.step` then leaves it there (no input this frame), so the
+        // state->mode mapping is what we read.
+        walk.inventory_ui.state = InventoryUiState::Options;
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step_inventory(ctx));
+
+        assert_eq!(
+            trans,
+            Some(GameMode::InventoryOptions),
+            "Options state asks to open the options menu"
+        );
+    }
+
+    /// The bag -> Options -> back round trip lands back in the walkaround with
+    /// the bag still open. The menu's "back to bag" handler sets the overlay
+    /// state (PageSelect) and returns `Walkaround` — there is no `Inventory` mode
+    /// anymore, so resuming the walkaround re-draws the still-open overlay.
+    #[test]
+    fn menu_back_to_bag_resumes_walkaround_with_bag_open() {
+        use crate::gamestate::MenuState;
+
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+
+        // Simulate having left the open bag for its options menu: the bag is
+        // open, and we drive the menu's back-to-bag entry (index 0 of the
+        // inventory-options menu) exactly as `step_mode` would.
+        walk.inventory_ui.open(&mut console);
+        let mut menu = MenuState::inventory_options();
+        let trans = with_ctx(&mut console, &mut parts, |ctx| {
+            menu.click(Some(0), ctx, &mut walk)
+        });
+
+        assert_eq!(
+            trans,
+            Some(GameMode::Walkaround),
+            "back-to-bag resumes the walkaround, not a defunct Inventory mode"
+        );
+        assert!(
+            walk.inventory_ui.is_open(),
+            "the bag overlay stays open after returning from its options menu"
+        );
+        assert!(
+            matches!(
+                walk.inventory_ui.state,
+                InventoryUiState::PageSelect(2)
+            ),
+            "and reopens on its options page"
         );
     }
 }

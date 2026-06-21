@@ -34,7 +34,6 @@ use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
 use crate::draw_state::DrawState;
 use crate::gamestate::walkaround::WalkaroundState;
-use crate::gamestate::walkaround::inventory::InventoryUiState;
 use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::ConsoleApi;
 use crate::rand::Lcg64Xsh32;
@@ -190,9 +189,7 @@ impl EggState {
         // before any state draws the inventory.
         if loaded {
             self.walkaround
-                .inventory_ui
-                .inventory
-                .load_from_save(&self.save.inventory, &self.items);
+                .load_inventory(&self.save.inventory, &self.items);
         }
         self.time += 1;
         if let Some(mode) = self.step_mode(system) {
@@ -201,7 +198,7 @@ impl EggState {
         // Serialise the live inventory into the save before it is flushed, so an
         // item the player gained, dropped or reordered this frame persists (the
         // inverse of `load_from_save` after `load_save` above).
-        self.save.inventory = self.walkaround.inventory_ui.inventory.to_save();
+        self.save.inventory = self.walkaround.snapshot_inventory();
         self.flush_save(system);
     }
 
@@ -237,17 +234,6 @@ impl EggState {
                 self.menu.draw_main_menu(&mut ctx, self.time);
                 next
             }
-            GameMode::Inventory => {
-                self.walkaround.inventory_ui.step(&mut ctx);
-                match self.walkaround.inventory_ui.state {
-                    InventoryUiState::Close => Some(GameMode::Walkaround),
-                    InventoryUiState::Options => Some(GameMode::InventoryOptions),
-                    _ => {
-                        self.walkaround.inventory_ui.draw(&mut ctx);
-                        None
-                    }
-                }
-            }
             GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
         }
     }
@@ -267,7 +253,7 @@ impl EggState {
             GameMode::InventoryOptions => self.menu = MenuState::inventory_options(),
             GameMode::DebugMenu => self.menu = MenuState::debug_options(&self.script),
             GameMode::MapSelect => self.menu = MenuState::map_select(&self.maps),
-            GameMode::Walkaround | GameMode::Inventory => {}
+            GameMode::Walkaround => {}
         }
     }
 

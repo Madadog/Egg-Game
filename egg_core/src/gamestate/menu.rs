@@ -234,9 +234,13 @@ impl MenuState {
                 }
             }
             Inventory => {
+                // Re-open the bag overlay on its options page and resume the
+                // walkaround: the bag is no longer a mode, so setting its state
+                // (which `is_open` reads as open) and returning to Walkaround
+                // makes the overlay step + draw itself again.
                 walkaround_state.inventory_ui.state =
                     crate::gamestate::walkaround::inventory::InventoryUiState::PageSelect(2);
-                return Some(GameMode::Inventory);
+                return Some(GameMode::Walkaround);
             }
             _Space => {}
             Debug(x) => {

@@ -31,7 +31,8 @@ pub mod walkaround;
 
 /// The current game mode — a pure tag. Each mode's state lives in its own field
 /// on [`EggState`](crate::EggState) (e.g. [`IntroAnimation`], [`Instructions`],
-/// [`MenuState`], [`SpriteTest`], plus the already-external walkaround/inventory);
+/// [`MenuState`], [`SpriteTest`], plus the external walkaround — which owns the
+/// inventory as an overlay rather than it being its own mode);
 /// dispatch and on-entry setup are [`EggState::step_mode`](crate::EggState) and
 /// [`EggState::enter`](crate::EggState). The four `…Menu`/`…Options` variants all
 /// drive the shared [`MenuState`], differing only in which menu `enter` builds.
@@ -40,7 +41,6 @@ pub enum GameMode {
     Instructions,
     Walkaround,
     Animation,
-    Inventory,
     SpriteTest,
 
     // menus
