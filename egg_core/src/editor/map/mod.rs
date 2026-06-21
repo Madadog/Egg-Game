@@ -370,6 +370,9 @@ enum EditorKey {
     /// The selected warp's destination-map preview: a rendered, click-to-place
     /// map of the warp target with the player shown at the landing point.
     WarpPreview,
+    /// Open the selected warp's destination map in the editor, centred on the
+    /// landing point. A no-op for a same-map warp (no destination to load).
+    OpenWarpDest,
     Field(EditField),
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
@@ -740,9 +743,12 @@ pub struct MapViewer {
     maps_selected: Option<String>,
     /// First page row shown in the Maps browser grid (paging, no scroll widget).
     maps_scroll: usize,
-    /// Set when the browser asks to open a map; drained by the host (which has
-    /// the sprite sheet needed to resolve it) so the editor stays engine-agnostic.
-    pub pending_open: Option<String>,
+    /// Set when the browser (or a warp's "open" button) asks to open a map;
+    /// drained by the host (which has the sprite sheet needed to resolve it) so
+    /// the editor stays engine-agnostic. The optional point is a map-pixel focus
+    /// the camera centres on after loading — a warp's landing point, so opening a
+    /// warp's destination frames where it lands.
+    pub pending_open: Option<(String, Option<Vec2>)>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -2047,6 +2053,11 @@ impl MapViewer {
                     // cycles through existing maps so a target can't be a typo.
                     self.field_row(b, rows, EditField::ToMap, "map", dest);
                     self.cycle_row(b, rows, CycleField::WarpTarget, "pick", dest);
+                    // Open the destination map in the editor, centred on the
+                    // landing point. Disabled for a same-map warp (no `map`).
+                    let open =
+                        Self::action_button(b, "open", 11, w.map.is_some(), EditorKey::OpenWarpDest);
+                    rows.push(b.row(2.0, [open]).id());
                     self.field_row(b, rows, EditField::ToX, "x", &w.to.x.to_string());
                     self.field_row(b, rows, EditField::ToY, "y", &w.to.y.to_string());
                     self.cycle_row(b, rows, CycleField::Flip, "flip", axis_label(&w.flip));
@@ -3206,6 +3217,19 @@ impl MapViewer {
         self.moving = None;
     }
 
+    /// Queue the selected warp's destination map to open in the editor, centred
+    /// on its landing point (the host drains [`pending_open`](Self::pending_open)
+    /// and frames the landing). A no-op if no warp is selected or it's a same-map
+    /// warp (`map = None`) — there's nothing to open.
+    fn open_selected_warp_dest(&mut self, objects: &[MapObject]) {
+        if let Some(ObjectEffect::Warp(w)) =
+            self.selected.and_then(|i| objects.get(i)).map(|o| &o.effect)
+            && let Some(dest) = w.map.clone()
+        {
+            self.pending_open = Some((dest, Some(w.to)));
+        }
+    }
+
     fn handle_panel(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -3494,6 +3518,13 @@ impl MapViewer {
                     }
                 }
             }
+            // Open the selected warp's destination map, centred on its landing
+            // point (the host drains `pending_open`). No-op for a same-map warp.
+            EditorKey::OpenWarpDest => {
+                if click {
+                    self.open_selected_warp_dest(&map.objects);
+                }
+            }
             // Press on a panel's scroll bar: begin a thumb drag, capturing the grab
             // offset so the thumb tracks the cursor rather than snapping under it.
             EditorKey::PanelScroll(pidx) => {
@@ -3588,7 +3619,7 @@ impl MapViewer {
                     let name = self.modern_names(maps).get(i).cloned();
                     if let Some(name) = name {
                         if self.maps_selected.as_deref() == Some(name.as_str()) {
-                            self.pending_open = Some(name);
+                            self.pending_open = Some((name, None));
                         } else {
                             self.maps_selected = Some(name);
                         }
@@ -6549,6 +6580,36 @@ mod tests {
             layer: 0,
             cells,
         }
+    }
+
+    /// Clicking a warp's "open" queues its destination map plus the landing point,
+    /// which the host loads and frames the camera on. A same-map warp (`map =
+    /// None`) queues nothing — there's nowhere to open.
+    #[test]
+    fn open_warp_dest_queues_destination_and_landing() {
+        let mut ed = MapViewer::primary();
+        let warp = |dest: Option<&str>, to| {
+            MapObject::new(
+                Hitbox::new(0, 0, 8, 8),
+                ObjectEffect::Warp(Warp::new(dest, to)),
+                None,
+            )
+        };
+
+        let objects = vec![warp(Some("town"), Vec2::new(40, 24))];
+        ed.selected = Some(0);
+        ed.open_selected_warp_dest(&objects);
+        assert_eq!(
+            ed.pending_open,
+            Some(("town".to_string(), Some(Vec2::new(40, 24)))),
+            "opens the destination map, carrying the landing point as the focus"
+        );
+
+        // A same-map warp has no destination to load: nothing queued.
+        ed.pending_open = None;
+        let same_map = vec![warp(None, Vec2::new(1, 1))];
+        ed.open_selected_warp_dest(&same_map);
+        assert_eq!(ed.pending_open, None, "same-map warp queues no open");
     }
 
     /// Pushing a new action clears any redo future: a fresh edit invalidates the

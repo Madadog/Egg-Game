@@ -528,19 +528,32 @@ pub fn update_views(
             );
             // Open a map the view's browser requested, into the shared map (so
             // every window sees it). Uses this view's framebuffer sprite sheet.
-            if let Some(name) = views.views[i].editor.pending_open.take() {
-                let mut ctx = egg_core::Ctx {
-                    draw: &mut views.views[i].draw_state,
-                    system: &mut g.system,
-                    maps: &mut g.state.maps,
-                    rng: &mut g.state.rng,
-                    script: &g.state.script,
-                    scenes: &g.state.scenes,
-                    save: &mut g.state.save,
-                    items: &g.state.items,
-                    presets: &g.state.presets,
-                };
-                g.state.walkaround.load_map_by_name(&mut ctx, &name);
+            if let Some((name, focus)) = views.views[i].editor.pending_open.take() {
+                {
+                    let mut ctx = egg_core::Ctx {
+                        draw: &mut views.views[i].draw_state,
+                        system: &mut g.system,
+                        maps: &mut g.state.maps,
+                        rng: &mut g.state.rng,
+                        script: &g.state.script,
+                        scenes: &g.state.scenes,
+                        save: &mut g.state.save,
+                        items: &g.state.items,
+                        presets: &g.state.presets,
+                    };
+                    g.state.walkaround.load_map_by_name(&mut ctx, &name);
+                }
+                // A warp "open" carries its landing point: centre THIS view's own
+                // free camera on it (the map load is shared, but each view has its
+                // own camera, so the window that asked is the one that moves).
+                if let Some(p) = focus {
+                    let v = &mut views.views[i];
+                    let (vw, vh) = (v.output.width() as i32, v.output.height() as i32);
+                    v.free_cam = EggVec2::new(
+                        (i32::from(p.x) + 4 - vw / 2) as i16,
+                        (i32::from(p.y) + 8 - vh / 2) as i16,
+                    );
+                }
             }
             // A layer or Setup edit from this view: re-derive the shared map's
             // layer lists and scalar metadata (bg colour, camera framing) using

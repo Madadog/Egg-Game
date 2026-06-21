@@ -208,6 +208,13 @@ impl WalkaroundState {
     pub fn cam_y(&self) -> i32 {
         self.camera.pos.y.into()
     }
+    /// Centre the camera on a map-pixel point framed as a player landing there
+    /// (the same +4/+8 sprite offset the follow-camera uses), clamped to the
+    /// map's bounds. Used when the editor opens a warp's destination so the
+    /// landing point is framed the way gameplay shows it on arrival.
+    pub fn center_camera_on(&mut self, p: Vec2, w: i32, h: i32) {
+        self.camera.center_on(p.x + 4, p.y + 8, w as i16, h as i16);
+    }
     pub fn cam_state(&mut self) -> &mut crate::world::camera::CameraBounds {
         &mut self.camera.bounds
     }
@@ -594,8 +601,13 @@ impl WalkaroundState {
             );
             // The browser can't resolve a map itself (it lacks the sprite sheet),
             // so it parks the request here and we load it through the tested path.
-            if let Some(name) = self.map_viewer.pending_open.take() {
+            if let Some((name, focus)) = self.map_viewer.pending_open.take() {
                 self.load_map_by_name(ctx, &name);
+                // A warp "open" carries its landing point: frame it as gameplay
+                // would when the player arrives there.
+                if let Some(p) = focus {
+                    self.center_camera_on(p, ctx.system.width(), ctx.system.height());
+                }
             }
             // A layer or Setup edit changed the stored map: re-derive the runtime
             // layer lists and the scalar metadata (bg colour, camera framing), so
