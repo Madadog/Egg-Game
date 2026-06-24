@@ -336,10 +336,11 @@ impl InventoryUi {
                         // the floating item is drawn over the cursor in `draw`.
                         // Only a known item (in the registry) draws a sprite.
                         let child = match slot_key {
-                            Some(key) if dragging_from != Some(i) => ctx
-                                .items
-                                .get(key)
-                                .map(|def| b.sprite(def.sprite, 1, 1).scale(2).size(16.0, 16.0).id()),
+                            Some(key) if dragging_from != Some(i) => {
+                                ctx.items.get(key).map(|def| {
+                                    b.sprite(def.sprite, 1, 1).scale(2).size(16.0, 16.0).id()
+                                })
+                            }
                             _ => None,
                         };
                         slot(&mut b, InvKey::Slot(i), main_c + 1, child)
@@ -440,7 +441,7 @@ impl InventoryUi {
         ui.draw(ctx.draw, ctx.system, FG);
 
         // Unlock emblems: each shell whose story flag is set shows its icon
-        // (sprite `10 + slot index`) centred on its 16×16 egg. `rect` resolves
+        // (sprite `596 + slot index`) centred on its 16×16 egg. `rect` resolves
         // the egg slots only on the Eggs page, so this is a no-op elsewhere.
         let shell_unlocks = ctx.save.shell_flags();
         for (i, unlocked) in shell_unlocks.iter().enumerate() {
@@ -448,9 +449,9 @@ impl InventoryUi {
                 ctx.draw.spr(
                     FG,
                     &PALETTE_MAP_IDENTITY,
-                    10 + i as i32,
+                    596 + i as i32,
                     i32::from(slot.x) + (i32::from(slot.w) - 8) / 2,
-                    i32::from(slot.y) + (i32::from(slot.h) - 8) / 2,
+                    i32::from(slot.y) + (i32::from(slot.h) - 6) / 2,
                     SpriteOptions {
                         w: 1,
                         h: 1,
@@ -544,16 +545,7 @@ impl InventoryUi {
                 let desc = ctx.item_desc(&key);
                 let string = self.dialogue.fit_text(ctx.system, small, &desc);
                 self.dialogue.draw_dialogue_portrait(
-                    ctx.draw,
-                    FG,
-                    ctx.system,
-                    small,
-                    &string,
-                    false,
-                    sprite,
-                    3,
-                    1,
-                    1,
+                    ctx.draw, FG, ctx.system, small, &string, false, sprite, 3, 1, 1,
                 );
             }
         }
@@ -581,9 +573,10 @@ impl InventoryUi {
     /// removing it from the inventory entirely. No-op outside the Items page.
     pub fn drop_item(&mut self, system: &mut impl ConsoleApi) {
         let target = match &self.state {
-            InventoryUiState::Items(current, selected) => {
-                selected.as_ref().map(|(origin, _)| *origin).unwrap_or(*current)
-            }
+            InventoryUiState::Items(current, selected) => selected
+                .as_ref()
+                .map(|(origin, _)| *origin)
+                .unwrap_or(*current),
             _ => return,
         };
         if self.inventory.take(target).is_some() {
