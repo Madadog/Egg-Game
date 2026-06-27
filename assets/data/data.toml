@@ -50,7 +50,7 @@ sprite = 514
 [presets.bro]
 hitbox = [
     0,
-    8,
+    0,
     7,
     5,
 ]
@@ -391,7 +391,7 @@ transparent = 0
 [presets.dog]
 hitbox = [
     0,
-    12,
+    0,
     7,
     5,
 ]
@@ -448,14 +448,12 @@ h = 2
 [[presets.dog.walk.grid.frames]]
 id = 960
 transparent = 0
-flip = "Horizontal"
 w = 2
 h = 2
 
 [[presets.dog.walk.grid.frames]]
 id = 962
 transparent = 0
-flip = "Horizontal"
 w = 2
 h = 2
 
@@ -477,6 +475,7 @@ h = 2
 id = 960
 x_offset = 8
 transparent = 0
+flip = "Horizontal"
 w = 2
 h = 2
 
@@ -484,6 +483,7 @@ h = 2
 id = 962
 x_offset = 8
 transparent = 0
+flip = "Horizontal"
 w = 2
 h = 2
 
@@ -526,7 +526,7 @@ h = 2
 [presets.ellie]
 hitbox = [
     0,
-    10,
+    0,
     7,
     5,
 ]
@@ -754,7 +754,7 @@ loop_range = [
 [presets.may]
 hitbox = [
     0,
-    12,
+    0,
     7,
     5,
 ]

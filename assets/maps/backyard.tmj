@@ -45,12 +45,12 @@
             {
               "name": "to_x",
               "type": "string",
-              "value": "101"
+              "value": "79"
             },
             {
               "name": "to_y",
               "type": "string",
-              "value": "65"
+              "value": "51"
             },
             {
               "name": "flip",
@@ -88,7 +88,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "488"
+              "value": "498"
             },
             {
               "name": "flip",
@@ -229,7 +229,7 @@
             {
               "name": "anim",
               "type": "string",
-              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":646,\"duration\":30,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":647,\"duration\":30,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":1,\"h\":1},\"outline_colour\":1,\"palette_rotate\":0}]"
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":646,\"duration\":30,\"options\":{\"id\":0,\"transparent\":0},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":647,\"duration\":30,\"options\":{\"id\":0,\"transparent\":0},\"outline_colour\":1,\"palette_rotate\":0}]"
             }
           ],
           "rotation": 0,

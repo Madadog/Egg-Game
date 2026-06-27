@@ -50,7 +50,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "80"
+              "value": "90"
             },
             {
               "name": "mode",
@@ -88,7 +88,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "256"
+              "value": "266"
             },
             {
               "name": "sound",

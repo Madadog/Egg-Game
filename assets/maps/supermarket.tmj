@@ -106,7 +106,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "32"
+              "value": "42"
             },
             {
               "name": "sound",
@@ -139,7 +139,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "32"
+              "value": "42"
             },
             {
               "name": "sound",
@@ -172,7 +172,7 @@
             {
               "name": "to_y",
               "type": "string",
-              "value": "120"
+              "value": "130"
             },
             {
               "name": "mode",

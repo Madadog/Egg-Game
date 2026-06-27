@@ -261,12 +261,15 @@ mod tests {
     fn builtin_presets_spawn_the_creatures() {
         // The shipped local (un-offset) hitboxes, pinned here so a stray edit to
         // `data.toml` is caught.
+        // Hitboxes are now flush at the shell's `pos` (the hitbox top-left); the
+        // old per-preset `y` inset is gone, derived at draw time from the sprite
+        // footprint instead (see `Shell::draw_params`).
         let hitboxes = [
-            ("ellie", [0, 10, 7, 5]),
-            ("may", [0, 12, 7, 5]),
-            ("bro", [0, 8, 7, 5]),
+            ("ellie", [0, 0, 7, 5]),
+            ("may", [0, 0, 7, 5]),
+            ("bro", [0, 0, 7, 5]),
             ("critter", [0, 0, 8, 8]),
-            ("dog", [0, 12, 7, 5]),
+            ("dog", [0, 0, 7, 5]),
         ];
         let presets = Presets::builtin();
         for (name, hitbox) in hitboxes {
@@ -374,15 +377,16 @@ sprite = 514
             "critter left mirrored",
         );
 
-        // dog (compass): the east look is the wide (2-tile) sprite drawn with an
-        // x_offset of 8; west is the same sprite mirrored, no offset.
+        // dog (compass): the east look is the wide (2-tile) sprite drawn mirrored
+        // with an x_offset of 8; west is the same sprite unmirrored, no offset.
+        // (The sheet redraw faces the base art west, so the mirror moved to east.)
         let dog = spawn("dog");
         let east = frame(&dog, (1, 0), 0);
         assert_eq!(east.id, 960, "dog east id");
         assert_eq!(east.x_offset, 8, "dog east x_offset");
-        assert_eq!(east.flip, Flip::None, "dog east unflipped");
+        assert_eq!(east.flip, Flip::Horizontal, "dog east mirrored");
         let west = frame(&dog, (-1, 0), 0);
-        assert_eq!(west.flip, Flip::Horizontal, "dog west mirrored");
+        assert_eq!(west.flip, Flip::None, "dog west unflipped");
         assert_eq!(west.x_offset, 0, "dog west has no offset");
     }
 }

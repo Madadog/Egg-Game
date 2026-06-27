@@ -209,11 +209,11 @@ impl WalkaroundState {
         self.camera.pos.y.into()
     }
     /// Centre the camera on a map-pixel point framed as a player landing there
-    /// (the same +4/+8 sprite offset the follow-camera uses), clamped to the
+    /// (the same +4/-2 hitbox offset the follow-camera uses), clamped to the
     /// map's bounds. Used when the editor opens a warp's destination so the
     /// landing point is framed the way gameplay shows it on arrival.
     pub fn center_camera_on(&mut self, p: Vec2, w: i32, h: i32) {
-        self.camera.center_on(p.x + 4, p.y + 8, w as i16, h as i16);
+        self.camera.center_on(p.x + 4, p.y - 2, w as i16, h as i16);
     }
     pub fn cam_state(&mut self) -> &mut crate::world::camera::CameraBounds {
         &mut self.camera.bounds
@@ -814,7 +814,7 @@ impl WalkaroundState {
             }
             self.camera.center_on(
                 self.player_ref().pos.x + 4,
-                self.player_ref().pos.y + 8,
+                self.player_ref().pos.y - 2,
                 ctx.system.width() as i16,
                 ctx.system.height() as i16,
             );
@@ -911,7 +911,7 @@ impl WalkaroundState {
 
         self.camera.center_on(
             self.player_ref().pos.x + 4,
-            self.player_ref().pos.y + 8,
+            self.player_ref().pos.y - 2,
             ctx.system.width() as i16,
             ctx.system.height() as i16,
         );

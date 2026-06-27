@@ -334,6 +334,19 @@ pub struct Shell {
     #[serde(skip, default = "ShellSprites::placeholder")]
     pub sprites: ShellSprites,
     pub move_mode: MoveMode,
+    /// Sprite outline: `Some(colour)` strokes a 1px border in that palette index,
+    /// `None` draws the bare sprite. When present, [`draw_params`](Self::draw_params)
+    /// lifts the sprite one extra pixel so the ring sits on the hitbox baseline.
+    /// `#[serde(default)]` so shells saved before the field keep the historical
+    /// outlined look.
+    #[serde(default = "default_outline")]
+    pub outline: Option<u8>,
+}
+
+/// Serde default for [`Shell::outline`]: the historical `Some(1)` every shell
+/// drew with before the field existed, so old saves load unchanged.
+fn default_outline() -> Option<u8> {
+    Some(1)
 }
 
 impl PartialEq for Shell {
@@ -353,6 +366,7 @@ impl PartialEq for Shell {
             && self.pet_timer == other.pet_timer
             && self.preset == other.preset
             && self.move_mode == other.move_mode
+            && self.outline == other.outline
     }
 }
 impl Eq for Shell {}
@@ -409,13 +423,28 @@ impl Shell {
         (sprite, y_offset)
     }
     pub fn draw_params(&self, offset: Vec2) -> DrawParams {
-        let (sprite, y_offset) = self.sprite_options();
+        let (sprite, bob) = self.sprite_options();
+        // `pos` is the hitbox top-left. The bottom-aligned sprite is drawn up by
+        // `8h - hitbox_h` (so its bottom row sits on the hitbox bottom) and, when
+        // mirrored, left by `8w - hitbox_w` (pivoting the flip about the hitbox
+        // centre so the footprint stays planted) — both derived from the tile
+        // footprint + hitbox rather than a hand-tuned per-frame offset. A drawn
+        // outline adds a 1px ring below the art, so lift one extra pixel to keep
+        // the outline's bottom row on the hitbox baseline (covering it) rather
+        // than poking a pixel below the feet.
+        let outline_lift = i16::from(self.outline.is_some());
+        let anchor_y = sprite.h as i16 * 8 - self.local_hitbox.h + outline_lift;
+        let anchor_x = if sprite.flip.x() {
+            sprite.w as i16 * 8 - self.local_hitbox.w
+        } else {
+            0
+        };
         DrawParams::new(
             sprite.id,
-            i32::from(self.pos.x - offset.x - sprite.x_offset as i16),
-            i32::from(self.pos.y - offset.y - sprite.y_offset as i16) - y_offset,
+            i32::from(self.pos.x - offset.x - anchor_x),
+            i32::from(self.pos.y - offset.y - anchor_y) - bob,
             sprite,
-            Some(1),
+            self.outline,
             0,
         )
     }
@@ -630,7 +659,10 @@ impl Shell {
     ) -> Self {
         Self {
             preset,
-            pos: Vec2::new(62, 23),
+            // Hitbox-top-left spawn (new anchor). Was (62, 23) when `pos` meant
+            // sprite-top-left; +10 (the old player hitbox.y) keeps the new-game
+            // bedroom spawn at the same world standing position as before.
+            pos: Vec2::new(62, 33),
             local_hitbox,
             hp: 3,
             dir: (0, 1),
@@ -642,6 +674,7 @@ impl Shell {
             pet_timer: None,
             sprites,
             move_mode,
+            outline: Some(1),
         }
     }
     /// An egg that hatches into `hatches_into` after a fixed delay. The egg form
