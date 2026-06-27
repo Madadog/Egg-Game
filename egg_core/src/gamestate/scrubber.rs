@@ -70,6 +70,12 @@ impl EggState {
         base_world.cutscene.clear();
         let base_save = self.save.clone();
         let mut console = ScrubConsole::new();
+        // Hold `A` as a permanent rising edge (`[down, up]`): the re-sim never
+        // advances the console's edge state, so `just_pressed(a)` reads true every
+        // frame, auto-advancing any `dialogue` beat instead of stalling on it
+        // (those wait for an `A` press). The dpad stays neutral, so movement /
+        // interrupt / skip are untouched.
+        console.controllers[0].a = [true, false];
 
         // Arm the scene on the snapshot, then measure its length — both on the
         // headless console + a throwaway save so nothing leaks into live state.
