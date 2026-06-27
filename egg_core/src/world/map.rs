@@ -399,6 +399,32 @@ impl MapInfo {
             l.draw_indexed(draw_state, layer, map, offset, debug);
         }
     }
+    /// Indices (into [`objects`](Self::objects)) of the warp objects whose
+    /// trigger hitbox `hitbox` overlaps. A player whose hitbox sits here stands
+    /// on those warps' triggers — a [`WarpMode::Auto`] warp re-fires instantly
+    /// (a teleport loop), a [`WarpMode::Interact`] warp drops the player inside a
+    /// door they can immediately re-enter. The reusable core of warp-destination
+    /// validation, shared by the editor's placement guard and the authored-map
+    /// sanity test; callers read `self.objects[i]` for the warp's mode.
+    pub fn warps_overlapping(&self, hitbox: Hitbox) -> impl Iterator<Item = usize> + '_ {
+        self.objects
+            .iter()
+            .enumerate()
+            .filter(move |(_, o)| {
+                matches!(o.effect, ObjectEffect::Warp(_)) && hitbox.touches(o.hitbox)
+            })
+            .map(|(i, _)| i)
+    }
+    /// Would a player with `player_hitbox` (its *local*, origin-relative box)
+    /// landing at `to` overlap a warp on this map? `Some(index)` of the first
+    /// offending warp, `None` if the spot is clear. `to` is in this — the
+    /// **destination** — map's pixels; resolve the destination map from the
+    /// warp's `map` field first. Thin wrapper over
+    /// [`warps_overlapping`](Self::warps_overlapping) that positions the player
+    /// box at the landing, so callers pass the raw warp target.
+    pub fn warp_landing_conflict(&self, to: Vec2, player_hitbox: Hitbox) -> Option<usize> {
+        self.warps_overlapping(player_hitbox.offset(to)).next()
+    }
 }
 
 /// What a [`LayerInfo`] draws from. The runtime layer list is *heterogeneous*:
@@ -1060,6 +1086,36 @@ mod tests {
         assert_eq!(
             Trigger::default_for(&ObjectEffect::Interact(Interaction::None)),
             Trigger::Press
+        );
+    }
+
+    /// `warps_overlapping` / `warp_landing_conflict` flag a landing whose player
+    /// hitbox would sit on a warp's trigger (an instant re-warp), ignore
+    /// non-warp objects, and read clear when the landing misses every warp.
+    #[test]
+    fn warp_landing_conflict_detects_overlap() {
+        // A 7x5 player box (the modern flush player hitbox) and a map with one
+        // warp trigger at (40,40)+16x16 and a dialogue object at (0,0).
+        let player = Hitbox::new(0, 0, 7, 5);
+        let map = MapInfo {
+            objects: vec![
+                MapObject::warp(Hitbox::new(40, 40, 16, 16), Warp::new(Some("elsewhere"), Vec2::new(0, 0))),
+                MapObject::dialogue(Hitbox::new(40, 40, 16, 16), "chat"),
+            ],
+            ..Default::default()
+        };
+
+        // Landing whose player box (44..51 , 44..49) lands inside the warp.
+        assert_eq!(map.warp_landing_conflict(Vec2::new(44, 44), player), Some(0));
+        // Just-touching the warp's top-left edge still counts (inclusive bounds).
+        assert_eq!(map.warps_overlapping(player.offset(Vec2::new(40, 40))).next(), Some(0));
+        // Clear landing far from the warp.
+        assert_eq!(map.warp_landing_conflict(Vec2::new(0, 0), player), None);
+        // The dialogue object (index 1) is never reported, even when overlapped.
+        assert_eq!(
+            map.warps_overlapping(Hitbox::new(40, 40, 16, 16)).collect::<Vec<_>>(),
+            vec![0],
+            "only warp objects count, not the co-located dialogue"
         );
     }
 
