@@ -19,6 +19,13 @@ use crate::platform::{ConsoleApi, ScanCode, ScrubConsole};
 use crate::render::{PrintOptions, print_to_shadow_with_font};
 use crate::{Ctx, EggState};
 
+/// Hold ←/→ to scrub: a tap steps one frame; holding past `SCRUB_REPEAT_DELAY`
+/// fixed steps then pages every `SCRUB_REPEAT_RATE` steps (so you don't have to
+/// tap once per frame). A touch snappier than the text-field repeat — scrubbing
+/// wants to start paging sooner.
+const SCRUB_REPEAT_DELAY: u16 = 12;
+const SCRUB_REPEAT_RATE: u16 = 2;
+
 /// A steppable replay session for one cutscene. Built by
 /// [`EggState::open_scrubber`] and driven by [`EggState::drive_scrubber`].
 pub struct CutsceneScrubber {
@@ -100,10 +107,10 @@ impl EggState {
         if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
             return;
         }
-        if system.keyp(ScanCode::Left) {
+        if system.key_repeat(ScanCode::Left, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
             scrubber.frame = scrubber.frame.saturating_sub(1);
         }
-        if system.keyp(ScanCode::Right) {
+        if system.key_repeat(ScanCode::Right, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
             scrubber.frame = (scrubber.frame + 1).min(scrubber.total);
         }
 
