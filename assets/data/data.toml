@@ -403,6 +403,7 @@ ids = [
 ]
 w = 2
 h = 2
+flip = "Horizontal"
 
 [presets.dog.walk]
 facing = "committed"

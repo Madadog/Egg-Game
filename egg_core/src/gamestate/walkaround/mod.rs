@@ -25,6 +25,37 @@ use crate::data::eggdata::GameItems;
 mod cutscene;
 pub mod inventory;
 
+/// The *location* of a shell in the entity tree (a top-level entity, or a
+/// companion of one) — the borrow-free result of
+/// [`resolve_path`](WalkaroundState::resolve_path). Holding a path rather than a
+/// `&mut Shell` lets a caller take the mutable shell *and* another `Walkaround`
+/// field (e.g. `current_map`) at once, by indexing the disjoint fields directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityPath {
+    /// `entities[i]`.
+    Entity(usize),
+    /// `entities[i].companions[j]`.
+    Companion(usize, usize),
+}
+
+impl EntityPath {
+    /// Borrow the shell this path points at.
+    pub fn shell_ref(self, w: &WalkaroundState) -> &Shell {
+        match self {
+            EntityPath::Entity(i) => &w.entities[i],
+            EntityPath::Companion(i, j) => &w.entities[i].companions[j],
+        }
+    }
+    /// Mutably borrow the shell this path points at. (For collision-aware moves,
+    /// index the fields directly instead, so `current_map` can be borrowed too.)
+    pub fn shell_mut(self, w: &mut WalkaroundState) -> &mut Shell {
+        match self {
+            EntityPath::Entity(i) => &mut w.entities[i],
+            EntityPath::Companion(i, j) => &mut w.entities[i].companions[j],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WalkaroundState {
     pub entities: Vec<Shell>,
@@ -46,7 +77,10 @@ pub struct WalkaroundState {
     /// it round-trips through the save with the rest of the walkaround's state.
     pub inventory_ui: InventoryUi,
     pub particles: ParticleList,
-    pub cutscene: Option<Cutscene>,
+    /// The cutscene **stack**: the top is the active cutscene; a `load` step
+    /// pushes a sub-cutscene (popped on finish), so map changes happen at
+    /// cutscene boundaries with fresh requisition. Empty = normal gameplay.
+    pub cutscene: Vec<Cutscene>,
     pub bg_colour: u8,
     pub default_map_colliders: Vec<Collider>,
     /// Per-object "player was inside this hitbox last frame" latch, one slot per
@@ -84,7 +118,7 @@ impl WalkaroundState {
             dialogue: Dialogue::default(),
             inventory_ui: InventoryUi::new(),
             particles: ParticleList::new(),
-            cutscene: None,
+            cutscene: Vec::new(),
             bg_colour: 0,
             default_map_colliders: Vec::new(),
             inside_objects: Vec::new(),
@@ -111,7 +145,7 @@ impl WalkaroundState {
     pub fn all_shells(&self) -> impl Iterator<Item = &Shell> {
         self.entities
             .iter()
-            .flat_map(|leader| std::iter::once(leader).chain(leader.companions.iter()))
+            .flat_map(|leader| leader.companions.iter().chain(std::iter::once(leader)))
     }
 
     /// Resolve an [`EntityId`] against the live entity tree: the player is
@@ -128,6 +162,51 @@ impl WalkaroundState {
             EntityId::Id(name) => self
                 .all_shells()
                 .find(|s| s.id.as_deref() == Some(name.as_str())),
+        }
+    }
+
+    /// After a cutscene that suspended companions (cutscene-driven actors don't
+    /// drag their companions), re-seat each leader's trail so its companions stay
+    /// where they are — resuming the trail toward the leader — instead of snapping
+    /// to a stale breadcrumb when normal following resumes. The first companion's
+    /// position seeds the trail tail (exact for the single-companion dog case).
+    fn reseat_companion_trails(&mut self) {
+        for leader in self.entities.iter_mut() {
+            // Seed the tail with the companion's *own* facing, not the leader's,
+            // so resuming the follow doesn't turn it — it keeps the direction it
+            // held through the scene until it actually walks again.
+            let Some((tail, dir)) = leader.companions.first().map(|c| (c.pos, c.dir)) else {
+                continue;
+            };
+            leader.trail.fill_toward(tail, leader.pos, dir);
+        }
+    }
+
+    /// Resolve an [`EntityId`] to a [`EntityPath`] — its *location* in the entity
+    /// tree, not a borrow — so a caller can take a `&mut Shell` to it alongside
+    /// another field (e.g. `current_map` for collision), which a `&mut Shell`
+    /// from a resolver method would forbid. `None` like [`resolve`](Self::resolve).
+    pub fn resolve_path(&self, id: &EntityId) -> Option<EntityPath> {
+        match id {
+            EntityId::Player => (!self.entities.is_empty()).then_some(EntityPath::Entity(0)),
+            EntityId::PlayerCompanion(slot) => self
+                .entities
+                .first()
+                .filter(|p| *slot < p.companions.len())
+                .map(|_| EntityPath::Companion(0, *slot)),
+            EntityId::Id(name) => {
+                for (i, leader) in self.entities.iter().enumerate() {
+                    if leader.id.as_deref() == Some(name.as_str()) {
+                        return Some(EntityPath::Entity(i));
+                    }
+                    for (j, comp) in leader.companions.iter().enumerate() {
+                        if comp.id.as_deref() == Some(name.as_str()) {
+                            return Some(EntityPath::Companion(i, j));
+                        }
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -322,8 +401,13 @@ impl WalkaroundState {
                 inventory.add(key.clone());
                 None
             }
-            InteractFn::Pet(vec, flip) => {
-                self.cutscene = Some(Cutscene::pet_dog(*vec, self.player().pos, *flip));
+            InteractFn::Pet(..) => {
+                // The pet *beat*: the player's petting animation + a sound. The
+                // walk-up is the cutscene's job (a `beside` move); this is the
+                // intrinsic effect its `interact` step fires. `pet_timer` counts
+                // down in the walk loop, so it plays out after the scene ends.
+                self.player().pet_timer = Some(90);
+                system.play_sound(sound::POP);
                 None
             }
         }
@@ -336,23 +420,59 @@ impl WalkaroundState {
     /// [`Ctx`] (not just the console) because a `dialogue` step resolves its key
     /// against `ctx.script` and drives the box through `ctx.save`.
     fn play_cutscene<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> bool {
-        // Taken out of `self` while it runs so it can borrow the walkaround
-        // mutably; put back only while it's still playing.
-        if let Some(mut cutscene) = self.cutscene.take() {
-            if just_pressed(ctx.system.controller().b) {
-                cutscene.skip(ctx, self);
-            }
-            match cutscene.next_stage(self) {
-                cutscene::CutsceneState::Playing => {
-                    cutscene.advance(ctx, self);
-                    self.cutscene = Some(cutscene);
-                    true
-                }
-                cutscene::CutsceneState::Finished => false,
-            }
-        } else {
-            false
+        if self.cutscene.is_empty() {
+            return false;
         }
+        // Drive the top of the stack, held apart from `self` so it can borrow the
+        // walkaround mutably. B fast-forwards; on an `interruptible` scene a
+        // just-pressed movement direction cancels it instead.
+        let mut top = self.cutscene.pop().expect("non-empty checked above");
+        let pad = ctx.system.controller();
+        let (idx, idy) = dpad_delta(&pad, just_pressed);
+        let interrupted = top.is_interruptible() && (idx != 0 || idy != 0);
+        let outcome = if interrupted {
+            cutscene::Outcome::Cancelled
+        } else {
+            if just_pressed(pad.b) {
+                top.skip(ctx, self);
+            }
+            top.step(ctx, self)
+        };
+        match outcome {
+            cutscene::Outcome::Running => self.cutscene.push(top),
+            // Reached the end, or cancelled (interrupt / blocked required move):
+            // clean up its transient actors, and when the whole stack is done hand
+            // companions back where they are (no snap to a stale breadcrumb).
+            cutscene::Outcome::Finished | cutscene::Outcome::Cancelled => {
+                top.cleanup(self);
+                if self.cutscene.is_empty() {
+                    self.reseat_companion_trails();
+                }
+            }
+            cutscene::Outcome::Load(name) => {
+                // The parent already advanced past its `load`; keep it below the
+                // sub-cutscene, which drives until it finishes and pops.
+                self.cutscene.push(top);
+                match ctx.scenes.get_cutscene(&name).cloned() {
+                    Some(def) => {
+                        let sub = Cutscene::launch(&def, ctx, self);
+                        self.cutscene.push(sub);
+                    }
+                    None => info!("cutscene load: unknown cutscene {name:?}"),
+                }
+            }
+        }
+        // Keep the camera on the player while a scene plays (the normal follow
+        // update below is skipped during cutscenes) — so the player stays framed
+        // as it walks and pets, with no snap when the scene ends. A per-scene
+        // camera target is a future verb.
+        self.camera.center_on(
+            self.player_ref().pos.x + 4,
+            self.player_ref().pos.y - 2,
+            ctx.system.width() as i16,
+            ctx.system.height() as i16,
+        );
+        true
     }
 
     /// Adds a shell and returns its index
@@ -469,12 +589,15 @@ impl WalkaroundState {
                 }
             }
             Interaction::Cutscene(name) => {
-                // Look the name up in the loaded cutscene registry and build a
-                // playable cutscene from its definition. An unknown name logs and
+                // Look the name up in the registry, then launch it (requisition
+                // its actors) and push it onto the stack. An unknown name logs and
                 // does nothing (like a dangling warp target), so a typo can't
                 // crash or soft-lock.
-                match ctx.get_cutscene(name) {
-                    Some(def) => self.cutscene = Some(Cutscene::from_def(def)),
+                match ctx.get_cutscene(name).cloned() {
+                    Some(def) => {
+                        let cutscene = Cutscene::launch(&def, ctx, self);
+                        self.cutscene.push(cutscene);
+                    }
                     None => info!("fire_interaction: unknown cutscene {name:?}"),
                 }
             }
@@ -856,6 +979,21 @@ impl WalkaroundState {
             shell.update_companions();
         }
 
+        // The petting animation (set by the pet beat): it plays out over its
+        // remaining frames after the cutscene ends. Player movement interrupts it
+        // immediately, and a `pop` fires every 20 frames synced with the pose flip.
+        if let Some(t) = self.player().pet_timer {
+            if self.player_ref().walking {
+                self.player().pet_timer = None;
+            } else {
+                let next = t.saturating_sub(1);
+                if next > 0 && next.is_multiple_of(20) {
+                    ctx.system.play_sound(sound::POP);
+                }
+                self.player().pet_timer = (next > 0).then_some(next);
+            }
+        }
+
         // Set after player.dir has updated
         let interact_hitbox = self
             .player()
@@ -957,31 +1095,26 @@ impl WalkaroundState {
             // (by stable id) and drop it from the live map so it vanishes now.
             self.take_object(i, ctx.save);
         } else if interact {
-            // No map object matched: fall back to the player's companions, checked
-            // against the facing hitbox (lowest precedence, press-only — fire only
-            // when nothing on the map did). Copy the first pettable companion's
-            // live (pos, dir) out before firing; its pet interaction rebuilds its
-            // target from them (so it pets the dog wherever it currently stands).
-            let pet = self.player_ref().companions.iter().find_map(|c| {
+            // No map object matched: fall back to the player's companions. If the
+            // facing hitbox is on a pettable companion (the dog), launch the pet
+            // cutscene — it walks the player up via a `beside` move, then fires the
+            // dog's intrinsic pet. Lowest precedence, press-only.
+            let pettable = self.player_ref().companions.iter().any(|c| {
                 if c.interaction.is_none() {
-                    return None;
+                    return false;
                 }
-                // Hit-test the companion's drawn *body* (its sprite footprint),
-                // not its small feet hitbox — the dog's pet target was a 16x16
-                // box, so testing the 7x5 hitbox would make petting finicky.
-                // Centre a sprite-sized box on the hitbox, rising from its feet.
+                // Hit-test the companion's drawn *body* (its sprite footprint), not
+                // its small feet hitbox, so petting isn't finicky. Centre a
+                // sprite-sized box on the hitbox, rising from its feet.
                 let (sprite, _) = c.sprite_options();
                 let (sw, sh) = (sprite.w as i16 * 8, sprite.h as i16 * 8);
                 let hb = c.hitbox();
                 let body = Hitbox::new(hb.x + hb.w / 2 - sw / 2, hb.y + hb.h - sh, sw, sh);
-                interact_hitbox.touches(body).then_some((c.pos, c.dir))
+                interact_hitbox.touches(body)
             });
-            if let Some((cpos, cdir)) = pet {
-                let ppos = self.player_ref().pos;
-                let interaction = crate::world::player::pet_interaction(cpos, cdir, ppos);
-                let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
-                self.fire_interaction(ctx, &interaction, &mut inventory);
-                self.inventory_ui.inventory = inventory;
+            if pettable && let Some(def) = ctx.scenes.get_cutscene("pet_dog").cloned() {
+                let cutscene = Cutscene::launch(&def, ctx, self);
+                self.cutscene.push(cutscene);
             }
         }
 

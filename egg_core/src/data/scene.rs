@@ -14,79 +14,216 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! `.eggscene` — a small line-oriented DSL for authoring **cutscenes**: the
-//! walk / wait / face / dialogue choreography a map plays. It is deliberately a
-//! *separate* registry from the dialogue ([`crate::data::script::eggtext`] /
-//! [`crate::data::script::ScriptFile`]):
-//!
-//! * Choreography is **language-independent** — it is authored once, in one
-//!   file, and never translated. A cutscene's *dialogue* step refers to a
-//!   `#dialogue` block **by key**, resolved at play time against whatever
-//!   language is loaded (see [`crate::data::script::Script::get_dialogue`]), so
-//!   the spoken text follows the active language while the staging does not.
-//! * Keeping it out of the dialogue file stops walk/wait/face instructions from
-//!   bloating `en.eggtext`, where they would be noise to a translator.
+//! `.eggscene` — a small line-oriented DSL for authoring **multi-actor
+//! cutscenes**: requisition some entities by name, then drive them along
+//! parallel timed paths, talk, and trigger each other's interactions. It is a
+//! *separate* registry from the dialogue ([`crate::data::script::eggtext`]):
+//! choreography is language-independent (authored once), and keeping it out of
+//! `en.eggtext` stops staging from being noise to a translator. A `dialogue`
+//! step refers to a `#dialogue` block **by key**, resolved at play time against
+//! the active language.
 //!
 //! The parsed result is a [`SceneFile`]: a registry of named [`CutsceneDef`]s,
-//! held by the host alongside the [`Script`](crate::data::script::Script) (see
-//! [`crate::EggState`]) and looked up when a `cutscene`-typed map object fires.
+//! held by the host (see [`crate::EggState`]) and looked up when a
+//! `cutscene`-typed map object fires.
 //!
 //! # The format
 //!
-//! A `#cutscene NAME` header at column 0 opens a block; its indented body is one
-//! `#verb args` per line. A **blank line within a block starts a new stage**.
-//! Items inside one stage run in *parallel* each frame; stages run in
-//! *sequence* (the next begins only when every item of the current one is done).
-//! Blank lines and `//` comments are otherwise ignored. The line grammar, the
-//! `"quoted"`/escaping rules and the block scanner are shared verbatim with the
-//! `.eggtext` parser.
+//! A `#cutscene NAME` header at column 0 opens a block. Its indented body is:
+//! **init** verbs first (bind actor names), then **content** steps (one per
+//! line, run in sequence). Blank lines and `//` comments are ignored — content
+//! order is the line order, not blank-line stages. A `move` step wraps a deeper-
+//! indented set of `actor: …` chains that run in *parallel*.
 //!
 //! ```text
-//! #cutscene pet_dog
-//!     // stage 0: walk up to the dog (each verb is its own stage here)
-//!     walk 120 64
+//! #cutscene meet_dog
+//!     spawn fido dog 120 64   // id preset x y  (transient)
+//!     bind ellie player       // alias a name to a well-known entity
 //!
-//!     face 1 1
-//!
-//!     // stage 2: bark sound, then the dog's line, in parallel
-//!     sound pop
-//!     dialogue pet_dog_woof
-//!
-//!     walk 112 72
+//!     move
+//!         ellie: walk 100 60 in 24; face fido
+//!         fido:  walk 108 60 in 24
+//!     dialogue dog_woof
+//!     interact ellie fido
 //! ```
 //!
-//! ## Verbs
+//! ## Init verbs (bind actor names; must precede content)
 //!
-//! | verb | args | runtime [`CutsceneItem`] |
-//! |------|------|--------------------------|
-//! | `wait N`            | frames            | `Wait` |
-//! | `dialogue KEY`      | dialogue-registry key | `Dialogue` (resolved at play time) |
-//! | `set FLAG BOOL`     | flag name + `true`/`false` | `SetFlag` |
-//! | `sound NAME`        | a known sound name | `Sound` |
-//! | `music [NAME]`      | a track name, or nothing to stop | `Music` |
-//! | `walk X Y`          | target pixel | `WalkPlayer` |
-//! | `move X Y`          | target pixel (teleport-walk) | `MovePlayer` |
-//! | `face DX DY`        | facing direction | `Face` |
+//! | verb | meaning |
+//! |------|---------|
+//! | `map NAME`              | load this map before the scene starts |
+//! | `spawn NAME PRESET X Y` | spawn a fresh transient shell (removed on finish) |
+//! | `bind NAME PRESET X Y`  | bind an existing shell with id==NAME, else spawn one |
+//! | `bind NAME player`      | alias NAME to the player |
+//! | `bind NAME companion N` | alias NAME to the player's companion in slot N |
+//! | `find NAME`             | bind id==NAME if present, else it resolves to nothing |
 //!
-//! [`CutsceneItem`]: crate::gamestate::walkaround::cutscene::CutsceneItem
+//! `player` and `companion N` are also usable directly in chains without binding.
+//!
+//! ## Content steps (sequential)
+//!
+//! | verb | meaning |
+//! |------|---------|
+//! | `move` + indented chains | run the chains in parallel until all finish |
+//! | `dialogue KEY`           | play a dialogue block, done when its box closes |
+//! | `interact ACTOR TARGET`  | fire TARGET's intrinsic interaction |
+//! | `load NAME`              | push a sub-cutscene (popped on its finish) |
+//! | `wait N`                 | hold for N frames |
+//! | `sound NAME` / `music [NAME]` / `set FLAG BOOL` | effects (carried over) |
+//!
+//! ## Chains & motions
+//!
+//! A chain is `ACTOR: motion args [in N]; motion args [in N]; …` — a sequence of
+//! timed motions. `in N` is the frame budget (the motion takes exactly N frames,
+//! speed inflated to suit); omitted ⇒ natural speed until done. Motions:
+//! `walk X Y`, `noclip X Y`, `to NAME`, `beside NAME [gap]`, `face NAME`,
+//! `face DX DY`, `teleport X Y`, `record [noclip] DX DY N …`.
 
 use std::collections::HashMap;
 
 use crate::geometry::Vec2;
+use crate::world::player::PresetId;
 
 pub use super::script::eggtext::ParseError;
 use super::script::eggtext::{collect_block, is_comment, split_first_word};
 
-/// A parsed cutscene: stages in order, each stage a parallel run of [`StepDef`]s.
-/// This is the language- and host-independent *definition*; the runtime
+/// A parsed cutscene: an optional initial map load, an `init` list that binds
+/// actor names, then sequential `content` steps. The language- and host-
+/// independent *definition*; the runtime
 /// [`Cutscene`](crate::gamestate::walkaround::cutscene::Cutscene) is built from
-/// it at launch (see
-/// [`build`](crate::gamestate::walkaround::cutscene::Cutscene::from_def)).
-pub type CutsceneDef = Vec<Vec<StepDef>>;
+/// it at launch.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CutsceneDef {
+    /// A map to load before the scene runs (`map NAME`); `None` plays in place.
+    pub init_map: Option<String>,
+    /// Requisition: bind each actor name to a live entity before content runs.
+    pub init: Vec<GetEntity>,
+    /// The steps, played in order; each runs to completion before the next.
+    pub content: Vec<CutsceneContent>,
+    /// `#cutscene NAME interruptible` — while this scene plays, the player
+    /// pressing a movement direction cancels it (cleanup + companions re-seated).
+    /// For scenes the player should be able to bail out of.
+    pub interruptible: bool,
+}
 
-/// The parsed cutscene registry: every `#cutscene NAME` block by name. Held by
-/// the host next to the script (see [`crate::EggState::scenes`]); a map object
-/// of type `cutscene` names one of these.
+/// One init step: how an actor name is bound before content runs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GetEntity {
+    /// `spawn NAME PRESET X Y` — always spawn a fresh transient shell (id=NAME),
+    /// removed when the cutscene finishes.
+    Spawn {
+        name: String,
+        preset: PresetId,
+        pos: Vec2,
+    },
+    /// `bind NAME PRESET X Y` — bind an existing shell whose id is NAME, else
+    /// spawn one there (it persists).
+    GetOrSpawn {
+        name: String,
+        preset: PresetId,
+        pos: Vec2,
+    },
+    /// `find NAME` — bind id==NAME if present, else NAME resolves to nothing
+    /// (chains targeting it log + skip).
+    GetOrIgnore { name: String },
+    /// `bind NAME player` / `bind NAME companion N` — alias a name to a
+    /// well-known live entity.
+    Alias { name: String, target: EntityRef },
+}
+
+/// A reference to a well-known live entity — the resolved form of a reserved
+/// name token (`player`, `companion N`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EntityRef {
+    Player,
+    Companion(usize),
+}
+
+/// One content step, played to completion before the next.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CutsceneContent {
+    /// Parallel actor chains; done when every chain finishes.
+    Move(Vec<Chain>),
+    /// Play the `#dialogue` block named by this key; done when the box closes.
+    Dialogue(String),
+    /// Fire TARGET's intrinsic interaction, with ACTOR as initiator.
+    Interact { actor: String, target: String },
+    /// Push a sub-cutscene by name onto the stack (popped on its finish).
+    Load(String),
+    /// Hold for `N` frames.
+    Wait(u32),
+    /// Play a sound effect by name (resolved at build time).
+    Sound(String),
+    /// Switch music to a named track, or stop it (`None`).
+    Music(Option<String>),
+    /// Set a named save flag.
+    SetFlag(String, bool),
+}
+
+/// One actor's timed motion sequence within a [`CutsceneContent::Move`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chain {
+    /// The actor name (resolved against the init bindings + reserved names).
+    pub actor: String,
+    /// The motions, in order.
+    pub instructions: Vec<Instruction>,
+}
+
+/// One motion in a [`Chain`], with its timing and a fail-fast flag.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Instruction {
+    pub motion: Motion,
+    /// Frame budget (`in N`); `0` = natural speed until done (no fixed budget).
+    pub time: u16,
+    /// `?` suffix — a *required* motion: if the actor can't make progress
+    /// (blocked by collision), the whole cutscene cancels rather than holding out
+    /// the budget. Only meaningful for the collision-aware moves.
+    pub required: bool,
+}
+
+impl Instruction {
+    /// A best-effort instruction (no `?`).
+    pub fn new(motion: Motion, time: u16) -> Self {
+        Self {
+            motion,
+            time,
+            required: false,
+        }
+    }
+    /// Mark this instruction required (the `?` suffix).
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+}
+
+/// A single motion an actor performs. Entity-relative motions name another actor
+/// (re-read live each frame at play time).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Motion {
+    /// `walk X Y` — toward a point, with collision.
+    MoveToPoint(Vec2),
+    /// `noclip X Y` — toward a point, ignoring collision.
+    MoveToPointNoclip(Vec2),
+    /// `to NAME` — toward another actor's live position.
+    MoveToEntity(String),
+    /// `beside NAME [gap]` — to NAME's head-side, `gap` px away, facing it.
+    MoveBesideHorizontal { target: String, gap: i16 },
+    /// `face NAME` — turn to face another actor.
+    FaceEntity(String),
+    /// `face DX DY` — face a fixed direction.
+    FaceDir(i8, i8),
+    /// `teleport X Y` — jump instantly.
+    Teleport(Vec2),
+    /// `record [noclip] DX DY N …` — an RLE path (direction held for N frames),
+    /// authored by the path recorder. Replayed step-for-step.
+    Record {
+        runs: Vec<((i8, i8), u16)>,
+        noclip: bool,
+    },
+}
+
+/// The parsed cutscene registry: every `#cutscene NAME` block by name.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneFile {
     pub cutscenes: HashMap<String, CutsceneDef>,
@@ -99,31 +236,9 @@ impl SceneFile {
     }
 }
 
-/// One parsed cutscene step: a verb with its arguments resolved to scalars, but
-/// *not* yet bound to host services (a sound/music name is still a string; the
-/// runtime resolves those at build time, and a dialogue key at play time). The
-/// inverse of [`emit_step`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StepDef {
-    /// Hold the stage for `N` frames.
-    Wait(u32),
-    /// Play the `#dialogue` block named by this key against the active script;
-    /// done when the box closes. The key is **not** resolved here.
-    Dialogue(String),
-    /// Set a named save flag to a value.
-    SetFlag(String, bool),
-    /// Play a sound effect by name (resolved against [`sound::by_name`] at build).
-    ///
-    /// [`sound::by_name`]: crate::data::sound::by_name
-    Sound(String),
-    /// Switch the music to a named track, or stop it (`None`).
-    Music(Option<String>),
-    /// Walk the player to a target pixel using the normal movement/collision.
-    Walk(Vec2),
-    /// Move the player to a target pixel by direct steps (ignoring collision).
-    Move(Vec2),
-    /// Face the player in a direction.
-    Face(i8, i8),
+/// Leading-whitespace width of a raw line (its indentation).
+fn indent(raw: &str) -> usize {
+    raw.len() - raw.trim_start().len()
 }
 
 /// Parse a whole `.eggscene` source into a [`SceneFile`]. Errors carry the
@@ -139,90 +254,309 @@ pub fn parse(src: &str) -> Result<SceneFile, ParseError> {
             continue;
         }
         if raw.starts_with([' ', '\t']) {
-            return Err(ParseError::new(
-                line_no,
-                "indented line is not inside a block",
-            ));
+            return Err(ParseError::new(line_no, "indented line is not inside a block"));
         }
         let Some(header) = logical.strip_prefix('#') else {
-            return Err(ParseError::new(
-                line_no,
-                "expected a block (`#cutscene name`)",
-            ));
+            return Err(ParseError::new(line_no, "expected a block (`#cutscene name`)"));
         };
-        let (kind, name) = split_first_word(header);
+        let (kind, rest) = split_first_word(header);
         if kind != "cutscene" {
             return Err(ParseError::new(
                 line_no,
                 format!("unknown block `#{kind}` (expected `#cutscene`)"),
             ));
         }
+        let (name, flags) = split_first_word(rest);
         if name.is_empty() {
             return Err(ParseError::new(line_no, "`#cutscene` needs a name"));
         }
+        let interruptible = match flags.trim() {
+            "" => false,
+            "interruptible" => true,
+            other => {
+                return Err(ParseError::new(
+                    line_no,
+                    format!("unknown cutscene flag `{other}` (only `interruptible`)"),
+                ));
+            }
+        };
         let body = collect_block(&mut lines);
-        let stages = parse_stages(&body)?;
-        file.cutscenes.insert(name.to_string(), stages);
+        let mut def = parse_cutscene(&body)?;
+        def.interruptible = interruptible;
+        file.cutscenes.insert(name.to_string(), def);
     }
 
     Ok(file)
 }
 
-/// A `#cutscene` body: indented `#`-free verb lines grouped into stages by blank
-/// lines. A blank line ends the current stage; consecutive blanks (and leading/
-/// trailing ones) collapse, so an empty stage is never produced.
-fn parse_stages(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
-    let mut stages: CutsceneDef = Vec::new();
-    let mut current: Vec<StepDef> = Vec::new();
-    for &(line_no, raw) in body {
+/// Parse a `#cutscene` body: init verbs first (until the first content verb),
+/// then content steps. A `move` step consumes the deeper-indented chain lines
+/// that follow it.
+fn parse_cutscene(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
+    let mut def = CutsceneDef::default();
+    let mut seen_content = false;
+    let mut i = 0;
+    while i < body.len() {
+        let (line_no, raw) = body[i];
         let logical = raw.trim_start();
-        if logical.is_empty() {
-            if !current.is_empty() {
-                stages.push(std::mem::take(&mut current));
+        if logical.is_empty() || is_comment(logical) {
+            i += 1;
+            continue;
+        }
+        let (verb, args) = split_first_word(logical);
+        match verb {
+            "map" | "spawn" | "bind" | "find" if !seen_content => {
+                if verb == "map" {
+                    def.init_map = Some(require_name(args, line_no, "`map` needs a name")?);
+                } else {
+                    def.init.push(parse_init(verb, args, line_no)?);
+                }
+                i += 1;
             }
-            continue;
+            "move" => {
+                seen_content = true;
+                let block_indent = indent(raw);
+                let mut chains = Vec::new();
+                i += 1;
+                while i < body.len() {
+                    let (cl_no, craw) = body[i];
+                    let clog = craw.trim_start();
+                    if clog.is_empty() || is_comment(clog) {
+                        i += 1;
+                        continue;
+                    }
+                    if indent(craw) <= block_indent {
+                        break;
+                    }
+                    chains.push(parse_chain(clog, cl_no)?);
+                    i += 1;
+                }
+                if chains.is_empty() {
+                    return Err(ParseError::new(line_no, "`move` needs at least one chain"));
+                }
+                def.content.push(CutsceneContent::Move(chains));
+            }
+            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" => {
+                seen_content = true;
+                def.content.push(parse_content(verb, args, line_no)?);
+                i += 1;
+            }
+            "map" | "spawn" | "bind" | "find" => {
+                return Err(ParseError::new(
+                    line_no,
+                    format!("init verb `{verb}` must come before content"),
+                ));
+            }
+            other => return Err(ParseError::new(line_no, format!("unknown verb `{other}`"))),
         }
-        if is_comment(logical) {
-            continue;
-        }
-        current.push(parse_step(logical, line_no)?);
     }
-    if !current.is_empty() {
-        stages.push(current);
-    }
-    Ok(stages)
+    Ok(def)
 }
 
-/// Parse one verb line into a [`StepDef`]. The verb is the first word; the rest
-/// are its arguments.
-fn parse_step(logical: &str, line_no: usize) -> Result<StepDef, ParseError> {
-    let (verb, args) = split_first_word(logical);
+/// Parse a `spawn`/`bind`/`find` init verb into a [`GetEntity`].
+fn parse_init(verb: &str, args: &str, line_no: usize) -> Result<GetEntity, ParseError> {
+    let (name, rest) = split_first_word(args);
+    if name.is_empty() {
+        return Err(ParseError::new(line_no, format!("`{verb}` needs a name")));
+    }
+    let name = name.to_string();
+    match verb {
+        "find" => Ok(GetEntity::GetOrIgnore { name }),
+        "spawn" | "bind" => {
+            let (head, tail) = split_first_word(rest);
+            // `bind NAME player|companion N` is an alias; otherwise it's a
+            // preset + position (spawn / get-or-spawn).
+            if verb == "bind" {
+                if head == "player" {
+                    return Ok(GetEntity::Alias {
+                        name,
+                        target: EntityRef::Player,
+                    });
+                }
+                if head == "companion" {
+                    let slot = parse_u32(tail, line_no, "`companion` needs a slot")? as usize;
+                    return Ok(GetEntity::Alias {
+                        name,
+                        target: EntityRef::Companion(slot),
+                    });
+                }
+            }
+            if head.is_empty() {
+                return Err(ParseError::new(
+                    line_no,
+                    format!("`{verb}` needs `NAME PRESET X Y`"),
+                ));
+            }
+            let preset = PresetId::new(head);
+            let pos = parse_vec2(tail, line_no, verb)?;
+            if verb == "spawn" {
+                Ok(GetEntity::Spawn { name, preset, pos })
+            } else {
+                Ok(GetEntity::GetOrSpawn { name, preset, pos })
+            }
+        }
+        _ => unreachable!("parse_init only called for spawn/bind/find"),
+    }
+}
+
+/// Parse a non-`move` content verb into a [`CutsceneContent`].
+fn parse_content(verb: &str, args: &str, line_no: usize) -> Result<CutsceneContent, ParseError> {
     Ok(match verb {
-        "wait" => StepDef::Wait(parse_u32(args, line_no, "`wait` needs a frame count")?),
-        "dialogue" => StepDef::Dialogue(require_name(args, line_no, "`dialogue` needs a key")?),
+        "dialogue" => CutsceneContent::Dialogue(require_name(args, line_no, "`dialogue` needs a key")?),
+        "load" => CutsceneContent::Load(require_name(args, line_no, "`load` needs a name")?),
+        "wait" => CutsceneContent::Wait(parse_u32(args, line_no, "`wait` needs a frame count")?),
+        "sound" => CutsceneContent::Sound(require_name(args, line_no, "`sound` needs a name")?),
+        "music" => CutsceneContent::Music((!args.trim().is_empty()).then(|| args.trim().to_string())),
         "set" => {
             let (name, value) = split_first_word(args);
             if name.is_empty() {
                 return Err(ParseError::new(line_no, "`set` needs `FLAG BOOL`"));
             }
-            StepDef::SetFlag(name.to_string(), parse_bool(value, line_no)?)
+            CutsceneContent::SetFlag(name.to_string(), parse_bool(value, line_no)?)
         }
-        "sound" => StepDef::Sound(require_name(args, line_no, "`sound` needs a name")?),
-        // `music` with no argument stops the music; with one, plays that track.
-        "music" => StepDef::Music((!args.trim().is_empty()).then(|| args.trim().to_string())),
-        "walk" => StepDef::Walk(parse_vec2(args, line_no, "walk")?),
-        "move" => StepDef::Move(parse_vec2(args, line_no, "move")?),
-        "face" => {
-            let (dx, dy) = parse_pair(args, line_no, "face")?;
-            StepDef::Face(
-                i8::try_from(dx)
-                    .map_err(|_| ParseError::new(line_no, "`face` dx is out of range"))?,
-                i8::try_from(dy)
-                    .map_err(|_| ParseError::new(line_no, "`face` dy is out of range"))?,
-            )
+        "interact" => {
+            let (actor, target) = split_first_word(args);
+            let target = target.trim();
+            if actor.is_empty() || target.is_empty() {
+                return Err(ParseError::new(line_no, "`interact` needs `ACTOR TARGET`"));
+            }
+            CutsceneContent::Interact {
+                actor: actor.to_string(),
+                target: target.to_string(),
+            }
         }
-        other => return Err(ParseError::new(line_no, format!("unknown verb `{other}`"))),
+        _ => unreachable!("parse_content only called for known content verbs"),
     })
+}
+
+/// Parse one `actor: motion; motion; …` chain line.
+fn parse_chain(logical: &str, line_no: usize) -> Result<Chain, ParseError> {
+    let (actor, rest) = logical
+        .split_once(':')
+        .ok_or_else(|| ParseError::new(line_no, "a chain reads `actor: motion; …`"))?;
+    let actor = actor.trim();
+    if actor.is_empty() {
+        return Err(ParseError::new(line_no, "a chain needs an actor name"));
+    }
+    let mut instructions = Vec::new();
+    for segment in rest.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        instructions.push(parse_motion(segment, line_no)?);
+    }
+    if instructions.is_empty() {
+        return Err(ParseError::new(line_no, "a chain needs at least one motion"));
+    }
+    Ok(Chain {
+        actor: actor.to_string(),
+        instructions,
+    })
+}
+
+/// Parse one motion segment, peeling an optional `in N` frame-budget suffix and a
+/// trailing `?` (the fail-fast / required marker).
+fn parse_motion(segment: &str, line_no: usize) -> Result<Instruction, ParseError> {
+    let mut tokens: Vec<&str> = segment.split_whitespace().collect();
+    // Peel `in N` (the last two tokens).
+    let time = if tokens.len() >= 2 && tokens[tokens.len() - 2] == "in" {
+        let n = tokens[tokens.len() - 1]
+            .parse()
+            .map_err(|_| ParseError::new(line_no, "`in` needs a frame count"))?;
+        tokens.truncate(tokens.len() - 2);
+        n
+    } else {
+        0u16
+    };
+    // Peel a trailing `?` (attached to the last token, e.g. `dog?`, or standalone).
+    let mut required = false;
+    if let Some(last) = tokens.last().copied()
+        && let Some(stripped) = last.strip_suffix('?')
+    {
+        required = true;
+        tokens.pop();
+        if !stripped.is_empty() {
+            tokens.push(stripped);
+        }
+    }
+    let (verb, args) = tokens
+        .split_first()
+        .ok_or_else(|| ParseError::new(line_no, "empty motion"))?;
+    let motion = match *verb {
+        "walk" => Motion::MoveToPoint(args_vec2(args, line_no, "walk")?),
+        "noclip" => Motion::MoveToPointNoclip(args_vec2(args, line_no, "noclip")?),
+        "to" => Motion::MoveToEntity(args_name(args, line_no, "to")?),
+        "beside" => {
+            let target = args_name(&args[..args.len().min(1)], line_no, "beside")?;
+            let gap = match args.get(1) {
+                Some(s) => s
+                    .parse()
+                    .map_err(|_| ParseError::new(line_no, "`beside` gap must be an integer"))?,
+                None => 0,
+            };
+            Motion::MoveBesideHorizontal { target, gap }
+        }
+        "face" => {
+            if args.len() == 2
+                && let (Ok(dx), Ok(dy)) = (args[0].parse::<i8>(), args[1].parse::<i8>())
+            {
+                Motion::FaceDir(dx, dy)
+            } else {
+                Motion::FaceEntity(args_name(args, line_no, "face")?)
+            }
+        }
+        "teleport" => Motion::Teleport(args_vec2(args, line_no, "teleport")?),
+        "record" => parse_record(args, line_no)?,
+        other => return Err(ParseError::new(line_no, format!("unknown motion `{other}`"))),
+    };
+    Ok(Instruction {
+        motion,
+        time,
+        required,
+    })
+}
+
+/// Parse a `record [noclip] DX DY N …` motion: a flat run of `(dx, dy, frames)`
+/// triples, optionally prefixed with `noclip`.
+fn parse_record(args: &[&str], line_no: usize) -> Result<Motion, ParseError> {
+    let (noclip, rest) = match args.split_first() {
+        Some((&"noclip", rest)) => (true, rest),
+        _ => (false, args),
+    };
+    if rest.len() % 3 != 0 || rest.is_empty() {
+        return Err(ParseError::new(
+            line_no,
+            "`record` needs `[noclip]` then `DX DY FRAMES` triples",
+        ));
+    }
+    let mut runs = Vec::new();
+    for triple in rest.chunks_exact(3) {
+        let err = || ParseError::new(line_no, "`record` triples are `DX DY FRAMES` integers");
+        let dx = triple[0].parse().map_err(|_| err())?;
+        let dy = triple[1].parse().map_err(|_| err())?;
+        let frames = triple[2].parse().map_err(|_| err())?;
+        runs.push(((dx, dy), frames));
+    }
+    Ok(Motion::Record { runs, noclip })
+}
+
+fn args_vec2(args: &[&str], line_no: usize, verb: &str) -> Result<Vec2, ParseError> {
+    if args.len() != 2 {
+        return Err(ParseError::new(line_no, format!("`{verb}` needs `X Y`")));
+    }
+    let err = || ParseError::new(line_no, format!("`{verb}` needs `X Y` integers"));
+    Ok(Vec2::new(
+        args[0].parse().map_err(|_| err())?,
+        args[1].parse().map_err(|_| err())?,
+    ))
+}
+
+fn args_name(args: &[&str], line_no: usize, verb: &str) -> Result<String, ParseError> {
+    match args.first() {
+        Some(name) if args.len() == 1 => Ok((*name).to_string()),
+        _ => Err(ParseError::new(line_no, format!("`{verb}` needs one name"))),
+    }
 }
 
 /// Require a non-empty single argument (a name/key), trimmed.
@@ -249,31 +583,22 @@ fn parse_bool(arg: &str, line_no: usize) -> Result<bool, ParseError> {
     }
 }
 
-/// Parse a whitespace-separated `X Y` integer pair.
-fn parse_pair(args: &str, line_no: usize, verb: &str) -> Result<(i16, i16), ParseError> {
+fn parse_vec2(args: &str, line_no: usize, verb: &str) -> Result<Vec2, ParseError> {
     let mut parts = args.split_whitespace();
     let err = || ParseError::new(line_no, format!("`{verb}` needs `X Y` integers"));
     let x = parts.next().and_then(|s| s.parse().ok()).ok_or_else(err)?;
     let y = parts.next().and_then(|s| s.parse().ok()).ok_or_else(err)?;
     if parts.next().is_some() {
-        return Err(ParseError::new(
-            line_no,
-            format!("`{verb}` takes exactly `X Y`"),
-        ));
+        return Err(ParseError::new(line_no, format!("`{verb}` takes `X Y`")));
     }
-    Ok((x, y))
-}
-
-fn parse_vec2(args: &str, line_no: usize, verb: &str) -> Result<Vec2, ParseError> {
-    let (x, y) = parse_pair(args, line_no, verb)?;
     Ok(Vec2::new(x, y))
 }
 
-// --- emitting: the inverse of `parse`, for a whole `.eggscene` file ---
+// --- emitting: the inverse of `parse` ---
 
 /// Emit a whole [`SceneFile`] back to `.eggscene` text that re-parses to the
-/// same registry. Cutscenes are emitted in sorted-name order for a stable
-/// output. The inverse of [`parse`].
+/// same registry. Cutscenes are emitted in sorted-name order. The inverse of
+/// [`parse`].
 pub fn emit_scene(file: &SceneFile) -> String {
     let mut names: Vec<&String> = file.cutscenes.keys().collect();
     names.sort();
@@ -288,19 +613,25 @@ pub fn emit_scene(file: &SceneFile) -> String {
     out
 }
 
-/// Emit one `#cutscene <name>` block. Stages are separated by a blank line; the
-/// returned string ends without a trailing newline.
+/// Emit one `#cutscene <name>` block. The returned string ends without a
+/// trailing newline.
 pub fn emit_cutscene(name: &str, def: &CutsceneDef) -> String {
-    let mut out = format!("#cutscene {name}\n");
-    for (i, stage) in def.iter().enumerate() {
-        if i != 0 {
-            out.push('\n');
-        }
-        for step in stage {
-            out.push_str("    ");
-            out.push_str(&emit_step(step));
-            out.push('\n');
-        }
+    let header = if def.interruptible {
+        format!("#cutscene {name} interruptible\n")
+    } else {
+        format!("#cutscene {name}\n")
+    };
+    let mut out = header;
+    if let Some(map) = &def.init_map {
+        out.push_str(&format!("    map {map}\n"));
+    }
+    for entity in &def.init {
+        out.push_str("    ");
+        out.push_str(&emit_init(entity));
+        out.push('\n');
+    }
+    for step in &def.content {
+        out.push_str(&emit_content(step));
     }
     while out.ends_with('\n') {
         out.pop();
@@ -308,19 +639,94 @@ pub fn emit_cutscene(name: &str, def: &CutsceneDef) -> String {
     out
 }
 
-/// Render one [`StepDef`] as its `.eggscene` verb line. The inverse of
-/// [`parse_step`].
-fn emit_step(step: &StepDef) -> String {
+fn emit_init(entity: &GetEntity) -> String {
+    match entity {
+        GetEntity::Spawn { name, preset, pos } => {
+            format!("spawn {name} {preset} {} {}", pos.x, pos.y)
+        }
+        GetEntity::GetOrSpawn { name, preset, pos } => {
+            format!("bind {name} {preset} {} {}", pos.x, pos.y)
+        }
+        GetEntity::GetOrIgnore { name } => format!("find {name}"),
+        GetEntity::Alias {
+            name,
+            target: EntityRef::Player,
+        } => format!("bind {name} player"),
+        GetEntity::Alias {
+            name,
+            target: EntityRef::Companion(slot),
+        } => format!("bind {name} companion {slot}"),
+    }
+}
+
+/// Emit one content step, including its trailing newline(s).
+fn emit_content(step: &CutsceneContent) -> String {
     match step {
-        StepDef::Wait(frames) => format!("wait {frames}"),
-        StepDef::Dialogue(key) => format!("dialogue {key}"),
-        StepDef::SetFlag(name, value) => format!("set {name} {value}"),
-        StepDef::Sound(name) => format!("sound {name}"),
-        StepDef::Music(Some(track)) => format!("music {track}"),
-        StepDef::Music(None) => "music".to_string(),
-        StepDef::Walk(pos) => format!("walk {} {}", pos.x, pos.y),
-        StepDef::Move(pos) => format!("move {} {}", pos.x, pos.y),
-        StepDef::Face(dx, dy) => format!("face {dx} {dy}"),
+        CutsceneContent::Move(chains) => {
+            let mut out = String::from("    move\n");
+            for chain in chains {
+                out.push_str("        ");
+                out.push_str(&emit_chain(chain));
+                out.push('\n');
+            }
+            out
+        }
+        CutsceneContent::Dialogue(key) => format!("    dialogue {key}\n"),
+        CutsceneContent::Interact { actor, target } => {
+            format!("    interact {actor} {target}\n")
+        }
+        CutsceneContent::Load(name) => format!("    load {name}\n"),
+        CutsceneContent::Wait(frames) => format!("    wait {frames}\n"),
+        CutsceneContent::Sound(name) => format!("    sound {name}\n"),
+        CutsceneContent::Music(Some(track)) => format!("    music {track}\n"),
+        CutsceneContent::Music(None) => "    music\n".to_string(),
+        CutsceneContent::SetFlag(name, value) => format!("    set {name} {value}\n"),
+    }
+}
+
+fn emit_chain(chain: &Chain) -> String {
+    let motions: Vec<String> = chain
+        .instructions
+        .iter()
+        .map(|ins| {
+            let mut m = emit_motion(&ins.motion);
+            if ins.required {
+                m.push('?');
+            }
+            if ins.time != 0 {
+                m.push_str(&format!(" in {}", ins.time));
+            }
+            m
+        })
+        .collect();
+    format!("{}: {}", chain.actor, motions.join("; "))
+}
+
+fn emit_motion(motion: &Motion) -> String {
+    match motion {
+        Motion::MoveToPoint(p) => format!("walk {} {}", p.x, p.y),
+        Motion::MoveToPointNoclip(p) => format!("noclip {} {}", p.x, p.y),
+        Motion::MoveToEntity(name) => format!("to {name}"),
+        Motion::MoveBesideHorizontal { target, gap } => {
+            if *gap == 0 {
+                format!("beside {target}")
+            } else {
+                format!("beside {target} {gap}")
+            }
+        }
+        Motion::FaceEntity(name) => format!("face {name}"),
+        Motion::FaceDir(dx, dy) => format!("face {dx} {dy}"),
+        Motion::Teleport(p) => format!("teleport {} {}", p.x, p.y),
+        Motion::Record { runs, noclip } => {
+            let mut out = String::from("record");
+            if *noclip {
+                out.push_str(" noclip");
+            }
+            for ((dx, dy), frames) in runs {
+                out.push_str(&format!(" {dx} {dy} {frames}"));
+            }
+            out
+        }
     }
 }
 
@@ -328,84 +734,159 @@ fn emit_step(step: &StepDef) -> String {
 mod tests {
     use super::*;
 
-    /// The single cutscene `src` defines, by name.
+    /// The single cutscene `src` defines.
     fn one(src: &str) -> CutsceneDef {
         let file = parse(src).expect("parse");
         file.cutscenes.into_values().next().expect("one cutscene")
     }
 
     #[test]
-    fn blank_lines_split_stages() {
-        let def = one("#cutscene c\n    wait 5\n    sound pop\n\n    walk 1 2");
-        assert_eq!(def.len(), 2);
-        assert_eq!(def[0], vec![StepDef::Wait(5), StepDef::Sound("pop".into())]);
-        assert_eq!(def[1], vec![StepDef::Walk(Vec2::new(1, 2))]);
-    }
-
-    #[test]
-    fn consecutive_blanks_make_no_empty_stage() {
-        let def = one("#cutscene c\n    wait 1\n\n\n    wait 2\n");
-        assert_eq!(def.len(), 2);
-        assert_eq!(def[0], vec![StepDef::Wait(1)]);
-        assert_eq!(def[1], vec![StepDef::Wait(2)]);
-    }
-
-    #[test]
-    fn every_verb_parses() {
-        let def = one("#cutscene c\n\
-             \x20   wait 30\n\
-             \x20   dialogue some_key\n\
-             \x20   set seen true\n\
-             \x20   sound pop\n\
-             \x20   music theme\n\
-             \x20   walk 10 20\n\
-             \x20   move 30 40\n\
-             \x20   face -1 1");
+    fn init_then_content_parses() {
+        let def = one(
+            "#cutscene meet\n\
+             \x20   spawn fido dog 120 64\n\
+             \x20   bind ellie player\n\
+             \x20   find cat\n\n\
+             \x20   move\n\
+             \x20       ellie: walk 100 60 in 24; face fido\n\
+             \x20       fido: walk 108 60 in 24\n\
+             \x20   dialogue dog_woof\n\
+             \x20   interact ellie fido",
+        );
+        assert_eq!(def.init.len(), 3);
         assert_eq!(
-            def[0],
+            def.init[0],
+            GetEntity::Spawn {
+                name: "fido".into(),
+                preset: PresetId::new("dog"),
+                pos: Vec2::new(120, 64),
+            }
+        );
+        assert_eq!(
+            def.init[1],
+            GetEntity::Alias {
+                name: "ellie".into(),
+                target: EntityRef::Player,
+            }
+        );
+        assert_eq!(def.init[2], GetEntity::GetOrIgnore { name: "cat".into() });
+        assert_eq!(def.content.len(), 3);
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("first content is a move");
+        };
+        assert_eq!(chains.len(), 2);
+        assert_eq!(chains[0].actor, "ellie");
+        assert_eq!(
+            chains[0].instructions,
             vec![
-                StepDef::Wait(30),
-                StepDef::Dialogue("some_key".into()),
-                StepDef::SetFlag("seen".into(), true),
-                StepDef::Sound("pop".into()),
-                StepDef::Music(Some("theme".into())),
-                StepDef::Walk(Vec2::new(10, 20)),
-                StepDef::Move(Vec2::new(30, 40)),
-                StepDef::Face(-1, 1),
-            ],
+                Instruction::new(Motion::MoveToPoint(Vec2::new(100, 60)), 24),
+                Instruction::new(Motion::FaceEntity("fido".into()), 0),
+            ]
+        );
+        assert_eq!(
+            def.content[2],
+            CutsceneContent::Interact {
+                actor: "ellie".into(),
+                target: "fido".into(),
+            }
         );
     }
 
     #[test]
-    fn music_with_no_arg_stops() {
-        let def = one("#cutscene c\n    music");
-        assert_eq!(def[0], vec![StepDef::Music(None)]);
+    fn every_motion_parses() {
+        let def = one(
+            "#cutscene c\n\
+             \x20   move\n\
+             \x20       a: walk 1 2; noclip 3 4; to b; beside b 5; face b; face 1 -1; teleport 7 8; record noclip 1 0 10",
+        );
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions,
+            vec![
+                Instruction::new(Motion::MoveToPoint(Vec2::new(1, 2)), 0),
+                Instruction::new(Motion::MoveToPointNoclip(Vec2::new(3, 4)), 0),
+                Instruction::new(Motion::MoveToEntity("b".into()), 0),
+                Instruction::new(Motion::MoveBesideHorizontal { target: "b".into(), gap: 5 }, 0),
+                Instruction::new(Motion::FaceEntity("b".into()), 0),
+                Instruction::new(Motion::FaceDir(1, -1), 0),
+                Instruction::new(Motion::Teleport(Vec2::new(7, 8)), 0),
+                Instruction::new(Motion::Record { runs: vec![((1, 0), 10)], noclip: true }, 0),
+            ]
+        );
+    }
+
+    /// The `?` suffix marks a motion required, before or after an `in N` budget;
+    /// the `interruptible` header flag parses. Both round-trip.
+    #[test]
+    fn required_motions_and_interruptible_flag() {
+        let def = one(
+            "#cutscene c interruptible\n\
+             \x20   move\n\
+             \x20       a: beside b? ; walk 4 5? in 12",
+        );
+        assert!(def.interruptible);
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions,
+            vec![
+                Instruction::new(Motion::MoveBesideHorizontal { target: "b".into(), gap: 0 }, 0)
+                    .required(),
+                Instruction::new(Motion::MoveToPoint(Vec2::new(4, 5)), 12).required(),
+            ]
+        );
+        let (file, reparsed) = round_trip("#cutscene c interruptible\n    move\n        a: beside b? in 3");
+        assert_eq!(file, reparsed);
     }
 
     #[test]
-    fn comments_and_blank_only_body_are_ignored() {
-        // A body that is only a comment yields a cutscene with no stages.
-        let def = one("#cutscene c\n    // nothing here");
-        assert!(def.is_empty());
+    fn carryover_effects_parse() {
+        let def = one(
+            "#cutscene c\n\
+             \x20   wait 30\n\
+             \x20   sound pop\n\
+             \x20   music theme\n\
+             \x20   set seen true\n\
+             \x20   load next",
+        );
+        assert_eq!(
+            def.content,
+            vec![
+                CutsceneContent::Wait(30),
+                CutsceneContent::Sound("pop".into()),
+                CutsceneContent::Music(Some("theme".into())),
+                CutsceneContent::SetFlag("seen".into(), true),
+                CutsceneContent::Load("next".into()),
+            ]
+        );
     }
 
     #[test]
     fn errors_point_at_the_line() {
         assert_eq!(parse("#cutscene c\n    bogus 1").unwrap_err().line, 2);
         assert_eq!(parse("#cutscene c\n    wait").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    move").unwrap_err().line, 2);
         assert_eq!(
-            parse("#cutscene c\n    set seen maybe").unwrap_err().line,
-            2
+            parse("#cutscene c\n    move\n        a: huh 1 2")
+                .unwrap_err()
+                .line,
+            3
+        );
+        // init after content is an error.
+        assert_eq!(
+            parse("#cutscene c\n    wait 1\n    spawn a b 1 2")
+                .unwrap_err()
+                .line,
+            3
         );
         assert_eq!(parse("#wat name").unwrap_err().line, 1);
-        assert_eq!(parse("ok\n   stray").unwrap_err().line, 1);
-        assert_eq!(parse("#cutscene").unwrap_err().line, 1);
-        assert_eq!(parse("#cutscene c\n    walk 1").unwrap_err().line, 2);
     }
 
     // --- emitter ---
 
-    /// Emit then re-parse a file round-trips it.
     fn round_trip(src: &str) -> (SceneFile, SceneFile) {
         let file = parse(src).expect("parse");
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
@@ -413,30 +894,30 @@ mod tests {
     }
 
     #[test]
-    fn emit_round_trips_a_multi_stage_scene() {
+    fn emit_round_trips_a_multi_actor_scene() {
         let (file, reparsed) = round_trip(
             "#cutscene a\n\
-             \x20   walk 5 6\n\
-             \x20   sound pop\n\n\
-             \x20   dialogue hello\n\n\
-             \x20   move 7 8\n\
-             #cutscene b\n\
+             \x20   map town\n\
+             \x20   spawn fido dog 1 2\n\
+             \x20   bind ellie player\n\n\
+             \x20   move\n\
+             \x20       ellie: walk 5 6 in 12; beside fido\n\
+             \x20       fido: to ellie\n\
+             \x20   dialogue hello\n\
              \x20   wait 10\n\
+             \x20   interact ellie fido\n\
+             #cutscene b\n\
              \x20   music\n\
-             \x20   face 1 0",
+             \x20   set done true",
         );
         assert_eq!(file, reparsed);
     }
 
-    /// The strongest guarantee: every block in the shipped `.eggscene` emits to
-    /// text that re-parses to the identical registry.
+    /// The strongest guarantee: the shipped `.eggscene` round-trips.
     #[test]
     fn emit_round_trips_every_shipped_cutscene() {
         let file = parse(include_str!("../../../assets/data/main.eggscene")).expect("parse main");
-        assert!(
-            !file.cutscenes.is_empty(),
-            "expected shipped cutscenes to test"
-        );
+        assert!(!file.cutscenes.is_empty(), "expected shipped cutscenes");
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
         assert_eq!(file, reparsed);
     }

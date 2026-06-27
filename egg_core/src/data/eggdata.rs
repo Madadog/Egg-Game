@@ -217,10 +217,16 @@ pub struct SpriteSet {
     pub ids: Vec<i32>,
     pub w: i32,
     pub h: i32,
+    /// The strip's authored default facing. Composed with the directional mirror
+    /// where it's drawn (the pet pose), so a strip whose sheet cells face the
+    /// "wrong" way — e.g. the dog's `others` vs the player's — corrects itself in
+    /// data without inverting the other.
+    #[serde(default, skip_serializing_if = "crate::render::Flip::is_none")]
+    pub flip: crate::render::Flip,
 }
 impl SpriteSet {
     fn build(&self) -> SpriteAnimation {
-        SpriteAnimation::from_sprite_ids(&self.ids, self.w, self.h)
+        SpriteAnimation::from_sprite_ids(&self.ids, self.w, self.h).with_flip(self.flip.clone())
     }
 }
 

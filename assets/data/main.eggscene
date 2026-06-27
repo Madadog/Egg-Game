@@ -1,26 +1,20 @@
-// main.eggscene — the cutscene registry. One language-independent file: stages
-// of walk/wait/face/sound/dialogue choreography, keyed by name. A map object of
-// type `cutscene` (the `cutscene` property) names one of these. A `dialogue`
-// step refers to a `#dialogue` block by key, resolved at play time against the
-// active language (assets/script/<lang>.eggtext), so the staging is shared while
-// the spoken text follows the loaded language.
+// main.eggscene — the cutscene registry. One language-independent file of
+// multi-actor choreography, keyed by name. A map object of type `cutscene` (the
+// `cutscene` property) names one of these; the dog's pet interaction launches
+// `pet_dog`. A `dialogue` step refers to a `#dialogue` block by key, resolved at
+// play time against the active language (assets/script/<lang>.eggtext), so the
+// staging is shared while the spoken text follows the loaded language.
 //
-// Stage model: verbs inside one stage run in parallel each frame; a blank line
-// starts the next stage, which begins only once every item of the current one
-// finishes. See egg_core/src/data/eggscene.rs for the grammar.
+// Format: init verbs (bind actor names) first, then content steps in order; a
+// `move` step runs its indented `actor: …` chains in parallel. See
+// egg_core/src/data/scene.rs for the grammar.
 
-// pet_dog — the proof cutscene. The original Rust `Cutscene::pet_dog` builds its
-// targets from the dog's live position (companion-internal), which a static file
-// can't express; this fixed-coordinate version proves the registry → build →
-// play path end-to-end when placed on a map. The pet animation is staged as a
-// few `pop` sounds spaced by `wait`s, mirroring the runtime PetDog beat.
+// pet_dog — petting the dog. Binds the dog (the player's first companion), walks
+// the player to its head-side via the live-position `beside` motion (so it works
+// wherever the dog is), then fires the dog's intrinsic pet interaction.
 #cutscene pet_dog
-    sound pop
+    bind dog companion 0
 
-    wait 20
-    sound pop
-
-    wait 20
-    sound pop
-
-    wait 20
+    move
+        player: beside dog?
+    interact player dog

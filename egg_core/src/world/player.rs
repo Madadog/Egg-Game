@@ -457,10 +457,14 @@ impl Shell {
         if let Some(t) = self.pet_timer {
             let t = (t / 20 % 2) as usize;
             let mut sprite = self.sprites.others[0].get_frame(t).clone();
-            sprite.flip = if self.dir.0 > 0 {
-                Flip::None
-            } else {
+            // Mirror toward the petter's facing, composed with the strip's own
+            // authored flip — so the dog's `others` (drawn when the player shell
+            // is set to the dog) face the right way without inverting the player's.
+            let mirror = self.dir.0 <= 0;
+            sprite.flip = if sprite.flip.x() ^ mirror {
                 Flip::Horizontal
+            } else {
+                Flip::None
             };
             return (sprite, 0);
         }
@@ -889,6 +893,21 @@ impl<const N: usize> CompanionTrail<N> {
     pub fn fill(&mut self, position: Vec2, direction: (i8, i8)) {
         self.positions.fill(position);
         self.directions.fill(direction);
+    }
+    /// Seed the buffer as a straight path from `tail` (the oldest sample, where a
+    /// slot-0 follower rides) to `head` (the newest, next to the leader), facing
+    /// `direction`. Hands companions back *in place* after something suspended
+    /// them (a cutscene): a follower resumes from `tail` and trails toward `head`
+    /// instead of snapping to a stale breadcrumb.
+    pub fn fill_toward(&mut self, tail: Vec2, head: Vec2, direction: (i8, i8)) {
+        let last = (N - 1).max(1) as i16;
+        for (k, slot) in self.positions.iter_mut().enumerate() {
+            let k = k as i16;
+            slot.x = tail.x + (head.x - tail.x) * k / last;
+            slot.y = tail.y + (head.y - tail.y) * k / last;
+        }
+        self.directions.fill(direction);
+        self.walktime = 0;
     }
     pub fn mid(&self) -> (Vec2, (i8, i8)) {
         (

@@ -1,349 +1,746 @@
+// Copyright (c) 2023 Adam Godwin <evilspamalt/at/gmail.com>
+//
+// This file is part of Egg Game - https://github.com/Madadog/Egg-Game/
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free Software
+// Foundation, either version 3 of the License, or (at your option) any later
+// version.
+//
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with
+// this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! The runtime for [`CutsceneDef`](crate::data::scene::CutsceneDef): a live,
+//! playing [`Cutscene`] built by requisitioning its actors, then stepping its
+//! content one step at a time. Cutscenes form a **stack** on
+//! [`WalkaroundState`] — a `load` step pushes a sub-cutscene, popped on finish —
+//! so map changes (a sub-cutscene's `init_map`) happen at cutscene boundaries
+//! with fresh requisition.
+
 use std::collections::HashMap;
 
 use crate::Ctx;
-use crate::data::scene::{CutsceneDef, StepDef};
+use crate::data::scene::{Chain, CutsceneContent, CutsceneDef, EntityRef, GetEntity, Motion};
 use crate::data::sound::music::MusicTrack;
-use crate::data::sound::{self, SfxData};
-use crate::world::player::Shell;
+use crate::data::sound::{self};
 use crate::geometry::Vec2;
 use crate::platform::{ConsoleApi, ConsoleHelper, just_pressed, pressed};
+use crate::world::player::{EntityId, MoveMode};
 
-use super::WalkaroundState;
+use super::{EntityPath, WalkaroundState};
 
-/// A playable cutscene: stages run in sequence, the items within one stage in
-/// parallel each frame ([`advance`](Self::advance)). A stage is finished when
-/// every item [`is_done`](CutsceneItem::is_done); the cutscene as a whole when
-/// the stage index runs past the end. Built from a parsed [`CutsceneDef`] via
-/// [`from_def`](Self::from_def), or directly for the companion-internal
-/// [`pet_dog`](Self::pet_dog) (whose targets come from the dog's live position).
+/// Natural-speed move cap (frames): a `time == 0` move that can't reach its
+/// target (a point behind a wall) gives up after this so a step can't hang.
+const NATURAL_CAP: u16 = 600;
+
+/// A live, playing cutscene. Built from a [`CutsceneDef`] via [`launch`], which
+/// requisitions its actors into a name→entity table, then steps its content in
+/// order ([`step`]). Lives on a stack ([`WalkaroundState`]); a `load` step
+/// pushes a sub-cutscene, popped on finish.
+///
+/// [`launch`]: Self::launch
+/// [`step`]: Self::step
 #[derive(Clone, Debug)]
 pub struct Cutscene {
-    stages: Vec<Vec<CutsceneItem>>,
-    /// Named spawned entities, by index into [`WalkaroundState::entities`].
-    /// Reserved for `spawn`/`despawn` verbs (deferred); empty today.
-    _entities: HashMap<String, usize>,
-    index: usize,
+    /// Actor name → the entity it resolves to (aliases + bound ids). Names absent
+    /// here fall back to the reserved `player`/`companion N`, then a bare id.
+    table: HashMap<String, EntityId>,
+    /// Names of transient `spawn`ed actors, removed from the world on finish.
+    spawned: Vec<String>,
+    content: Vec<CutsceneContent>,
+    /// Index of the content step currently playing.
+    step: usize,
+    /// Live state of that step.
+    state: StepState,
+    /// `#cutscene NAME interruptible` — player movement cancels the scene.
+    interruptible: bool,
+    /// Set when a required (`?`) motion is blocked; [`step`](Self::step) then
+    /// reports [`Outcome::Cancelled`].
+    aborted: bool,
 }
+
+/// The live state of the content step a [`Cutscene`] is on.
+#[derive(Clone, Debug)]
+enum StepState {
+    /// Not started — the step's start hook runs next [`step`](Cutscene::step).
+    Pending,
+    /// Parallel chains (cloned from the step) + one progress record each.
+    Move {
+        chains: Vec<Chain>,
+        progress: Vec<ChainProgress>,
+    },
+    /// A dialogue box; `opened` latches the one-time open.
+    Dialogue { opened: bool },
+    /// Frames left to wait.
+    Wait(u32),
+    /// Finished — advance to the next step.
+    Done,
+}
+
+/// One chain's progress within a `move` step.
+#[derive(Clone, Debug)]
+struct ChainProgress {
+    /// The current instruction index in the chain (`>= len` ⇒ this chain done).
+    instr: usize,
+    /// Frames elapsed in the current instruction.
+    elapsed: u16,
+    /// Consecutive frames the current instruction made no progress (blocked).
+    /// Trips [`STUCK_LIMIT`] for a required motion → the scene cancels.
+    stuck: u16,
+}
+
+/// What one [`Cutscene::step`] asks the stack driver to do next.
+pub enum Outcome {
+    /// Still playing — keep it on the stack.
+    Running,
+    /// Reached the end — pop it and clean up its spawned actors.
+    Finished,
+    /// A required (`?`) motion could not make progress — cancel the scene (same
+    /// cleanup as [`Finished`](Self::Finished), just early).
+    Cancelled,
+    /// Hit a `load NAME` (already advanced past it) — push that sub-cutscene.
+    Load(String),
+}
+
+/// Frames a required move may make no progress before it counts as blocked and
+/// cancels the scene. A couple of frames of slide-against-a-wall is fine; a wall
+/// it can't get past trips this fast.
+const STUCK_LIMIT: u16 = 6;
 
 impl Cutscene {
-    pub fn new(stages: Vec<Vec<CutsceneItem>>, entities: HashMap<String, usize>) -> Self {
+    /// Build + requisition a live cutscene: load `init_map` (if set), then bind
+    /// each actor name (spawn a transient shell / get-or-spawn / find / alias to
+    /// a well-known entity).
+    pub fn launch<S: ConsoleApi>(
+        def: &CutsceneDef,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) -> Self {
+        if let Some(map) = &def.init_map {
+            walkaround.load_map_by_name(ctx, map);
+        }
+        let mut table = HashMap::new();
+        let mut spawned = Vec::new();
+        for entity in &def.init {
+            match entity {
+                GetEntity::Spawn { name, preset, pos } => {
+                    spawn_actor(walkaround, ctx, name, &preset.to_string(), *pos);
+                    spawned.push(name.clone());
+                    table.insert(name.clone(), EntityId::Id(name.clone()));
+                }
+                GetEntity::GetOrSpawn { name, preset, pos } => {
+                    if walkaround.resolve(&EntityId::Id(name.clone())).is_none() {
+                        spawn_actor(walkaround, ctx, name, &preset.to_string(), *pos);
+                    }
+                    table.insert(name.clone(), EntityId::Id(name.clone()));
+                }
+                GetEntity::GetOrIgnore { name } => {
+                    if walkaround.resolve(&EntityId::Id(name.clone())).is_some() {
+                        table.insert(name.clone(), EntityId::Id(name.clone()));
+                    }
+                    // miss: leave unbound → the name resolves to nothing.
+                }
+                GetEntity::Alias { name, target } => {
+                    let id = match target {
+                        EntityRef::Player => EntityId::Player,
+                        EntityRef::Companion(slot) => EntityId::PlayerCompanion(*slot),
+                    };
+                    table.insert(name.clone(), id);
+                }
+            }
+        }
         Self {
-            stages,
-            _entities: entities,
-            index: 0,
+            table,
+            spawned,
+            content: def.content.clone(),
+            step: 0,
+            state: StepState::Pending,
+            interruptible: def.interruptible,
+            aborted: false,
         }
     }
 
-    /// Build a playable cutscene from a parsed [`CutsceneDef`]. Resolves the
-    /// steps that can resolve at build time (sounds via [`sound::by_name`], music
-    /// via [`MusicTrack::named`]); a dialogue step keeps its key string, resolved
-    /// at play time against the active [`Script`](crate::data::script::Script). An
-    /// unknown sound name becomes an inert no-op item (it still advances) rather
-    /// than a hard failure, mirroring how a dangling warp/music name no-ops.
-    pub fn from_def(def: &CutsceneDef) -> Cutscene {
-        let stages = def
-            .iter()
-            .map(|stage| stage.iter().map(CutsceneItem::from_step).collect())
-            .collect();
-        Self::new(stages, HashMap::new())
+    /// Whether this scene cancels on player movement (`#cutscene … interruptible`).
+    pub fn is_interruptible(&self) -> bool {
+        self.interruptible
     }
 
-    pub fn pet_dog(dog_position: Vec2, initial_position: Vec2, flip: Option<bool>) -> Cutscene {
-        let (position, dir) = if let Some(flip) = flip {
-            if flip {
-                (dog_position + Vec2::new(8, 0), (-1, 1))
-            } else {
-                (dog_position + Vec2::new(-8, 0), (1, 1))
-            }
-        } else {
-            (dog_position, (0, 0))
-        };
-        let mut vec = vec![
-            vec![CutsceneItem::MovePlayer(position)],
-            vec![CutsceneItem::PetDog(0)],
-            vec![CutsceneItem::MovePlayer(initial_position)],
-        ];
-        if flip.is_some() {
-            vec.insert(1, vec![CutsceneItem::FacePlayer(dir)]);
-        }
-        let hashmap = HashMap::new();
-        Self::new(vec, hashmap)
-    }
-    /// An out-of-range stage counts as done; [`next_stage`](Self::next_stage)
-    /// checks [`is_cutscene_done`](Self::is_cutscene_done) before this.
-    pub fn is_stage_done(&self, walkaround: &WalkaroundState) -> bool {
-        self.stages
-            .get(self.index)
-            .is_none_or(|stage| stage.iter().all(|x| x.is_done(walkaround)))
-    }
-    pub fn is_cutscene_done(&self, _walkaround: &WalkaroundState) -> bool {
-        self.stages.get(self.index).is_none()
-    }
-    pub fn next_stage(&mut self, walkaround: &WalkaroundState) -> CutsceneState {
-        if self.is_cutscene_done(walkaround) {
-            return CutsceneState::Finished;
-        } else if self.is_stage_done(walkaround) {
-            self.index += 1;
-        }
-        CutsceneState::Playing
-    }
-    pub fn advance<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
-        if let Some(x) = self.stages.get_mut(self.index) {
-            x.iter_mut().for_each(|x| {
-                x.advance(ctx, walkaround);
-            });
-        };
-    }
-
-    /// Fast-forward the whole cutscene to its end *safely* — the skip/abort path
-    /// (B button). Every remaining item is finalised in stage order so its lasting
-    /// side effects still happen: end positions snap into place, `SetFlag`/`Sound`
-    /// /`Music` fire, the dialogue box closes. After this the cutscene reads as
-    /// done and is dropped, so a stuck stage (an unreachable walk target) can
-    /// never soft-lock the player.
-    pub fn skip<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
-        for stage in &mut self.stages[self.index..] {
-            for item in stage.iter_mut() {
-                item.finish(ctx, walkaround);
-            }
-        }
-        self.index = self.stages.len();
-    }
-}
-
-pub enum CutsceneState {
-    Playing,
-    Finished,
-}
-
-/// One runtime cutscene step. Each variant advances toward its goal per frame
-/// ([`advance`](Self::advance)) and reports completion ([`is_done`](Self::is_done));
-/// the stage finishes when all of its items are done. Sounds/music are resolved
-/// to concrete values at build time; a [`Dialogue`](Self::Dialogue) step keeps
-/// its registry *key* and resolves it against the active script the first frame
-/// it runs.
-#[derive(Clone, Debug)]
-pub enum CutsceneItem {
-    /// Walk the player to a target, with a frame budget (counts down) so an
-    /// unreachable point can't hang the stage — see [`WALK_BUDGET`].
-    WalkPlayer {
-        target: Vec2,
-        budget: u32,
-    },
-    WalkEntity(Vec2, usize),
-    FacePlayer((i8, i8)),
-    MovePlayer(Vec2),
-    PetDog(u8),
-    /// Hold for `frames` more frames (counts down).
-    Wait(u32),
-    /// Open the named dialogue and wait for the box to close. The bool latches
-    /// "has been opened" so it opens exactly once; once opened, `is_done` reads
-    /// the closed box. (Resolved at play time — the key follows the language.)
-    Dialogue {
-        key: String,
-        opened: bool,
-    },
-    /// Set a save flag (fires once, on the first advance).
-    SetFlag(String, bool),
-    /// Play a sound effect (fires once). `None` = an unknown name, an inert no-op.
-    Sound(Option<SfxData>),
-    /// Switch the music track, or stop it (fires once).
-    Music(Option<MusicTrack>),
-}
-
-/// A frame budget for [`CutsceneItem::WalkPlayer`]: if the player can't reach the
-/// target within this many frames (an unreachable point behind a wall), the item
-/// reports done anyway so the stage can't hang. Generous — a long on-screen walk
-/// is well under this.
-const WALK_BUDGET: u32 = 600;
-
-impl CutsceneItem {
-    /// Build a runtime item from a parsed [`StepDef`], resolving build-time names.
-    fn from_step(step: &StepDef) -> CutsceneItem {
-        match step {
-            StepDef::Wait(frames) => CutsceneItem::Wait(*frames),
-            StepDef::Dialogue(key) => CutsceneItem::Dialogue {
-                key: key.clone(),
-                opened: false,
-            },
-            StepDef::SetFlag(name, value) => CutsceneItem::SetFlag(name.clone(), *value),
-            StepDef::Sound(name) => CutsceneItem::Sound(sound::by_name(name)),
-            StepDef::Music(track) => CutsceneItem::Music(track.as_deref().map(MusicTrack::named)),
-            StepDef::Walk(pos) => CutsceneItem::WalkPlayer {
-                target: *pos,
-                budget: WALK_BUDGET,
-            },
-            StepDef::Move(pos) => CutsceneItem::MovePlayer(*pos),
-            StepDef::Face(dx, dy) => CutsceneItem::FacePlayer((*dx, *dy)),
-        }
-    }
-
-    pub fn is_done(&self, walkaround: &WalkaroundState) -> bool {
-        match self {
-            // Reached the target, or the budget ran out (an unreachable point).
-            CutsceneItem::WalkPlayer { target, budget } => {
-                walkaround.player_ref().pos == *target || *budget == 0
-            }
-            CutsceneItem::WalkEntity(pos, i) => {
-                walkaround.entities.get(*i).map(|x| x.pos == *pos).unwrap()
-            }
-            CutsceneItem::MovePlayer(pos) => walkaround.player_ref().pos == *pos,
-            CutsceneItem::FacePlayer(_) => true,
-            CutsceneItem::PetDog(x) => *x > 90,
-            CutsceneItem::Wait(frames) => *frames == 0,
-            // Done once the box has been opened *and* has fully closed (no current
-            // line and an empty queue) — the pending-warp "wait until box closed"
-            // rule. Before it has opened it is not done (the open is its work).
-            CutsceneItem::Dialogue { opened, .. } => {
-                *opened
-                    && walkaround.dialogue.current_text.is_none()
-                    && walkaround.dialogue.next_text.is_empty()
-            }
-            CutsceneItem::SetFlag(..) => true,
-            CutsceneItem::Sound(_) => true,
-            CutsceneItem::Music(_) => true,
-        }
-    }
-    pub fn advance<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
-        match self {
-            CutsceneItem::WalkPlayer { target, budget } => {
-                *budget = budget.saturating_sub(1);
-                let Vec2 { x, y } = walkaround.player().pos.towards(target);
-                let (dx, dy) = walkaround.player().apply_walk_direction(x, y);
-
-                walkaround.player().apply_motion(dx, dy);
-
-                if self.is_done(walkaround) {
-                    walkaround.player().apply_motion(0, 0);
-                }
-
-                // The player pushed its own breadcrumb; drag its companions along
-                // so the dog follows through the cutscene too.
-                walkaround.player().update_companions();
-            }
-            CutsceneItem::WalkEntity(vec2, i) => {
-                let shell = if let Some(entity) = walkaround.entities.get_mut(*i) {
-                    entity
-                } else {
-                    walkaround.entities.push(Shell::default());
-                    *i = walkaround.entities.len() - 1;
-                    walkaround.entities.last_mut().unwrap()
+    /// Drive one frame. Chains the instant steps (sound/flag/…) into the same
+    /// frame; the first frame-consuming step (`move`/`dialogue`/`wait`) returns
+    /// [`Outcome::Running`]. A `load` returns [`Outcome::Load`]; the end returns
+    /// [`Outcome::Finished`].
+    pub fn step<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) -> Outcome {
+        loop {
+            if matches!(self.state, StepState::Pending) {
+                let Some(content) = self.content.get(self.step) else {
+                    return Outcome::Finished;
                 };
-                let Vec2 { x, y } = shell.pos.towards(vec2);
-                let (dx, dy) = shell.apply_walk_direction(x, y);
+                match content {
+                    CutsceneContent::Move(chains) => {
+                        let progress = chains
+                            .iter()
+                            .map(|_| ChainProgress {
+                                instr: 0,
+                                elapsed: 0,
+                                stuck: 0,
+                            })
+                            .collect();
+                        self.state = StepState::Move {
+                            chains: chains.clone(),
+                            progress,
+                        };
+                    }
+                    CutsceneContent::Dialogue(_) => {
+                        self.state = StepState::Dialogue { opened: false };
+                    }
+                    CutsceneContent::Wait(frames) => self.state = StepState::Wait(*frames),
+                    CutsceneContent::Interact { actor, target } => {
+                        self.fire_interact(ctx, walkaround, actor, target);
+                        // If the fired interaction opened a dialogue box, drive it
+                        // to completion (the walk loop's box handler is bypassed
+                        // while a cutscene plays); otherwise the step is done (an
+                        // instant effect like the dog's pet beat). `opened: true`
+                        // makes `advance_dialogue` skip its key-read, which would
+                        // mismatch the Interact content.
+                        self.state = if walkaround.dialogue.current_text.is_some() {
+                            StepState::Dialogue { opened: true }
+                        } else {
+                            StepState::Done
+                        };
+                    }
+                    CutsceneContent::Sound(name) => {
+                        if let Some(sfx) = sound::by_name(name) {
+                            ctx.system.play_sound(sfx);
+                        }
+                        self.state = StepState::Done;
+                    }
+                    CutsceneContent::Music(track) => {
+                        let track = track.as_deref().map(MusicTrack::named);
+                        ctx.system.music(track.as_ref());
+                        self.state = StepState::Done;
+                    }
+                    CutsceneContent::SetFlag(name, value) => {
+                        ctx.save.set_flag(name, *value);
+                        self.state = StepState::Done;
+                    }
+                    CutsceneContent::Load(name) => {
+                        let name = name.clone();
+                        self.step += 1;
+                        self.state = StepState::Pending;
+                        return Outcome::Load(name);
+                    }
+                }
+            }
 
-                shell.apply_motion(dx, dy);
-
-                if shell.pos == *vec2 {
-                    shell.apply_motion(0, 0);
-                }
-                shell.update_companions();
-            }
-            CutsceneItem::MovePlayer(pos) => {
-                let Vec2 { x, y } = walkaround.player().pos.towards(pos);
-                let (dx, dy) = walkaround.player().apply_walk_direction(x, y);
-                walkaround.player().pos = walkaround.player().pos + Vec2::new(dx, dy);
-                walkaround.player().animate_walk();
-                if self.is_done(walkaround) {
-                    walkaround.player().animate_stop();
-                }
-            }
-            CutsceneItem::PetDog(x) => {
-                walkaround.player().pet_timer = Some(*x);
-                if *x % 20 == 0 {
-                    ctx.system.play_sound(sound::POP);
-                }
-                *x += 1;
-                if self.is_done(walkaround) {
-                    walkaround.player().pet_timer = None;
-                }
-            }
-            CutsceneItem::FacePlayer(dir) => walkaround.player().face(*dir),
-            CutsceneItem::Wait(frames) => {
+            let done = if matches!(self.state, StepState::Move { .. }) {
+                self.advance_move(ctx, walkaround)
+            } else if matches!(self.state, StepState::Dialogue { .. }) {
+                self.advance_dialogue(ctx, walkaround)
+            } else if let StepState::Wait(frames) = &mut self.state {
                 *frames = frames.saturating_sub(1);
+                *frames == 0
+            } else {
+                matches!(self.state, StepState::Done)
+            };
+
+            // A required motion blocked this frame — bail out of the whole scene.
+            if self.aborted {
+                return Outcome::Cancelled;
             }
-            CutsceneItem::Dialogue { key, opened } => {
-                if !*opened {
-                    // Resolve the key against the *active* script and open the box.
+            if done {
+                self.step += 1;
+                self.state = StepState::Pending;
+                continue;
+            }
+            return Outcome::Running;
+        }
+    }
+
+    /// Advance every chain of the current `move` step one frame; returns whether
+    /// all chains have run out of instructions.
+    fn advance_move<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) -> bool {
+        // Lift the chains + progress out so motion code can borrow `self.table`
+        // (for resolution) alongside them.
+        let StepState::Move {
+            chains,
+            mut progress,
+        } = std::mem::replace(&mut self.state, StepState::Done)
+        else {
+            unreachable!("advance_move only runs on a Move state");
+        };
+        for (chain, prog) in chains.iter().zip(progress.iter_mut()) {
+            if prog.instr >= chain.instructions.len() {
+                continue;
+            }
+            let ins = &chain.instructions[prog.instr];
+            let (finished, progressed) = step_motion(
+                &chain.actor,
+                &ins.motion,
+                ins.time,
+                prog.elapsed,
+                &self.table,
+                ctx,
+                walkaround,
+            );
+            // A required (`?`) motion that stays blocked cancels the whole scene.
+            if ins.required && !progressed {
+                prog.stuck = prog.stuck.saturating_add(1);
+                if prog.stuck >= STUCK_LIMIT {
+                    self.aborted = true;
+                }
+            } else {
+                prog.stuck = 0;
+            }
+            prog.elapsed = prog.elapsed.saturating_add(1);
+            if finished {
+                prog.instr += 1;
+                prog.elapsed = 0;
+                prog.stuck = 0;
+            }
+        }
+        let all_done = chains
+            .iter()
+            .zip(progress.iter())
+            .all(|(c, p)| p.instr >= c.instructions.len());
+        if !all_done {
+            self.state = StepState::Move { chains, progress };
+        }
+        all_done
+    }
+
+    /// Drive the dialogue box for the current `dialogue` step (the walk loop's
+    /// dialogue input is short-circuited while a cutscene plays). Opens the box
+    /// once, then ticks the typewriter and reads A/B; returns whether the box has
+    /// fully closed.
+    fn advance_dialogue<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) -> bool {
+        let StepState::Dialogue { opened } = &mut self.state else {
+            unreachable!("advance_dialogue only runs on a Dialogue state");
+        };
+        if !*opened {
+            let CutsceneContent::Dialogue(key) = &self.content[self.step] else {
+                unreachable!("Dialogue state ⇒ Dialogue content");
+            };
+            let convo = ctx.get_dialogue(key);
+            walkaround
+                .dialogue
+                .set_messages(ctx.system, ctx.save, &convo);
+            *opened = true;
+            return false;
+        }
+        let pad = ctx.system.controller();
+        walkaround.dialogue.tick(ctx.system, ctx.save, 1);
+        if pressed(pad.a) {
+            walkaround.dialogue.tick(ctx.system, ctx.save, 2);
+        }
+        if just_pressed(pad.b) {
+            walkaround.dialogue.skip(ctx.system, ctx.save);
+        }
+        if just_pressed(pad.a)
+            && walkaround.dialogue.is_line_done()
+            && !walkaround.dialogue.next_text(ctx.system, ctx.save, false)
+            && walkaround.dialogue.current_text.is_some()
+        {
+            walkaround.dialogue.close();
+        }
+        walkaround.dialogue.current_text.is_none() && walkaround.dialogue.next_text.is_empty()
+    }
+
+    /// Fire the `target` actor's intrinsic [`Shell::interaction`], with `actor`
+    /// as the initiator. An unresolvable target or one with no interaction logs
+    /// and is skipped.
+    fn fire_interact<S: ConsoleApi>(
+        &self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        _actor: &str,
+        target: &str,
+    ) {
+        let target_id = resolve_name(target, &self.table);
+        let Some(interaction) = walkaround
+            .resolve(&target_id)
+            .and_then(|s| s.interaction.clone())
+        else {
+            log::info!("cutscene interact: `{target}` is absent or not interactive");
+            return;
+        };
+        let mut inventory = std::mem::take(&mut walkaround.inventory_ui.inventory);
+        walkaround.fire_interaction(ctx, &interaction, &mut inventory);
+        walkaround.inventory_ui.inventory = inventory;
+    }
+
+    /// Remove this cutscene's transient `spawn`ed actors from the world — run
+    /// once, when it finishes or is skipped.
+    pub fn cleanup(&self, walkaround: &mut WalkaroundState) {
+        if self.spawned.is_empty() {
+            return;
+        }
+        walkaround
+            .entities
+            .retain(|e| match &e.id {
+                Some(id) => !self.spawned.contains(id),
+                None => true,
+            });
+    }
+
+    /// Fast-forward to the end (the B-button abort): snap every remaining move to
+    /// its final point and fire every remaining instant effect, so lasting side
+    /// effects still land, then mark the cutscene finished. Best-effort — a
+    /// `load`/`interact`/entity-relative target is just dropped, not chased.
+    pub fn skip<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
+        // Close any live dialogue box first.
+        if matches!(self.state, StepState::Dialogue { opened: true }) {
+            walkaround.dialogue.close();
+        }
+        while let Some(content) = self.content.get(self.step) {
+            match content {
+                CutsceneContent::Move(chains) => {
+                    for chain in chains {
+                        if let Some(ins) = chain.instructions.last() {
+                            snap_motion(&chain.actor, &ins.motion, &self.table, walkaround);
+                        }
+                    }
+                }
+                CutsceneContent::Dialogue(key) => {
                     let convo = ctx.get_dialogue(key);
                     walkaround
                         .dialogue
                         .set_messages(ctx.system, ctx.save, &convo);
-                    *opened = true;
-                    return;
-                }
-                // The normal walk-loop dialogue input is short-circuited while a
-                // cutscene runs (see `WalkaroundState::step`), so the box is driven
-                // here: tick the typewriter, advance/finish a line on A, close the
-                // box on the last A press, fast-skip on B — the same gestures the
-                // walk loop applies.
-                let pad = ctx.system.controller();
-                walkaround.dialogue.tick(ctx.system, ctx.save, 1);
-                if pressed(pad.a) {
-                    walkaround.dialogue.tick(ctx.system, ctx.save, 2);
-                }
-                if just_pressed(pad.b) {
-                    walkaround.dialogue.skip(ctx.system, ctx.save);
-                }
-                if just_pressed(pad.a)
-                    && walkaround.dialogue.is_line_done()
-                    && !walkaround.dialogue.next_text(ctx.system, ctx.save, false)
-                    && walkaround.dialogue.current_text.is_some()
-                {
                     walkaround.dialogue.close();
                 }
-            }
-            CutsceneItem::SetFlag(name, value) => ctx.save.set_flag(name, *value),
-            CutsceneItem::Sound(sfx) => {
-                if let Some(sfx) = sfx {
-                    ctx.system.play_sound(sfx.clone());
+                CutsceneContent::SetFlag(name, value) => ctx.save.set_flag(name, *value),
+                CutsceneContent::Sound(name) => {
+                    if let Some(sfx) = sound::by_name(name) {
+                        ctx.system.play_sound(sfx);
+                    }
                 }
+                CutsceneContent::Music(track) => {
+                    let track = track.as_deref().map(MusicTrack::named);
+                    ctx.system.music(track.as_ref());
+                }
+                CutsceneContent::Interact { actor, target } => {
+                    self.fire_interact(ctx, walkaround, actor, target)
+                }
+                // A `load` mid-skip is dropped rather than chased.
+                CutsceneContent::Wait(_) | CutsceneContent::Load(_) => {}
             }
-            CutsceneItem::Music(track) => ctx.system.music(track.as_ref()),
+            self.step += 1;
         }
+        self.state = StepState::Done;
     }
 
-    /// Finalise this item for the skip path: apply its end state immediately and
-    /// run any lasting side effect, leaving it [`is_done`]. Walks/moves snap to
-    /// the target; a dialogue closes (opening first if it never ran, so a
-    /// `#set` inside it still applies); flags/sounds/music fire if they hadn't.
-    fn finish<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
-        match self {
-            CutsceneItem::WalkPlayer { target: pos, .. } | CutsceneItem::MovePlayer(pos) => {
-                walkaround.player().pos = *pos;
-                walkaround.player().animate_stop();
-            }
-            CutsceneItem::WalkEntity(pos, i) => {
-                if let Some(entity) = walkaround.entities.get_mut(*i) {
-                    entity.pos = *pos;
-                }
-            }
-            CutsceneItem::FacePlayer(dir) => walkaround.player().face(*dir),
-            CutsceneItem::PetDog(x) => {
-                *x = 91;
-                walkaround.player().pet_timer = None;
-            }
-            CutsceneItem::Wait(frames) => *frames = 0,
-            CutsceneItem::Dialogue { key, opened } => {
-                if !*opened {
-                    // Never ran: resolve + queue it so its `#set` side effects
-                    // still apply, then close immediately.
-                    let convo = ctx.get_dialogue(key);
-                    walkaround
-                        .dialogue
-                        .set_messages(ctx.system, ctx.save, &convo);
-                    *opened = true;
-                }
-                walkaround.dialogue.close();
-            }
-            CutsceneItem::SetFlag(name, value) => ctx.save.set_flag(name, *value),
-            CutsceneItem::Sound(sfx) => {
-                if let Some(sfx) = sfx {
-                    ctx.system.play_sound(sfx.clone());
-                }
-            }
-            CutsceneItem::Music(track) => ctx.system.music(track.as_ref()),
+    /// Whether the cutscene has played every content step.
+    pub fn is_finished(&self) -> bool {
+        self.step >= self.content.len()
+    }
+}
+
+/// Resolve an actor name to an entity id: a bound/aliased name, else the
+/// reserved `player`/`companion N`, else a bare id (a map creature by `Shell::id`).
+fn resolve_name(name: &str, table: &HashMap<String, EntityId>) -> EntityId {
+    if let Some(id) = table.get(name) {
+        return id.clone();
+    }
+    if name == "player" {
+        return EntityId::Player;
+    }
+    if let Some(slot) = name
+        .strip_prefix("companion")
+        .and_then(|s| s.trim().parse().ok())
+    {
+        return EntityId::PlayerCompanion(slot);
+    }
+    EntityId::Id(name.to_string())
+}
+
+/// Spawn a fresh shell of `preset` at `pos`, stamped with `id = name`, as a
+/// puppet (`Wander` so it behaves as a creature after the scene; the AI loop is
+/// skipped while a cutscene plays, so it doesn't self-move mid-scene). Pushed as
+/// a top-level entity.
+fn spawn_actor<S: ConsoleApi>(
+    walkaround: &mut WalkaroundState,
+    ctx: &mut Ctx<S>,
+    name: &str,
+    preset: &str,
+    pos: Vec2,
+) {
+    let mut shell = ctx
+        .presets
+        .spawn(&crate::world::player::PresetId::new(preset))
+        .unwrap_or_default();
+    shell.pos = pos;
+    shell.id = Some(name.to_string());
+    shell.move_mode = MoveMode::Wander;
+    walkaround.spawn_shell(shell);
+}
+
+/// Integer ceiling division for positive `a`, `b` (`b >= 1`).
+fn div_ceil(a: i32, b: i32) -> i32 {
+    (a + b - 1) / b
+}
+
+/// The cardinal facing from `from` toward `to` (the dominant axis).
+fn facing_toward(from: Vec2, to: Vec2) -> (i8, i8) {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    if dx.abs() >= dy.abs() {
+        (dx.signum() as i8, 0)
+    } else {
+        (0, dy.signum() as i8)
+    }
+}
+
+/// Whether a hold-style motion (face/teleport) is done: instant when `time == 0`,
+/// else after holding for `time` frames.
+fn time_done(time: u16, elapsed: u16) -> bool {
+    time == 0 || elapsed + 1 >= time
+}
+
+/// Execute one frame of `motion` for the named `actor`. Returns `(finished,
+/// progressed)` — `progressed` is `false` only when a move is blocked, which
+/// drives the required-motion abort. An unresolvable actor logs and is skipped.
+fn step_motion<S: ConsoleApi>(
+    actor: &str,
+    motion: &Motion,
+    time: u16,
+    elapsed: u16,
+    table: &HashMap<String, EntityId>,
+    ctx: &mut Ctx<S>,
+    walkaround: &mut WalkaroundState,
+) -> (bool, bool) {
+    let actor_id = resolve_name(actor, table);
+    let Some(path) = walkaround.resolve_path(&actor_id) else {
+        log::info!("cutscene: actor `{actor}` not found, skipping motion");
+        return (true, true);
+    };
+    // The live position of a named target, read before the actor is borrowed mut.
+    let target_pos = |name: &str, w: &WalkaroundState| -> Option<Vec2> {
+        w.resolve(&resolve_name(name, table)).map(|s| s.pos)
+    };
+
+    match motion {
+        Motion::FaceDir(dx, dy) => {
+            path.shell_mut(walkaround).face((*dx, *dy));
+            (time_done(time, elapsed), true)
         }
+        Motion::FaceEntity(name) => {
+            if let Some(tp) = target_pos(name, walkaround) {
+                let from = path.shell_ref(walkaround).pos;
+                path.shell_mut(walkaround).face(facing_toward(from, tp));
+            }
+            (time_done(time, elapsed), true)
+        }
+        Motion::Teleport(p) => {
+            path.shell_mut(walkaround).pos = *p;
+            (time_done(time, elapsed), true)
+        }
+        Motion::MoveToPoint(p) => move_toward(path, *p, time, elapsed, false, ctx, walkaround),
+        Motion::MoveToPointNoclip(p) => move_toward(path, *p, time, elapsed, true, ctx, walkaround),
+        Motion::MoveToEntity(name) => match target_pos(name, walkaround) {
+            Some(tp) => move_toward(path, tp, time, elapsed, false, ctx, walkaround),
+            None => (true, true),
+        },
+        Motion::MoveBesideHorizontal { target, gap } => {
+            let Some((spot, facing)) = beside_spot(target, *gap, table, walkaround) else {
+                return (true, true);
+            };
+            let (done, progressed) = move_toward(path, spot, time, elapsed, false, ctx, walkaround);
+            // Look at the target once arrived — the per-frame walk overwrites
+            // facing with the travel direction, so set the look-at on the last
+            // frame (when the actor has reached the spot).
+            if done {
+                path.shell_mut(walkaround).face(facing);
+            }
+            (done, progressed)
+        }
+        Motion::Record { runs, noclip } => {
+            (replay_record(path, runs, *noclip, elapsed, ctx, walkaround), true)
+        }
+    }
+}
+
+/// Move `path`'s shell toward `target` one frame. Fixed-duration when `time > 0`
+/// (speed inflated to arrive in exactly `time` frames); natural (1 px/frame) when
+/// `time == 0`, capped by [`NATURAL_CAP`]. Returns whether the move is finished.
+fn move_toward<S: ConsoleApi>(
+    path: EntityPath,
+    target: Vec2,
+    time: u16,
+    elapsed: u16,
+    noclip: bool,
+    ctx: &mut Ctx<S>,
+    walkaround: &mut WalkaroundState,
+) -> (bool, bool) {
+    let pos = path.shell_ref(walkaround).pos;
+    let remaining = Vec2::new(target.x - pos.x, target.y - pos.y);
+    let cheby = remaining.x.abs().max(remaining.y.abs());
+    // Already at the target counts as progress (no failure); a step that moves
+    // the shell counts; a blocked step (pos unchanged) does not.
+    let mut progressed = cheby == 0;
+    if cheby != 0 {
+        // Inflate speed so the remaining distance is covered in the remaining
+        // budget (computed in i32 — a huge `time` would overflow i16).
+        let speed = if time > 0 {
+            let budget = time.saturating_sub(elapsed).max(1);
+            div_ceil(i32::from(cheby), i32::from(budget)) as i16
+        } else {
+            1
+        };
+        let dx = remaining.x.signum() * remaining.x.abs().min(speed);
+        let dy = remaining.y.signum() * remaining.y.abs().min(speed);
+        // Index the disjoint fields directly so `current_map` can be borrowed
+        // alongside the mutable shell (a `&mut Shell` from a method would not).
+        let tiles = ctx.maps.get(&walkaround.current_map.source);
+        let map = &walkaround.current_map;
+        let shell = match path {
+            EntityPath::Entity(i) => &mut walkaround.entities[i],
+            EntityPath::Companion(i, j) => &mut walkaround.entities[i].companions[j],
+        };
+        let before = shell.pos;
+        if noclip {
+            shell.face((dx.signum() as i8, dy.signum() as i8));
+            shell.pos.x += dx;
+            shell.pos.y += dy;
+            shell.animate_walk();
+        } else {
+            let (mdx, mdy) = shell.walk(ctx.system, dx, dy, false, map, tiles);
+            shell.apply_motion(mdx, mdy);
+        }
+        // Blocked = the collision step left the shell exactly where it was.
+        progressed = shell.pos != before;
+        // A cutscene-driven actor does NOT drag its companions: during a scene
+        // every actor is an explicit puppet (the author moves the dog with its
+        // own chain if it should move), so e.g. `player: beside dog` walks the
+        // player to the *stationary* dog instead of the dog sliding to the player.
+    }
+    let arrived = path.shell_ref(walkaround).pos == target;
+    let done = if time > 0 {
+        elapsed + 1 >= time
+    } else {
+        arrived || elapsed + 1 >= NATURAL_CAP
+    };
+    (done, progressed)
+}
+
+/// The point an actor stands to be *beside* `target`, plus the facing to look at
+/// it: `gap` px off the target's head-side (its horizontal facing; a vertically-
+/// facing target → the actor's nearest side), feet aligned. `None` if the target
+/// is absent.
+fn beside_spot(
+    target: &str,
+    gap: i16,
+    table: &HashMap<String, EntityId>,
+    walkaround: &WalkaroundState,
+) -> Option<(Vec2, (i8, i8))> {
+    let t = walkaround.resolve(&resolve_name(target, table))?;
+    let t_box = t.hitbox();
+    // The actor's own width comes from the player by default (the common pet
+    // case); a precise per-actor width is a future refinement.
+    let actor_w = walkaround.player_ref().local_hitbox.w;
+    // Head-side: the target's horizontal facing; if it faces vertically, fall
+    // back to whichever side the player is already on (no crossing over).
+    let right_side = if t.dir.0 != 0 {
+        t.dir.0 > 0
+    } else {
+        walkaround.player_ref().pos.x >= t.pos.x
+    };
+    let x = if right_side {
+        t_box.x + t_box.w + gap
+    } else {
+        t_box.x - gap - actor_w
+    };
+    // Feet aligned: share the target's hitbox-top (both are flush boxes).
+    let spot = Vec2::new(x, t.pos.y);
+    let facing = if right_side { (-1, 0) } else { (1, 0) };
+    Some((spot, facing))
+}
+
+/// Replay a recorded RLE path one frame: hold the run that `elapsed` falls in.
+/// Finished once `elapsed` passes the total recorded frames.
+fn replay_record<S: ConsoleApi>(
+    path: EntityPath,
+    runs: &[((i8, i8), u16)],
+    noclip: bool,
+    elapsed: u16,
+    ctx: &mut Ctx<S>,
+    walkaround: &mut WalkaroundState,
+) -> bool {
+    let total: u16 = runs.iter().map(|(_, n)| n).sum();
+    if elapsed >= total {
+        return true;
+    }
+    // Find the run this frame falls in.
+    let mut acc = 0u16;
+    let mut dir = (0i8, 0i8);
+    for (d, n) in runs {
+        acc += n;
+        if elapsed < acc {
+            dir = *d;
+            break;
+        }
+    }
+    let (dx, dy) = (dir.0 as i16, dir.1 as i16);
+    let tiles = ctx.maps.get(&walkaround.current_map.source);
+    let map = &walkaround.current_map;
+    let shell = match path {
+        EntityPath::Entity(i) => &mut walkaround.entities[i],
+        EntityPath::Companion(i, j) => &mut walkaround.entities[i].companions[j],
+    };
+    if noclip {
+        shell.face(dir);
+        shell.pos.x += dx;
+        shell.pos.y += dy;
+        shell.animate_walk();
+    } else {
+        shell.apply_walk_direction(dx, dy);
+        let (mdx, mdy) = shell.walk(ctx.system, dx, dy, false, map, tiles);
+        shell.apply_motion(mdx, mdy);
+    }
+    // No companion drag during a cutscene (see `move_toward`).
+    elapsed + 1 >= total
+}
+
+/// Snap a motion to its end state for the skip path: moves jump to their point,
+/// teleports/faces apply, entity-relative motions are left where they are.
+fn snap_motion(
+    actor: &str,
+    motion: &Motion,
+    table: &HashMap<String, EntityId>,
+    walkaround: &mut WalkaroundState,
+) {
+    let Some(path) = walkaround.resolve_path(&resolve_name(actor, table)) else {
+        return;
+    };
+    match motion {
+        Motion::MoveToPoint(p) | Motion::MoveToPointNoclip(p) | Motion::Teleport(p) => {
+            let shell = path.shell_mut(walkaround);
+            shell.pos = *p;
+            shell.animate_stop();
+            shell.update_companions();
+        }
+        Motion::FaceDir(dx, dy) => {
+            path.shell_mut(walkaround).face((*dx, *dy));
+        }
+        // Entity-relative ends depend on a live target; leave the actor in place.
+        Motion::MoveToEntity(_)
+        | Motion::MoveBesideHorizontal { .. }
+        | Motion::FaceEntity(_)
+        | Motion::Record { .. } => {}
     }
 }
 
@@ -354,12 +751,12 @@ mod tests {
     use crate::data::scene;
     use crate::data::script::Script;
     use crate::draw_state::DrawState;
-    use crate::world::map::MapStore;
-    use crate::rand::Lcg64Xsh32;
     use crate::platform::test_console::TestConsole;
+    use crate::rand::Lcg64Xsh32;
+    use crate::world::map::MapStore;
 
     /// Everything a [`Ctx`] borrows, owned in one place so a test can hand out a
-    /// fresh `Ctx` each frame (it borrows mutably, so it can't outlive a frame).
+    /// fresh `Ctx` each frame.
     struct Harness {
         system: TestConsole,
         draw: DrawState,
@@ -387,178 +784,171 @@ mod tests {
                 walk: WalkaroundState::new(),
             }
         }
-        /// Install a one-line dialogue under `key` so a `Dialogue` step resolves.
-        fn with_dialogue(mut self, key: &str, line: &str) -> Self {
-            let src = format!("#dialogue {key}\n    {line}");
-            self.script
-                .set_base(crate::data::script::eggtext::parse(&src).unwrap());
-            self
-        }
-    }
-
-    /// One `advance` of a lone item against the harness's walkaround.
-    fn step(h: &mut Harness, item: &mut CutsceneItem) {
-        // Split the borrow: the walkaround is held apart from the Ctx-borrowed
-        // fields, exactly as `play_cutscene` does with `self`.
-        let mut walk = std::mem::take(&mut h.walk);
-        let mut ctx = Ctx {
-            draw: &mut h.draw,
-            system: &mut h.system,
-            maps: &mut h.maps,
-            rng: &mut h.rng,
-            script: &h.script,
-            scenes: &h.scenes,
-            save: &mut h.save,
-            items: &h.items,
-            presets: &h.presets,
-        };
-        item.advance(&mut ctx, &mut walk);
-        h.walk = walk;
-    }
-
-    #[test]
-    fn wait_counts_down_then_is_done() {
-        let mut h = Harness::new();
-        let mut item = CutsceneItem::Wait(2);
-        assert!(!item.is_done(&h.walk));
-        step(&mut h, &mut item);
-        assert!(!item.is_done(&h.walk), "one frame left");
-        step(&mut h, &mut item);
-        assert!(item.is_done(&h.walk), "countdown reached zero");
-        // A `Wait(0)` reads done before any advance.
-        assert!(CutsceneItem::Wait(0).is_done(&h.walk));
-    }
-
-    #[test]
-    fn set_flag_fires_on_advance_and_is_immediately_done() {
-        let mut h = Harness::new();
-        let mut item = CutsceneItem::SetFlag("seen".into(), true);
-        // A `SetFlag` is structurally done the moment it exists (no frames to
-        // wait), but its side effect lands on advance.
-        assert!(item.is_done(&h.walk));
-        assert!(!h.save.flag("seen"));
-        step(&mut h, &mut item);
-        assert!(h.save.flag("seen"), "flag written on advance");
-    }
-
-    #[test]
-    fn sound_resolves_by_name_and_unknown_is_inert() {
-        // A known name resolves to a real sfx; an unknown one becomes an inert
-        // `None` item. Either way the item is done (nothing to wait on) and
-        // advancing it doesn't panic.
-        let mut known = CutsceneItem::from_step(&StepDef::Sound("gain".into()));
-        assert!(matches!(known, CutsceneItem::Sound(Some(_))));
-        let mut unknown = CutsceneItem::from_step(&StepDef::Sound("not_a_sound".into()));
-        assert!(matches!(unknown, CutsceneItem::Sound(None)));
-
-        let mut h = Harness::new();
-        assert!(known.is_done(&h.walk) && unknown.is_done(&h.walk));
-        step(&mut h, &mut known);
-        step(&mut h, &mut unknown);
-    }
-
-    #[test]
-    fn dialogue_opens_the_box_then_done_when_closed() {
-        let mut h = Harness::new().with_dialogue("hi", "Hello.");
-        let mut item = CutsceneItem::Dialogue {
-            key: "hi".into(),
-            opened: false,
-        };
-        // Not done before it opens (the open is its work).
-        assert!(!item.is_done(&h.walk));
-        // First advance opens the box; now it's not done (box is live).
-        step(&mut h, &mut item);
-        assert!(h.walk.dialogue.current_text.is_some(), "box opened");
-        assert!(!item.is_done(&h.walk));
-        // Press A to advance past the single line and close the box.
-        h.system.controllers[0].a = [true, false];
-        // The line must be done to register the A advance.
-        h.walk.dialogue.finish_line();
-        step(&mut h, &mut item);
-        assert!(
-            h.walk.dialogue.current_text.is_none() && h.walk.dialogue.next_text.is_empty(),
-            "box closed",
-        );
-        assert!(item.is_done(&h.walk), "done once the box has closed");
-    }
-
-    #[test]
-    fn skip_fast_forwards_side_effects_and_finishes() {
-        // A scene whose remaining stages set a flag, move the player, and open a
-        // dialogue: skip applies the end position, fires the flag, and closes the
-        // box, all at once, leaving the cutscene done.
-        let mut h = Harness::new().with_dialogue("hi", "Hello.");
-        let def: scene::CutsceneDef = vec![
-            vec![StepDef::Move(Vec2::new(40, 50))],
-            vec![
-                StepDef::SetFlag("done".into(), true),
-                StepDef::Dialogue("hi".into()),
-            ],
-        ];
-        let mut cutscene = Cutscene::from_def(&def);
-
-        let mut walk = std::mem::take(&mut h.walk);
-        {
-            let mut ctx = Ctx {
-                draw: &mut h.draw,
-                system: &mut h.system,
-                maps: &mut h.maps,
-                rng: &mut h.rng,
-                script: &h.script,
-                scenes: &h.scenes,
-                save: &mut h.save,
-                items: &h.items,
-                presets: &h.presets,
+        /// Run `f` against a fresh `Ctx` + the held-apart walkaround (the split
+        /// `play_cutscene` does with `self`).
+        fn frame<R>(&mut self, f: impl FnOnce(&mut Ctx<TestConsole>, &mut WalkaroundState) -> R) -> R {
+            let mut walk = std::mem::take(&mut self.walk);
+            let r = {
+                let mut ctx = Ctx {
+                    draw: &mut self.draw,
+                    system: &mut self.system,
+                    maps: &mut self.maps,
+                    rng: &mut self.rng,
+                    script: &self.script,
+                    scenes: &self.scenes,
+                    save: &mut self.save,
+                    items: &self.items,
+                    presets: &self.presets,
+                };
+                f(&mut ctx, &mut walk)
             };
-            cutscene.skip(&mut ctx, &mut walk);
+            self.walk = walk;
+            r
         }
-        h.walk = walk;
-
-        assert!(matches!(
-            cutscene.next_stage(&h.walk),
-            CutsceneState::Finished
-        ));
-        assert_eq!(
-            h.walk.player_ref().pos,
-            Vec2::new(40, 50),
-            "end position applied"
-        );
-        assert!(h.save.flag("done"), "flag side effect fired");
-        assert!(
-            h.walk.dialogue.current_text.is_none() && h.walk.dialogue.next_text.is_empty(),
-            "dialogue closed",
-        );
     }
 
+    /// A spawned actor walks to a fixed point with a frame budget, arriving in
+    /// exactly that many frames (speed inflated to suit).
     #[test]
-    fn walk_player_budget_caps_an_unreachable_target() {
-        // A target the player can't actually reach (no map/collision moves it) is
-        // capped by the frame budget so the stage can't hang. Drive the item with
-        // a tiny budget to keep the test fast.
+    fn fixed_duration_move_arrives_on_time() {
+        let def = scene::parse(
+            "#cutscene t\n    spawn a critter 0 0\n    move\n        a: walk 30 0 in 10",
+        )
+        .unwrap();
+        let def = def.get_cutscene("t").unwrap().clone();
         let mut h = Harness::new();
-        let mut item = CutsceneItem::WalkPlayer {
-            target: Vec2::new(9999, 9999),
-            budget: 3,
-        };
-        for _ in 0..3 {
-            assert!(!item.is_done(&h.walk));
-            step(&mut h, &mut item);
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        for _ in 0..9 {
+            h.frame(|ctx, w| cs.step(ctx, w));
         }
+        // Not yet arrived one frame before the budget.
+        let early = h.walk.resolve(&EntityId::Id("a".into())).unwrap().pos;
+        assert!(early.x < 30, "still travelling at frame 9 ({})", early.x);
+        h.frame(|ctx, w| cs.step(ctx, w));
+        let arrived = h.walk.resolve(&EntityId::Id("a".into())).unwrap().pos;
+        assert_eq!(arrived.x, 30, "arrived exactly at the budget");
+    }
+
+    /// `spawn` adds a transient actor; finishing the cutscene removes it.
+    #[test]
+    fn spawn_is_transient() {
+        let def = scene::parse("#cutscene t\n    spawn ghost critter 5 5\n    wait 1")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
         assert!(
-            item.is_done(&h.walk),
-            "budget exhausted -> done despite not arriving"
+            h.walk.resolve(&EntityId::Id("ghost".into())).is_some(),
+            "spawned for the scene",
+        );
+        // wait 1 → one frame to finish.
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+        assert!(matches!(outcome, Outcome::Finished));
+        cs.cleanup(&mut h.walk);
+        assert!(
+            h.walk.resolve(&EntityId::Id("ghost".into())).is_none(),
+            "removed on finish",
         );
     }
 
+    /// A cutscene-driven player move does NOT drag its companion — the dog is
+    /// suspended in place for the scene (it would otherwise slide onto the
+    /// player's trail and warp). Guards the petting bug.
     #[test]
-    fn from_def_builds_a_playable_cutscene_from_the_shipped_pet_dog() {
-        // The shipped `pet_dog` block builds without panicking and yields the same
-        // stage shape it was authored with (proving the registry -> build path).
+    fn cutscene_move_suspends_companions() {
+        let def = scene::parse("#cutscene t\n    move\n        player: walk 80 50 in 4")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        h.walk.player().pos = Vec2::new(50, 50);
+        let mut dog = crate::world::player::Shell::default();
+        dog.pos = Vec2::new(50, 66);
+        dog.dir = (1, 0);
+        dog.move_mode = MoveMode::Companion { slot: 0 };
+        h.walk.player().companions.push(dog);
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        for _ in 0..8 {
+            h.frame(|ctx, w| {
+                cs.step(ctx, w);
+            });
+        }
+        assert!(h.walk.player_ref().pos.x > 50, "player moved by the cutscene");
+        let dog = &h.walk.player_ref().companions[0];
+        assert_eq!(
+            dog.pos,
+            Vec2::new(50, 66),
+            "dog stayed put — not dragged onto the player's trail",
+        );
+        assert_eq!(dog.dir, (1, 0), "dog kept its facing — not turned by the scene");
+    }
+
+    /// An `interruptible` scene cancels (clears the stack) the frame the player
+    /// presses a movement direction; without input it keeps playing.
+    #[test]
+    fn interruptible_scene_cancels_on_movement() {
+        let def = scene::parse("#cutscene t interruptible\n    wait 100")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.walk.cutscene.push(cs);
+
+        // No input → still playing.
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert!(!h.walk.cutscene.is_empty(), "plays on with no input");
+
+        // A just-pressed direction cancels it.
+        h.system.controllers[0].up = [true, false];
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert!(h.walk.cutscene.is_empty(), "movement cancelled the scene");
+    }
+
+    /// Determinism: the same cutscene from the same start produces byte-identical
+    /// results (no RNG during a scene — the entity-AI loop is skipped). This is
+    /// the property the scrubber's re-sim (Phase C) relies on.
+    #[test]
+    fn replay_is_deterministic() {
+        let def = scene::parse(
+            "#cutscene t\n    spawn a critter 0 0\n    move\n        a: walk 20 10 in 8; face 1 0\n    wait 3",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        let run = |def: &CutsceneDef| {
+            let mut h = Harness::new();
+            let mut cs = h.frame(|ctx, w| Cutscene::launch(def, ctx, w));
+            for _ in 0..20 {
+                h.frame(|ctx, w| {
+                    cs.step(ctx, w);
+                });
+            }
+            h.walk
+                .resolve(&EntityId::Id("a".into()))
+                .map(|s| (s.pos, s.dir, s.walktime))
+        };
+        assert_eq!(run(&def), run(&def), "two identical runs match exactly");
+    }
+
+    /// The shipped `pet_dog` builds (requisitions) without panicking.
+    #[test]
+    fn shipped_pet_dog_launches() {
         let scenes = scene::parse(include_str!("../../../../assets/data/main.eggscene"))
             .expect("parse main.eggscene");
-        let def = scenes.get_cutscene("pet_dog").expect("pet_dog defined");
-        let cutscene = Cutscene::from_def(def);
-        assert_eq!(cutscene.stages.len(), def.len());
-        assert!(!cutscene.stages.is_empty());
+        let def = scenes.get_cutscene("pet_dog").expect("pet_dog defined").clone();
+        let mut h = Harness::new();
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        assert_eq!(cs.content.len(), 2, "move + interact");
     }
 }
