@@ -818,6 +818,10 @@ impl WalkaroundState {
                 ctx.draw.indexed_sprites.width() as usize / 8,
                 ctx.draw.indexed_sprites.height() as usize / 8,
             );
+            // Hand the editor the current cutscene names so its scene picker can
+            // list them (it doesn't otherwise see the registry). Refreshed each
+            // focused frame, so a just-recorded scene shows up.
+            self.map_viewer.scene_names = ctx.scenes.names();
             self.map_viewer.step_map_viewer(
                 ctx.system,
                 &mut self.current_map,

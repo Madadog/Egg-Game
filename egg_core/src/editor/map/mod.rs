@@ -23,7 +23,8 @@ use crate::platform::{
 };
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
-    Canvas, DrawParams, EdgePolicy, Flip, Font, MapOptions, Rotate, SpriteOptions, Transform,
+    Canvas, DrawParams, EdgePolicy, Flip, Font, MapOptions, PrintOptions, Rotate, SpriteOptions,
+    Transform, print_to_with_font,
 };
 use crate::ui::dialogue::Dialogue;
 use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};
@@ -497,11 +498,22 @@ const SCENE_PATH: &str = "data/main.eggscene";
 /// it.
 #[derive(Debug, Clone)]
 pub enum ScrubRequest {
-    /// Replay a scene looked up by name in the registry (the `P` shortcut).
+    /// Replay a scene looked up by name in the registry (the picker's choice).
     ByName(String),
     /// Replay a freshly recorded definition directly, no registry lookup — so
     /// play-right-after-recording doesn't race the on-disk save's live-reload.
     Recorded(String, CutsceneDef),
+}
+
+/// An open scene-picker session (fully modal): a list of cutscene names; pick
+/// one with ↑/↓ + Enter to replay it in the scrubber. Populated from the
+/// editor's [`scene_names`](MapViewer::scene_names) snapshot when opened.
+#[derive(Debug, Clone, Default)]
+struct ScenePicker {
+    /// Names to choose from (a snapshot taken at open).
+    names: Vec<String>,
+    /// The highlighted row.
+    selected: usize,
 }
 
 /// An open live path-recorder session (fully modal): drive a puppet actor with
@@ -841,10 +853,15 @@ pub struct MapViewer {
     /// the host to re-parse + `set_scenes` (live-reload). Mirrors the text
     /// editor's `pending_scene`; the editor writes the file itself.
     pub pending_scene: Option<String>,
-    /// A scrubber the editor wants opened (the `P` shortcut, or save-and-play in
-    /// the recorder). The engine drains it in `step_mode` — where the cutscene
+    /// A scrubber the editor wants opened (the picker's choice, or save-and-play
+    /// in the recorder). The engine drains it in `step_mode` — where the cutscene
     /// registry lives — and opens the scrubber. `None` when nothing's requested.
     pub pending_scrub: Option<ScrubRequest>,
+    /// Cutscene names the engine pushes in each focused frame (it owns the
+    /// registry, the editor doesn't) so the scene picker can list them.
+    pub scene_names: Vec<String>,
+    /// An open scene-picker session (fully modal): choose a scene to scrub.
+    scene_picker: Option<ScenePicker>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -895,6 +912,7 @@ impl MapViewer {
             || self.maps_dialog.is_typing()
             || self.warp_preview.is_some()
             || self.path_recorder.is_some()
+            || self.scene_picker.is_some()
     }
 
     /// The field currently focused for text entry, if any.
@@ -2934,6 +2952,12 @@ impl MapViewer {
             self.step_warp_preview(system, map, maps, screen);
             return;
         }
+        // The scene picker is fully modal (like the recorder/warp placement).
+        if self.scene_picker.is_some() {
+            self.dock.recompute(screen);
+            self.step_scene_picker(system);
+            return;
+        }
         // `R` opens the path recorder — but not while a text field or the maps
         // dialog is capturing keys (else typing an `r` would abort the edit).
         if self.editing.is_none()
@@ -2944,14 +2968,15 @@ impl MapViewer {
             self.open_path_recorder(map, camera_pos);
             return;
         }
-        // `P` replays this map's recorded path (`<map>_path`) in the scrubber.
-        // The engine owns the cutscene registry, so we just park a request; it
-        // opens the scrubber after this step (same guards as `R`).
+        // `P` opens the scene picker — pick any saved cutscene to replay in the
+        // scrubber (same guards as `R`). The engine, which owns the registry,
+        // pushes the names in via `scene_names`.
         if self.editing.is_none()
             && !self.maps_dialog.is_active()
             && system.keyp(ScanCode::P)
         {
-            self.pending_scrub = Some(ScrubRequest::ByName(format!("{}_path", map.source)));
+            self.dock.recompute(screen);
+            self.open_scene_picker();
             return;
         }
 
@@ -3614,6 +3639,91 @@ impl MapViewer {
     /// Open the live path recorder over the current map: a puppet (player sprites)
     /// at the centre of the current view, with an empty recording. The camera
     /// tracks it as the dpad drives.
+    /// Open the scene picker over the editor — a snapshot of the engine-pushed
+    /// cutscene names, highlighted from the top. Empty is fine: the list shows a
+    /// hint, so the modal can't trap you with nothing to pick.
+    fn open_scene_picker(&mut self) {
+        self.scene_picker = Some(ScenePicker {
+            names: self.scene_names.clone(),
+            selected: 0,
+        });
+    }
+
+    /// Step the modal scene picker: up/down move the highlight, Enter replays the
+    /// chosen scene (parks a [`ScrubRequest`] the engine opens), Esc/X cancels.
+    fn step_scene_picker(&mut self, system: &mut impl ConsoleApi) {
+        let Some(mut picker) = self.scene_picker.clone() else {
+            return;
+        };
+        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+            self.scene_picker = None;
+            return;
+        }
+        let len = picker.names.len();
+        if len > 0 {
+            if system.keyp(ScanCode::Up) {
+                picker.selected = picker.selected.saturating_sub(1);
+            }
+            if system.keyp(ScanCode::Down) {
+                picker.selected = (picker.selected + 1).min(len - 1);
+            }
+            if system.keyp(ScanCode::Return) {
+                let name = picker.names[picker.selected].clone();
+                self.pending_scrub = Some(ScrubRequest::ByName(name));
+                self.scene_picker = None;
+                return;
+            }
+        }
+        self.scene_picker = Some(picker);
+    }
+
+    /// Draw the fullscreen scene picker: a dark backdrop, the cutscene list with
+    /// the highlighted row, and the key hints.
+    fn draw_scene_picker_fullscreen(&self, draw_state: &mut DrawState, font: &Font) {
+        let Some(picker) = self.scene_picker.as_ref() else {
+            return;
+        };
+        let (_, sh) = self.dock.solved.screen;
+        let backdrop = draw_state.colour(0);
+        draw_state.rgba(LayerId::BG).fill(backdrop);
+
+        let title = draw_state.colour(11);
+        let row = draw_state.colour(13);
+        let canvas = draw_state.rgba(LayerId::BG);
+        let opts = PrintOptions::default();
+        print_to_with_font(font, canvas, "SCRUB WHICH SCENE?", 6, 6, title, opts.clone());
+        if picker.names.is_empty() {
+            print_to_with_font(
+                font,
+                canvas,
+                "(no saved cutscenes - record a path with R)",
+                6,
+                20,
+                row,
+                opts.clone(),
+            );
+        } else {
+            for (i, name) in picker.names.iter().enumerate() {
+                let y = 20 + i as i32 * 8;
+                let (mark, col) = if i == picker.selected {
+                    ("> ", title)
+                } else {
+                    ("  ", row)
+                };
+                print_to_with_font(font, canvas, &format!("{mark}{name}"), 6, y, col, opts.clone());
+            }
+        }
+        print_to_with_font(
+            font,
+            canvas,
+            "[up/down] choose   [enter] scrub   [X] cancel",
+            6,
+            sh as i32 - 10,
+            row,
+            opts,
+        );
+    }
+
     fn open_path_recorder(&mut self, map: &MapInfo, camera_pos: Vec2) {
         let (sw, sh) = self.dock.solved.screen;
         let start = Vec2::new(camera_pos.x + sw as i16 / 2, camera_pos.y + sh as i16 / 2);
@@ -5048,9 +5158,10 @@ impl MapViewer {
     fn reset_for_new_map(&mut self) {
         self.history.clear();
         self.stop_editing();
-        // A placement / recording session belongs to the old map; drop it.
+        // A placement / recording / picking session belongs to the old map; drop it.
         self.warp_preview = None;
         self.path_recorder = None;
+        self.scene_picker = None;
         self.selected = None;
         self.sprite_frame = 0;
         self.preview_frame = 0;
@@ -5970,6 +6081,11 @@ impl MapViewer {
         // A fullscreen warp-destination placement session draws over everything.
         if self.warp_preview.is_some() {
             self.draw_warp_preview_fullscreen(draw_state, font, maps);
+            return;
+        }
+        // The scene picker draws over everything.
+        if self.scene_picker.is_some() {
+            self.draw_scene_picker_fullscreen(draw_state, font);
             return;
         }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
@@ -7517,6 +7633,22 @@ mod tests {
             after.x > start.x,
             "held-right should move the puppet: {start:?} -> {after:?}"
         );
+    }
+
+    /// `P` opens the scene picker over the engine-pushed name list, highlighting
+    /// the top. The names come from `scene_names`, which the engine refreshes
+    /// each focused frame from the cutscene registry.
+    #[test]
+    fn scene_picker_opens_over_the_pushed_names() {
+        let mut ed = MapViewer::primary();
+        ed.scene_names = vec!["backyard_path".into(), "pet_dog".into()];
+        ed.open_scene_picker();
+        let p = ed.scene_picker.as_ref().expect("picker opened");
+        assert_eq!(
+            p.names,
+            vec!["backyard_path".to_string(), "pet_dog".to_string()]
+        );
+        assert_eq!(p.selected, 0, "highlight starts at the top");
     }
 
     /// A recording with no real movement (all idle) saves nothing.

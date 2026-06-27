@@ -234,6 +234,14 @@ impl SceneFile {
     pub fn get_cutscene(&self, name: &str) -> Option<&CutsceneDef> {
         self.cutscenes.get(name)
     }
+
+    /// Every cutscene name, sorted — for pickers and listings (the registry is
+    /// an unordered map, so a stable order needs sorting).
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.cutscenes.keys().cloned().collect();
+        names.sort();
+        names
+    }
 }
 
 /// Leading-whitespace width of a raw line (its indentation).
