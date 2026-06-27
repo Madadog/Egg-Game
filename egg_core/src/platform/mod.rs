@@ -7,11 +7,13 @@ pub use audio::*;
 pub use consts::*;
 pub use input::*;
 pub use scancode::*;
+pub use scrub_console::ScrubConsole;
 
 pub mod audio;
 pub mod consts;
 pub mod input;
 pub mod scancode;
+pub mod scrub_console;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
 /// this trait — see `DrawState`, the `Canvas` trait, and `print_to_with_font`.
