@@ -33,6 +33,7 @@ use crate::data::script::Script;
 use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
 use crate::draw_state::DrawState;
+use crate::editor::map::ScrubRequest;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{CutsceneScrubber, GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::ConsoleApi;
@@ -313,10 +314,14 @@ impl EggState {
                 GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
             }
         };
-        // The map editor can request a scrubber (e.g. play this map's recorded
-        // path); open it here, where the full Ctx + EggState are in reach.
-        if let Some(name) = self.walkaround.map_viewer.pending_scrub.take() {
-            self.open_scrubber(&name);
+        // The map editor can request a scrubber (the `P` shortcut, or save-and-
+        // play in the recorder); open it here, where the full Ctx + registry are
+        // in reach. A recorded def opens directly — no registry round-trip.
+        if let Some(req) = self.walkaround.map_viewer.pending_scrub.take() {
+            match req {
+                ScrubRequest::ByName(name) => self.open_scrubber(&name),
+                ScrubRequest::Recorded(name, def) => self.open_scrubber_def(name, def),
+            }
         }
         transition
     }

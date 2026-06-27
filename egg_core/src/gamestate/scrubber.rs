@@ -11,6 +11,7 @@
 //! assembles; the editor merely *requests* one via `MapViewer::pending_scrub`.
 
 use crate::data::save::SaveData;
+use crate::data::scene::CutsceneDef;
 use crate::debug::DebugInfo;
 use crate::draw_state::LayerId;
 use crate::editor::map::MapViewer;
@@ -45,15 +46,23 @@ pub struct CutsceneScrubber {
 }
 
 impl EggState {
-    /// Open the scrubber on the cutscene named `name`: snapshot the live world +
-    /// save, arm the scene on the snapshot, measure its length, and park the
-    /// playhead at frame 0. An unknown name logs and no-ops (like a dangling
-    /// trigger), leaving any current session untouched.
+    /// Open the scrubber on the cutscene named `name`, looked up in the loaded
+    /// registry. An unknown name logs and no-ops (like a dangling trigger),
+    /// leaving any current session untouched. See [`open_scrubber_def`](Self::open_scrubber_def)
+    /// for replaying a definition that isn't (yet) in the registry.
     pub fn open_scrubber(&mut self, name: &str) {
         let Some(def) = self.scenes.get_cutscene(name).cloned() else {
             log::info!("scrubber: unknown cutscene {name:?}");
             return;
         };
+        self.open_scrubber_def(name.to_string(), def);
+    }
+
+    /// Open the scrubber directly on a cutscene `def` — bypassing the registry,
+    /// so play-right-after-recording needs no round-trip through the on-disk
+    /// scene file + host live-reload (which lands a frame later). Snapshots the
+    /// live world + save, arms the scene, measures its length, parks at frame 0.
+    pub fn open_scrubber_def(&mut self, name: String, def: CutsceneDef) {
         // Snapshot the live world without the editor overlay or any live scene,
         // so the replay shows a clean world and starts from a known stack.
         let mut base_world = self.walkaround.clone();
@@ -84,7 +93,7 @@ impl EggState {
 
         log::info!("scrubber: opened {name:?} ({total} frames)");
         self.scrubber = Some(CutsceneScrubber {
-            name: name.to_string(),
+            name,
             base_world,
             base_save,
             console,
@@ -207,5 +216,28 @@ mod tests {
         let mut state = EggState::default();
         state.open_scrubber("does_not_exist");
         assert!(state.scrubber.is_none(), "no session for an unknown scene");
+    }
+
+    /// Play-after-record: a freshly recorded def opens directly, with no entry in
+    /// the registry — so it can't race the on-disk scene's live-reload.
+    #[test]
+    fn open_scrubber_def_replays_without_a_registry_entry() {
+        let mut state = EggState::default();
+        // `state.scenes` is empty: the definition comes straight in.
+        let def = scene::parse("#cutscene x\n    move\n        player: walk 30 0 in 8")
+            .unwrap()
+            .get_cutscene("x")
+            .unwrap()
+            .clone();
+
+        state.open_scrubber_def("backyard_path".to_string(), def);
+
+        let s = state.scrubber.as_ref().expect("opened straight from the def");
+        assert_eq!(s.name, "backyard_path");
+        assert_eq!(s.total, 8, "measured the 8-frame move");
+        assert!(
+            state.scenes.get_cutscene("backyard_path").is_none(),
+            "never went through the registry",
+        );
     }
 }

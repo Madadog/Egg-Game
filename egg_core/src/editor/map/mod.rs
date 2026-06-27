@@ -491,6 +491,19 @@ struct WarpPreview {
 /// text editor uses).
 const SCENE_PATH: &str = "data/main.eggscene";
 
+/// A request from the editor to open the cutscene scrubber, parked on
+/// [`MapViewer::pending_scrub`] and drained by the engine in `step_mode` (which
+/// owns the cutscene registry). Defined here because the editor is what *sets*
+/// it.
+#[derive(Debug, Clone)]
+pub enum ScrubRequest {
+    /// Replay a scene looked up by name in the registry (the `P` shortcut).
+    ByName(String),
+    /// Replay a freshly recorded definition directly, no registry lookup — so
+    /// play-right-after-recording doesn't race the on-disk save's live-reload.
+    Recorded(String, CutsceneDef),
+}
+
 /// An open live path-recorder session (fully modal): drive a puppet actor with
 /// the dpad over the current map, capturing its per-frame heading as an RLE
 /// [`Motion::Record`], then save it as a one-actor cutscene to `main.eggscene`.
@@ -828,10 +841,10 @@ pub struct MapViewer {
     /// the host to re-parse + `set_scenes` (live-reload). Mirrors the text
     /// editor's `pending_scene`; the editor writes the file itself.
     pub pending_scene: Option<String>,
-    /// A cutscene name the editor wants replayed in the scrubber (set by the
-    /// `P` shortcut). The engine drains it in `step_mode` — where the cutscene
+    /// A scrubber the editor wants opened (the `P` shortcut, or save-and-play in
+    /// the recorder). The engine drains it in `step_mode` — where the cutscene
     /// registry lives — and opens the scrubber. `None` when nothing's requested.
-    pub pending_scrub: Option<String>,
+    pub pending_scrub: Option<ScrubRequest>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -2938,7 +2951,7 @@ impl MapViewer {
             && !self.maps_dialog.is_active()
             && system.keyp(ScanCode::P)
         {
-            self.pending_scrub = Some(format!("{}_path", map.source));
+            self.pending_scrub = Some(ScrubRequest::ByName(format!("{}_path", map.source)));
             return;
         }
 
@@ -3764,6 +3777,10 @@ impl MapViewer {
         );
         system.write_file(SCENE_PATH, merged.as_bytes());
         self.pending_scene = Some(merged);
+        // Save-and-play: drop straight into the scrubber on what was just
+        // recorded — replayed directly from `def`, so it needn't wait for the
+        // on-disk scene to live-reload back into the registry.
+        self.pending_scrub = Some(ScrubRequest::Recorded(pr.name.clone(), def));
         self.status.edited();
     }
 
