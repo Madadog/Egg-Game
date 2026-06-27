@@ -426,6 +426,24 @@ pub fn poll_text_open(mut views: ResMut<ViewWindows>, mut game: ResMut<EggGame>)
                 .open(&mut g.system, &path, anchor);
         }
     }
+
+    // The map editor's path recorder writes `main.eggscene` itself, then asks the
+    // host to live-reload it (the editor never gets `&mut EggState`). Same shape as
+    // the text editor's `pending_scene` drain.
+    if let Some(src) = game.state.walkaround.map_viewer.pending_scene.take() {
+        match egg_core::data::scene::parse(&src) {
+            Ok(file) => game.state.set_scenes(file),
+            Err(e) => warn!("path recorder: invalid eggscene on save: {e}"),
+        }
+    }
+    for i in 0..views.views.len() {
+        if let Some(src) = views.views[i].editor.pending_scene.take() {
+            match egg_core::data::scene::parse(&src) {
+                Ok(file) => game.state.set_scenes(file),
+                Err(e) => warn!("path recorder: invalid eggscene on save: {e}"),
+            }
+        }
+    }
 }
 
 /// Per-frame update for every extra view: pan/route input for the focused view,

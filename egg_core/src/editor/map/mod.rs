@@ -17,8 +17,9 @@ use crate::data::{
 use crate::draw_state::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate};
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::geometry::{Hitbox, Vec2};
+use crate::data::scene::{self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion};
 use crate::platform::{
-    ConsoleApi, ConsoleHelper, MouseInput, ScanCode, just_pressed, pressed,
+    ConsoleApi, ConsoleHelper, MouseInput, ScanCode, dpad_delta, just_pressed, pressed,
 };
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
@@ -381,6 +382,10 @@ enum EditorKey {
     WarpPreviewOk,
     /// Cancel the fullscreen placement — leave the warp untouched.
     WarpPreviewCancel,
+    /// Save the live path recording as a cutscene.
+    PathRecOk,
+    /// Discard the live path recording.
+    PathRecCancel,
     Field(EditField),
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
@@ -480,6 +485,32 @@ struct WarpPreview {
     armed: bool,
     /// `(cursor, camera)` captured at a right-button press, for grab-drag panning.
     pan_anchor: Option<(Vec2, Vec2)>,
+}
+
+/// Where to write the cutscene registry (mirrors the private `EGGSCENE_PATH` the
+/// text editor uses).
+const SCENE_PATH: &str = "data/main.eggscene";
+
+/// An open live path-recorder session (fully modal): drive a puppet actor with
+/// the dpad over the current map, capturing its per-frame heading as an RLE
+/// [`Motion::Record`], then save it as a one-actor cutscene to `main.eggscene`.
+/// The camera auto-follows the puppet, so the dpad is free to drive.
+#[derive(Debug, Clone)]
+struct PathRecorder {
+    /// The driven puppet — `pos` is the live cursor; it uses the player's sprites.
+    puppet: Shell,
+    /// The recorded RLE: `(heading, frames-held)` runs in order. Stores the
+    /// *commanded* heading each frame (collision is re-applied at replay), idle
+    /// `(0,0)` included, so the path round-trips through `Motion::Record`.
+    runs: Vec<((i8, i8), u16)>,
+    /// The puppet's position each frame, for drawing the path polyline.
+    path: Vec<Vec2>,
+    /// Camera top-left (map px) — the 1:1 render's pan offset, tracking the puppet.
+    camera: Vec2,
+    /// Whether collision is ignored while driving (toggled with `N`).
+    noclip: bool,
+    /// The cutscene name the recording saves under.
+    name: String,
 }
 /// Side (px) of the square animated-sprite preview box in the Objects panel.
 const SPRITE_PREVIEW_PX: f32 = 40.0;
@@ -789,6 +820,14 @@ pub struct MapViewer {
     /// confirm or cancel. `None` when not placing. See
     /// [`open_warp_preview`](Self::open_warp_preview).
     warp_preview: Option<WarpPreview>,
+    /// An open live path-recorder session (fully modal): drive a puppet to record
+    /// a cutscene path. `None` when not recording. See
+    /// [`open_path_recorder`](Self::open_path_recorder).
+    path_recorder: Option<PathRecorder>,
+    /// Set after a recorded cutscene is saved: the emitted `.eggscene` source, for
+    /// the host to re-parse + `set_scenes` (live-reload). Mirrors the text
+    /// editor's `pending_scene`; the editor writes the file itself.
+    pub pending_scene: Option<String>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -835,7 +874,10 @@ impl MapViewer {
     /// True while a text field is capturing keyboard input — the host suppresses
     /// its global debug hotkeys so typed dialogue keys don't trigger them.
     pub fn is_typing(&self) -> bool {
-        self.editing.is_some() || self.maps_dialog.is_typing() || self.warp_preview.is_some()
+        self.editing.is_some()
+            || self.maps_dialog.is_typing()
+            || self.warp_preview.is_some()
+            || self.path_recorder.is_some()
     }
 
     /// The field currently focused for text entry, if any.
@@ -2862,11 +2904,27 @@ impl MapViewer {
             self.load_layout(system);
         }
 
+        // The live path recorder is fully modal (like warp placement).
+        if self.path_recorder.is_some() {
+            self.dock.recompute(screen);
+            self.step_path_recorder(system, map, maps, screen);
+            return;
+        }
         // A fullscreen warp-destination placement session is fully modal: it draws
         // over the editor and captures all input until confirmed or cancelled.
         if self.warp_preview.is_some() {
             self.dock.recompute(screen);
             self.step_warp_preview(system, map, maps, screen);
+            return;
+        }
+        // `R` opens the path recorder — but not while a text field or the maps
+        // dialog is capturing keys (else typing an `r` would abort the edit).
+        if self.editing.is_none()
+            && !self.maps_dialog.is_active()
+            && system.keyp(ScanCode::R)
+        {
+            self.dock.recompute(screen);
+            self.open_path_recorder(map, camera_pos);
             return;
         }
 
@@ -3526,6 +3584,260 @@ impl MapViewer {
             .draw_at(0, 0, draw_state, system, LayerId::BG);
     }
 
+    /// Open the live path recorder over the current map: a puppet (player sprites)
+    /// at the centre of the current view, with an empty recording. The camera
+    /// tracks it as the dpad drives.
+    fn open_path_recorder(&mut self, map: &MapInfo, camera_pos: Vec2) {
+        let (sw, sh) = self.dock.solved.screen;
+        let start = Vec2::new(camera_pos.x + sw as i16 / 2, camera_pos.y + sh as i16 / 2);
+        let puppet = Shell::default().with_pos(start);
+        self.path_recorder = Some(PathRecorder {
+            puppet,
+            runs: Vec::new(),
+            path: vec![start],
+            camera: camera_pos,
+            noclip: false,
+            name: format!("{}_path", map.source),
+        });
+    }
+
+    /// Map pixel dimensions (clamped ≥1), for camera clamping.
+    fn map_px_dims(map: &MapInfo, maps: &MapStore, fallback: (i16, i16)) -> (i16, i16) {
+        maps.get(&map.source)
+            .map(|t| ((t.width as i16 * 8).max(1), (t.height as i16 * 8).max(1)))
+            .unwrap_or(fallback)
+    }
+
+    /// Step the recorder (fully modal): the dpad drives the puppet via
+    /// `Shell::walk` (collision unless `noclip`), capturing the **commanded**
+    /// heading each frame as an RLE run; the camera follows. `N` toggles noclip;
+    /// Z/Enter saves the path as a cutscene, X/Esc discards.
+    fn step_path_recorder(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        screen: (f32, f32),
+    ) {
+        let Some(mut pr) = self.path_recorder.clone() else { return };
+        let (sw, sh) = (screen.0 as i16, screen.1 as i16);
+        let (fw, fh) = Self::map_px_dims(map, maps, (sw, sh));
+
+        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+            self.path_recorder = None;
+            return;
+        }
+        if system.keyp(ScanCode::Return) || system.keyp(ScanCode::Z) {
+            self.commit_path_recorder(system);
+            return;
+        }
+        // `N` toggles noclip — but only before any movement is recorded, since the
+        // flag is saved once for the whole replay (toggling mid-record would make
+        // the replay re-collide segments differently than they were driven).
+        if system.keyp(ScanCode::N) && pr.runs.iter().all(|(d, _)| *d == (0, 0)) {
+            pr.noclip = !pr.noclip;
+        }
+
+        let mouse = system.mouse();
+        let cursor = mouse.pos();
+        if just_pressed(mouse.left) {
+            match self.build_path_recorder_ui().hit_at(0, 0, cursor) {
+                Some(EditorKey::PathRecOk) => {
+                    self.commit_path_recorder(system);
+                    return;
+                }
+                Some(EditorKey::PathRecCancel) => {
+                    self.path_recorder = None;
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Drive the puppet one frame; record the COMMANDED heading (collision is
+        // re-applied at replay, so storing the clamped delta would double-clip).
+        // Read raw arrow keys — the reliable editor-input source (the warp-preview
+        // pan reads the same): the host only folds arrows onto the controller dpad
+        // for the player-driving *primary* window, so a focused F8 view's dpad is
+        // empty. Sum with the gamepad dpad and clamp so either source drives a step
+        // (and holding an arrow on the primary, where both fire, isn't doubled).
+        let kx = system.key(ScanCode::Right) as i16 - system.key(ScanCode::Left) as i16;
+        let ky = system.key(ScanCode::Down) as i16 - system.key(ScanCode::Up) as i16;
+        let pad = system.controller();
+        let (pdx, pdy) = dpad_delta(&pad, pressed);
+        let dx0 = (kx + pdx).clamp(-1, 1);
+        let dy0 = (ky + pdy).clamp(-1, 1);
+        let tiles = maps.get(&map.source);
+        let (mdx, mdy) = pr.puppet.walk(system, dx0, dy0, pr.noclip, map, tiles);
+        pr.puppet.apply_motion(mdx, mdy);
+        // Keep the puppet on the map so it can't be driven (noclip) off-frame and
+        // lost — the recorded heading is the *commanded* one, unaffected by this.
+        pr.puppet.pos.x = pr.puppet.pos.x.clamp(0, fw - 1);
+        pr.puppet.pos.y = pr.puppet.pos.y.clamp(0, fh - 1);
+        let dir = (dx0 as i8, dy0 as i8);
+        match pr.runs.last_mut() {
+            Some((d, n)) if *d == dir => *n = n.saturating_add(1),
+            _ => pr.runs.push((dir, 1)),
+        }
+        pr.path.push(pr.puppet.pos);
+
+        // Camera follows the puppet, clamped to the map.
+        pr.camera.x = clamp_camera(pr.puppet.pos.x - sw / 2, fw, sw);
+        pr.camera.y = clamp_camera(pr.puppet.pos.y - sh / 2, fh, sh);
+
+        self.path_recorder = Some(pr);
+    }
+
+    /// Save the recording as a one-actor (`player`) cutscene named `<map>_path`,
+    /// merged into the on-disk `.eggscene` registry (so other cutscenes survive),
+    /// then signal the host to re-parse + live-reload it. The editor writes the
+    /// file itself (it holds the console); only the install is host-deferred.
+    fn commit_path_recorder(&mut self, system: &mut impl ConsoleApi) {
+        // Read the on-disk registry as RAW TEXT and merge into it textually
+        // ([`merge_cutscene_source`]) — replacing just this scene's block and
+        // leaving every other line verbatim. Parsing the file into a `SceneFile`
+        // and re-emitting it would discard every hand-authored comment and blank
+        // line, silently eating the file's documentation each time you record.
+        // Still validate FIRST: a file that exists but won't parse must NOT be
+        // clobbered — abort and keep the recording so it can be fixed in F2 and
+        // retried. A missing/empty file is a fresh start.
+        let raw = match system.read_file(SCENE_PATH) {
+            None => String::new(),
+            Some(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    log::warn!("path recorder: `{SCENE_PATH}` isn't valid UTF-8 — not saving");
+                    return;
+                }
+            },
+        };
+        if !raw.trim().is_empty() && scene::parse(&raw).is_err() {
+            log::warn!(
+                "path recorder: `{SCENE_PATH}` is unparseable — not saving (fix it in F2 first)"
+            );
+            return;
+        }
+        let Some(pr) = self.path_recorder.take() else { return };
+        // Trim leading + trailing idle (the reaction-time pauses before the first
+        // press and after the last); keep interior idles — those are real timing.
+        let mut runs = pr.runs;
+        while runs.first().is_some_and(|(d, _)| *d == (0, 0)) {
+            runs.remove(0);
+        }
+        while runs.last().is_some_and(|(d, _)| *d == (0, 0)) {
+            runs.pop();
+        }
+        if runs.is_empty() {
+            return;
+        }
+        let motion = Motion::Record {
+            runs,
+            noclip: pr.noclip,
+        };
+        let chain = Chain {
+            actor: "player".to_string(),
+            instructions: vec![Instruction::new(motion, 0)],
+        };
+        let def = CutsceneDef {
+            content: vec![CutsceneContent::Move(vec![chain])],
+            ..Default::default()
+        };
+        let block = scene::emit_cutscene(&pr.name, &def);
+        let merged = merge_cutscene_source(&raw, &pr.name, &block);
+        debug_assert!(
+            scene::parse(&merged).is_ok(),
+            "merged source must re-parse: {merged}"
+        );
+        system.write_file(SCENE_PATH, merged.as_bytes());
+        self.pending_scene = Some(merged);
+        self.status.edited();
+    }
+
+    /// The recorder chrome: a `PATH RECORDER` banner + a bottom bar (hint +
+    /// save/cancel). Shared by the hit pass and the draw pass.
+    fn build_path_recorder_ui(&self) -> Ui<EditorKey> {
+        let (sw, sh) = self.dock.solved.screen;
+        let mut b = UiBuilder::new();
+        let banner = b
+            .text("PATH RECORDER")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(8.0)
+            .fill(11)
+            .id();
+        let hint = b
+            .text("dpad = drive   N = noclip   Z = save   X = cancel")
+            .small(true)
+            .color(13)
+            .grow(1.0)
+            .id();
+        let ok = b
+            .text("save")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(7.0)
+            .outlined(11, 11)
+            .key(EditorKey::PathRecOk)
+            .id();
+        let cancel = b
+            .text("cancel")
+            .small(true)
+            .center()
+            .color(0)
+            .full_width(7.0)
+            .outlined(8, 8)
+            .key(EditorKey::PathRecCancel)
+            .id();
+        let bottom = b.row(2.0, [hint, ok, cancel]).pad(1.0).id();
+        let spacer = b.spacer(0.0).grow(1.0).id();
+        let root = b
+            .column(0.0, [banner, spacer, bottom])
+            .size(sw as f32, sh as f32)
+            .id();
+        b.finish(root, (sw as f32, sh as f32))
+    }
+
+    /// Draw the fullscreen recorder: the current map rendered 1:1 at the follow
+    /// camera, the recorded path as a polyline, the puppet ghost, and the chrome.
+    fn draw_path_recorder_fullscreen(
+        &self,
+        draw_state: &mut DrawState,
+        system: &mut impl ConsoleApi,
+        map: &MapInfo,
+        maps: &MapStore,
+    ) {
+        let Some(pr) = self.path_recorder.as_ref() else { return };
+        let cam = pr.camera;
+        let Some(tiled) = maps.get(&map.source) else { return };
+
+        let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
+        draw_state.rgba(LayerId::BG).fill(bg);
+        map.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+        map.draw_fg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+
+        // The recorded path as a polyline (colour 11), under the puppet.
+        let line_col = draw_state.colour(11);
+        {
+            let layer = draw_state.rgba(LayerId::BG);
+            for seg in pr.path.windows(2) {
+                layer.line(
+                    i32::from(seg[0].x - cam.x),
+                    i32::from(seg[0].y - cam.y),
+                    i32::from(seg[1].x - cam.x),
+                    i32::from(seg[1].y - cam.y),
+                    line_col,
+                );
+            }
+        }
+
+        // The puppet ghost on top, then the chrome.
+        pr.puppet.draw_params(cam).draw_to(draw_state, LayerId::BG);
+        self.build_path_recorder_ui()
+            .draw_at(0, 0, draw_state, system, LayerId::BG);
+    }
+
     fn handle_panel(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -3828,7 +4140,10 @@ impl MapViewer {
             }
             // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
             // (it's modal), so they never arrive through the normal panel dispatch.
-            EditorKey::WarpPreviewOk | EditorKey::WarpPreviewCancel => {}
+            EditorKey::WarpPreviewOk
+            | EditorKey::WarpPreviewCancel
+            | EditorKey::PathRecOk
+            | EditorKey::PathRecCancel => {}
             // Press on a panel's scroll bar: begin a thumb drag, capturing the grab
             // offset so the thumb tracks the cursor rather than snapping under it.
             EditorKey::PanelScroll(pidx) => {
@@ -4702,8 +5017,9 @@ impl MapViewer {
     fn reset_for_new_map(&mut self) {
         self.history.clear();
         self.stop_editing();
-        // A placement session indexes the old map's objects; drop it.
+        // A placement / recording session belongs to the old map; drop it.
         self.warp_preview = None;
+        self.path_recorder = None;
         self.selected = None;
         self.sprite_frame = 0;
         self.preview_frame = 0;
@@ -5611,6 +5927,11 @@ impl MapViewer {
         if !self.focused {
             return;
         }
+        // The path recorder draws over everything.
+        if self.path_recorder.is_some() {
+            self.draw_path_recorder_fullscreen(draw_state, system, map, maps);
+            return;
+        }
         // A fullscreen warp-destination placement session draws over everything.
         if self.warp_preview.is_some() {
             self.draw_warp_preview_fullscreen(draw_state, system, maps);
@@ -6408,6 +6729,55 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// Splice one emitted `#cutscene NAME …` block into raw `.eggscene` source,
+/// preserving every other line verbatim — comments, blank lines, and other
+/// scenes all survive (unlike a parse-then-re-emit, which discards them). If a
+/// block with the same `name` already exists it's replaced in place; otherwise
+/// the block is appended. Blocks are delimited by a `#cutscene NAME` header at
+/// column 0, running to the next such header or end of file.
+fn merge_cutscene_source(raw: &str, name: &str, block: &str) -> String {
+    // The name token of a `#cutscene` header line (col 0), else `None`.
+    fn header_name(line: &str) -> Option<&str> {
+        line.strip_prefix("#cutscene ")
+            .and_then(|r| r.split_whitespace().next())
+    }
+    let block = block.trim_end();
+    let lines: Vec<&str> = raw.lines().collect();
+
+    let Some(start) = lines.iter().position(|l| header_name(l) == Some(name)) else {
+        // Absent: append after the existing content, blank-line separated.
+        let mut out = raw.trim_end().to_string();
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(block);
+        out.push('\n');
+        return out;
+    };
+
+    // Present: replace `start..end`, where `end` is the next header (or EOF).
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| header_name(l).is_some())
+        .map_or(lines.len(), |i| start + 1 + i);
+    let mut out = String::new();
+    for l in &lines[..start] {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(block);
+    out.push('\n');
+    let rest = &lines[end..];
+    if !rest.is_empty() {
+        out.push('\n'); // blank line before the next block
+        for l in rest {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Frame a 1:1 map preview: clamp a camera coordinate (top-left, map px) so the
 /// map stays in view — pan within `[0, content - view]` when the map is larger
 /// than the viewport, pin to a centred negative offset when it's smaller.
@@ -6987,6 +7357,204 @@ mod tests {
             panic!("still a warp");
         };
         assert_eq!(w.to, Vec2::new(50, 30), "cancel leaves the warp untouched");
+    }
+
+    /// Committing a recording emits a one-actor `player` `Record` cutscene, merges
+    /// it into the on-disk registry (existing scenes survive), writes the file, and
+    /// stages the source for the host's live-reload.
+    #[test]
+    fn path_recorder_commit_emits_and_merges_a_record_cutscene() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![((1, 0), 5), ((0, 1), 3)],
+            path: vec![Vec2::new(0, 0)],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "town_path".to_string(),
+        });
+        let mut console = TestConsole::new();
+        // A pre-existing cutscene on disk must survive the merge.
+        console.write_file(SCENE_PATH, b"#cutscene other\n    wait 5");
+
+        ed.commit_path_recorder(&mut console);
+        assert!(ed.path_recorder.is_none(), "commit closes the session");
+        let src = ed.pending_scene.clone().expect("staged for live-reload");
+        assert_eq!(
+            console.read_file(SCENE_PATH),
+            Some(src.clone().into_bytes()),
+            "wrote the same source to disk",
+        );
+
+        let file = scene::parse(&src).expect("emitted source re-parses");
+        assert!(file.get_cutscene("other").is_some(), "existing scene survives");
+        let def = file.get_cutscene("town_path").expect("new scene added");
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("first content is a move");
+        };
+        assert_eq!(chains[0].actor, "player");
+        assert!(matches!(
+            chains[0].instructions[0].motion,
+            Motion::Record { noclip: false, .. }
+        ));
+    }
+
+    /// Saving merges textually, so hand-authored comments and other scenes in the
+    /// file survive untouched (a parse-then-re-emit would silently eat them).
+    #[test]
+    fn path_recorder_save_preserves_comments_and_other_scenes() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![((1, 0), 5)],
+            path: vec![Vec2::new(0, 0)],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "town_path".to_string(),
+        });
+        let mut console = TestConsole::new();
+        let original = "// a hand-authored header\n// keep me\n#cutscene other\n    wait 5\n";
+        console.write_file(SCENE_PATH, original.as_bytes());
+
+        ed.commit_path_recorder(&mut console);
+        let saved = String::from_utf8(console.read_file(SCENE_PATH).unwrap()).unwrap();
+        assert!(saved.contains("// a hand-authored header"), "header kept: {saved}");
+        assert!(saved.contains("// keep me"), "all comments kept: {saved}");
+        assert!(saved.contains("#cutscene other"), "other scene kept: {saved}");
+        // And the result still parses to both scenes.
+        let file = scene::parse(&saved).expect("merged source re-parses");
+        assert!(file.get_cutscene("other").is_some(), "other survives the merge");
+        assert!(file.get_cutscene("town_path").is_some(), "new scene added");
+    }
+
+    /// Re-recording a scene replaces its block in place (no duplicate header),
+    /// leaving the other scenes alone.
+    #[test]
+    fn path_recorder_save_replaces_an_existing_same_name_block() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![((1, 0), 5)],
+            path: vec![Vec2::new(0, 0)],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "town_path".to_string(),
+        });
+        let mut console = TestConsole::new();
+        // An old town_path (a bare wait) plus a neighbour to preserve.
+        let original = "#cutscene town_path\n    wait 99\n\n#cutscene other\n    wait 5\n";
+        console.write_file(SCENE_PATH, original.as_bytes());
+
+        ed.commit_path_recorder(&mut console);
+        let saved = String::from_utf8(console.read_file(SCENE_PATH).unwrap()).unwrap();
+        let file = scene::parse(&saved).expect("merged source re-parses");
+        assert_eq!(file.cutscenes.len(), 2, "no duplicate town_path: {saved}");
+        assert!(file.get_cutscene("other").is_some(), "neighbour survives");
+        // The new town_path is the recorded move, not the old `wait 99`.
+        let def = file.get_cutscene("town_path").unwrap();
+        assert!(
+            matches!(def.content.first(), Some(CutsceneContent::Move(_))),
+            "town_path replaced with the recording: {saved}"
+        );
+    }
+
+    /// Holding a direction drives the puppet: the step reads the controller dpad,
+    /// walks the puppet, and records the commanded heading. (Isolates the step
+    /// logic from host input — injects the controller directly.)
+    #[test]
+    fn path_recorder_drive_moves_the_puppet_when_a_direction_is_held() {
+        use crate::platform::test_console::TestConsole;
+        let mut store = MapStore::default();
+        let mut map = MapInfo::default();
+        let mut ed = MapViewer::primary();
+        ed.open_path_recorder(&map, Vec2::new(0, 0));
+        let start = ed.path_recorder.as_ref().unwrap().puppet.pos;
+
+        let mut console = TestConsole::new();
+        console.controllers[0].right = [true, false]; // hold right this frame
+        ed.step_path_recorder(&mut console, &mut map, &mut store, (200.0, 150.0));
+
+        let after = ed.path_recorder.as_ref().unwrap().puppet.pos;
+        assert!(
+            after.x > start.x,
+            "held-right should move the puppet: {start:?} -> {after:?}"
+        );
+    }
+
+    /// A recording with no real movement (all idle) saves nothing.
+    #[test]
+    fn path_recorder_ignores_an_empty_recording() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![((0, 0), 30)],
+            path: vec![],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "town_path".to_string(),
+        });
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+        assert!(ed.pending_scene.is_none(), "nothing recorded, nothing saved");
+    }
+
+    /// A `main.eggscene` that exists but won't parse is left untouched (no silent
+    /// wipe of hand-authored cutscenes); the recording is kept to retry.
+    #[test]
+    fn path_recorder_does_not_clobber_an_unparseable_scene_file() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![((1, 0), 5)],
+            path: vec![],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "town_path".to_string(),
+        });
+        let mut console = TestConsole::new();
+        let bad = b"#cutscene broken\n    bogusverb 1 2";
+        console.write_file(SCENE_PATH, bad);
+        ed.commit_path_recorder(&mut console);
+        assert_eq!(console.read_file(SCENE_PATH), Some(bad.to_vec()), "file untouched");
+        assert!(ed.pending_scene.is_none(), "nothing staged");
+        assert!(ed.path_recorder.is_some(), "recording kept to retry");
+    }
+
+    /// Leading + trailing idle (reaction-time pauses) are trimmed; interior idle
+    /// (intentional timing) is preserved.
+    #[test]
+    fn path_recorder_trims_outer_idle_keeps_inner() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder {
+            puppet: Shell::default(),
+            runs: vec![
+                ((0, 0), 10),
+                ((1, 0), 5),
+                ((0, 0), 4),
+                ((0, 1), 3),
+                ((0, 0), 20),
+            ],
+            path: vec![],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: "p".to_string(),
+        });
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+        let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
+        let CutsceneContent::Move(chains) = &file.get_cutscene("p").unwrap().content[0] else {
+            panic!("move");
+        };
+        let Motion::Record { runs, .. } = &chains[0].instructions[0].motion else {
+            panic!("record");
+        };
+        assert_eq!(runs, &vec![((1, 0), 5), ((0, 0), 4), ((0, 1), 3)]);
     }
 
     /// The modal step self-closes if the destination map vanishes mid-session, so
