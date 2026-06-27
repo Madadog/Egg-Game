@@ -389,6 +389,11 @@ fn load_assets(
         return;
     };
     state.system.set_font(font);
+    // The same built font is game data on `EggState` too (threaded through
+    // `Ctx::font`), so install a clone there — text drawing reads it from the
+    // engine, not the console.
+    let built_font = state.system.font.clone();
+    state.state.set_font(built_font);
     // The sprite sheets live on DrawState (their single owner); the host
     // converts the Bevy image into the engine's formats and fills DrawState
     // directly.
@@ -663,7 +668,7 @@ fn step_state(
         // (we populated the view's own input instead), so this is a harmless no-op
         // then. The editor still draws every frame so the window keeps showing it.
         let (w, h) = (g.system.width(), g.system.height());
-        g.text_editor.step(&mut g.system, w, h);
+        g.text_editor.step(&mut g.system, &g.state.font, w, h);
         if let Some(source) = g.text_editor.pending_script.take() {
             match egg_core::data::script::eggtext::parse(&source) {
                 Ok(file) => g.state.script.set_base(file),
@@ -676,7 +681,7 @@ fn step_state(
                 Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
             }
         }
-        g.text_editor.draw(&mut g.state.draw_state, &g.system);
+        g.text_editor.draw(&mut g.state.draw_state, &g.state.font);
         egg_core::gamestate::walkaround::WalkaroundState::composite_into(
             &mut g.state.draw_state,
             g.system.output_image(),

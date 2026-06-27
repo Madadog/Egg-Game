@@ -339,21 +339,21 @@ impl Cutscene {
             let convo = ctx.get_dialogue(key);
             walkaround
                 .dialogue
-                .set_messages(ctx.system, ctx.save, &convo);
+                .set_messages(ctx.system, ctx.font, ctx.save, &convo);
             *opened = true;
             return false;
         }
         let pad = ctx.system.controller();
-        walkaround.dialogue.tick(ctx.system, ctx.save, 1);
+        walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
         if pressed(pad.a) {
-            walkaround.dialogue.tick(ctx.system, ctx.save, 2);
+            walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
         }
         if just_pressed(pad.b) {
-            walkaround.dialogue.skip(ctx.system, ctx.save);
+            walkaround.dialogue.skip(ctx.system, ctx.font, ctx.save);
         }
         if just_pressed(pad.a)
             && walkaround.dialogue.is_line_done()
-            && !walkaround.dialogue.next_text(ctx.system, ctx.save, false)
+            && !walkaround.dialogue.next_text(ctx.system, ctx.font, ctx.save, false)
             && walkaround.dialogue.current_text.is_some()
         {
             walkaround.dialogue.close();
@@ -420,7 +420,7 @@ impl Cutscene {
                     let convo = ctx.get_dialogue(key);
                     walkaround
                         .dialogue
-                        .set_messages(ctx.system, ctx.save, &convo);
+                        .set_messages(ctx.system, ctx.font, ctx.save, &convo);
                     walkaround.dialogue.close();
                 }
                 CutsceneContent::SetFlag(name, value) => ctx.save.set_flag(name, *value),
@@ -767,6 +767,7 @@ mod tests {
         save: SaveData,
         items: crate::data::eggdata::GameItems,
         presets: crate::data::eggdata::Presets,
+        font: crate::render::Font,
         walk: WalkaroundState,
     }
     impl Harness {
@@ -781,6 +782,7 @@ mod tests {
                 save: SaveData::default(),
                 items: crate::data::eggdata::GameItems::default(),
                 presets: crate::data::eggdata::Presets::builtin(),
+                font: crate::render::Font::blank(),
                 walk: WalkaroundState::new(),
             }
         }
@@ -799,6 +801,7 @@ mod tests {
                     save: &mut self.save,
                     items: &self.items,
                     presets: &self.presets,
+                    font: &self.font,
                 };
                 f(&mut ctx, &mut walk)
             };

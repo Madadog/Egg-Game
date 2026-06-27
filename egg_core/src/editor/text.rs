@@ -32,10 +32,13 @@ use crate::data::script::message::{Message, TextContent};
 use crate::data::sound::music::MusicTrack;
 use crate::draw_state::{DrawState, LayerId};
 use crate::platform::{
-    ConsoleApi, ConsoleHelper, Controller, MouseInput, ScanCode, SfxOptions, just_pressed, pressed,
+    ConsoleApi, Controller, MouseInput, ScanCode, SfxOptions, just_pressed, pressed,
 };
 use crate::render::image::{Rgba, RgbaImage};
-use crate::render::{Canvas, EdgePolicy, Font, PrintOptions, Transform};
+use crate::render::{
+    Canvas, EdgePolicy, Font, PrintOptions, Transform, print_to_centered_with_font,
+    print_to_with_font, text_width,
+};
 use crate::ui::dialogue::Dialogue;
 
 /// The English dialogue/text source and the cutscene source — the editor's two
@@ -279,9 +282,6 @@ impl<C: ConsoleApi> ConsoleApi for Muted<'_, C> {
     }
     fn output_image(&mut self) -> &mut RgbaImage {
         self.0.output_image()
-    }
-    fn font(&self) -> &Font {
-        self.0.font()
     }
 }
 
@@ -891,11 +891,11 @@ impl TextEditor {
     /// Advance one frame: route this view's already-mapped mouse + keyboard into
     /// the buffer. `fb_w`/`fb_h` are the view's framebuffer size (cursor space),
     /// so the click regions match what [`draw`](Self::draw) lays out.
-    pub fn step(&mut self, system: &mut impl ConsoleApi, fb_w: i32, fb_h: i32) {
+    pub fn step(&mut self, system: &mut impl ConsoleApi, font: &Font, fb_w: i32, fb_h: i32) {
         if self.path.is_none() {
             self.open(system, EGGTEXT_PATH, TextAnchor::Top);
         }
-        let r = self.regions(system, fb_w, fb_h);
+        let r = self.regions(font, fb_w, fb_h);
         let ctrl = system.key(ScanCode::Ctrl);
         // Shift extends a selection (Shift+arrow / Shift+click); read once for the
         // mouse and keyboard handling below.
@@ -904,11 +904,11 @@ impl TextEditor {
         // A modal find / go-to-line prompt swallows all input until it closes.
         if self.prompt.is_some() {
             self.step_prompt(system, shift);
-            let layout = self.layout(system, &r);
+            let layout = self.layout(font, &r);
             // A find / go-to match moves the caret, so always reveal it here.
             self.ensure_caret_visible_rows(&layout, r.visible_rows, true);
             if !self.wrap {
-                self.ensure_caret_visible_h(system, r.body_w);
+                self.ensure_caret_visible_h(font, r.body_w);
             }
             self.last_caret = self.field.cursor();
             return;
@@ -916,7 +916,7 @@ impl TextEditor {
 
         // The visual-row layout for this frame: clicks and the caret map through
         // it. Recomputed after edits below for the caret-follow.
-        let layout = self.layout(system, &r);
+        let layout = self.layout(font, &r);
 
         // Closes the current coalescing undo group so a run of typing/deleting is
         // one undo step: set by navigation (click / arrows / paging) or by a
@@ -953,7 +953,7 @@ impl TextEditor {
             } else if r.in_body(mx, my)
                 && let Some(&row) = layout.get(self.scroll + r.row_at_y(my))
             {
-                let within = self.byte_at_x_in_row(&row, mx - r.text_x, system);
+                let within = self.byte_at_x_in_row(&row, mx - r.text_x, font);
                 let global = self.line_start_byte(row.line) + within;
                 if shift {
                     self.field.move_to_byte(global, true);
@@ -973,7 +973,7 @@ impl TextEditor {
                             self.preview.skip = !self.preview.skip;
                             self.preview.chars = 0;
                         }
-                        3 => self.toggle_preview_font(system, rect.w),
+                        3 => self.toggle_preview_font(system, font, rect.w),
                         4 => self.preview_next(),
                         _ => {} // cell 1: the N/M counter, not a button
                     }
@@ -1002,7 +1002,7 @@ impl TextEditor {
             // visible rows when it strays past an edge.
             let idx = (self.scroll + r.row_at_y(my)).min(layout.len().saturating_sub(1));
             if let Some(&row) = layout.get(idx) {
-                let within = self.byte_at_x_in_row(&row, (mx - r.text_x).max(0), system);
+                let within = self.byte_at_x_in_row(&row, (mx - r.text_x).max(0), font);
                 let global = self.line_start_byte(row.line) + within;
                 self.field.move_to_byte(global, true);
             }
@@ -1160,7 +1160,7 @@ impl TextEditor {
                     self.move_line(false);
                     changed = true;
                 } else {
-                    self.move_caret_visual(-1, shift, &layout, system);
+                    self.move_caret_visual(-1, shift, &layout, font);
                     vertical = true;
                 }
                 boundary = true;
@@ -1171,7 +1171,7 @@ impl TextEditor {
                     self.move_line(true);
                     changed = true;
                 } else {
-                    self.move_caret_visual(1, shift, &layout, system);
+                    self.move_caret_visual(1, shift, &layout, font);
                     vertical = true;
                 }
                 boundary = true;
@@ -1186,12 +1186,12 @@ impl TextEditor {
             }
             let page = r.visible_rows.saturating_sub(1) as i32;
             if system.key_repeat(ScanCode::PageUp, REPEAT_DELAY, REPEAT_RATE) {
-                self.move_caret_visual(-page, shift, &layout, system);
+                self.move_caret_visual(-page, shift, &layout, font);
                 vertical = true;
                 boundary = true;
             }
             if system.key_repeat(ScanCode::PageDown, REPEAT_DELAY, REPEAT_RATE) {
-                self.move_caret_visual(page, shift, &layout, system);
+                self.move_caret_visual(page, shift, &layout, font);
                 vertical = true;
                 boundary = true;
             }
@@ -1211,22 +1211,22 @@ impl TextEditor {
         // the previous step or an external jump) or the buffer changed this frame;
         // a bare wheel scroll keeps its position.
         let follow = changed || self.field.cursor() != self.last_caret;
-        let layout = self.layout(system, &r);
+        let layout = self.layout(font, &r);
         self.ensure_caret_visible_rows(&layout, r.visible_rows, follow);
         if follow && !self.wrap {
-            self.ensure_caret_visible_h(system, r.body_w);
+            self.ensure_caret_visible_h(font, r.body_w);
         }
         self.last_caret = self.field.cursor();
         // Drive the dialogue previewer (parse/follow-caret/tick) for this frame.
-        self.update_preview(system, r.preview.map_or(0, |p| p.w), changed);
+        self.update_preview(system, font, r.preview.map_or(0, |p| p.w), changed);
     }
 
     /// Paint the editor into the view's BG layer (which `composite_into` blits to
     /// the framebuffer). Fills opaque first, so switching from walkaround leaves
     /// no stale world pixels behind.
-    pub fn draw(&self, draw_state: &mut DrawState, system: &impl ConsoleApi) {
+    pub fn draw(&self, draw_state: &mut DrawState, font: &Font) {
         let (fb_w, fb_h) = draw_state.size();
-        let r = self.regions(system, fb_w, fb_h);
+        let r = self.regions(font, fb_w, fb_h);
         let opts = print_opts();
 
         // Resolve every palette colour before the mutable canvas borrow.
@@ -1277,7 +1277,7 @@ impl TextEditor {
 
         let cur_line = self.field.line_col().0;
         let active = self.outline.iter().rposition(|e| e.line <= cur_line);
-        let layout = self.layout(system, &r);
+        let layout = self.layout(font, &r);
 
         // Outline panel (when shown), at its dock rect: category headers, then each
         // item as `name … line-number` (number right-aligned).
@@ -1293,19 +1293,27 @@ impl TextEditor {
                 let y = rect.y + PAD + (vi - self.outline_scroll) as i32 * LINE_H;
                 match *row {
                     OutlineRow::Header(title) => {
-                        system.print_to(canvas, title, rect.x + PAD, y, cat_col, opts.clone());
+                        print_to_with_font(
+                            font,
+                            canvas,
+                            title,
+                            rect.x + PAD,
+                            y,
+                            cat_col,
+                            opts.clone(),
+                        );
                     }
                     OutlineRow::Item(i) => {
                         let entry = &self.outline[i];
                         let name = entry.key.as_deref().unwrap_or(&entry.label);
                         let colour = if Some(i) == active { hilite } else { text_col };
                         let num = format!("{}", entry.line + 1);
-                        let num_x = rect.x + rect.w - PAD - system.text_width(&num, opts.clone());
+                        let num_x = rect.x + rect.w - PAD - text_width(font, &num, opts.clone());
                         let name_x = rect.x + PAD + 4; // indent items under the header
                         let name =
-                            truncate_to_width(name, (num_x - PAD - name_x).max(0), system, &opts);
-                        system.print_to(canvas, &name, name_x, y, colour, opts.clone());
-                        system.print_to(canvas, &num, num_x, y, dim, opts.clone());
+                            truncate_to_width(name, (num_x - PAD - name_x).max(0), font, &opts);
+                        print_to_with_font(font, canvas, &name, name_x, y, colour, opts.clone());
+                        print_to_with_font(font, canvas, &num, num_x, y, dim, opts.clone());
                     }
                 }
             }
@@ -1330,12 +1338,12 @@ impl TextEditor {
             if row.start == 0 {
                 if let Some(folded) = row.fold {
                     let glyph = if folded { "+" } else { "-" };
-                    system.print_to(canvas, glyph, r.gutter_x + 1, y, dim, opts.clone());
+                    print_to_with_font(font, canvas, glyph, r.gutter_x + 1, y, dim, opts.clone());
                 }
                 let num = format!("{}", row.line + 1);
-                let nx = (r.text_x - PAD - system.text_width(&num, opts.clone()))
+                let nx = (r.text_x - PAD - text_width(font, &num, opts.clone()))
                     .max(r.gutter_x + FOLD_W);
-                system.print_to(canvas, &num, nx, y, dim, opts.clone());
+                print_to_with_font(font, canvas, &num, nx, y, dim, opts.clone());
             }
 
             // Where this row's text starts (wrap rows from `start`; non-wrap rows
@@ -1355,8 +1363,8 @@ impl TextEditor {
                     let from = lo.max(ls + draw_start) - ls;
                     let to = hi.min(row_hi) - ls;
                     if to >= from {
-                        let x0 = x_base + system.text_width(&line[draw_start..from], opts.clone());
-                        let x1 = x_base + system.text_width(&line[draw_start..to], opts.clone());
+                        let x0 = x_base + text_width(font, &line[draw_start..from], opts.clone());
+                        let x1 = x_base + text_width(font, &line[draw_start..to], opts.clone());
                         let tail = if last_row && e > row_hi { 3 } else { 0 };
                         let w = x1 - x0 + tail;
                         if w > 0 {
@@ -1368,7 +1376,7 @@ impl TextEditor {
 
             // Base text, then each syntax-highlight span overdrawn in its colour,
             // clipped to this row's visible slice.
-            system.print_to(
+            print_to_with_font(font, 
                 canvas,
                 &line[draw_start..row.end],
                 x_base,
@@ -1380,8 +1388,8 @@ impl TextEditor {
                 let cs = s.max(draw_start);
                 let ce = e.min(row.end);
                 if cs < ce {
-                    let x = x_base + system.text_width(&line[draw_start..cs], opts.clone());
-                    system.print_to(
+                    let x = x_base + text_width(font, &line[draw_start..cs], opts.clone());
+                    print_to_with_font(font, 
                         canvas,
                         &line[cs..ce],
                         x,
@@ -1404,7 +1412,7 @@ impl TextEditor {
             if cb >= draw_start {
                 let cx = x_off
                     + r.text_x
-                    + system.text_width(&line[draw_start..cb.min(row.end)], opts.clone());
+                    + text_width(font, &line[draw_start..cb.min(row.end)], opts.clone());
                 let cy = r.row_y(cr - self.scroll);
                 canvas.fill_rect(cx, cy, 1, LINE_H, hilite);
             }
@@ -1422,24 +1430,56 @@ impl TextEditor {
             // its button coincide; every label is centred in its own cell.
             let cw = Self::preview_cell_w(rect.w);
             let cell_cx = |i: i32| rect.x + i * cw + cw / 2;
-            system.print_to_centered(canvas, "<", cell_cx(0), cy, hilite, opts.clone());
-            system.print_to_centered(canvas, ">", cell_cx(4), cy, hilite, opts.clone());
+            print_to_centered_with_font(font, canvas, "<", cell_cx(0), cy, hilite, opts.clone());
+            print_to_centered_with_font(font, canvas, ">", cell_cx(4), cy, hilite, opts.clone());
             match &self.preview.key {
                 Some(_) if total > 0 => {
                     let counter = format!("{}/{total}", self.preview.page + 1);
                     let mode = if self.preview.skip { "skip" } else { "page" };
-                    let font = if self.preview.small_font { "sm" } else { "reg" };
-                    system.print_to_centered(canvas, &counter, cell_cx(1), cy, dim, opts.clone());
+                    let font_label = if self.preview.small_font { "sm" } else { "reg" };
+                    print_to_centered_with_font(
+                        font,
+                        canvas,
+                        &counter,
+                        cell_cx(1),
+                        cy,
+                        dim,
+                        opts.clone(),
+                    );
                     // The two toggles read as hilit (clickable), the counter as dim.
-                    system.print_to_centered(canvas, mode, cell_cx(2), cy, hilite, opts.clone());
-                    system.print_to_centered(canvas, font, cell_cx(3), cy, hilite, opts.clone());
+                    print_to_centered_with_font(
+                        font,
+                        canvas,
+                        mode,
+                        cell_cx(2),
+                        cy,
+                        hilite,
+                        opts.clone(),
+                    );
+                    print_to_centered_with_font(
+                        font,
+                        canvas,
+                        font_label,
+                        cell_cx(3),
+                        cy,
+                        hilite,
+                        opts.clone(),
+                    );
                 }
                 Some(_) => {
-                    system
-                        .print_to_centered(canvas, "no dialogue", cell_cx(2), cy, dim, opts.clone());
+                    print_to_centered_with_font(
+                        font,
+                        canvas,
+                        "no dialogue",
+                        cell_cx(2),
+                        cy,
+                        dim,
+                        opts.clone(),
+                    );
                 }
                 None => {
-                    system.print_to_centered(
+                    print_to_centered_with_font(
+                        font,
                         canvas,
                         "caret not in a dialogue",
                         cell_cx(2),
@@ -1479,7 +1519,7 @@ impl TextEditor {
                     d.draw_dialogue_box(
                         &mut tmp,
                         LayerId::BG,
-                        system,
+                        font,
                         self.preview.small_font,
                         &snap.text,
                         timer,
@@ -1507,8 +1547,8 @@ impl TextEditor {
                 PromptKind::GoTo => "Go to line",
             };
             let bar = format!("{label}: {}", prompt.input.display());
-            let bar = truncate_to_width(&bar, fb_w - PAD * 2, system, &opts);
-            system.print_to(canvas, &bar, PAD, py, text_col, opts.clone());
+            let bar = truncate_to_width(&bar, fb_w - PAD * 2, font, &opts);
+            print_to_with_font(font, canvas, &bar, PAD, py, text_col, opts.clone());
         }
 
         // Status bar.
@@ -1520,8 +1560,8 @@ impl TextEditor {
             "^S save  ^O switch  ^F find  ^G goto"
         };
         let bar = format!("{mark}{path}   {}   {hint}", self.status);
-        let bar = truncate_to_width(&bar, fb_w - PAD * 2, system, &opts);
-        system.print_to(canvas, &bar, PAD, r.status_y, text_col, opts);
+        let bar = truncate_to_width(&bar, fb_w - PAD * 2, font, &opts);
+        print_to_with_font(font, canvas, &bar, PAD, r.status_y, text_col, opts);
     }
 
     /// Write the buffer to disk and, if it still parses, hand the new source to
@@ -1588,7 +1628,7 @@ impl TextEditor {
     /// Keep the caret's column within the body horizontally: scroll left if it's
     /// behind `h_scroll`, or right until its measured x fits `text_area_w` px.
     /// `text_area_w` is the body's pixel width (framebuffer minus the gutter).
-    fn ensure_caret_visible_h(&mut self, system: &impl ConsoleApi, text_area_w: i32) {
+    fn ensure_caret_visible_h(&mut self, font: &Font, text_area_w: i32) {
         let (line_idx, col) = self.field.line_col();
         if col <= self.h_scroll {
             self.h_scroll = col;
@@ -1606,7 +1646,7 @@ impl TextEditor {
         let cb = byte_at_col(&line, col);
         while self.h_scroll < col {
             let hb = byte_at_col(&line, self.h_scroll);
-            if system.text_width(&line[hb..cb], opts.clone()) <= text_area_w {
+            if text_width(font, &line[hb..cb], opts.clone()) <= text_area_w {
                 break;
             }
             self.h_scroll += 1;
@@ -1631,9 +1671,9 @@ impl TextEditor {
     /// The line-number gutter's pixel width for the current file: room for a fold
     /// glyph, the widest line number, and padding either side. Grows so a 4-digit
     /// file's numbers aren't clipped.
-    fn gutter_width(&self, system: &impl ConsoleApi) -> i32 {
+    fn gutter_width(&self, font: &Font) -> i32 {
         let digits = format!("{}", self.line_count().max(1));
-        FOLD_W + system.text_width(&digits, print_opts()) + PAD * 2
+        FOLD_W + text_width(font, &digits, print_opts()) + PAD * 2
     }
 
     /// A panel's dock placement (copy).
@@ -1665,9 +1705,9 @@ impl TextEditor {
     /// (Left/Right full height first, then Top/Bottom between), and the main panel
     /// takes the leftover centre. The body's rect (centre or docked) drives the
     /// gutter / text geometry; the gutter sizes to the file's line numbers.
-    fn regions(&self, system: &impl ConsoleApi, fb_w: i32, fb_h: i32) -> Regions {
+    fn regions(&self, font: &Font, fb_w: i32, fb_h: i32) -> Regions {
         let status_y = fb_h - LINE_H;
-        let gutter_w = self.gutter_width(system);
+        let gutter_w = self.gutter_width(font);
 
         let (mut wx, mut wy, mut ww, mut wh) = (0, 0, fb_w, status_y);
         let mut rects: [Option<PanelRect>; 3] = [None; 3];
@@ -1860,7 +1900,13 @@ impl TextEditor {
     /// caret to its dialogue + turn, and tick the typewriter. `panel_w` is the
     /// preview dock's width (for text fitting); `changed` is whether the buffer
     /// changed. A cheap no-op when the preview is hidden.
-    fn update_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32, changed: bool) {
+    fn update_preview(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        font: &Font,
+        panel_w: i32,
+        changed: bool,
+    ) {
         if self.preview_dock.side.is_none() {
             return;
         }
@@ -1881,7 +1927,7 @@ impl TextEditor {
             self.preview.key = key;
             self.preview.page = target;
             self.preview.followed = target;
-            self.reload_preview(system, panel_w);
+            self.reload_preview(system, font, panel_w);
         } else if target != self.preview.followed {
             // The caret moved to a different turn of the same dialogue — follow it.
             // Compared against `followed` (the turn last synced to), not `page`, so
@@ -1897,7 +1943,7 @@ impl TextEditor {
     /// Rebuild the conversation's per-turn [`PageSnap`]s from the parsed buffer +
     /// caret key, fitted to the box width at the current font. Clamps the page and
     /// resets the typewriter. Silent (loads through a [`Muted`] console).
-    fn reload_preview(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+    fn reload_preview(&mut self, system: &mut impl ConsoleApi, font: &Font, panel_w: i32) {
         let width = (panel_w - 8).clamp(40, 220) as usize;
         let messages = match (&self.preview.script, &self.preview.key) {
             (Some(script), Some(key)) => script.get_dialogue(key, &SaveData::default()),
@@ -1905,7 +1951,7 @@ impl TextEditor {
         };
         let small = self.preview.small_font;
         let mut m = Muted(system);
-        self.preview.pages = extract_pages(&messages, width, small, &mut m);
+        self.preview.pages = extract_pages(&messages, width, small, &mut m, font);
         self.preview.page = self
             .preview
             .page
@@ -1939,9 +1985,9 @@ impl TextEditor {
 
     /// Toggle the preview box between the small and regular font (re-fits the
     /// pages, which the wrap width depends on).
-    fn toggle_preview_font(&mut self, system: &mut impl ConsoleApi, panel_w: i32) {
+    fn toggle_preview_font(&mut self, system: &mut impl ConsoleApi, font: &Font, panel_w: i32) {
         self.preview.small_font = !self.preview.small_font;
-        self.reload_preview(system, panel_w);
+        self.reload_preview(system, font, panel_w);
     }
 
     /// Tick the current page's typewriter (silent), pacing ~1 char / 2 frames with
@@ -1983,7 +2029,7 @@ impl TextEditor {
     fn wrap_segments(
         &self,
         line: &str,
-        system: &impl ConsoleApi,
+        font: &Font,
         avail_w: i32,
     ) -> Vec<(usize, usize, i32)> {
         let opts = print_opts();
@@ -1991,7 +2037,7 @@ impl TextEditor {
             return vec![(0, line.len(), 0)];
         }
         let indent_bytes = line.len() - line.trim_start_matches([' ', '\t']).len();
-        let indent_px = system.text_width(&line[..indent_bytes], opts.clone());
+        let indent_px = text_width(font, &line[..indent_bytes], opts.clone());
         let mut segs = Vec::new();
         let mut start = 0;
         while start < line.len() {
@@ -2001,7 +2047,7 @@ impl TextEditor {
             let mut last_space = None; // boundary just after a space
             for (off, ch) in line[start..].char_indices() {
                 let next = start + off + ch.len_utf8();
-                let over = system.text_width(&line[start..next], opts.clone()) > budget;
+                let over = text_width(font, &line[start..next], opts.clone()) > budget;
                 if over && next > start + ch.len_utf8() {
                     break; // overflow, with at least one char already placed
                 }
@@ -2054,14 +2100,14 @@ impl TextEditor {
     /// Build the body's visual rows at the current wrap/fold state and body width:
     /// folded sections collapse to their header row, and (with wrap on) long lines
     /// split into hang-indented continuation rows.
-    fn layout(&self, system: &impl ConsoleApi, r: &Regions) -> Vec<VisualRow> {
+    fn layout(&self, font: &Font, r: &Regions) -> Vec<VisualRow> {
         let text = self.field.text();
         let lines: Vec<&str> = text.split('\n').collect();
         let mut rows = Vec::new();
         let mut i = 0;
         while i < lines.len() {
             let fold = self.fold_marker(i);
-            for (start, end, indent_px) in self.wrap_segments(lines[i], system, r.body_w) {
+            for (start, end, indent_px) in self.wrap_segments(lines[i], font, r.body_w) {
                 rows.push(VisualRow {
                     line: i,
                     start,
@@ -2120,7 +2166,7 @@ impl TextEditor {
     }
 
     /// The caret's x in px from the text origin within its visual row.
-    fn caret_x(&self, layout: &[VisualRow], system: &impl ConsoleApi) -> i32 {
+    fn caret_x(&self, layout: &[VisualRow], font: &Font) -> i32 {
         let row = layout[self.caret_row(layout)];
         let (_, cb) = self.caret_line_byte();
         let ls = self.line_start_byte(row.line);
@@ -2128,13 +2174,13 @@ impl TextEditor {
         let line = &text[ls..ls + self.line_byte_len(row.line)];
         let (draw_start, x_off) = self.row_origin(&row, line);
         let to = cb.clamp(draw_start, row.end);
-        x_off + system.text_width(&line[draw_start..to], print_opts())
+        x_off + text_width(font, &line[draw_start..to], print_opts())
     }
 
     /// The byte (within its line) on visual `row` whose x is closest to `goal_x`
     /// (px from the text origin) — lands the caret under the goal column on a
     /// vertical move or a click.
-    fn byte_at_x_in_row(&self, row: &VisualRow, goal_x: i32, system: &impl ConsoleApi) -> usize {
+    fn byte_at_x_in_row(&self, row: &VisualRow, goal_x: i32, font: &Font) -> usize {
         let text = self.field.text();
         let ls = self.line_start_byte(row.line);
         let line = &text[ls..ls + self.line_byte_len(row.line)];
@@ -2149,7 +2195,7 @@ impl TextEditor {
             .map(|(o, _)| o)
             .chain(std::iter::once(slice.len()))
         {
-            let dist = (system.text_width(&slice[..end], opts.clone()) - target).abs();
+            let dist = (text_width(font, &slice[..end], opts.clone()) - target).abs();
             if dist < best_dist {
                 best_dist = dist;
                 best = draw_start + end;
@@ -2165,7 +2211,7 @@ impl TextEditor {
         delta: i32,
         extend: bool,
         layout: &[VisualRow],
-        system: &impl ConsoleApi,
+        font: &Font,
     ) {
         if layout.is_empty() {
             return;
@@ -2174,14 +2220,14 @@ impl TextEditor {
         let goal = match self.goal_x {
             Some(g) => g,
             None => {
-                let g = self.caret_x(layout, system);
+                let g = self.caret_x(layout, font);
                 self.goal_x = Some(g);
                 g
             }
         };
         let target = (cur + delta).clamp(0, layout.len() as i32 - 1) as usize;
         let row = layout[target];
-        let within = self.byte_at_x_in_row(&row, goal, system);
+        let within = self.byte_at_x_in_row(&row, goal, font);
         self.field
             .move_to_byte(self.line_start_byte(row.line) + within, extend);
     }
@@ -2441,10 +2487,15 @@ fn dock_strip(
 /// Advance a preview dialogue past a pause to the next page, returning whether a
 /// new page is shown. Loops `next_text` until the displayed text changes (a lone
 /// `Pause` is consumed without changing it) or the queue empties.
-fn advance_dialogue(d: &mut Dialogue, console: &mut impl ConsoleApi, save: &mut SaveData) -> bool {
+fn advance_dialogue(
+    d: &mut Dialogue,
+    console: &mut impl ConsoleApi,
+    font: &Font,
+    save: &mut SaveData,
+) -> bool {
     let before = d.current_text.clone();
     loop {
-        if !d.next_text(console, save, true) {
+        if !d.next_text(console, font, save, true) {
             return false;
         }
         if d.current_text != before {
@@ -2461,13 +2512,14 @@ fn extract_pages(
     width: usize,
     small_text: bool,
     console: &mut impl ConsoleApi,
+    font: &Font,
 ) -> Vec<PageSnap> {
     let mut save = SaveData {
         small_text_on: small_text,
         ..SaveData::default()
     };
     let mut d = Dialogue::default().with_width(width);
-    d.set_messages(console, &mut save, messages);
+    d.set_messages(console, font, &mut save, messages);
     let mut pages = Vec::new();
     while d.current_text.is_some() {
         // A `#delay` reveal *appends* to the current box rather than opening a new
@@ -2475,7 +2527,7 @@ fn extract_pages(
         // otherwise a piecemeal sentence would show as several stacked turns.
         while next_is_append(&d) {
             d.finish_line();
-            if !advance_dialogue(&mut d, console, &mut save) {
+            if !advance_dialogue(&mut d, console, font, &mut save) {
                 break;
             }
         }
@@ -2487,7 +2539,7 @@ fn extract_pages(
         // Mark the page done so the next text opens a fresh box rather than
         // appending (`add_text` only starts a new box once the current is finished).
         d.finish_line();
-        if !advance_dialogue(&mut d, console, &mut save) {
+        if !advance_dialogue(&mut d, console, font, &mut save) {
             break;
         }
     }
@@ -2637,15 +2689,15 @@ fn highlight_line(line: &str, kind: ScriptKind) -> Vec<(usize, usize, HiRole)> {
     out
 }
 
-fn truncate_to_width(s: &str, max_w: i32, system: &impl ConsoleApi, opts: &PrintOptions) -> String {
-    if system.text_width(s, opts.clone()) <= max_w {
+fn truncate_to_width(s: &str, max_w: i32, font: &Font, opts: &PrintOptions) -> String {
+    if text_width(font, s, opts.clone()) <= max_w {
         return s.to_string();
     }
     let mut out = String::new();
     for c in s.chars() {
         let mut candidate = out.clone();
         candidate.push(c);
-        if system.text_width(&candidate, opts.clone()) > max_w {
+        if text_width(font, &candidate, opts.clone()) > max_w {
             break;
         }
         out.push(c);
@@ -2761,27 +2813,27 @@ title = Hello
         ed.rebuild_outline();
 
         // Idle step (mouse still, no keys) then a draw with the caret at the top.
-        ed.step(&mut console, 240, 136);
-        ed.draw(&mut draw, &console);
+        ed.step(&mut console, &Font::blank(), 240, 136);
+        ed.draw(&mut draw, &Font::blank());
 
         // Drive the caret to the buffer end, let the visual caret-follow move the
         // scroll, then draw — the caret-on-screen branch and the end clamps.
         ed.field.set_cursor(ed.field.text().len());
-        let r = ed.regions(&console, 240, 136);
-        let layout = ed.layout(&console, &r);
+        let r = ed.regions(&Font::blank(), 240, 136);
+        let layout = ed.layout(&Font::blank(), &r);
         ed.ensure_caret_visible_rows(&layout, r.visible_rows, true);
-        ed.draw(&mut draw, &console);
+        ed.draw(&mut draw, &Font::blank());
 
         // The minimum framebuffer (a very narrow text column) is also safe to draw
         // — exercises the wrap layout at a tiny body width.
         let mut small = DrawState::default();
         small.resize(64, 48);
-        ed.draw(&mut small, &console);
+        ed.draw(&mut small, &Font::blank());
 
         // With a find prompt open, the prompt-bar strip also draws cleanly.
         ed.open_prompt(PromptKind::Find);
-        ed.draw(&mut draw, &console);
-        ed.draw(&mut small, &console);
+        ed.draw(&mut draw, &Font::blank());
+        ed.draw(&mut small, &Font::blank());
 
         // Non-wrapped + horizontally scrolled (long lines sliced from a mid-line
         // column) draws without slicing panics, both with and without a selection.
@@ -2789,8 +2841,8 @@ title = Hello
         ed.wrap = false;
         ed.h_scroll = 4;
         ed.field.select(0, ed.field.text().len());
-        ed.draw(&mut draw, &console);
-        ed.draw(&mut small, &console);
+        ed.draw(&mut draw, &Font::blank());
+        ed.draw(&mut small, &Font::blank());
     }
 
     /// Undo/redo coalesces a run of typing into one step, broken at whitespace, and
@@ -3019,21 +3071,19 @@ title = Hello
     /// and right (bounded by the caret column) until it fits the text width.
     #[test]
     fn h_scroll_follows_the_caret() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "0123456789abcdef");
 
         // Caret behind the scroll snaps h_scroll back to it.
         ed.h_scroll = 8;
         ed.field.move_to_line_col(0, 2);
-        ed.ensure_caret_visible_h(&console, 100);
+        ed.ensure_caret_visible_h(&Font::blank(), 100);
         assert_eq!(ed.h_scroll, 2, "scrolls left to the caret");
 
         // A text width nothing fits in scrolls right up to (but not past) the
         // caret's column.
         ed.h_scroll = 0;
         ed.field.move_to_line_col(0, 6);
-        ed.ensure_caret_visible_h(&console, -1);
+        ed.ensure_caret_visible_h(&Font::blank(), -1);
         assert_eq!(ed.h_scroll, 6, "scrolls right, bounded by the caret column");
     }
 
@@ -3044,11 +3094,9 @@ title = Hello
     /// hang indent.
     #[test]
     fn wrap_segments_breaks_and_tiles() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let ed = editor_with("script/en.eggtext", "");
         let line = "aa bb cc dd ee ff";
-        let segs = ed.wrap_segments(line, &console, 8);
+        let segs = ed.wrap_segments(line, &Font::blank(), 8);
         assert!(segs.len() > 1, "wraps into multiple rows");
         let joined: String = segs.iter().map(|&(s, e, _)| &line[s..e]).collect();
         assert_eq!(joined, line, "rows tile the line exactly");
@@ -3058,13 +3106,11 @@ title = Hello
     /// Wrapped continuation rows hang-indent under the line's leading whitespace.
     #[test]
     fn wrap_segments_hang_indent_continuations() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let ed = editor_with("script/en.eggtext", "");
         let line = "    aa bb cc dd ee ff"; // 4-space indent
-        let segs = ed.wrap_segments(line, &console, 16);
+        let segs = ed.wrap_segments(line, &Font::blank(), 16);
         assert!(segs.len() > 1);
-        let indent_px = console.text_width("    ", print_opts());
+        let indent_px = text_width(&Font::blank(), "    ", print_opts());
         assert_eq!(segs[0].2, 0, "first row flush left");
         assert!(
             segs[1..].iter().all(|&(_, _, ind)| ind == indent_px),
@@ -3075,13 +3121,11 @@ title = Hello
     /// With wrap off, a line is always a single full-width row.
     #[test]
     fn wrap_off_is_one_segment() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "");
         ed.wrap = false;
         let line = "a very long line that would otherwise wrap";
         assert_eq!(
-            ed.wrap_segments(line, &console, 4),
+            ed.wrap_segments(line, &Font::blank(), 4),
             vec![(0, line.len(), 0)]
         );
     }
@@ -3099,13 +3143,11 @@ title = Hello
     /// (now marked folded); the next section still shows.
     #[test]
     fn folding_hides_body_rows() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = folding_fixture();
-        let r = ed.regions(&console, 240, 136);
-        let before = ed.layout(&console, &r).len();
+        let r = ed.regions(&Font::blank(), 240, 136);
+        let before = ed.layout(&Font::blank(), &r).len();
         ed.toggle_fold_at(0);
-        let after = ed.layout(&console, &r);
+        let after = ed.layout(&Font::blank(), &r);
         assert!(after.len() < before, "fewer rows once folded");
         assert!(
             after
@@ -3141,23 +3183,21 @@ title = Hello
     /// folded section's hidden body to the next visible row.
     #[test]
     fn visual_down_moves_and_skips_folds() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
 
         let mut ed = editor_with("script/en.eggtext", "one\ntwo\nthree");
         ed.field.move_to_line_col(0, 1);
-        let r = ed.regions(&console, 240, 136);
-        let layout = ed.layout(&console, &r);
+        let r = ed.regions(&Font::blank(), 240, 136);
+        let layout = ed.layout(&Font::blank(), &r);
         assert_eq!(ed.caret_row(&layout), 0);
-        ed.move_caret_visual(1, false, &layout, &console);
+        ed.move_caret_visual(1, false, &layout, &Font::blank());
         assert_eq!(ed.field.line_col().0, 1, "down moves one row");
 
         let mut folded = folding_fixture();
         folded.toggle_fold_at(0); // hide lines 1, 2
         folded.field.move_to_line_col(0, 0); // on header a
-        let r = folded.regions(&console, 240, 136);
-        let layout = folded.layout(&console, &r);
-        folded.move_caret_visual(1, false, &layout, &console);
+        let r = folded.regions(&Font::blank(), 240, 136);
+        let layout = folded.layout(&Font::blank(), &r);
+        folded.move_caret_visual(1, false, &layout, &Font::blank());
         assert_eq!(
             folded.field.line_col().0,
             3,
@@ -3231,14 +3271,12 @@ title = Hello
     #[test]
     fn regions_dock_left_right_hidden() {
         use crate::editor::map::dock::Side;
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "a\nb\nc");
         ed.preview_dock.side = None; // isolate the outline
         ed.outline_dock.size = 60;
 
         ed.outline_dock.side = Some(Side::Left);
-        let r = ed.regions(&console, 240, 136);
+        let r = ed.regions(&Font::blank(), 240, 136);
         let o = r.outline.expect("outline shown");
         assert_eq!((o.x, o.w, r.gutter_x), (0, 60, 60));
         assert_eq!(r.body_right, 240);
@@ -3249,12 +3287,12 @@ title = Hello
         assert_eq!(r.splitters.len(), 1);
 
         ed.outline_dock.side = Some(Side::Right);
-        let r = ed.regions(&console, 240, 136);
+        let r = ed.regions(&Font::blank(), 240, 136);
         let o = r.outline.expect("outline shown");
         assert_eq!((o.x, r.gutter_x, r.body_right), (180, 0, 180));
 
         ed.outline_dock.side = None;
-        let r = ed.regions(&console, 240, 136);
+        let r = ed.regions(&Font::blank(), 240, 136);
         assert!(r.outline.is_none());
         assert_eq!((r.gutter_x, r.body_right), (0, 240));
         assert!(r.splitters.is_empty());
@@ -3265,13 +3303,11 @@ title = Hello
     #[test]
     fn regions_bottom_dock_shrinks_body() {
         use crate::editor::map::dock::Side;
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "a");
         ed.outline_dock.side = None;
         ed.preview_dock.side = Some(Side::Bottom);
         ed.preview_dock.size = 40;
-        let r = ed.regions(&console, 240, 136);
+        let r = ed.regions(&Font::blank(), 240, 136);
         let p = r.preview.expect("preview shown");
         assert_eq!((p.x, p.w), (0, 240), "spans the full width");
         assert_eq!(p.y + p.h, r.status_y, "sits just above the status bar");
@@ -3282,12 +3318,10 @@ title = Hello
     /// The line-number gutter widens for a file with more digits in its numbers.
     #[test]
     fn gutter_width_grows_with_line_count() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let few = editor_with("script/en.eggtext", "a\nb"); // up to "2"
         let many = editor_with("script/en.eggtext", &"x\n".repeat(150)); // up to "151"
         assert!(
-            many.gutter_width(&console) > few.gutter_width(&console),
+            many.gutter_width(&Font::blank()) > few.gutter_width(&Font::blank()),
             "more digits → wider gutter"
         );
     }
@@ -3333,7 +3367,7 @@ title = Hello
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0); // inside the dialogue, first turn
 
-        ed.update_preview(&mut console, 200, true); // parse + resolve pages
+        ed.update_preview(&mut console, &Font::blank(), 200, true); // parse + resolve pages
         assert_eq!(ed.preview.key.as_deref(), Some("talk"));
         assert_eq!(ed.preview.pages.len(), 3, "three turns resolved");
         assert_eq!(ed.preview.page, 0);
@@ -3366,10 +3400,10 @@ title = Hello
 
         // Moving the caret (no edit) makes the preview follow to that turn.
         ed.field.move_to_line_col(1, 0);
-        ed.update_preview(&mut console, 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true);
         assert_eq!(ed.preview.page, 0);
         ed.field.move_to_line_col(5, 0);
-        ed.update_preview(&mut console, 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false);
         assert_eq!(ed.preview.page, 2, "preview followed the caret to turn 3");
     }
 
@@ -3384,18 +3418,18 @@ title = Hello
         let mut ed = editor_with("script/en.eggtext", src);
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0); // first turn
-        ed.update_preview(&mut console, 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true);
         assert_eq!(ed.preview.page, 0);
 
         ed.preview_next(); // step forward a turn via the button
         assert_eq!(ed.preview.page, 1);
         // A follow frame with the caret still on turn 0 must not revert it.
-        ed.update_preview(&mut console, 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false);
         assert_eq!(ed.preview.page, 1, "manual page step persists");
 
         // Moving the caret to a different turn resumes following.
         ed.field.move_to_line_col(5, 0); // third turn
-        ed.update_preview(&mut console, 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false);
         assert_eq!(ed.preview.page, 2, "a caret move resumes follow");
     }
 
@@ -3411,7 +3445,7 @@ title = Hello
         let mut ed = editor_with("script/en.eggtext", src);
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0);
-        ed.update_preview(&mut console, 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true);
         assert_eq!(ed.preview.pages.len(), 2, "delayed clauses stay one turn");
         let first = &ed.preview.pages[0].text;
         assert!(
@@ -3440,13 +3474,11 @@ title = Hello
     /// viewport can move off the caret, but the scroll is still clamped in range.
     #[test]
     fn scroll_follows_caret_only_when_asked() {
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let src = "x\n".repeat(200);
         let mut ed = editor_with("script/en.eggtext", &src);
         ed.field.move_to_line_col(0, 0); // caret at the top
-        let r = ed.regions(&console, 240, 136);
-        let layout = ed.layout(&console, &r);
+        let r = ed.regions(&Font::blank(), 240, 136);
+        let layout = ed.layout(&Font::blank(), &r);
 
         ed.scroll = 50; // a wheel scrolled well past the caret
         ed.ensure_caret_visible_rows(&layout, r.visible_rows, false);
@@ -3475,7 +3507,7 @@ title = Hello
         let mut ed = TextEditor::default();
         ed.open(&mut console, "script/en.eggtext", TextAnchor::Line(150));
         assert_eq!(ed.scroll, 0, "open resets the scroll");
-        ed.step(&mut console, 240, 136);
+        ed.step(&mut console, &Font::blank(), 240, 136);
         assert!(ed.scroll > 0, "the step scrolled the deep caret into view");
     }
 
@@ -3484,11 +3516,9 @@ title = Hello
     #[test]
     fn cycle_main_swaps_body_into_panel() {
         use crate::editor::map::dock::Side;
-        use crate::platform::test_console::TestConsole;
-        let console = TestConsole::new();
         let mut ed = editor_with("script/en.eggtext", "a\nb");
         assert_eq!(ed.main_panel, TextPanel::Body);
-        let body0 = ed.regions(&console, 240, 136).body;
+        let body0 = ed.regions(&Font::blank(), 240, 136).body;
 
         ed.cycle_main(); // Body → Outline (the first visible aux)
         assert_eq!(ed.main_panel, TextPanel::Outline);
@@ -3498,7 +3528,7 @@ title = Hello
             "body took the outline's spot"
         );
 
-        let r = ed.regions(&console, 240, 136);
+        let r = ed.regions(&Font::blank(), 240, 136);
         let outline = r.outline.expect("outline shown (now centre)");
         assert!(
             outline.w > r.body.w,

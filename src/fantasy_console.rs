@@ -314,10 +314,6 @@ impl ConsoleApi for FantasyConsole {
     fn height(&self) -> i32 {
         self.output_screen.height() as i32
     }
-
-    fn font(&self) -> &Font {
-        &self.font
-    }
 }
 
 /// Routing rule for the string-named file store: the engine names files, the

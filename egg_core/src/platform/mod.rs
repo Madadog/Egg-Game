@@ -1,8 +1,6 @@
 use crate::{
     data::sound::{SfxData, music::MusicTrack},
-    render::{
-        Canvas, Font, PrintOptions, image::RgbaImage, print_to_with_font, text_width,
-    },
+    render::image::RgbaImage,
 };
 
 pub use audio::*;
@@ -89,11 +87,6 @@ pub trait ConsoleApi {
     fn height(&self) -> i32 {
         HEIGHT
     }
-
-    /// Default 8×8 bitmap [`Font`] used by `print_to_with_font` and text
-    /// measurement. The font caches each glyph's width so text can be
-    /// measured without rasterising to a throwaway canvas.
-    fn font(&self) -> &Font;
 }
 
 impl<T: ConsoleApi> ConsoleHelper for T {}
@@ -118,57 +111,6 @@ pub trait ConsoleHelper: ConsoleApi {
     fn any_btnpr(&self) -> bool {
         self.controllers().iter().any(Controller::changed)
     }
-
-    /// Render `text` onto `target` using the console's default font
-    /// (`self.font()`). `colour` is the pixel value (RGBA, palette index, …)
-    /// used for non-transparent font pixels — the font itself is read as
-    /// alpha-only. To measure text without drawing it, use
-    /// [`text_width`](Self::text_width).
-    fn print_to<C: Canvas>(
-        &self,
-        target: &mut C,
-        text: &str,
-        x: i32,
-        y: i32,
-        colour: C::Pixel,
-        opts: PrintOptions,
-    ) {
-        print_to_with_font(self.font(), target, text, x, y, colour, opts);
-    }
-
-    /// Render `text` horizontally centred on `x`. Measures with
-    /// [`text_width`](Self::text_width) rather than a throwaway off-screen draw.
-    fn print_to_centered<C: Canvas>(
-        &self,
-        target: &mut C,
-        text: &str,
-        x: i32,
-        y: i32,
-        colour: C::Pixel,
-        opts: PrintOptions,
-    ) {
-        let width = self.text_width(text, opts.clone());
-        self.print_to(target, text, x - width / 2, y, colour, opts);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn print_to_shadow<C: Canvas>(
-        &self,
-        target: &mut C,
-        text: &str,
-        x: i32,
-        y: i32,
-        colour: C::Pixel,
-        shadow: C::Pixel,
-        opts: PrintOptions,
-    ) {
-        self.print_to(target, text, x + 1, y + 1, shadow, opts.clone());
-        self.print_to(target, text, x, y, colour, opts);
-    }
-
-    fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
-        text_width(self.font(), text, opts)
-    }
 }
 
 #[cfg(test)]
@@ -183,15 +125,16 @@ pub mod test_console {
 
     use crate::data::sound::music::MusicTrack;
     use crate::platform::{Controller, MouseInput, ScanCode, SfxOptions};
-    use crate::render::Font;
     use crate::render::image::{IndexedImage, RgbaImage};
 
     use super::ConsoleApi;
 
     /// Inert console used by tests. Holds just enough state to satisfy the
-    /// trait (output/font) plus an `indexed_sprites` sheet some tests hand to
-    /// sheet-reading helpers like [`crate::world::map::map_by_name`] — those read the
-    /// sheet directly now (it lives on `DrawState`), not through the console.
+    /// trait (the output surface) plus an `indexed_sprites` sheet some tests hand
+    /// to sheet-reading helpers like [`crate::world::map::map_by_name`] — those read
+    /// the sheet directly now (it lives on `DrawState`), not through the console.
+    /// Text rendering reads a [`Font`](crate::render::Font), which is game data
+    /// now (not a console service), so a test that draws text builds one locally.
     pub struct TestConsole {
         pub controllers: [Controller; 4],
         /// In-memory stand-in for the host's string-named file store, so tests
@@ -205,7 +148,6 @@ pub mod test_console {
         /// to read any low tile id.
         pub indexed_sprites: IndexedImage,
         pub output: RgbaImage,
-        pub font: Font,
     }
 
     impl TestConsole {
@@ -218,7 +160,6 @@ pub mod test_console {
                 // modern-map collider derivation to read any low tile id.
                 indexed_sprites: IndexedImage::new(256, 64),
                 output: RgbaImage::new(1, 1),
-                font: Font::blank(),
             }
         }
     }
@@ -262,9 +203,6 @@ pub mod test_console {
         }
         fn output_image(&mut self) -> &mut RgbaImage {
             &mut self.output
-        }
-        fn font(&self) -> &Font {
-            &self.font
         }
     }
 }

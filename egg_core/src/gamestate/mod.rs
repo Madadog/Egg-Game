@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::render::PrintOptions;
+use crate::render::{PrintOptions, print_to_shadow_with_font, text_width};
 
 use self::walkaround::WalkaroundState;
 use crate::Ctx;
@@ -104,7 +104,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
         let d = (canvas.height() as i32 - crate::platform::HEIGHT) / 2;
         canvas.outlined_rect(6, 15 + d, cw - 12, 100, colour_0, colour_1);
         canvas.fill_rect(8, 17 + d, cw - 16, 96, colour_1);
-        ctx.system.print_to_shadow(
+        print_to_shadow_with_font(ctx.font, 
             canvas,
             &title,
             11,
@@ -113,7 +113,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
             colour_0,
             opts.clone(),
         );
-        ctx.system.print_to_shadow(
+        print_to_shadow_with_font(ctx.font, 
             canvas,
             &instructions,
             11,
@@ -122,7 +122,7 @@ pub fn draw_instructions(ctx: &mut Ctx<impl ConsoleApi>) {
             colour_0,
             opts.clone(),
         );
-        let width = ctx.system.text_width(&title, opts) - 1;
+        let width = text_width(ctx.font, &title, opts) - 1;
         let origin = 11;
         canvas.line(origin, 27 + d, origin + width, 27 + d, colour_12);
         canvas.line(origin + 1, 28 + d, origin + width + 1, 28 + d, colour_0);

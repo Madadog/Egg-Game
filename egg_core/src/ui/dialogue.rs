@@ -23,7 +23,7 @@ use crate::{
     platform::{ConsoleApi, ConsoleHelper},
 };
 
-use crate::render::{PrintOptions, SpriteOptions};
+use crate::render::{Font, PrintOptions, SpriteOptions, print_to_with_font};
 
 use crate::data::portraits::Portrait;
 use crate::data::script::message::{Message, TextContent};
@@ -73,33 +73,23 @@ impl Dialogue {
             None => true,
         }
     }
-    fn set_current_text(&mut self, system: &mut impl ConsoleApi, save: &SaveData, string: &str) {
-        self.current_text = Some(self.fit_text(system, save.small_text_on, string));
+    fn set_current_text(&mut self, font: &Font, save: &SaveData, string: &str) {
+        self.current_text = Some(self.fit_text(font, save.small_text_on, string));
         self.characters = 0;
         self.print_time = Some(0);
     }
-    pub fn add_text(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        save: &SaveData,
-        string: String,
-    ) -> bool {
+    pub fn add_text(&mut self, font: &Font, save: &SaveData, string: String) -> bool {
         if self.current_text.is_none() || self.is_line_done() {
-            self.set_current_text(system, save, &string);
+            self.set_current_text(font, save, &string);
             true
         } else {
             self.next_text.push(TextContent::text(string));
             false
         }
     }
-    pub fn maybe_add_text(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        save: &SaveData,
-        string: &'static str,
-    ) {
+    pub fn maybe_add_text(&mut self, font: &Font, save: &SaveData, string: &'static str) {
         if self.current_text.is_none() {
-            self.set_current_text(system, save, string);
+            self.set_current_text(font, save, string);
         }
     }
     /// Queue a sequence of [`Message`]s. Each message sets its speaker
@@ -115,6 +105,7 @@ impl Dialogue {
     pub fn set_messages(
         &mut self,
         system: &mut impl ConsoleApi,
+        font: &Font,
         save: &mut SaveData,
         messages: &[Message],
     ) {
@@ -129,20 +120,21 @@ impl Dialogue {
             }
         }
         self.next_text = queue.into_iter().rev().collect();
-        self.next_text(system, save, false);
+        self.next_text(system, font, save, false);
     }
     pub fn next_text(
         &mut self,
         system: &mut impl ConsoleApi,
+        font: &Font,
         save: &mut SaveData,
         manual_skip: bool,
     ) -> bool {
         if let Some(text_content) = self.next_text.pop() {
             // trace!(format!("Popping text content: {:?}", text_content), 12);
             let skip = text_content.is_skip();
-            let val = self.consume_text_content(system, save, text_content, manual_skip);
+            let val = self.consume_text_content(system, font, save, text_content, manual_skip);
             if skip {
-                self.next_text(system, save, manual_skip)
+                self.next_text(system, font, save, manual_skip)
             } else {
                 val
             }
@@ -153,6 +145,7 @@ impl Dialogue {
     pub fn consume_text_content(
         &mut self,
         system: &mut impl ConsoleApi,
+        font: &Font,
         save: &mut SaveData,
         text_content: TextContent,
         manual_skip: bool,
@@ -164,16 +157,16 @@ impl Dialogue {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(&text);
-                    *string = fit_default_paragraph(system, string, wrap_width, save.small_text_on);
+                    *string = fit_default_paragraph(font, string, wrap_width, save.small_text_on);
                     if !manual_skip {
                         self.add_delay(delay.into());
                     }
                 } else {
-                    self.add_text(system, save, text);
+                    self.add_text(font, save, text);
                 }
                 true
             }
-            TextContent::Text { text, .. } => self.add_text(system, save, text),
+            TextContent::Text { text, .. } => self.add_text(font, save, text),
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());
@@ -204,8 +197,8 @@ impl Dialogue {
             }
         }
     }
-    pub fn fit_text(&self, system: &mut impl ConsoleApi, small_text: bool, string: &str) -> String {
-        fit_default_paragraph(system, string, self.wrap_width(), small_text)
+    pub fn fit_text(&self, font: &Font, small_text: bool, string: &str) -> String {
+        fit_default_paragraph(font, string, self.wrap_width(), small_text)
     }
     pub fn wrap_width(&self) -> usize {
         self.width - 3
@@ -222,7 +215,13 @@ impl Dialogue {
     pub fn char_count(&self) -> usize {
         self.current_text.as_ref().map_or(0, |x| x.chars().count())
     }
-    pub fn tick(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData, amount: usize) {
+    pub fn tick(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        font: &Font,
+        save: &mut SaveData,
+        amount: usize,
+    ) {
         if let Some(text) = &mut self.current_text {
             if self.delay != 0 {
                 self.delay = self.delay.saturating_sub(amount);
@@ -247,7 +246,7 @@ impl Dialogue {
             self.delay += 1;
         }
         if self.is_line_done() && self.can_autoadvance() {
-            self.next_text(system, save, false);
+            self.next_text(system, font, save, false);
         }
     }
     pub fn step_text(&mut self, amount: usize) {
@@ -263,9 +262,9 @@ impl Dialogue {
     pub fn add_delay(&mut self, amount: usize) {
         self.delay = self.delay.saturating_add(amount);
     }
-    pub fn skip(&mut self, system: &mut impl ConsoleApi, save: &mut SaveData) {
+    pub fn skip(&mut self, system: &mut impl ConsoleApi, font: &Font, save: &mut SaveData) {
         while self.can_autoadvance() {
-            self.next_text(system, save, true);
+            self.next_text(system, font, save, true);
         }
         self.finish_line();
     }
@@ -281,7 +280,7 @@ impl Dialogue {
         &self,
         draw_state: &mut DrawState,
         layer: LayerId,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         small_text: bool,
         string: &str,
         timer: bool,
@@ -300,7 +299,7 @@ impl Dialogue {
         let w = self.width as i32;
         let h = 24;
         self.draw_dialogue_box_with_offset(
-            draw_state, layer, system, small_text, string, timer, 14, -2, 4,
+            draw_state, layer, font, small_text, string, timer, 14, -2, 4,
         );
         let rect_fill = draw_state.colour(0);
         let rect_outline = draw_state.colour(3);
@@ -334,10 +333,10 @@ impl Dialogue {
         &self,
         draw_state: &mut DrawState,
         layer: LayerId,
-        // Drawing only measures/prints text (`&self` console methods), so a shared
-        // reference suffices — which lets the text-editor previewer call this from
-        // its own `&self` draw. Callers passing `&mut` reborrow automatically.
-        system: &impl ConsoleApi,
+        // Drawing only measures/prints text, so it takes the loaded [`Font`]
+        // directly (not the console) — which lets the text-editor previewer call
+        // this from its own `&self` draw, split-borrowing the font and the canvas.
+        font: &Font,
         small_text: bool,
         string: &str,
         timer: bool,
@@ -423,7 +422,8 @@ impl Dialogue {
         } else {
             string
         };
-        system.print_to(
+        print_to_with_font(
+            font,
             draw_state.rgba(layer),
             text,
             (screen_w - w) / 2 + 3 + x,
@@ -440,13 +440,13 @@ impl Dialogue {
         &self,
         draw_state: &mut DrawState,
         layer: LayerId,
-        system: &impl ConsoleApi,
+        font: &Font,
         small_text: bool,
         string: &str,
         timer: bool,
     ) {
         self.draw_dialogue_box_with_offset(
-            draw_state, layer, system, small_text, string, timer, 0, 0, 0,
+            draw_state, layer, font, small_text, string, timer, 0, 0, 0,
         )
     }
 }
@@ -465,9 +465,9 @@ impl Debug for Dialogue {
     }
 }
 
-pub fn print_width(system: &impl ConsoleApi, string: &str, fixed: bool, small_font: bool) -> i32 {
+pub fn print_width(font: &Font, string: &str, fixed: bool, small_font: bool) -> i32 {
     crate::render::text_width(
-        system.font(),
+        font,
         string,
         PrintOptions {
             fixed,
@@ -493,7 +493,7 @@ pub fn revealed(text: &str, chars: usize) -> &str {
 /// Clamps a string to the specified width (with the TIC-80 font). Returns a string,
 /// the number of fitting words, and a bool for if the whole string fit.
 pub fn fit_string(
-    system: &mut impl ConsoleApi,
+    font: &Font,
     string: &str,
     wrap_width: usize,
     start_word: usize,
@@ -504,7 +504,7 @@ pub fn fit_string(
     let mut line_length = 0;
     for i in 1..=len {
         let taken = &take_words(string, i, start_word);
-        if print_width(system, taken, fixed, small_font) as usize > wrap_width {
+        if print_width(font, taken, fixed, small_font) as usize > wrap_width {
             break;
         } else {
             line_length = i
@@ -518,7 +518,7 @@ pub fn fit_string(
 }
 
 pub fn fit_paragraph(
-    system: &mut impl ConsoleApi,
+    font: &Font,
     string: &str,
     wrap_width: usize,
     fixed: bool,
@@ -528,7 +528,7 @@ pub fn fit_paragraph(
     let mut paragraph = String::new();
     let mut skip = 0;
     while skip < len {
-        let (string, x, all_fits) = fit_string(system, string, wrap_width, skip, fixed, small_font);
+        let (string, x, all_fits) = fit_string(font, string, wrap_width, skip, fixed, small_font);
         skip += x;
         paragraph.push_str(&string);
         if all_fits {
@@ -542,12 +542,12 @@ pub fn fit_paragraph(
 /// Wrap `string` to `wrap_width` using the caller's small-text setting (the
 /// save flag `small_text_on`, passed in now that persistence is game state).
 pub fn fit_default_paragraph(
-    system: &mut impl ConsoleApi,
+    font: &Font,
     string: &str,
     wrap_width: usize,
     small_text: bool,
 ) -> String {
-    fit_paragraph(system, string, wrap_width, false, small_text)
+    fit_paragraph(font, string, wrap_width, false, small_text)
 }
 
 #[cfg(test)]

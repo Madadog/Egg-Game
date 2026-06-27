@@ -37,6 +37,10 @@ use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::ConsoleApi;
 use crate::rand::Lcg64Xsh32;
+use crate::render::{
+    Canvas, Font, PrintOptions, print_to_centered_with_font, print_to_shadow_with_font,
+    print_to_with_font, text_width,
+};
 use crate::world::map::MapStore;
 
 /// The shared world every game state steps and draws against — the layer
@@ -73,9 +77,64 @@ pub struct Ctx<'a, S: ConsoleApi> {
     /// The loaded creature registry (preset defs by [`PresetId`](crate::world::player::PresetId)).
     /// Loaded game data like [`items`](Self::items); read-only here.
     pub presets: &'a Presets,
+    /// The loaded bitmap [`Font`], threaded in as game data rather than a console
+    /// service. The text-drawing convenience methods on `Ctx` ([`print_to`] &c.)
+    /// render with it; a headless console needs no font at all.
+    ///
+    /// [`print_to`]: Ctx::print_to
+    pub font: &'a Font,
 }
 
 impl<S: ConsoleApi> Ctx<'_, S> {
+    /// Render `text` onto `target` with the loaded [`font`](Self::font). `colour`
+    /// is the pixel value for non-transparent font pixels; the glyph atlas is read
+    /// alpha-only. To measure without drawing, use [`text_width`](Self::text_width).
+    pub fn print_to<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) {
+        print_to_with_font(self.font, target, text, x, y, colour, opts);
+    }
+
+    /// Render `text` horizontally centred on `x` (measured with the loaded font).
+    pub fn print_to_centered<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        opts: PrintOptions,
+    ) {
+        print_to_centered_with_font(self.font, target, text, x, y, colour, opts);
+    }
+
+    /// Render `text` with a one-pixel drop shadow (`shadow` at `+1/+1`, then
+    /// `colour`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn print_to_shadow<C: Canvas>(
+        &self,
+        target: &mut C,
+        text: &str,
+        x: i32,
+        y: i32,
+        colour: C::Pixel,
+        shadow: C::Pixel,
+        opts: PrintOptions,
+    ) {
+        print_to_shadow_with_font(self.font, target, text, x, y, colour, shadow, opts);
+    }
+
+    /// Measure `text`'s pixel width in the loaded font without drawing it.
+    pub fn text_width(&self, text: &str, opts: PrintOptions) -> i32 {
+        text_width(self.font, text, opts)
+    }
+
     /// A UI label by key (see [`Script::label`]).
     pub fn label(&self, key: &str) -> String {
         self.script.label(key)
@@ -142,6 +201,11 @@ pub struct EggState {
     /// [`Ctx::presets`]. Defaults to the embedded built-ins ([`Presets::builtin`]);
     /// [`load_data`](Self::load_data) re-derives it from the runtime `data.toml`.
     pub presets: Presets,
+    /// The loaded bitmap [`Font`], threaded into every state through [`Ctx::font`].
+    /// Starts blank ([`Font::blank`]); the host installs the real glyph atlas at
+    /// asset-load time via [`set_font`](Self::set_font). Game data, not a console
+    /// service — so a headless console can carry no font of its own.
+    pub font: Font,
     /// The game's RNG, threaded into every state through [`Ctx::rng`].
     pub rng: Lcg64Xsh32,
     /// The loaded UI labels + dialogue, threaded into every state through
@@ -217,6 +281,7 @@ impl EggState {
             save: &mut self.save,
             items: &self.items,
             presets: &self.presets,
+            font: &self.font,
         };
         match self.gamestate {
             GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
@@ -336,6 +401,12 @@ impl EggState {
     pub fn set_scenes(&mut self, scenes: SceneFile) {
         self.scenes = scenes;
     }
+    /// Install the loaded bitmap [`Font`] (the glyph atlas the host built from its
+    /// font image). Called once at asset-load time; text drawing reads it through
+    /// [`Ctx::font`].
+    pub fn set_font(&mut self, font: Font) {
+        self.font = font;
+    }
     /// Request switching the active language at runtime. The host's asset loop
     /// drains the request via [`take_pending_language`](Self::take_pending_language),
     /// loads the matching script file, and applies it to [`script`](Self::script).
@@ -364,6 +435,7 @@ impl Default for EggState {
             maps: MapStore::default(),
             items: GameItems::default(),
             presets: Presets::builtin(),
+            font: Font::blank(),
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
             scenes: SceneFile::default(),
@@ -595,6 +667,7 @@ mod tests {
                     save: &mut state.save,
                     items: &state.items,
                     presets: &state.presets,
+                    font: &state.font,
                 };
                 returned = menu.click(Some(index), &mut ctx, &mut walk);
             }

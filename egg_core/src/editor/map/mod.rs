@@ -23,7 +23,7 @@ use crate::platform::{
 };
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
-    Canvas, DrawParams, EdgePolicy, Flip, MapOptions, Rotate, SpriteOptions, Transform,
+    Canvas, DrawParams, EdgePolicy, Flip, Font, MapOptions, Rotate, SpriteOptions, Transform,
 };
 use crate::ui::dialogue::Dialogue;
 use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};
@@ -3524,7 +3524,7 @@ impl MapViewer {
     fn draw_warp_preview_fullscreen(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         maps: &MapStore,
     ) {
         let Some(pv) = self.warp_preview.as_ref() else { return };
@@ -3581,7 +3581,7 @@ impl MapViewer {
         layer.line(cx, cy - arm, cx, cy + arm, mark);
 
         self.build_warp_preview_ui()
-            .draw_at(0, 0, draw_state, system, LayerId::BG);
+            .draw_at(0, 0, draw_state, font, LayerId::BG);
     }
 
     /// Open the live path recorder over the current map: a puppet (player sprites)
@@ -3804,7 +3804,7 @@ impl MapViewer {
     fn draw_path_recorder_fullscreen(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         map: &MapInfo,
         maps: &MapStore,
     ) {
@@ -3835,7 +3835,7 @@ impl MapViewer {
         // The puppet ghost on top, then the chrome.
         pr.puppet.draw_params(cam).draw_to(draw_state, LayerId::BG);
         self.build_path_recorder_ui()
-            .draw_at(0, 0, draw_state, system, LayerId::BG);
+            .draw_at(0, 0, draw_state, font, LayerId::BG);
     }
 
     fn handle_panel(
@@ -5789,12 +5789,14 @@ impl MapViewer {
         &self,
         draw_state: &mut DrawState,
         system: &mut impl ConsoleApi,
+        font: &Font,
         maps: &MapStore,
         walkaround: &WalkaroundState,
     ) {
         self.draw_at(
             draw_state,
             system,
+            font,
             &walkaround.current_map,
             maps,
             walkaround.camera.pos,
@@ -5824,6 +5826,7 @@ impl MapViewer {
         &self,
         draw_state: &mut DrawState,
         system: &mut impl ConsoleApi,
+        font: &Font,
         map: &MapInfo,
         maps: &MapStore,
         camera_pos: Vec2,
@@ -5906,7 +5909,7 @@ impl MapViewer {
                 world.x + world.w - 31,
                 world.y + world.h - 8,
                 draw_state,
-                system,
+                font,
                 LayerId::BG,
             );
         }
@@ -5920,6 +5923,7 @@ impl MapViewer {
         &self,
         draw_state: &mut DrawState,
         system: &mut impl ConsoleApi,
+        font: &Font,
         map: &MapInfo,
         maps: &MapStore,
         camera_pos: Vec2,
@@ -5929,16 +5933,16 @@ impl MapViewer {
         }
         // The path recorder draws over everything.
         if self.path_recorder.is_some() {
-            self.draw_path_recorder_fullscreen(draw_state, system, map, maps);
+            self.draw_path_recorder_fullscreen(draw_state, font, map, maps);
             return;
         }
         // A fullscreen warp-destination placement session draws over everything.
         if self.warp_preview.is_some() {
-            self.draw_warp_preview_fullscreen(draw_state, system, maps);
+            self.draw_warp_preview_fullscreen(draw_state, font, maps);
             return;
         }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
-        self.draw_grid(draw_state, system, map, maps, camera_pos);
+        self.draw_grid(draw_state, system, font, map, maps, camera_pos);
         self.draw_canvas_overlay(draw_state, system, map, camera_pos);
         // Draw each panel back-to-front from the geometry `step` already solved
         // (not a fresh layout against the live canvas) — so a framebuffer resize
@@ -5972,13 +5976,13 @@ impl MapViewer {
                     rect.y - scroll,
                     body,
                     draw_state,
-                    system,
+                    font,
                     LayerId::BG,
                 );
-                ui.draw_at_clipped(rect.x, rect.y, title_clip, draw_state, system, LayerId::BG);
+                ui.draw_at_clipped(rect.x, rect.y, title_clip, draw_state, font, LayerId::BG);
                 self.draw_panel_scrollbar(rect, scroll, ui.content_height(), draw_state);
             } else {
-                ui.draw_at(rect.x, rect.y, draw_state, system, LayerId::BG);
+                ui.draw_at(rect.x, rect.y, draw_state, font, LayerId::BG);
             }
             match self.dock.panels[idx].kind {
                 PanelKind::Maps => self.draw_map_thumbnails(&ui, rect, maps, draw_state),
@@ -5987,7 +5991,7 @@ impl MapViewer {
                     self.draw_warp_preview(&ui, rect, idx, map, maps, draw_state);
                     self.draw_sprite_preview(&ui, rect, idx, map, draw_state);
                 }
-                PanelKind::Dialogue => self.draw_dialogue_preview(draw_state, system),
+                PanelKind::Dialogue => self.draw_dialogue_preview(draw_state, font),
                 _ => {}
             }
             if self.dock.is_float(idx) {
@@ -6018,11 +6022,11 @@ impl MapViewer {
         // The always-on global bar, on top of everything, at the world's corner.
         let world = self.dock.solved.world;
         self.build_global_bar()
-            .draw_at(world.x + 1, world.y + 1, draw_state, system, LayerId::BG);
+            .draw_at(world.x + 1, world.y + 1, draw_state, font, LayerId::BG);
         // A modal map dialog, centred over everything.
         if self.maps_dialog.is_active() {
             self.build_dialog()
-                .draw_at(0, 0, draw_state, system, LayerId::BG);
+                .draw_at(0, 0, draw_state, font, LayerId::BG);
         }
     }
 
@@ -6310,7 +6314,7 @@ impl MapViewer {
     /// real [`Dialogue`] renderer, fully revealed, at its usual bottom-anchored
     /// spot. Screen-anchored, so it's independent of the Dialog panel's rect; the
     /// cached `dialogue_preview` already holds the resolved message to show.
-    fn draw_dialogue_preview(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi) {
+    fn draw_dialogue_preview(&self, draw_state: &mut DrawState, font: &Font) {
         let len = self.dialogue_preview.len();
         if len == 0 {
             return;
@@ -6325,8 +6329,8 @@ impl MapViewer {
         // Wrap to the box width exactly as in-game, then draw fully revealed. The
         // box re-centres on the render target, so it lands at the bottom-middle of
         // this view and keeps its margin across resizes — faithful to gameplay.
-        let text = dialogue.fit_text(system, small, &message.to_plain_string());
-        dialogue.draw_dialogue_box(draw_state, LayerId::BG, system, small, &text, false);
+        let text = dialogue.fit_text(font, small, &message.to_plain_string());
+        dialogue.draw_dialogue_box(draw_state, LayerId::BG, font, small, &text, false);
     }
 
     fn draw_warp_preview(
@@ -7784,7 +7788,7 @@ mod tests {
         );
         // Force the drop-zone highlight branch.
         viewer.dock.solved.hot_edge = Some(Side::Right);
-        viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));
+        viewer.draw_at(&mut draw, &mut console, &Font::blank(), &map, &store, Vec2::new(0, 0));
     }
 
     /// Stepping then drawing with the Dialog panel open, an object selected and a
@@ -7832,7 +7836,7 @@ mod tests {
         );
         assert_eq!(viewer.dialogue_preview.len(), 1, "one previewed message");
 
-        viewer.draw_at(&mut draw, &mut console, &map, &store, Vec2::new(0, 0));
+        viewer.draw_at(&mut draw, &mut console, &Font::blank(), &map, &store, Vec2::new(0, 0));
     }
 
     /// Create → duplicate → rename → delete a map, checking the store and the

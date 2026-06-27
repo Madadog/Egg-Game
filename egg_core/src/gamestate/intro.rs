@@ -117,7 +117,7 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 draw_title_indexed(
                     fg,
                     &ctx.draw.indexed_sprites,
-                    ctx.system,
+                    ctx.font,
                     ctx.script,
                     ty,
                     &ctx.script.label("game_title"),
@@ -140,7 +140,7 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
         draw_title_indexed(
             fg,
             &ctx.draw.indexed_sprites,
-            ctx.system,
+            ctx.font,
             ctx.script,
             ty,
             &ctx.script.label("game_title"),

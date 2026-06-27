@@ -7,7 +7,7 @@ use crate::debug::DebugInfo;
 use crate::editor::map::MapViewer;
 use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
-use crate::render::{DrawParams, PrintOptions};
+use crate::render::{DrawParams, PrintOptions, print_to_with_font};
 use crate::ui::dialogue::Dialogue;
 use crate::world::animation::Animation;
 use crate::world::camera::Camera;
@@ -580,12 +580,12 @@ impl WalkaroundState {
         match interaction {
             Interaction::Dialogue(key) => {
                 let convo = ctx.get_dialogue(key);
-                self.dialogue.set_messages(ctx.system, ctx.save, &convo);
+                self.dialogue.set_messages(ctx.system, ctx.font, ctx.save, &convo);
             }
             Interaction::Func(x) => {
                 if let Some(key) = self.execute_interact_fn(x, ctx.system, inventory, ctx.presets) {
                     let convo = ctx.get_dialogue(key);
-                    self.dialogue.set_messages(ctx.system, ctx.save, &convo);
+                    self.dialogue.set_messages(ctx.system, ctx.font, ctx.save, &convo);
                 }
             }
             Interaction::Cutscene(name) => {
@@ -638,7 +638,7 @@ impl WalkaroundState {
         }
         if let Some(key) = warp.narration.clone() {
             let convo = ctx.get_dialogue(&key);
-            self.dialogue.set_messages(ctx.system, ctx.save, &convo);
+            self.dialogue.set_messages(ctx.system, ctx.font, ctx.save, &convo);
             self.pending_warp = Some(warp);
         } else {
             self.apply_warp(ctx, warp);
@@ -855,12 +855,12 @@ impl WalkaroundState {
             if self.dialogue.characters == 0 {
                 ctx.system.play_sound(sound::INTERACT);
             }
-            self.dialogue.tick(ctx.system, ctx.save, 1);
+            self.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
             if pressed(pad.a) {
-                self.dialogue.tick(ctx.system, ctx.save, 2);
+                self.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
             }
             if just_pressed(pad.b) {
-                self.dialogue.skip(ctx.system, ctx.save);
+                self.dialogue.skip(ctx.system, ctx.font, ctx.save);
             }
             if ctx.system.keyp(ScanCode::Q) && ctx.system.key(ScanCode::Ctrl) {
                 self.dialogue.close();
@@ -868,7 +868,7 @@ impl WalkaroundState {
         }
         if just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
-            if self.dialogue.next_text(ctx.system, ctx.save, false) {
+            if self.dialogue.next_text(ctx.system, ctx.font, ctx.save, false) {
                 interact = false;
             } else if self.dialogue.current_text.is_some() {
                 interact = false;
@@ -1223,7 +1223,7 @@ impl WalkaroundState {
             self.dialogue.draw_dialogue_box(
                 ctx.draw,
                 BG,
-                ctx.system,
+                ctx.font,
                 ctx.save.small_text_on,
                 &string,
                 true,
@@ -1254,7 +1254,7 @@ impl WalkaroundState {
                 color: 11,
                 ..Default::default()
             };
-            ctx.system.print_to(
+            print_to_with_font(ctx.font, 
                 ctx.draw.rgba(BG),
                 &format!("Player: {:#?}", self.player_ref()),
                 0,
@@ -1262,7 +1262,7 @@ impl WalkaroundState {
                 c11,
                 opts.clone(),
             );
-            ctx.system.print_to(
+            print_to_with_font(ctx.font, 
                 ctx.draw.rgba(BG),
                 &format!("Camera: {camera_pos:#?}"),
                 74,
@@ -1274,6 +1274,7 @@ impl WalkaroundState {
         editor.draw_at(
             ctx.draw,
             ctx.system,
+            ctx.font,
             &self.current_map,
             ctx.maps,
             camera_pos,
@@ -1682,6 +1683,7 @@ mod tests {
         save: SaveData,
         items: GameItems,
         presets: crate::data::eggdata::Presets,
+        font: crate::render::Font,
     }
     impl CtxParts {
         fn new() -> Self {
@@ -1694,6 +1696,7 @@ mod tests {
                 save: SaveData::default(),
                 items: GameItems::default(),
                 presets: crate::data::eggdata::Presets::builtin(),
+                font: crate::render::Font::blank(),
             }
         }
     }
@@ -1716,6 +1719,7 @@ mod tests {
             save: &mut parts.save,
             items: &parts.items,
             presets: &parts.presets,
+            font: &parts.font,
         };
         f(&mut ctx)
     }

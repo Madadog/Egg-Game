@@ -83,13 +83,14 @@ pub fn text_width(font: &Font, text: &str, opts: PrintOptions) -> i32 {
     layout(font, text, 0, 0, &opts, |_, _, _| {})
 }
 
-/// Render `text` onto `target` using the supplied `font`. Free-function
-/// variant of [`ConsoleHelper::print_to`] for callers that already hold a
-/// `&Font` reference (e.g. when split-borrowing the console's font and
-/// output_image at the same time). To measure text without drawing it, use
-/// [`text_width`].
+/// Render `text` onto `target` using the supplied `font`. The canonical text
+/// renderer: callers hold a `&Font` (game data, e.g. [`Ctx::font`] or
+/// [`EggState::font`]) and draw into any [`Canvas`], so the font and the target
+/// surface can be split-borrowed at the same time. To measure text without
+/// drawing it, use [`text_width`].
 ///
-/// [`ConsoleHelper::print_to`]: crate::platform::ConsoleHelper::print_to
+/// [`Ctx::font`]: crate::Ctx::font
+/// [`EggState::font`]: crate::EggState::font
 pub fn print_to_with_font<C: Canvas>(
     font: &Font,
     target: &mut C,
@@ -102,6 +103,40 @@ pub fn print_to_with_font<C: Canvas>(
     layout(font, text, x, y, &opts, |glyph, dx, dy| {
         draw_letter_to(font, target, glyph, dx, dy, colour);
     });
+}
+
+/// Render `text` horizontally centred on `x` with `font`. Free-function variant
+/// of [`print_to_with_font`] that measures with [`text_width`] (no throwaway
+/// off-screen draw) and then prints at `x - width / 2`.
+pub fn print_to_centered_with_font<C: Canvas>(
+    font: &Font,
+    target: &mut C,
+    text: &str,
+    x: i32,
+    y: i32,
+    colour: C::Pixel,
+    opts: PrintOptions,
+) {
+    let width = text_width(font, text, opts.clone());
+    print_to_with_font(font, target, text, x - width / 2, y, colour, opts);
+}
+
+/// Render `text` with a one-pixel drop shadow using `font`: `shadow` offset by
+/// `(+1, +1)` first, then `colour` at `(x, y)`. Free-function variant for callers
+/// that already hold a `&Font` reference.
+#[allow(clippy::too_many_arguments)]
+pub fn print_to_shadow_with_font<C: Canvas>(
+    font: &Font,
+    target: &mut C,
+    text: &str,
+    x: i32,
+    y: i32,
+    colour: C::Pixel,
+    shadow: C::Pixel,
+    opts: PrintOptions,
+) {
+    print_to_with_font(font, target, text, x + 1, y + 1, shadow, opts.clone());
+    print_to_with_font(font, target, text, x, y, colour, opts);
 }
 
 /// Walk `text` one glyph at a time, advancing the pen and tracking the maximum

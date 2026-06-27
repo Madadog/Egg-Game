@@ -488,7 +488,9 @@ pub fn update_views(
                 views.views[i].output.height() as i32,
             );
             let g = &mut *game;
-            views.views[i].text_editor.step(&mut g.system, fb_w, fb_h);
+            views.views[i]
+                .text_editor
+                .step(&mut g.system, &g.state.font, fb_w, fb_h);
             if let Some(source) = views.views[i].text_editor.pending_script.take() {
                 match egg_core::data::script::eggtext::parse(&source) {
                     Ok(file) => g.state.script.set_base(file),
@@ -558,6 +560,7 @@ pub fn update_views(
                         save: &mut g.state.save,
                         items: &g.state.items,
                         presets: &g.state.presets,
+                        font: &g.state.font,
                     };
                     g.state.walkaround.load_map_by_name(&mut ctx, &name);
                 }
@@ -652,6 +655,7 @@ pub fn update_views(
                     save: &mut g.state.save,
                     items: &g.state.items,
                     presets: &g.state.presets,
+                    font: &g.state.font,
                 };
                 g.state.walkaround.draw_world(
                     &mut ctx,
@@ -660,7 +664,7 @@ pub fn update_views(
                     &g.state.debug_info,
                 );
             }
-            ViewMode::Text => view.text_editor.draw(&mut view.draw_state, &g.system),
+            ViewMode::Text => view.text_editor.draw(&mut view.draw_state, &g.state.font),
         }
         egg_core::gamestate::walkaround::WalkaroundState::composite_into(
             &mut view.draw_state,

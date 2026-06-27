@@ -1,5 +1,6 @@
 use crate::render::PrintOptions;
 use crate::render::SpriteOptions;
+use crate::render::{Font, print_to_centered_with_font, print_to_with_font};
 
 use crate::Ctx;
 use crate::data::save::SaveData;
@@ -301,7 +302,7 @@ impl MenuState {
     fn hover(
         &self,
         draw_state: &mut crate::draw_state::DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         script: &Script,
         small_text: bool,
         index: usize,
@@ -320,7 +321,8 @@ impl MenuState {
             draw_state
                 .rgba(BG)
                 .fill_rect((w - 120) / 2, 10, 120, 11, c2);
-            system.print_to_centered(
+            print_to_centered_with_font(
+                font,
                 draw_state.rgba(BG),
                 &lose_data,
                 w / 2,
@@ -350,7 +352,7 @@ impl MenuState {
             let d = (ctx.draw.size().1 - crate::platform::HEIGHT) / 2;
             draw_title_rgba(
                 ctx.draw,
-                ctx.system,
+                ctx.font,
                 ctx.script,
                 53 + d,
                 &title,
@@ -358,10 +360,10 @@ impl MenuState {
             );
         }
 
-        self.build_ui(&*ctx).draw(ctx.draw, ctx.system, BG);
+        self.build_ui(&*ctx).draw(ctx.draw, ctx.font, BG);
         self.hover(
             ctx.draw,
-            ctx.system,
+            ctx.font,
             ctx.script,
             ctx.save.small_text_on,
             self.index,
@@ -444,7 +446,7 @@ impl MenuEntry {
 #[allow(clippy::too_many_arguments)]
 fn draw_title_text<C: crate::render::Canvas>(
     canvas: &mut C,
-    system: &impl ConsoleApi,
+    font: &Font,
     script: &Script,
     y: i32,
     game_title: &str,
@@ -459,9 +461,10 @@ fn draw_title_text<C: crate::render::Canvas>(
         scale: 1,
         ..Default::default()
     };
-    let title_width = system.text_width(game_title, opts.clone());
-    system.print_to_centered(canvas, game_title, cx, y + 23, title_colour, opts);
-    system.print_to(
+    let title_width = crate::render::text_width(font, game_title, opts.clone());
+    print_to_centered_with_font(font, canvas, game_title, cx, y + 23, title_colour, opts);
+    print_to_with_font(
+        font,
         canvas,
         &script.label("game_title_blurb"),
         3,
@@ -491,13 +494,13 @@ fn draw_title_text<C: crate::render::Canvas>(
 pub fn draw_title_indexed(
     canvas: &mut crate::render::image::IndexedImage,
     indexed_sprites: &crate::render::image::IndexedImage,
-    system: &impl ConsoleApi,
+    font: &Font,
     script: &Script,
     y: i32,
     game_title: &str,
     elapsed_frames: i32,
 ) {
-    draw_title_text(canvas, system, script, y, game_title, 2u8, 14u8);
+    draw_title_text(canvas, font, script, y, game_title, 2u8, 14u8);
     let egg_x = canvas.width() as i32 / 2 - 8;
     canvas.spr(
         indexed_sprites,
@@ -517,7 +520,7 @@ pub fn draw_title_indexed(
 /// RGBA-canvas variant of the title screen, used by the migrated main menu.
 pub fn draw_title_rgba(
     draw_state: &mut crate::draw_state::DrawState,
-    system: &impl ConsoleApi,
+    font: &Font,
     script: &Script,
     y: i32,
     game_title: &str,
@@ -526,7 +529,7 @@ pub fn draw_title_rgba(
     use crate::draw_state::{LayerId::*, PALETTE_MAP_IDENTITY};
     let c2 = draw_state.colour(2);
     let c14 = draw_state.colour(14);
-    draw_title_text(draw_state.rgba(BG), system, script, y, game_title, c2, c14);
+    draw_title_text(draw_state.rgba(BG), font, script, y, game_title, c2, c14);
     let egg_x = draw_state.size().0 / 2 - 8;
     draw_state.spr(
         BG,

@@ -2,7 +2,10 @@ use crate::Ctx;
 use crate::draw_state::{LayerId, PALETTE_MAP_IDENTITY};
 use crate::platform::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
 use crate::render::image::{Rgba, RgbaImage};
-use crate::render::{Canvas, EdgePolicy, PrintOptions, SpriteOptions, Transform};
+use crate::render::{
+    Canvas, EdgePolicy, PrintOptions, SpriteOptions, Transform, print_to_centered_with_font,
+    print_to_with_font,
+};
 
 use crate::gamestate::GameMode;
 
@@ -68,13 +71,11 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
                     }
                 }
             }
-            ctx.system
-                .print_to(canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
+            print_to_with_font(ctx.font, canvas, "RAW DATA:", 0, 0, white, print_opts.clone());
         }
         if pressed(pad.a) {
             for i in 0..255i32 {
-                ctx.system
-                    .print_to(canvas, "PALETTE:", 0, 0, white, print_opts.clone());
+                print_to_with_font(ctx.font, canvas, "PALETTE:", 0, 0, white, print_opts.clone());
                 let px = 10 + i % 32;
                 let py = 10 + i / 32;
                 if px >= 0
@@ -89,7 +90,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
         }
         if pressed(pad.x) {
             canvas.stroke_rect(0, 0, 8, 8, white);
-            ctx.system.print_to(
+            print_to_with_font(ctx.font, 
                 canvas,
                 &format!("Sprite ID = {indice}"),
                 0,
@@ -105,7 +106,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
         let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
         let flip_text = if grid_index.1 == 0 { 15 } else { 0 };
         canvas.stroke_rect(grid_x, grid_y, 8, 8, white);
-        ctx.system.print_to_centered(
+        print_to_centered_with_font(ctx.font, 
             canvas,
             &format!("ID:{mouse_indice}"),
             grid_x + 4,

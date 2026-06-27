@@ -15,8 +15,9 @@
 //! keeps the existing per-frame `step`/`draw` split unchanged — both passes just
 //! rebuild the same layout.
 //!
-//! Leaf sizes are supplied up front (measure text with [`ConsoleHelper::text_width`],
-//! sprites are `w*8*scale` px), so Taffy's measure-closure is never needed.
+//! Leaf sizes are supplied up front (measure text with
+//! [`text_width`](crate::render::text_width), sprites are `w*8*scale` px), so
+//! Taffy's measure-closure is never needed.
 
 use taffy::geometry::Rect as TaffyRect;
 use taffy::prelude::{
@@ -26,8 +27,9 @@ use taffy::prelude::{
 
 use crate::draw_state::{DrawState, LayerId, PALETTE_MAP_IDENTITY};
 use crate::geometry::Vec2;
-use crate::platform::{ConsoleApi, ConsoleHelper};
-use crate::render::{Canvas, PrintOptions, SpriteOptions};
+use crate::render::{
+    Canvas, Font, PrintOptions, SpriteOptions, print_to_centered_with_font, print_to_with_font,
+};
 
 /// Re-exported so consumers can write `Style { .. }` literals (with the
 /// [`row`]/[`column`]/[`size`]/[`pad`] helpers) and node-building helpers
@@ -266,7 +268,7 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
 
     /// Compute layout from `root` and resolve every node to an absolute [`Rect`].
     /// `avail` is the screen size (px) the root lays out within — pass the live
-    /// [`ConsoleApi::width`]/[`height`](crate::platform::ConsoleApi::height) so the
+    /// [`width`](crate::platform::ConsoleApi::width)/[`height`](crate::platform::ConsoleApi::height) so the
     /// UI fills the framebuffer at any resolution.
     pub fn finish(mut self, root: NodeId, avail: (f32, f32)) -> Ui<K> {
         self.tree
@@ -544,8 +546,8 @@ impl<K: Copy + PartialEq> Ui<K> {
     }
 
     /// Render every node's decoration then content onto `layer`, back-to-front.
-    pub fn draw(&self, draw_state: &mut DrawState, system: &mut impl ConsoleApi, layer: LayerId) {
-        self.draw_at(0, 0, draw_state, system, layer);
+    pub fn draw(&self, draw_state: &mut DrawState, font: &Font, layer: LayerId) {
+        self.draw_at(0, 0, draw_state, font, layer);
     }
 
     /// Like [`draw`](Self::draw) but with the whole tree translated by `(dx, dy)`
@@ -557,10 +559,10 @@ impl<K: Copy + PartialEq> Ui<K> {
         dx: i16,
         dy: i16,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         layer: LayerId,
     ) {
-        self.draw_clipped(dx, dy, None, draw_state, system, layer);
+        self.draw_clipped(dx, dy, None, draw_state, font, layer);
     }
 
     /// Like [`draw_at`](Self::draw_at) but pixel-clipped to `clip` (screen space):
@@ -575,10 +577,10 @@ impl<K: Copy + PartialEq> Ui<K> {
         dy: i16,
         clip: Rect,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         layer: LayerId,
     ) {
-        self.draw_clipped(dx, dy, Some(clip), draw_state, system, layer);
+        self.draw_clipped(dx, dy, Some(clip), draw_state, font, layer);
     }
 
     fn draw_clipped(
@@ -587,7 +589,7 @@ impl<K: Copy + PartialEq> Ui<K> {
         dy: i16,
         clip: Option<Rect>,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        font: &Font,
         layer: LayerId,
     ) {
         for r in &self.resolved {
@@ -646,7 +648,8 @@ impl<K: Copy + PartialEq> Ui<K> {
                     let ty = i32::from(rect.y) + 1;
                     let canvas = draw_state.rgba(layer);
                     if *center {
-                        system.print_to_centered(
+                        print_to_centered_with_font(
+                            font,
                             canvas,
                             text,
                             rect.center_x() as i32,
@@ -655,7 +658,7 @@ impl<K: Copy + PartialEq> Ui<K> {
                             opts,
                         );
                     } else {
-                        system.print_to(canvas, text, rect.x as i32, ty, colour, opts);
+                        print_to_with_font(font, canvas, text, rect.x as i32, ty, colour, opts);
                     }
                 }
                 Content::Sprite {

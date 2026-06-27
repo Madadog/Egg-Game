@@ -3,6 +3,7 @@ use crate::{
     data::eggdata::GameItems,
     data::sound,
     platform::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
+    render::{print_to_centered_with_font, print_to_with_font},
     ui::dialogue::Dialogue,
     ui::layout::{NodeId, Ui, UiBuilder},
 };
@@ -303,7 +304,7 @@ impl InventoryUi {
         ];
         let label_w = labels
             .iter()
-            .map(|s| ctx.system.text_width(s, body_opts.clone()))
+            .map(|s| ctx.text_width(s, body_opts.clone()))
             .max()
             .unwrap_or(0);
         let label_nodes: Vec<NodeId> = labels
@@ -373,7 +374,7 @@ impl InventoryUi {
                 } else {
                     "Back to world"
                 };
-                let hint_w = ctx.system.text_width(hint, body_opts.clone());
+                let hint_w = ctx.text_width(hint, body_opts.clone());
                 let text_node = b.text(hint).small(small).size(hint_w as f32, 8.0).id();
                 let hint_box = b
                     .boxed([text_node])
@@ -421,7 +422,7 @@ impl InventoryUi {
         let (cw, ch) = ctx.draw.size();
         let cx = cw / 2;
         let title_y = (ch - PANEL_H as i32) / 2 - 7;
-        ctx.system.print_to_centered(
+        print_to_centered_with_font(ctx.font, 
             ctx.draw.rgba(FG),
             &inventory_title,
             cx + 1,
@@ -429,7 +430,7 @@ impl InventoryUi {
             black,
             body_opts.clone(),
         );
-        ctx.system.print_to_centered(
+        print_to_centered_with_font(ctx.font, 
             ctx.draw.rgba(FG),
             &inventory_title,
             cx,
@@ -440,7 +441,7 @@ impl InventoryUi {
 
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(&*ctx);
-        ui.draw(ctx.draw, ctx.system, FG);
+        ui.draw(ctx.draw, ctx.font, FG);
 
         // Unlock emblems: each shell whose story flag is set shows its icon
         // (sprite `596 + slot index`) centred on its 16×16 egg. `rect` resolves
@@ -509,7 +510,7 @@ impl InventoryUi {
                     let nx = (cw - self.dialogue.width as i32) / 2 - 13;
                     let ny = ch - 38;
                     ctx.draw.rgba(FG).outlined_rect(nx, ny, 70, 9, c2, c3);
-                    ctx.system.print_to(
+                    print_to_with_font(ctx.font, 
                         ctx.draw.rgba(FG),
                         &name,
                         nx + 2,
@@ -545,9 +546,9 @@ impl InventoryUi {
                 .and_then(|k| ctx.items.get(k).map(|d| (d.sprite, k.to_string())));
             if let Some((sprite, key)) = resolved {
                 let desc = ctx.item_desc(&key);
-                let string = self.dialogue.fit_text(ctx.system, small, &desc);
+                let string = self.dialogue.fit_text(ctx.font, small, &desc);
                 self.dialogue.draw_dialogue_portrait(
-                    ctx.draw, FG, ctx.system, small, &string, false, sprite, 3, 1, 1,
+                    ctx.draw, FG, ctx.font, small, &string, false, sprite, 3, 1, 1,
                 );
             }
         }
