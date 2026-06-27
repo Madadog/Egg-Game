@@ -22,10 +22,12 @@ use crate::platform::{ConsoleApi, ConsoleHelper};
 
 pub use self::intro::IntroAnimation;
 pub use self::menu::MenuState;
+pub use self::scrubber::CutsceneScrubber;
 pub use self::sprite_test::SpriteTest;
 
 mod intro;
 mod menu;
+pub mod scrubber;
 mod sprite_test;
 pub mod walkaround;
 

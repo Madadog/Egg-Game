@@ -832,6 +832,47 @@ mod tests {
         assert_eq!(arrived.x, 30, "arrived exactly at the budget");
     }
 
+    /// The scrubber's re-sim core: a scene launched onto the world's own stack
+    /// measures to its exact frame length, seeks to any frame, and does so
+    /// deterministically — all on clones, leaving the live world untouched.
+    #[test]
+    fn scrubber_resim_measures_and_seeks_deterministically() {
+        let def = scene::parse("#cutscene t\n    move\n        player: walk 30 0 in 10")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        h.walk.player().pos = Vec2::new(0, 0);
+        // What `open_scrubber` does: launch onto the world's own cutscene stack.
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.walk.cutscene.push(cs);
+
+        // `walk … in 10` runs exactly 10 frames then finishes.
+        let total = h.frame(|ctx, w| w.measure_cutscene(ctx));
+        assert_eq!(total, 10, "10-frame move measured");
+
+        // Seek midway and to the end (a fresh re-sim from the snapshot each time).
+        let mid = h.frame(|ctx, w| w.sim_cutscene_to(5, ctx));
+        let end = h.frame(|ctx, w| w.sim_cutscene_to(total, ctx));
+        assert!(
+            (1..30).contains(&mid.player_ref().pos.x),
+            "partway at frame 5: {}",
+            mid.player_ref().pos.x
+        );
+        assert_eq!(end.player_ref().pos.x, 30, "arrived at the end");
+
+        // Determinism: re-seeking the same frame yields the same world.
+        let mid2 = h.frame(|ctx, w| w.sim_cutscene_to(5, ctx));
+        assert_eq!(
+            mid.player_ref().pos,
+            mid2.player_ref().pos,
+            "re-sim is deterministic"
+        );
+        // Re-sim never mutated the live world — its stack is still armed.
+        assert_eq!(h.walk.cutscene.len(), 1, "live stack untouched by re-sim");
+    }
+
     /// `spawn` adds a transient actor; finishing the cutscene removes it.
     #[test]
     fn spawn_is_transient() {

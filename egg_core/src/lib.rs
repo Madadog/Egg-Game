@@ -34,7 +34,7 @@ use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
 use crate::draw_state::DrawState;
 use crate::gamestate::walkaround::WalkaroundState;
-use crate::gamestate::{GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
+use crate::gamestate::{CutsceneScrubber, GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::ConsoleApi;
 use crate::rand::Lcg64Xsh32;
 use crate::render::{
@@ -236,6 +236,10 @@ pub struct EggState {
     /// The last [`SaveData`] flushed to storage. [`flush_save`](Self::flush_save)
     /// diffs the live save against this so it only writes when something changed.
     last_flushed_save: SaveData,
+    /// The open cutscene scrubber, if any (see [`CutsceneScrubber`]). A fullscreen
+    /// editor modal: while it's `Some`, [`step_mode`](Self::step_mode) drives + draws
+    /// it and skips the normal sim. Opened via the editor's `pending_scrub` request.
+    pub scrubber: Option<CutsceneScrubber>,
 }
 impl EggState {
     pub fn run(&mut self, system: &mut impl platform::ConsoleApi) {
@@ -271,36 +275,50 @@ impl EggState {
     /// Each mode's state is a field on `self`; the four menu variants all drive
     /// the shared [`menu`](Self::menu).
     fn step_mode(&mut self, system: &mut impl platform::ConsoleApi) -> Option<GameMode> {
-        let mut ctx = Ctx {
-            draw: &mut self.draw_state,
-            system,
-            maps: &mut self.maps,
-            rng: &mut self.rng,
-            script: &self.script,
-            scenes: &self.scenes,
-            save: &mut self.save,
-            items: &self.items,
-            presets: &self.presets,
-            font: &self.font,
-        };
-        match self.gamestate {
-            GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
-            GameMode::Walkaround => {
-                let next = self.walkaround.step(&mut ctx);
-                self.walkaround.draw(&mut ctx, &self.debug_info);
-                next
-            }
-            GameMode::Animation => self.intro.step(&mut ctx),
-            GameMode::MainMenu
-            | GameMode::InventoryOptions
-            | GameMode::DebugMenu
-            | GameMode::MapSelect => {
-                let next = self.menu.step_main_menu(&mut ctx, &mut self.walkaround);
-                self.menu.draw_main_menu(&mut ctx, self.time);
-                next
-            }
-            GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
+        // The cutscene scrubber is a fullscreen modal over everything: drive +
+        // draw it and skip the normal sim while a session is open.
+        if self.scrubber.is_some() {
+            self.drive_scrubber(system);
+            return None;
         }
+        let transition = {
+            let mut ctx = Ctx {
+                draw: &mut self.draw_state,
+                system,
+                maps: &mut self.maps,
+                rng: &mut self.rng,
+                script: &self.script,
+                scenes: &self.scenes,
+                save: &mut self.save,
+                items: &self.items,
+                presets: &self.presets,
+                font: &self.font,
+            };
+            match self.gamestate {
+                GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
+                GameMode::Walkaround => {
+                    let next = self.walkaround.step(&mut ctx);
+                    self.walkaround.draw(&mut ctx, &self.debug_info);
+                    next
+                }
+                GameMode::Animation => self.intro.step(&mut ctx),
+                GameMode::MainMenu
+                | GameMode::InventoryOptions
+                | GameMode::DebugMenu
+                | GameMode::MapSelect => {
+                    let next = self.menu.step_main_menu(&mut ctx, &mut self.walkaround);
+                    self.menu.draw_main_menu(&mut ctx, self.time);
+                    next
+                }
+                GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
+            }
+        };
+        // The map editor can request a scrubber (e.g. play this map's recorded
+        // path); open it here, where the full Ctx + EggState are in reach.
+        if let Some(name) = self.walkaround.map_viewer.pending_scrub.take() {
+            self.open_scrubber(&name);
+        }
+        transition
     }
 
     /// Switch to `mode` and (re)initialise its state. Transient modes reset on
@@ -444,6 +462,7 @@ impl Default for EggState {
             save_loaded: false,
             data_loaded: false,
             last_flushed_save: SaveData::default(),
+            scrubber: None,
         }
     }
 }

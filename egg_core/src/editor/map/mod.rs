@@ -828,6 +828,10 @@ pub struct MapViewer {
     /// the host to re-parse + `set_scenes` (live-reload). Mirrors the text
     /// editor's `pending_scene`; the editor writes the file itself.
     pub pending_scene: Option<String>,
+    /// A cutscene name the editor wants replayed in the scrubber (set by the
+    /// `P` shortcut). The engine drains it in `step_mode` — where the cutscene
+    /// registry lives — and opens the scrubber. `None` when nothing's requested.
+    pub pending_scrub: Option<String>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -2925,6 +2929,16 @@ impl MapViewer {
         {
             self.dock.recompute(screen);
             self.open_path_recorder(map, camera_pos);
+            return;
+        }
+        // `P` replays this map's recorded path (`<map>_path`) in the scrubber.
+        // The engine owns the cutscene registry, so we just park a request; it
+        // opens the scrubber after this step (same guards as `R`).
+        if self.editing.is_none()
+            && !self.maps_dialog.is_active()
+            && system.keyp(ScanCode::P)
+        {
+            self.pending_scrub = Some(format!("{}_path", map.source));
             return;
         }
 

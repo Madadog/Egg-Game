@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::Ctx;
 use crate::data::save::SaveData;
+use crate::data::scene::CutsceneDef;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::editor::map::MapViewer;
@@ -473,6 +474,53 @@ impl WalkaroundState {
             ctx.system.height() as i16,
         );
         true
+    }
+
+    /// Frame cap for the scrubber's re-simulation, so a scene that never
+    /// terminates (e.g. a required move blocked forever) can't hang the editor.
+    /// ~27 min at 60fps — far beyond any authored cutscene.
+    pub(crate) const SCRUB_MAX_FRAMES: usize = 100_000;
+
+    /// Re-simulate this world's cutscene stack to completion on a CLONE,
+    /// returning the number of frames it runs (one per [`play_cutscene`] step).
+    /// The clone leaves `self` untouched, so the scrubber can measure a scene's
+    /// length and then seek into it freely. Capped at [`SCRUB_MAX_FRAMES`](Self::SCRUB_MAX_FRAMES)
+    /// so a scene that never terminates can't hang the editor.
+    pub(crate) fn measure_cutscene<S: ConsoleApi>(&self, ctx: &mut Ctx<S>) -> usize {
+        let mut world = self.clone();
+        let mut frames = 0;
+        while world.play_cutscene(ctx) {
+            frames += 1;
+            if frames >= Self::SCRUB_MAX_FRAMES {
+                break;
+            }
+        }
+        frames
+    }
+
+    /// Re-simulate `frame` steps on a CLONE (clamped by the scene ending) and
+    /// return the world at that frame — what the scrubber draws as its ghost.
+    /// A pure re-sim from the post-launch snapshot, so any playhead position is
+    /// reproducible; this is the determinism the scrubber relies on (the AI/RNG
+    /// loop is skipped while a cutscene plays, so there's nothing nondeterministic
+    /// to diverge).
+    pub(crate) fn sim_cutscene_to<S: ConsoleApi>(&self, frame: usize, ctx: &mut Ctx<S>) -> Self {
+        let mut world = self.clone();
+        for _ in 0..frame.min(Self::SCRUB_MAX_FRAMES) {
+            if !world.play_cutscene(ctx) {
+                break;
+            }
+        }
+        world
+    }
+
+    /// Launch `def` and arm it on this world's cutscene stack — the scrubber's
+    /// snapshot setup. After this, [`play_cutscene`](Self::play_cutscene) (hence
+    /// [`measure_cutscene`](Self::measure_cutscene)/[`sim_cutscene_to`](Self::sim_cutscene_to))
+    /// drives the scene. Keeps [`Cutscene`] construction inside this module.
+    pub(crate) fn arm_cutscene<S: ConsoleApi>(&mut self, def: &CutsceneDef, ctx: &mut Ctx<S>) {
+        let cs = Cutscene::launch(def, ctx, self);
+        self.cutscene.push(cs);
     }
 
     /// Adds a shell and returns its index
