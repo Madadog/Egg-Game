@@ -194,7 +194,9 @@ impl InventoryUi {
     pub fn new() -> Self {
         Self {
             inventory: Inventory::new(),
-            state: InventoryUiState::PageSelect(0),
+            // Start closed — the bag opens on the bag button (see `open`), not on
+            // walkaround entry.
+            state: InventoryUiState::Close,
             dialogue: Dialogue::default(),
         }
     }
