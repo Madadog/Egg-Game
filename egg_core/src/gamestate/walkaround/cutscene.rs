@@ -210,15 +210,16 @@ impl CutsceneItem {
                 *budget = budget.saturating_sub(1);
                 let Vec2 { x, y } = walkaround.player().pos.towards(target);
                 let (dx, dy) = walkaround.player().apply_walk_direction(x, y);
-                let mut trail = walkaround.companion_trail.clone();
 
-                walkaround.player().apply_motion(dx, dy, Some(&mut trail));
+                walkaround.player().apply_motion(dx, dy);
 
                 if self.is_done(walkaround) {
-                    walkaround.player().apply_motion(0, 0, Some(&mut trail));
+                    walkaround.player().apply_motion(0, 0);
                 }
 
-                walkaround.companion_trail = trail;
+                // The player pushed its own breadcrumb; drag its companions along
+                // so the dog follows through the cutscene too.
+                walkaround.player().update_companions();
             }
             CutsceneItem::WalkEntity(vec2, i) => {
                 let shell = if let Some(entity) = walkaround.entities.get_mut(*i) {
@@ -231,11 +232,12 @@ impl CutsceneItem {
                 let Vec2 { x, y } = shell.pos.towards(vec2);
                 let (dx, dy) = shell.apply_walk_direction(x, y);
 
-                shell.apply_motion(dx, dy, Some(&mut walkaround.companion_trail));
+                shell.apply_motion(dx, dy);
 
                 if shell.pos == *vec2 {
-                    shell.apply_motion(0, 0, Some(&mut walkaround.companion_trail));
+                    shell.apply_motion(0, 0);
                 }
+                shell.update_companions();
             }
             CutsceneItem::MovePlayer(pos) => {
                 let Vec2 { x, y } = walkaround.player().pos.towards(pos);

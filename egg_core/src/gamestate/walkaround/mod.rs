@@ -5,7 +5,7 @@ use crate::data::save::SaveData;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::editor::map::MapViewer;
-use crate::geometry::{Collider, Vec2};
+use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
 use crate::render::{DrawParams, PrintOptions};
 use crate::ui::dialogue::Dialogue;
@@ -14,7 +14,7 @@ use crate::world::camera::Camera;
 use crate::world::interact::{InteractFn, Interaction};
 use crate::world::map::{Axis, MapInfo, ObjectEffect, map_by_name};
 use crate::world::particles::{Particle, ParticleDraw, ParticleList};
-use crate::world::player::{Companion, CompanionList, CompanionTrail, MoveMode, PresetId, Shell};
+use crate::world::player::{EntityId, MoveMode, PresetId, Shell};
 use crate::gamestate::GameMode;
 use log::info;
 
@@ -35,8 +35,6 @@ pub struct WalkaroundState {
     /// them instead of bleeding into the next one. In-memory only for now — a
     /// later pass persists it (see the per-map save design).
     map_entities: BTreeMap<String, Vec<Shell>>,
-    pub companion_trail: CompanionTrail<16>,
-    pub companion_list: CompanionList,
     pub map_animations: Vec<Animation>,
     pub camera: Camera,
     pub current_map: MapInfo,
@@ -79,8 +77,6 @@ impl WalkaroundState {
                 ..Default::default()
             }],
             map_entities: BTreeMap::new(),
-            companion_trail: CompanionTrail::new(),
-            companion_list: CompanionList::new(),
             map_animations: Vec::new(),
             camera: Camera::default(),
             current_map: MapInfo::default(),
@@ -105,6 +101,34 @@ impl WalkaroundState {
     /// Access the player entity immutably
     pub fn player_ref(&self) -> &Shell {
         &self.entities[0]
+    }
+
+    /// Every shell in the live world — top-level entities **and** their nested
+    /// companions (depth-1) — in a stable order (each leader immediately followed
+    /// by its companions). The single seam the update loop, draw, save and
+    /// [`resolve`](Self::resolve) walk, so "every entity" never silently means
+    /// "top-level only".
+    pub fn all_shells(&self) -> impl Iterator<Item = &Shell> {
+        self.entities
+            .iter()
+            .flat_map(|leader| std::iter::once(leader).chain(leader.companions.iter()))
+    }
+
+    /// Resolve an [`EntityId`] against the live entity tree: the player is
+    /// `entities[0]`, a companion is `entities[0].companions[slot]`, and an
+    /// [`EntityId::Id`] is the first shell whose [`Shell::id`] matches. `None`
+    /// when nothing matches (an absent creature / out-of-range slot) — callers
+    /// (cutscene chains) log and skip.
+    pub fn resolve(&self, id: &EntityId) -> Option<&Shell> {
+        match id {
+            EntityId::Player => self.entities.first(),
+            EntityId::PlayerCompanion(slot) => {
+                self.entities.first().and_then(|p| p.companions.get(*slot))
+            }
+            EntityId::Id(name) => self
+                .all_shells()
+                .find(|s| s.id.as_deref() == Some(name.as_str())),
+        }
     }
 
     /// Frame the camera and background from `map_set`: the camera bounds (an
@@ -230,17 +254,26 @@ impl WalkaroundState {
         interact: &InteractFn,
         system: &mut impl ConsoleApi,
         inventory: &mut Inventory,
+        presets: &crate::data::eggdata::Presets,
     ) -> Option<&'static str> {
         match interact {
             InteractFn::ToggleDog => {
-                self.companion_trail
-                    .fill(self.player_ref().pos, self.player_ref().dir);
-                if self.companion_list.has(Companion::Dog) {
-                    self.companion_list.remove(Companion::Dog);
+                let (ppos, pdir) = (self.player_ref().pos, self.player_ref().dir);
+                // Seed the player's trail at its own position so a freshly
+                // summoned dog snaps to it rather than the stale tail.
+                self.player().trail.fill(ppos, pdir);
+                let dog = PresetId::dog();
+                if self.player_ref().companions.iter().any(|c| c.preset == dog) {
+                    self.player().companions.retain(|c| c.preset != dog);
                     system.play_sound(sound::ALERT_DOWN);
                     Some("dog_relinquished")
                 } else {
-                    self.companion_list.add(Companion::Dog);
+                    let slot = self.player_ref().companions.len();
+                    let mut shell = presets.spawn(&dog).unwrap_or_default();
+                    shell.move_mode = MoveMode::Companion { slot };
+                    shell.interaction = Some(crate::world::player::pet_marker());
+                    shell.pos = ppos;
+                    self.player().companions.push(shell);
                     system.play_sound(sound::EQUIP_OBTAINED);
                     Some("dog_obtained")
                 }
@@ -333,11 +366,12 @@ impl WalkaroundState {
     /// at the end of the frame — this just updates the in-memory copy. Saves
     /// carry the map *name* only now (every map is named).
     fn save(&self, new_map: &str, save: &mut SaveData) {
-        let pos = self.player_ref().pos;
         save.save_count += 1;
         save.current_map_name = Some(new_map.to_string());
-        save.player_x = pos.x;
-        save.player_y = pos.y;
+        // The player is a Shell like any other entity — persist it whole, so its
+        // position and its nested companions (the dog) ride along. Its derived
+        // sprites/trail/interaction are serde-skipped and rebuilt on load.
+        save.player = Some(self.player_ref().clone());
         // Snapshot per-map creatures: the already-parked maps, plus the map the
         // player is on now — its live non-player `entities[1..]` under its own
         // name. Keyed by `current_map.source` (where those entities *are*), not
@@ -376,8 +410,26 @@ impl WalkaroundState {
             .current_map_name
             .unwrap_or_else(|| "bedroom".to_string());
         self.load_map_by_name(ctx, &name);
-        self.player().pos.x = save.player_x;
-        self.player().pos.y = save.player_y;
+        // Restore the whole player entity. A modern save carries it (position +
+        // nested companions + state); an older save only had a position, so place
+        // the freshly-built default player there instead. Either way rebuild the
+        // derived sprites, re-derive the dog's serde-skipped pet interaction, and
+        // seed the trail so companions regroup on the player next step.
+        let (legacy_x, legacy_y) = (save.player_x, save.player_y);
+        if let Some(mut player) = save.player {
+            player.reattach_sprites(ctx.presets);
+            let dog = PresetId::dog();
+            for companion in &mut player.companions {
+                if companion.preset == dog {
+                    companion.interaction = Some(crate::world::player::pet_marker());
+                }
+            }
+            self.entities[0] = player;
+        } else {
+            self.player().pos = Vec2::new(legacy_x, legacy_y);
+        }
+        let (ppos, pdir) = (self.player_ref().pos, self.player_ref().dir);
+        self.player().trail.fill(ppos, pdir);
     }
 
     /// Starts a fresh game and saves over the default zeroed
@@ -411,7 +463,7 @@ impl WalkaroundState {
                 self.dialogue.set_messages(ctx.system, ctx.save, &convo);
             }
             Interaction::Func(x) => {
-                if let Some(key) = self.execute_interact_fn(x, ctx.system, inventory) {
+                if let Some(key) = self.execute_interact_fn(x, ctx.system, inventory, ctx.presets) {
                     let convo = ctx.get_dialogue(key);
                     self.dialogue.set_messages(ctx.system, ctx.save, &convo);
                 }
@@ -438,8 +490,13 @@ impl WalkaroundState {
     fn apply_warp<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, warp: crate::world::map::Warp) {
         self.player().pos = warp.target();
         self.player().flip_controls = warp.flip;
-        self.companion_trail
-            .fill(self.player_ref().pos, self.player_ref().dir);
+        let (ppos, pdir) = (self.player_ref().pos, self.player_ref().dir);
+        // Collapse the player's trail onto the landing so companions teleport in
+        // beside it instead of streaming across the map from the old position,
+        // then snap them there this frame (apply_warp runs after the entity loop,
+        // so without this the dog would draw at its old position for one frame).
+        self.player().trail.fill(ppos, pdir);
+        self.player().update_companions();
         if let Some(new_map) = warp.map {
             self.save(&new_map, ctx.save);
             self.load_map_by_name(ctx, &new_map);
@@ -755,17 +812,20 @@ impl WalkaroundState {
                         walking: state.is_walking(),
                     }
                 }
+                // Companions are driven by their leader's `update_companions`, not
+                // self — a top-level companion (shouldn't happen) just idles.
+                MoveMode::Companion { .. } => Act::Drive(0, 0),
             };
             match act {
                 Act::Player => {
                     let (dx, dy) = shell.walk(ctx.system, dx, dy, noclip, &self.current_map, tiles);
-                    shell.apply_motion(dx, dy, Some(&mut self.companion_trail));
+                    shell.apply_motion(dx, dy);
                 }
                 Act::Drive(vx, vy) => {
                     // `walk` updates the shell's facing (incl. the sticky
                     // horizontal that keeps a vertical-only wanderer's mirror).
                     let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
-                    shell.apply_motion::<8>(dx, dy, None);
+                    shell.apply_motion(dx, dy);
                 }
                 Act::Amble { vx, vy, walking } => {
                     let (dx, dy) = shell.walk(ctx.system, vx, vy, false, &self.current_map, tiles);
@@ -791,6 +851,9 @@ impl WalkaroundState {
                         .with_pos(pos);
                 }
             }
+            // Each leader, having moved (and pushed its breadcrumb), drags its
+            // companions onto the trail — the dog follows the player here.
+            shell.update_companions();
         }
 
         // Set after player.dir has updated
@@ -894,18 +957,31 @@ impl WalkaroundState {
             // (by stable id) and drop it from the live map so it vanishes now.
             self.take_object(i, ctx.save);
         } else if interact {
-            // No map object matched: fall back to the companions, checked against
-            // the facing hitbox in order (today's chain ordering — companions
-            // fire only when nothing on the map did, and stay press-only).
-            for companion in self.companion_list.interact(&self.companion_trail) {
-                if interact_hitbox.touches(companion.hitbox) {
-                    if let ObjectEffect::Interact(interaction) = companion.effect {
-                        let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
-                        self.fire_interaction(ctx, &interaction, &mut inventory);
-                        self.inventory_ui.inventory = inventory;
-                    }
-                    break;
+            // No map object matched: fall back to the player's companions, checked
+            // against the facing hitbox (lowest precedence, press-only — fire only
+            // when nothing on the map did). Copy the first pettable companion's
+            // live (pos, dir) out before firing; its pet interaction rebuilds its
+            // target from them (so it pets the dog wherever it currently stands).
+            let pet = self.player_ref().companions.iter().find_map(|c| {
+                if c.interaction.is_none() {
+                    return None;
                 }
+                // Hit-test the companion's drawn *body* (its sprite footprint),
+                // not its small feet hitbox — the dog's pet target was a 16x16
+                // box, so testing the 7x5 hitbox would make petting finicky.
+                // Centre a sprite-sized box on the hitbox, rising from its feet.
+                let (sprite, _) = c.sprite_options();
+                let (sw, sh) = (sprite.w as i16 * 8, sprite.h as i16 * 8);
+                let hb = c.hitbox();
+                let body = Hitbox::new(hb.x + hb.w / 2 - sw / 2, hb.y + hb.h - sh, sw, sh);
+                interact_hitbox.touches(body).then_some((c.pos, c.dir))
+            });
+            if let Some((cpos, cdir)) = pet {
+                let ppos = self.player_ref().pos;
+                let interaction = crate::world::player::pet_interaction(cpos, cdir, ppos);
+                let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
+                self.fire_interaction(ctx, &interaction, &mut inventory);
+                self.inventory_ui.inventory = inventory;
             }
         }
 
@@ -991,24 +1067,10 @@ impl WalkaroundState {
             ));
         }
 
-        sprites.extend(self.entities.iter().map(|x| x.draw_params(camera_pos)));
-
-        for (i, companion) in self.companion_list.companions.iter().enumerate() {
-            if let Some(companion) = companion {
-                let (position, direction) = if i == 0 {
-                    self.companion_trail.oldest()
-                } else {
-                    self.companion_trail.mid()
-                };
-                let walktime = self.companion_trail.walktime();
-                // The companion sprite helper bounds against a camera; build a
-                // throwaway camera at `camera_pos` so an extra view's free
-                // camera offsets them correctly too.
-                let cam = Camera::new(camera_pos, self.camera.bounds.clone());
-                let params = companion.spr_params(position, direction, walktime, &cam);
-                sprites.push(params);
-            }
-        }
+        // Every shell — leaders and their nested companions — draws through the
+        // one Y-sorted list, so the dog sorts against the player and the map by
+        // its feet line like any other entity (no separate companion pass).
+        sprites.extend(self.all_shells().map(|s| s.draw_params(camera_pos)));
 
         // Sort sprites in order of Y index
         sprites.sort_by_key(|sprite| sprite.bottom());
@@ -1266,6 +1328,51 @@ mod tests {
         assert_eq!(save.map_entities["field"][0].pos.x, 7);
     }
 
+    /// The whole player entity survives a save → load round-trip, including
+    /// through JSON: its position and its nested companion (the dog) come back,
+    /// with the dog's skipped `sprites`/`interaction` rebuilt (pettable again).
+    /// Guards against the "companions vanish on reload" gap.
+    #[test]
+    fn player_entity_round_trips_through_save_and_load() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.player().pos = Vec2::new(91, 73);
+
+        // Summon the dog onto the player.
+        with_ctx(&mut console, &mut parts, |ctx| {
+            let mut inventory = Inventory {
+                items: [const { None }; 8],
+            };
+            walk.execute_interact_fn(
+                &InteractFn::ToggleDog,
+                ctx.system,
+                &mut inventory,
+                ctx.presets,
+            );
+        });
+        assert_eq!(walk.player_ref().companions.len(), 1, "dog summoned");
+
+        // Save captures the whole player; a JSON round-trip proves the derived
+        // sprites / interaction don't need to serialise.
+        let mut save = SaveData::default();
+        walk.save("bedroom", &mut save);
+        let saved = save.player.as_ref().expect("player saved");
+        assert_eq!(saved.pos, Vec2::new(91, 73), "player position saved");
+        assert_eq!(saved.companions.len(), 1, "dog saved with the player");
+        let json = serde_json::to_string(&save).expect("serialise save");
+        parts.save = serde_json::from_str(&json).expect("deserialise save");
+
+        // A fresh walkaround loads it back: position and a pettable dog.
+        let mut reloaded = WalkaroundState::new();
+        with_ctx(&mut console, &mut parts, |ctx| reloaded.load_pmem(ctx));
+        assert_eq!(reloaded.player_ref().pos, Vec2::new(91, 73), "position restored");
+        let dogs = &reloaded.player_ref().companions;
+        assert_eq!(dogs.len(), 1, "dog restored on load");
+        assert_eq!(dogs[0].preset, PresetId::dog());
+        assert!(dogs[0].interaction.is_some(), "restored dog is pettable");
+    }
+
     /// Interacting with a removable object consumes it: `take_object` records it
     /// in the save's `taken` set by stable id (so a later `load_map_by_name`
     /// filters it) and drops it from the live map at once, keeping the edge latch
@@ -1367,8 +1474,9 @@ mod tests {
             items: [const { None }; 8],
         };
         let give = InteractFn::GiveItem("ff".to_string());
+        let presets = crate::data::eggdata::Presets::builtin();
         assert!(
-            walk.execute_interact_fn(&give, &mut console, &mut inventory)
+            walk.execute_interact_fn(&give, &mut console, &mut inventory, &presets)
                 .is_none()
         );
         assert_eq!(
@@ -1386,12 +1494,46 @@ mod tests {
             &InteractFn::GiveItem("chegg".to_string()),
             &mut console,
             &mut inventory,
+            &presets,
         );
         assert_eq!(
             inventory.to_save(),
             before,
             "full inventory: grant dropped, nothing lost"
         );
+    }
+
+    /// `EntityId` resolves the three addressing modes against the live tree: the
+    /// player (`entities[0]`), a player companion by slot, and a map creature by
+    /// its `id` — with misses (absent id / out-of-range slot) returning `None`.
+    #[test]
+    fn entity_id_resolves_player_companion_and_id() {
+        let mut walk = WalkaroundState::new();
+        let mut dog = Shell::default();
+        dog.move_mode = MoveMode::Companion { slot: 0 };
+        dog.preset = PresetId::dog();
+        walk.player().companions.push(dog);
+        let mut critter = Shell::default();
+        critter.id = Some("critter_a".to_string());
+        walk.entities.push(critter);
+
+        assert_eq!(
+            walk.resolve(&EntityId::Player).unwrap().move_mode,
+            MoveMode::Player,
+        );
+        assert_eq!(
+            walk.resolve(&EntityId::PlayerCompanion(0)).unwrap().preset,
+            PresetId::dog(),
+        );
+        assert_eq!(
+            walk.resolve(&EntityId::Id("critter_a".into()))
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("critter_a"),
+        );
+        assert!(walk.resolve(&EntityId::Id("missing".into())).is_none());
+        assert!(walk.resolve(&EntityId::PlayerCompanion(5)).is_none());
     }
 
     /// All the owned game-data a [`Ctx`] borrows, built from the embedded

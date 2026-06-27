@@ -266,6 +266,7 @@ impl MenuState {
                             &crate::world::interact::InteractFn::ToggleDog,
                             ctx.system,
                             &mut inventory,
+                            ctx.presets,
                         );
                         walk.inventory_ui.inventory = inventory;
                     }
@@ -275,6 +276,7 @@ impl MenuState {
                             &crate::world::interact::InteractFn::AddCreatures(1),
                             ctx.system,
                             &mut inventory,
+                            ctx.presets,
                         );
                         walk.inventory_ui.inventory = inventory;
                     }

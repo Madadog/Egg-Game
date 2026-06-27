@@ -23,9 +23,8 @@ use crate::geometry::{Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper};
 use crate::rand::Lcg64Xsh32;
 use crate::render::{DrawParams, Flip, SpriteOptions};
-use crate::world::camera::Camera;
 use crate::world::interact::Interaction;
-use crate::world::map::{Axis, LayerInfo, MapInfo, MapObject};
+use crate::world::map::{Axis, LayerInfo, MapInfo};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -213,6 +212,31 @@ pub enum MoveMode {
     /// Dwell wander: commit to a random heading for a spell, idle for a spell,
     /// repeat — the critter gait (see [`CreatureState`]).
     Amble(CreatureState),
+    /// Follows its leader: each step it snaps onto a sample of the leader's
+    /// [`trail`](Shell::trail) (the breadcrumb buffer), `slot` picking which
+    /// sample (its place in the leader's `companions`). Driven by the leader,
+    /// not self — the top-level entity loop skips it. The growable interruption
+    /// seam: a future transient mode (knockback/puppeting) lives alongside this
+    /// arm without it assuming a companion is always following.
+    Companion {
+        slot: usize,
+    },
+}
+
+/// How a cutscene (and, later, the editor) addresses a live entity: by stable
+/// string id — an authored map creature — or by a well-known role: the player,
+/// or one of its companions by slot. Resolved against the entity tree by
+/// [`WalkaroundState::resolve`](crate::gamestate::walkaround::WalkaroundState::resolve).
+/// Replaces the old positional `cutscene_token`/`entities[0]` addressing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EntityId {
+    /// A shell whose [`Shell::id`] matches (first match wins; ids should be
+    /// unique per map).
+    Id(String),
+    /// The player entity (`entities[0]`).
+    Player,
+    /// The player's companion in this slot (`entities[0].companions[slot]`).
+    PlayerCompanion(usize),
 }
 
 /// The data-store key identifying a creature archetype: the name a
@@ -341,6 +365,28 @@ pub struct Shell {
     /// outlined look.
     #[serde(default = "default_outline")]
     pub outline: Option<u8>,
+    /// Nested followers (depth-1): each is a full [`Shell`] with
+    /// [`MoveMode::Companion`], snapped onto this shell's [`trail`](Self::trail)
+    /// every step. Any shell can lead. Serialised with its leader, so a parked
+    /// map creature carries its companions; an empty `Vec` is the common case.
+    #[serde(default)]
+    pub companions: Vec<Shell>,
+    /// Breadcrumb buffer of this shell's recent `(pos, dir)` — its companions
+    /// follow by sampling it. Transient runtime state (rebuilt as it walks), so
+    /// it's skipped in serialisation and ignored by `PartialEq`, like `sprites`.
+    #[serde(skip)]
+    pub trail: CompanionTrail<16>,
+    /// An intrinsic interaction this shell offers when another acts on it (the
+    /// dog's pet). `None` for everything else. Skipped in serialisation /
+    /// `PartialEq` (it isn't `Serialize`/`Eq`); set when the shell is spawned
+    /// into its role, like `sprites`.
+    #[serde(skip)]
+    pub interaction: Option<Interaction>,
+    /// Stable identity for cutscene addressing ([`EntityId::Id`]): an authored
+    /// map-creature name. `None` for the player, companions, and anonymous
+    /// creatures (which resolve by role/slot instead).
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// Serde default for [`Shell::outline`]: the historical `Some(1)` every shell
@@ -367,6 +413,10 @@ impl PartialEq for Shell {
             && self.preset == other.preset
             && self.move_mode == other.move_mode
             && self.outline == other.outline
+            && self.companions == other.companions
+            && self.id == other.id
+        // `trail` and `interaction` are transient/derived (skipped in serde),
+        // so they're excluded here too — like `sprites`.
     }
 }
 impl Eq for Shell {}
@@ -468,6 +518,15 @@ impl Shell {
                 .map(|def| def.build_sprites())
                 .unwrap_or_else(ShellSprites::placeholder)
         };
+        // Companions are nested shells whose `sprites` were skipped too — rebuild
+        // each from its own preset (depth follows the nesting).
+        for companion in &mut self.companions {
+            companion.reattach_sprites(presets);
+        }
+        // `trail` is serde-skipped, so a freshly-loaded leader's is all-zero —
+        // seed it at this shell's position so its companions regroup here on the
+        // next step instead of snapping to (0, 0) until the trail refills.
+        self.trail.fill(self.pos, self.dir);
     }
     pub fn replace(&mut self, shell: Shell) {
         *self = shell.with_pos(self.pos).with_move_mode(self.move_mode.clone());
@@ -613,25 +672,41 @@ impl Shell {
 
         (dx, dy)
     }
-    pub fn apply_motion<const N: usize>(
-        &mut self,
-        dx: i16,
-        dy: i16,
-        trail: Option<&mut CompanionTrail<N>>,
-    ) {
-        // Apply motion
+    /// Apply a per-axis movement step, recording the breadcrumb a leader's
+    /// companions follow. Every shell owns its [`trail`](Self::trail) and pushes
+    /// its pre-move position onto it as it walks (so anything can lead); a shell
+    /// with no companions just leaves an unread trail. `(0, 0)` stops the trail
+    /// (companions settle) and switches the sprite to idle.
+    pub fn apply_motion(&mut self, dx: i16, dy: i16) {
         if dx == 0 && dy == 0 {
-            if let Some(x) = trail {
-                x.stop()
-            }
+            self.trail.stop();
             self.animate_stop();
         } else {
-            if let Some(x) = trail {
-                x.push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1))
-            }
+            self.trail
+                .push(Vec2::new(self.pos.x, self.pos.y), (self.dir.0, self.dir.1));
             self.pos.x += dx;
             self.pos.y += dy;
             self.animate_walk();
+        }
+    }
+    /// Snap each [`MoveMode::Companion`] follower onto a sample of this shell's
+    /// [`trail`](Self::trail) — the per-step follow update a leader runs after it
+    /// moves. Position, facing and walk cadence all come from the leader's
+    /// breadcrumb (so the gait stays synced); the `slot` picks how far back along
+    /// the trail this companion rides. Depth-1: a companion's own followers (if
+    /// any) aren't recursed here.
+    pub fn update_companions(&mut self) {
+        let trail = &self.trail;
+        let walktime = trail.walktime();
+        for (i, companion) in self.companions.iter_mut().enumerate() {
+            let slot = match companion.move_mode {
+                MoveMode::Companion { slot } => slot,
+                _ => i,
+            };
+            let (pos, dir) = trail.sample(slot);
+            companion.pos = pos;
+            companion.face(dir);
+            companion.walktime = u16::from(walktime);
         }
     }
     pub fn animate_walk(&mut self) {
@@ -675,6 +750,10 @@ impl Shell {
             sprites,
             move_mode,
             outline: Some(1),
+            companions: Vec::new(),
+            trail: CompanionTrail::new(),
+            interaction: None,
+            id: None,
         }
     }
     /// An egg that hatches into `hatches_into` after a fixed delay. The egg form
@@ -740,71 +819,36 @@ fn slide_ramp(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Companion {
-    Dog,
+/// A pettable shell's intrinsic interaction marker (the dog's
+/// [`Shell::interaction`]). Its `Pet` coordinates are placeholders — the live
+/// pet rebuilds them from the dog's current position via [`pet_interaction`] at
+/// fire time, so the stored value only flags "this shell is pettable".
+pub fn pet_marker() -> Interaction {
+    Interaction::Func(crate::world::interact::InteractFn::Pet(
+        Vec2::new(0, 0),
+        None,
+    ))
 }
-impl Companion {
-    pub fn spr_params(
-        &self,
-        position: Vec2,
-        direction: (i8, i8),
-        walktime: u8,
-        camera: &Camera,
-    ) -> DrawParams {
-        match &self {
-            Self::Dog => {
-                let t = (walktime / 10) % 2;
-                let (w, i, flip) = match direction {
-                    (1, 0) => (2, 706 + t as i32 * 2, Flip::Horizontal),
-                    (-1, 0) => (2, 706 + t as i32 * 2, Flip::None),
-                    (_, 1) => (1, 710 + t as i32, Flip::None),
-                    (_, _) => (1, 712 + t as i32, Flip::None),
-                };
-                let x_offset = if let Flip::Horizontal = flip { -8 } else { 0 };
-                DrawParams::new(
-                    i,
-                    position.x as i32 - camera.x() + x_offset,
-                    position.y as i32 - camera.y() - 2,
-                    SpriteOptions {
-                        w,
-                        h: 2,
-                        flip,
-                        ..SpriteOptions::transparent_zero()
-                    },
-                    Some(1),
-                    1,
-                )
-            }
+
+/// Build the dog's pet interaction from live positions: the target the player
+/// walks to (nudged a pixel when approached from the right) and which side it
+/// pets from. Extracted from the old `Companion::interact`; both the live pet
+/// (the companion step fallback) and an authored pet feed it. Phase A folds this
+/// into a `move_beside` + `interact` cutscene.
+pub fn pet_interaction(position: Vec2, direction: (i8, i8), player_position: Vec2) -> Interaction {
+    use crate::world::interact::InteractFn;
+    let mut pixel = 0;
+    let offset = if direction.1 == 0 {
+        direction.0 > 0
+    } else {
+        let x = player_position.x > position.x;
+        if x {
+            pixel -= 1;
         }
-    }
-    pub fn interact(self, position: Vec2, direction: (i8, i8), player_position: Vec2) -> MapObject {
-        use crate::world::interact::InteractFn;
-        use crate::world::map::ObjectEffect;
-        match self {
-            Companion::Dog => {
-                let mut pixel = 0;
-                let offset = if direction.1 == 0 {
-                    direction.0 > 0
-                } else {
-                    let x = player_position.x > position.x;
-                    if x {
-                        pixel -= 1;
-                    }
-                    x
-                };
-                let position = position + Vec2::new(pixel, 0);
-                MapObject::new(
-                    Hitbox::new(position.x, position.y, 16, 16),
-                    ObjectEffect::Interact(Interaction::Func(InteractFn::Pet(
-                        position,
-                        Some(offset),
-                    ))),
-                    None,
-                )
-            }
-        }
-    }
+        x
+    };
+    let position = position + Vec2::new(pixel, 0);
+    Interaction::Func(InteractFn::Pet(position, Some(offset)))
 }
 
 #[derive(Clone, Debug)]
@@ -865,64 +909,15 @@ impl<const N: usize> CompanionTrail<N> {
     pub fn walktime(&self) -> u8 {
         self.walktime
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct CompanionList {
-    pub companions: [Option<Companion>; 2],
-}
-impl CompanionList {
-    pub const fn new() -> Self {
-        Self {
-            companions: [None; 2],
+    /// The `(pos, dir)` a companion in `slot` follows. Slot 0 — the lone dog, and
+    /// the nearest of several — rides the oldest breadcrumb (the trail's tail, `N`
+    /// steps back), settling a fixed gap behind the leader; deeper slots ride more
+    /// recent samples. Preserves the old breadcrumb follow distance.
+    pub fn sample(&self, slot: usize) -> (Vec2, (i8, i8)) {
+        match slot {
+            0 => self.oldest(),
+            _ => self.mid(),
         }
-    }
-    pub fn add(&mut self, companion: Companion) {
-        if let Some(x) = self.companions.iter_mut().find(|x| x.is_none()) {
-            *x = Some(companion);
-        } else {
-            *self.companions.iter_mut().last().unwrap() = Some(companion);
-        }
-    }
-    pub fn has(&self, companion: Companion) -> bool {
-        self.companions.contains(&Some(companion))
-    }
-    pub fn remove(&mut self, target: Companion) -> bool {
-        if let Some(x) = self
-            .companions
-            .iter_mut()
-            .find(|x| if let Some(x) = x { *x == target } else { false })
-        {
-            *x = None;
-            true
-        } else {
-            false
-        }
-    }
-    pub fn count(&self) -> usize {
-        self.companions
-            .iter()
-            .filter(|companion| companion.is_some())
-            .count()
-    }
-    pub fn interact<const N: usize>(&self, positions: &CompanionTrail<N>) -> Vec<MapObject> {
-        // Trail points go to companions by presence, not slot: with two, the
-        // first walks at the trail's midpoint and the second at its tail; a
-        // lone companion (whichever slot it occupies) takes the tail.
-        let present: Vec<Companion> = self.companions.iter().flatten().copied().collect();
-        let count = present.len();
-        present
-            .into_iter()
-            .enumerate()
-            .map(|(i, companion)| {
-                let (position, direction) = if count == 2 && i == 0 {
-                    positions.mid()
-                } else {
-                    positions.oldest()
-                };
-                companion.interact(position, direction, positions.latest().0)
-            })
-            .collect()
     }
 }
 
@@ -994,12 +989,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn companion_in_second_slot_interacts_without_panic() {
-        let list = CompanionList {
-            companions: [None, Some(Companion::Dog)],
-        };
-        let trail: CompanionTrail<16> = CompanionTrail::new();
-        assert_eq!(list.interact(&trail).len(), 1);
+    fn companion_snaps_to_the_leaders_trail_tail() {
+        // A leader with one slot-0 companion: after the leader walks east, the
+        // companion rides the oldest breadcrumb (the trail tail) — a fixed gap
+        // behind, the dog-follow feel.
+        let mut leader = Shell::default();
+        leader.pos = Vec2::new(50, 50);
+        let mut dog = Shell::default();
+        dog.move_mode = MoveMode::Companion { slot: 0 };
+        leader.companions.push(dog);
+        for _ in 0..20 {
+            leader.face((1, 0));
+            leader.apply_motion(1, 0);
+        }
+        leader.update_companions();
+        let (tail, _) = leader.trail.sample(0);
+        assert_eq!(
+            leader.companions[0].pos, tail,
+            "companion rides the trail tail",
+        );
+        assert!(
+            leader.companions[0].pos.x < leader.pos.x,
+            "companion trails behind the leader",
+        );
     }
 
     /// Spawn a built-in shell from the embedded `data.toml` — the data is the

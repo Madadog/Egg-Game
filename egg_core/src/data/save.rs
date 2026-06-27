@@ -80,11 +80,29 @@ pub struct SaveData {
     /// load: that key is simply ignored (no `deny_unknown_fields`).
     #[serde(default)]
     pub current_map_name: Option<String>,
+
+    /// Legacy player position, kept only to load saves written before the whole
+    /// player entity was persisted (see [`player`](Self::player)): when `player`
+    /// is absent these place the restored default player. New saves carry the
+    /// position inside `player` instead and leave these at `0`.
+    #[serde(default)]
     pub player_x: i16,
+    #[serde(default)]
     pub player_y: i16,
 
     /// Number of times the game has saved
     pub save_count: u32,
+
+    /// The whole player entity, persisted like any other [`Shell`] — so its
+    /// position **and** its nested `companions` (the dog) ride along for free,
+    /// along with any future player state (form, hp). The player is `entities[0]`
+    /// but travels across maps, so it gets its own slot here rather than living in
+    /// [`map_entities`](Self::map_entities) (which is per-map). Every field
+    /// round-trips except the derived `sprites`/`trail`/`interaction`, rebuilt on
+    /// load. `None` only in older saves, which fall back to
+    /// [`player_x`](Self::player_x)/[`player_y`](Self::player_y).
+    #[serde(default)]
+    pub player: Option<Shell>,
 
     /// Non-player entities (creatures) parked by map name — the persisted form of
     /// the runtime [`WalkaroundState::map_entities`](crate::gamestate::walkaround::WalkaroundState),
@@ -145,6 +163,7 @@ impl Default for SaveData {
             player_x: 0,
             player_y: 0,
             save_count: 0,
+            player: None,
             map_entities: BTreeMap::new(),
         }
     }

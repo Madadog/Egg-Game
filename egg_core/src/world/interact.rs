@@ -45,7 +45,7 @@ pub enum Interaction {
 /// *behaviour* rather than per-object boolean wiring.
 ///
 /// [`Pet`](Self::Pet) is the one case with no name: it is constructed only by
-/// [`Companion::interact`](crate::world::player::Companion::interact) from live
+/// [`pet_interaction`](crate::world::player::pet_interaction) from live
 /// companion/player positions, never from a map object, so there is nothing for
 /// an editor to place and it has no `func` spelling.
 #[derive(Debug, Clone, PartialEq)]
