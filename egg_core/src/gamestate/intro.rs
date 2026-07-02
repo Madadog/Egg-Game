@@ -3,8 +3,8 @@ use crate::data::sound::music::MusicTrack;
 use crate::draw_state::{DrawState, LayerId::*, fade_colour_into, fade_palette_into};
 use crate::gamestate::GameMode;
 use crate::gamestate::menu::draw_title_indexed;
+use crate::platform::{ConsoleApi, SWEETIE_16, pressed};
 use crate::render::{Canvas, EdgePolicy};
-use crate::platform::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
 
 /// The startup intro animation: a frame counter ticking through
 /// [`draw_animation`] until it finishes (or is skipped with B), then it hands off
@@ -20,7 +20,7 @@ impl IntroAnimation {
             return Some(GameMode::MainMenu);
         }
         // Hold B to fast-forward past the intro.
-        if pressed(ctx.system.controller().b) {
+        if pressed(ctx.input.controller().b) {
             self.frame = self.frame.saturating_add(1000);
         }
         if draw_animation(self.frame, ctx) {

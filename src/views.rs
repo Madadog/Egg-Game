@@ -134,10 +134,12 @@ pub struct ViewWindow {
     /// This view's raw text editor for the script files ([`ViewMode::Text`]).
     pub text_editor: TextEditor,
     /// This view's own input. `step_state` populates it (mapped to this view's
-    /// framebuffer) only while the view is focused; it's swapped into the shared
-    /// console for the duration of this view's step (the editors read input via
-    /// the console). Keeping it per-view preserves this view's own edge-detection
-    /// history and stops a focused view's keys/clicks reaching the primary.
+    /// framebuffer) only while the view is focused, and `update_views` threads it
+    /// straight into this view's editor step + draw `Ctx` as data (no swap through
+    /// a shared console). Keeping it per-view preserves this view's own
+    /// edge-detection history and stops a focused view's keys/clicks reaching the
+    /// primary; a non-focused view's input stays empty (refreshed, never
+    /// populated), so it draws with no cursor over it.
     pub input: EggInput,
     /// Base window px per framebuffer px — the view's framebuffer is the window
     /// size divided by this (Mirror-style), so resizing the window resizes the
@@ -472,12 +474,10 @@ pub fn update_views(
     // to decide whether to drive the controller; the view's edge-triggered
     // hotkey (`L`) lives in `view_hotkeys` (Update schedule).
     if let Focus::Extra(i) = focus {
-        // This view owns input this frame: install its own `EggInput` into the
-        // shared console for the duration of its step (the editors read input via
-        // the console), then restore at the end of the block. `step_state`
-        // populated this view's input (mapped to its framebuffer) and left the
-        // console — the primary's input — empty, so the primary never saw it.
-        std::mem::swap(game.system.input(), &mut views.views[i].input);
+        // This view owns input this frame. `step_state` populated this view's own
+        // `EggInput` (mapped to its framebuffer) and left the primary's empty, so
+        // the editors below read the view's input directly — threaded into their
+        // step as data, no swap through a shared console.
 
         // Text-editor mode: every key feeds the buffer. Step the editor at this
         // view's framebuffer size (so its click regions match `draw`), then drain
@@ -488,16 +488,16 @@ pub fn update_views(
                 views.views[i].output.height() as i32,
             );
             let g = &mut *game;
-            views.views[i]
-                .text_editor
-                .step(&mut g.system, &g.state.font, fb_w, fb_h);
-            if let Some(source) = views.views[i].text_editor.pending_script.take() {
+            let view = &mut views.views[i];
+            view.text_editor
+                .step(&mut g.system, &view.input, &g.state.font, fb_w, fb_h);
+            if let Some(source) = view.text_editor.pending_script.take() {
                 match egg_core::data::script::eggtext::parse(&source) {
                     Ok(file) => g.state.script.set_base(file),
                     Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
                 }
             }
-            if let Some(source) = views.views[i].text_editor.pending_scene.take() {
+            if let Some(source) = view.text_editor.pending_scene.take() {
                 match egg_core::data::scene::parse(&source) {
                     Ok(file) => g.state.set_scenes(file),
                     Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
@@ -521,23 +521,22 @@ pub fn update_views(
             cam.y = cam.y.saturating_add(dy);
         }
 
-        // The shared console's mouse was already mapped from the focused window's
-        // cursor in `step_state`. Step this view's editor against its own map +
-        // free camera — at this view's framebuffer size, so the panel layout and
-        // hit-testing match what `draw_at` renders below.
+        // This view's cursor was already mapped into its own input in
+        // `step_state`. Step this view's editor against its own map + free camera —
+        // at this view's framebuffer size, so the panel layout and hit-testing
+        // match what `draw_at` renders below — reading the view's own input.
         if views.views[i].mode == ViewMode::Walkaround && views.views[i].editor.focused {
-            let cam = views.views[i].free_cam;
-            let screen = (
-                views.views[i].output.width() as f32,
-                views.views[i].output.height() as f32,
-            );
             let g = &mut *game;
+            let view = &mut views.views[i];
+            let cam = view.free_cam;
+            let screen = (view.output.width() as f32, view.output.height() as f32);
             let sheet = (
-                views.views[i].draw_state.indexed_sprites.width() as usize / 8,
-                views.views[i].draw_state.indexed_sprites.height() as usize / 8,
+                view.draw_state.indexed_sprites.width() as usize / 8,
+                view.draw_state.indexed_sprites.height() as usize / 8,
             );
-            views.views[i].editor.step_map_viewer_at(
+            view.editor.step_map_viewer_at(
                 &mut g.system,
+                &view.input,
                 &mut g.state.walkaround.current_map,
                 &mut g.state.maps,
                 cam,
@@ -548,11 +547,12 @@ pub fn update_views(
             );
             // Open a map the view's browser requested, into the shared map (so
             // every window sees it). Uses this view's framebuffer sprite sheet.
-            if let Some((name, focus)) = views.views[i].editor.pending_open.take() {
+            if let Some((name, focus)) = view.editor.pending_open.take() {
                 {
                     let mut ctx = egg_core::Ctx {
-                        draw: &mut views.views[i].draw_state,
+                        draw: &mut view.draw_state,
                         system: &mut g.system,
+                        input: &view.input,
                         maps: &mut g.state.maps,
                         rng: &mut g.state.rng,
                         script: &g.state.script,
@@ -568,9 +568,8 @@ pub fn update_views(
                 // free camera on it (the map load is shared, but each view has its
                 // own camera, so the window that asked is the one that moves).
                 if let Some(p) = focus {
-                    let v = &mut views.views[i];
-                    let (vw, vh) = (v.output.width() as i32, v.output.height() as i32);
-                    v.free_cam = EggVec2::new(
+                    let (vw, vh) = (view.output.width() as i32, view.output.height() as i32);
+                    view.free_cam = EggVec2::new(
                         (i32::from(p.x) + 4 - vw / 2) as i16,
                         (i32::from(p.y) + 8 - vh / 2) as i16,
                     );
@@ -580,11 +579,11 @@ pub fn update_views(
             // layer lists and scalar metadata (bg colour, camera framing) using
             // this view's sprite sheet, preserving objects/camera/player. The live
             // background colour is pushed too so a swatch click shows immediately.
-            if views.views[i].editor.pending_reload {
-                views.views[i].editor.pending_reload = false;
+            if view.editor.pending_reload {
+                view.editor.pending_reload = false;
                 let name = g.state.walkaround.current_map.source.clone();
                 let fresh = egg_core::world::map::map_by_name(
-                    &views.views[i].draw_state.indexed_sprites,
+                    &view.draw_state.indexed_sprites,
                     &name,
                     &g.state.maps,
                 );
@@ -597,9 +596,6 @@ pub fn update_views(
                 }
             }
         }
-
-        // Restore the console's own (primary's) input now this view has stepped.
-        std::mem::swap(game.system.input(), &mut views.views[i].input);
     }
 
     // Reconcile each view's framebuffer with its window size ÷ pixel ratio
@@ -630,24 +626,19 @@ pub fn update_views(
 
     // Render + present every extra view from its own free camera.
     let g = &mut *game;
-    for (i, view) in views.views.iter_mut().enumerate() {
-        // The focused view's editor reads the live mouse during *draw* too — the
-        // hover preview / tile cursor in `draw_at` — so install its input into the
-        // shared console here as well (the step swap above was already undone),
-        // then restore. Non-focused views draw with the empty console (no cursor
-        // is over them), which is what we want.
-        let focused = matches!(focus, Focus::Extra(fi) if fi == i);
-        if focused {
-            std::mem::swap(g.system.input(), &mut view.input);
-        }
+    for view in views.views.iter_mut() {
         // Draw this view into its own DrawState BG layer — never the main
         // framebuffer — then composite that to its output. The world (+ editor)
-        // from the free camera, or the text editor, per the view's mode.
+        // from the free camera, or the text editor, per the view's mode. The draw
+        // reads this view's OWN input — the editor's hover preview / tile cursor in
+        // `draw_at` reads the mouse. A non-focused view's input is empty (refreshed
+        // but never populated this frame), so no cursor draws over it.
         match view.mode {
             ViewMode::Walkaround => {
                 let mut ctx = egg_core::Ctx {
                     draw: &mut view.draw_state,
                     system: &mut g.system,
+                    input: &view.input,
                     maps: &mut g.state.maps,
                     rng: &mut g.state.rng,
                     script: &g.state.script,
@@ -670,9 +661,6 @@ pub fn update_views(
             &mut view.draw_state,
             &mut view.output,
         );
-        if focused {
-            std::mem::swap(g.system.input(), &mut view.input);
-        }
     }
 
     // Blit each view's finished frame into its GPU texture.

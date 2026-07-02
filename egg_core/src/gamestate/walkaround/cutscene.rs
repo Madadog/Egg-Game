@@ -343,7 +343,7 @@ impl Cutscene {
             *opened = true;
             return false;
         }
-        let pad = ctx.system.controller();
+        let pad = ctx.input.controller();
         walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
         if pressed(pad.a) {
             walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
@@ -751,6 +751,7 @@ mod tests {
     use crate::data::scene;
     use crate::data::script::Script;
     use crate::draw_state::DrawState;
+    use crate::platform::EggInput;
     use crate::platform::test_console::TestConsole;
     use crate::rand::Lcg64Xsh32;
     use crate::world::map::MapStore;
@@ -759,6 +760,9 @@ mod tests {
     /// fresh `Ctx` each frame.
     struct Harness {
         system: TestConsole,
+        /// This frame's input, threaded into the `Ctx` — a test injects presses
+        /// here (e.g. a rising-edge direction to cancel an interruptible scene).
+        input: EggInput,
         draw: DrawState,
         maps: MapStore,
         rng: Lcg64Xsh32,
@@ -774,6 +778,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 system: TestConsole::new(),
+                input: EggInput::new(),
                 draw: DrawState::default(),
                 maps: MapStore::default(),
                 rng: Lcg64Xsh32::default(),
@@ -794,6 +799,7 @@ mod tests {
                 let mut ctx = Ctx {
                     draw: &mut self.draw,
                     system: &mut self.system,
+                    input: &self.input,
                     maps: &mut self.maps,
                     rng: &mut self.rng,
                     script: &self.script,
@@ -951,7 +957,7 @@ mod tests {
         assert!(!h.walk.cutscene.is_empty(), "plays on with no input");
 
         // A just-pressed direction cancels it.
-        h.system.controllers[0].up = [true, false];
+        h.input.controllers[0].up = [true, false];
         h.frame(|ctx, w| {
             w.play_cutscene(ctx);
         });

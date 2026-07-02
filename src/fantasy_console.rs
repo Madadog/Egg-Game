@@ -15,9 +15,7 @@ use bevy::platform::collections::HashMap as BevyHashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use egg_core::data::sound::music::MusicTrack;
-use egg_core::platform::{
-    ConsoleApi, Controller, EggInput, HEIGHT, MouseInput, ScanCode, SfxOptions, WIDTH,
-};
+use egg_core::platform::{ConsoleApi, HEIGHT, SfxOptions, WIDTH};
 use egg_core::render::Font;
 use egg_core::render::image::{IndexedImage, RgbaImage};
 
@@ -33,7 +31,6 @@ pub struct FantasyConsole {
     /// (web), in which case any requested track plays as-is.
     music_registry: HashMap<String, MusicTrack>,
     sounds: HashMap<String, SfxOptions>,
-    input: EggInput,
     /// App-local clipboard for the text editor's copy/cut/paste. Shared across all
     /// windows (one console), but not wired to the OS clipboard yet.
     clipboard: String,
@@ -51,13 +48,9 @@ impl FantasyConsole {
             music: None,
             music_registry: scan_music_dir(),
             sounds: HashMap::new(),
-            input: EggInput::new(),
             clipboard: String::new(),
             exit_requested: false,
         }
-    }
-    pub fn input(&mut self) -> &mut EggInput {
-        &mut self.input
     }
     pub fn sounds(&mut self) -> &mut HashMap<String, SfxOptions> {
         &mut self.sounds
@@ -149,32 +142,8 @@ impl FantasyConsole {
 }
 
 impl ConsoleApi for FantasyConsole {
-    fn controllers(&self) -> &[Controller; 4] {
-        &self.input.controllers
-    }
-
     fn exit(&mut self) {
         self.exit_requested = true;
-    }
-
-    fn key(&self, scancode: ScanCode) -> bool {
-        self.input.key(scancode)
-    }
-
-    fn keyp(&self, scancode: ScanCode) -> bool {
-        self.input.keyp(scancode)
-    }
-
-    fn key_repeat(&self, scancode: ScanCode, delay: u16, rate: u16) -> bool {
-        self.input.key_repeat(scancode, delay, rate)
-    }
-
-    fn key_chars(&self) -> &[char] {
-        self.input.key_chars()
-    }
-
-    fn mouse(&self) -> MouseInput {
-        self.input.mouse
     }
 
     fn clipboard_get(&mut self) -> Option<String> {

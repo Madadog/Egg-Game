@@ -89,8 +89,8 @@ impl MenuState {
         let old_index = self.index;
         let entries = self.entries.len();
         let ui = self.build_ui(&*ctx);
-        let mouse = ctx.system.mouse();
-        let pad = ctx.system.controller();
+        let mouse = ctx.input.mouse;
+        let pad = ctx.input.controller();
         let mut clicked = false;
         if let Some(i) = ui.hit(mouse.pos()) {
             if mouse.moved() {

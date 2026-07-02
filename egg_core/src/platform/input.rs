@@ -117,8 +117,8 @@ pub fn dpad_delta(pad: &Controller, edge: impl Fn([bool; 2]) -> bool) -> (i16, i
 
 /// A whole frame's accumulated input: the four gamepads, the keyboard edge
 /// state, and the characters typed. The host fills one of these per window each
-/// frame and the engine reads it back through the [`ConsoleApi`](super::ConsoleApi)
-/// surface.
+/// frame and threads it into the engine as data (via [`Ctx::input`](crate::Ctx::input)),
+/// so the host — not the console — decides which window's input a step sees.
 #[derive(Clone, Debug)]
 pub struct EggInput {
     pub controllers: [Controller; 4],
@@ -206,6 +206,21 @@ impl EggInput {
             return true;
         }
         held >= delay && (held - delay).is_multiple_of(rate.max(1))
+    }
+    /// Player one's [`Controller`], mirroring the `mouse` field. Returns a copy;
+    /// read it with the shared [`pressed`]/[`just_pressed`] helpers, e.g.
+    /// `just_pressed(input.controller().a)`.
+    pub fn controller(&self) -> Controller {
+        self.controllers[0]
+    }
+    /// Whether any button on any controller was just pressed this frame. Ignores
+    /// button releases.
+    pub fn any_btnp(&self) -> bool {
+        self.controllers.iter().any(Controller::any_just_pressed)
+    }
+    /// Whether any button on any controller was pressed or released this frame.
+    pub fn any_btnpr(&self) -> bool {
+        self.controllers.iter().any(Controller::changed)
     }
 }
 

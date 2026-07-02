@@ -3,7 +3,7 @@
 //! It snapshots the live world + save the moment a scene is opened, arms the
 //! scene on that snapshot, and measures its length once. Any playhead frame is
 //! then a fresh deterministic re-simulation of the snapshot through a headless
-//! [`ScrubConsole`] — the AI/RNG loop is skipped while a cutscene plays, so
+//! [`NullConsole`] — the AI/RNG loop is skipped while a cutscene plays, so
 //! nothing diverges between runs. The live world and save are never touched.
 //!
 //! It lives on [`EggState`] (not the map editor) because re-simming needs the
@@ -16,7 +16,7 @@ use crate::debug::DebugInfo;
 use crate::draw_state::LayerId;
 use crate::editor::map::MapViewer;
 use crate::gamestate::walkaround::WalkaroundState;
-use crate::platform::{ConsoleApi, ScanCode, ScrubConsole};
+use crate::platform::{ConsoleApi, EggInput, NullConsole, ScanCode};
 use crate::render::{PrintOptions, print_to_shadow_with_font};
 use crate::{Ctx, EggState};
 
@@ -38,8 +38,12 @@ pub struct CutsceneScrubber {
     /// The save snapshot, cloned per re-sim so a replayed `set_flag` can never
     /// reach real progress.
     base_save: SaveData,
-    /// Headless console driving the re-sim (neutral input, muted audio).
-    console: ScrubConsole,
+    /// Headless console driving the re-sim (muted audio, no file IO).
+    console: NullConsole,
+    /// The input the re-sim frames are stepped against: neutral except a
+    /// permanent held-`A` rising edge, threaded through the re-sim `Ctx`s. See
+    /// [`open_scrubber_def`](EggState::open_scrubber_def) for why.
+    sim_input: EggInput,
     /// Current playhead frame and the measured total length.
     frame: usize,
     total: usize,
@@ -69,13 +73,14 @@ impl EggState {
         base_world.map_viewer = MapViewer::default();
         base_world.cutscene.clear();
         let base_save = self.save.clone();
-        let mut console = ScrubConsole::new();
+        let mut console = NullConsole::new();
         // Hold `A` as a permanent rising edge (`[down, up]`): the re-sim never
-        // advances the console's edge state, so `just_pressed(a)` reads true every
+        // advances this input's edge state, so `just_pressed(a)` reads true every
         // frame, auto-advancing any `dialogue` beat instead of stalling on it
         // (those wait for an `A` press). The dpad stays neutral, so movement /
         // interrupt / skip are untouched.
-        console.controllers[0].a = [true, false];
+        let mut sim_input = EggInput::new();
+        sim_input.controllers[0].a = [true, false];
 
         // Arm the scene on the snapshot, then measure its length — both on the
         // headless console + a throwaway save so nothing leaks into live state.
@@ -84,6 +89,7 @@ impl EggState {
             let mut ctx = Ctx {
                 draw: &mut self.draw_state,
                 system: &mut console,
+                input: &sim_input,
                 maps: &mut self.maps,
                 rng: &mut self.rng,
                 script: &self.script,
@@ -103,39 +109,42 @@ impl EggState {
             base_world,
             base_save,
             console,
+            sim_input,
             frame: 0,
             total,
         });
     }
 
     /// Drive the open scrubber one host frame: read step/close input from the
-    /// real console, re-sim the snapshot to the playhead on the headless one,
+    /// real `input`, re-sim the snapshot to the playhead on the headless console,
     /// and render that frame fullscreen. A no-op if no session is open.
-    pub fn drive_scrubber(&mut self, system: &mut impl ConsoleApi) {
+    pub fn drive_scrubber(&mut self, system: &mut impl ConsoleApi, input: &EggInput) {
         // Take the session out so the re-sim can borrow `self`'s other fields
         // freely; put it back at the end (drop = close).
         let Some(mut scrubber) = self.scrubber.take() else {
             return;
         };
 
-        // Input from the REAL console: Esc/X closes; arrows step the playhead.
-        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+        // The REAL input drives the playhead: Esc/X closes; arrows step.
+        if input.keyp(ScanCode::Escape) || input.keyp(ScanCode::X) {
             return;
         }
-        if system.key_repeat(ScanCode::Left, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Left, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
             scrubber.frame = scrubber.frame.saturating_sub(1);
         }
-        if system.key_repeat(ScanCode::Right, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Right, SCRUB_REPEAT_DELAY, SCRUB_REPEAT_RATE) {
             scrubber.frame = (scrubber.frame + 1).min(scrubber.total);
         }
 
         // Re-sim from the snapshot to the playhead on the headless console + a
-        // fresh save clone (so a replayed `set_flag` can't touch real progress).
+        // fresh save clone (so a replayed `set_flag` can't touch real progress),
+        // stepped against the scrubber's neutral held-`A` input.
         let current = {
             let mut scratch = scrubber.base_save.clone();
             let mut ctx = Ctx {
                 draw: &mut self.draw_state,
                 system: &mut scrubber.console,
+                input: &scrubber.sim_input,
                 maps: &mut self.maps,
                 rng: &mut self.rng,
                 script: &self.script,
@@ -156,6 +165,7 @@ impl EggState {
             let mut ctx = Ctx {
                 draw: &mut self.draw_state,
                 system,
+                input,
                 maps: &mut self.maps,
                 rng: &mut self.rng,
                 script: &self.script,

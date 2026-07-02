@@ -5,15 +5,16 @@
 //! shared by the map editor's single-line property fields and the multi-line
 //! [text editor](super::text).
 //!
-//! [`TextField::step`] reads the shared console and decodes it into [`TextOp`]s;
-//! [`TextField::apply`] performs one op on the buffer. Tests drive `apply`
-//! directly to exercise push/backspace/motion without a console. The field tracks
+//! [`TextField::step`] reads the frame's [`EggInput`](crate::platform::EggInput)
+//! and decodes it into [`TextOp`]s; [`TextField::apply`] performs one op on the
+//! buffer. Tests drive `apply` directly to exercise push/backspace/motion without
+//! any input. The field tracks
 //! only the text — *which* field is being edited and what to do with a committed
 //! value stay with the caller. The buffer is a flat `String`; a `'\n'` is just
 //! another character, so the same type backs both single-line fields (which never
 //! emit [`TextOp::Up`]/etc.) and the multi-line editor.
 
-use crate::platform::{ConsoleApi, ScanCode};
+use crate::platform::{EggInput, ScanCode};
 
 /// Held-key repeat cadence for text entry, in fixed steps (the sim runs at
 /// 64 Hz): `REPEAT_DELAY` before the first repeat, then one every `REPEAT_RATE`.
@@ -23,10 +24,10 @@ use crate::platform::{ConsoleApi, ScanCode};
 pub(crate) const REPEAT_DELAY: u16 = 20;
 pub(crate) const REPEAT_RATE: u16 = 2;
 
-/// A single character-level edit to a [`TextField`], the pure unit its console
-/// input decodes into. Splitting the keyboard read (which needs a
-/// [`ConsoleApi`]) from the buffer mutation (which doesn't) is what lets the
-/// field's behaviour be unit-tested without a live console.
+/// A single character-level edit to a [`TextField`], the pure unit its input
+/// decodes into. Splitting the keyboard read (which needs an
+/// [`EggInput`](crate::platform::EggInput)) from the buffer mutation (which
+/// doesn't) is what lets the field's behaviour be unit-tested without any input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextOp {
     /// Insert a character at the cursor (a typed, non-control key; the multi-line
@@ -398,30 +399,30 @@ impl TextField {
     /// the map dialogs, and the multi-line editor (which adds Up/Down/Home/End and
     /// its own typed-char / newline handling on top), so they all get the same
     /// caret behaviour.
-    pub(crate) fn edit_keys(&mut self, system: &impl ConsoleApi) {
-        let ctrl = system.key(ScanCode::Ctrl);
-        let shift = system.key(ScanCode::Shift);
+    pub(crate) fn edit_keys(&mut self, input: &EggInput) {
+        let ctrl = input.key(ScanCode::Ctrl);
+        let shift = input.key(ScanCode::Shift);
         // These auto-repeat while held (Backspace/Delete to delete a run, arrows to
         // glide the caret); the Ctrl variants act by word, Shift+arrow extends the
         // selection, and a delete with an active selection removes the selection.
-        if system.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE) {
             self.edit(if ctrl {
                 TextOp::DeleteWordBack
             } else {
                 TextOp::Pop
             });
         }
-        if system.key_repeat(ScanCode::Delete, REPEAT_DELAY, REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Delete, REPEAT_DELAY, REPEAT_RATE) {
             self.edit(if ctrl {
                 TextOp::DeleteWordForward
             } else {
                 TextOp::DeleteForward
             });
         }
-        if system.key_repeat(ScanCode::Left, REPEAT_DELAY, REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Left, REPEAT_DELAY, REPEAT_RATE) {
             self.move_caret(if ctrl { TextOp::WordLeft } else { TextOp::Left }, shift);
         }
-        if system.key_repeat(ScanCode::Right, REPEAT_DELAY, REPEAT_RATE) {
+        if input.key_repeat(ScanCode::Right, REPEAT_DELAY, REPEAT_RATE) {
             self.move_caret(
                 if ctrl {
                     TextOp::WordRight
@@ -440,16 +441,16 @@ impl TextField {
     /// Ctrl+arrow / Ctrl+Backspace) edit via [`edit_keys`](Self::edit_keys);
     /// Escape cancels and Return commits. Escape takes priority over Return when
     /// (improbably) both fire in one frame.
-    pub(crate) fn step(&mut self, system: &impl ConsoleApi) -> TextEvent {
-        for c in system.key_chars() {
+    pub(crate) fn step(&mut self, input: &EggInput) -> TextEvent {
+        for c in input.key_chars() {
             if !c.is_control() {
                 self.edit(TextOp::Push(*c));
             }
         }
-        self.edit_keys(system);
-        if system.keyp(ScanCode::Escape) {
+        self.edit_keys(input);
+        if input.keyp(ScanCode::Escape) {
             self.apply(TextOp::Cancel)
-        } else if system.keyp(ScanCode::Return) {
+        } else if input.keyp(ScanCode::Return) {
             self.apply(TextOp::Commit)
         } else {
             TextEvent::Active

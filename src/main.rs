@@ -6,7 +6,7 @@ use egg_core::EggState;
 use egg_core::data::tiled::TiledMap;
 use egg_core::editor::text::TextEditor;
 use egg_core::platform::ConsoleApi;
-use egg_core::platform::{HEIGHT, ScanCode, WIDTH};
+use egg_core::platform::{EggInput, HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{
     ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture,
 };
@@ -24,6 +24,12 @@ mod views;
 pub struct EggGame {
     pub state: EggState,
     system: FantasyConsole,
+    /// The PRIMARY window's input for this frame. `step_state` refreshes it and —
+    /// only while the primary is focused — fills it from the host events; each
+    /// extra window keeps its own [`ViewWindow.input`](views::ViewWindow::input).
+    /// Threaded into the engine as data (via [`egg_core::Ctx::input`]) rather than
+    /// pulled through the console.
+    pub input: EggInput,
 
     pub loaded: bool,
     pub pause: bool,
@@ -38,7 +44,10 @@ pub struct EggGame {
 }
 impl EggGame {
     pub fn run(&mut self) {
-        self.state.run(&mut self.system);
+        // Disjoint field borrows: the sim reads its input as data while it still
+        // holds `&mut system` for host effects.
+        let g = &mut *self;
+        g.state.run(&mut g.system, &g.input);
     }
 }
 impl Default for EggGame {
@@ -47,6 +56,7 @@ impl Default for EggGame {
             state: EggState::default(),
 
             system: FantasyConsole::new(),
+            input: EggInput::new(),
 
             pause: false,
             loaded: false,
@@ -542,12 +552,13 @@ fn step_state(
     let routing = views::InputRouting::compute(focused_entity, &game, &views);
     let drives_player = routing.drives_player;
 
-    // Each window owns its own input (the console's *is* the primary's). Advance
-    // every window's edge-detection history this frame; we then populate only the
-    // *focused* window's input, so the primary reads its own — empty when a view
-    // is focused, so it can't act on input aimed at the view — and the view's
-    // input is swapped into the shared console for its step in `update_views`.
-    game.system.input().refresh();
+    // Each window owns its own `EggInput` (the primary's on `game`, each view's on
+    // the view). Advance every window's edge-detection history this frame; we then
+    // populate only the *focused* window's input, so the primary reads its own —
+    // empty when a view is focused, so it can't act on input aimed at the view —
+    // and each view's input is threaded straight into its own step in
+    // `update_views` (no swap through a shared console).
+    game.input.refresh();
     for v in views.views.iter_mut() {
         v.input.refresh();
     }
@@ -608,10 +619,10 @@ fn step_state(
             || pad.is_some_and(|g| g.pressed(button))
     };
 
-    // Everything below writes into the *focused* window's input: the console's for
+    // Everything below writes into the *focused* window's input: `game.input` for
     // the primary, the view's own `EggInput` for a focused extra view.
     let target = match routing.focus {
-        views::Focus::Primary => game.system.input(),
+        views::Focus::Primary => &mut game.input,
         views::Focus::Extra(i) => &mut views.views[i].input,
     };
     target.mouse.scroll_x[0] = wheel_x.clamp(-127.0, 127.0) as i8;
@@ -664,11 +675,13 @@ fn step_state(
     if game.text_mode {
         // One deref of the `ResMut` so the field borrows below are disjoint.
         let g = &mut *game;
-        // Step against the console's input — which is empty when a view is focused
-        // (we populated the view's own input instead), so this is a harmless no-op
-        // then. The editor still draws every frame so the window keeps showing it.
+        // Step against the primary window's input — which is empty when a view is
+        // focused (we populated the view's own input instead), so this is a
+        // harmless no-op then. The editor still draws every frame so the window
+        // keeps showing it.
         let (w, h) = (g.system.width(), g.system.height());
-        g.text_editor.step(&mut g.system, &g.state.font, w, h);
+        g.text_editor
+            .step(&mut g.system, &g.input, &g.state.font, w, h);
         if let Some(source) = g.text_editor.pending_script.take() {
             match egg_core::data::script::eggtext::parse(&source) {
                 Ok(file) => g.state.script.set_base(file),
@@ -696,7 +709,7 @@ fn step_state(
         return;
     }
     // A view owns input this frame (it's focused, not the primary). The primary
-    // still simulates + draws, but its own input (the console's) was left empty
+    // still simulates + draws, but its own input (`game.input`) was left empty
     // above — we populated the focused view's input instead — so it can't act on
     // input aimed at the view. The view consumes its own input in `update_views`.
     if !drives_player {

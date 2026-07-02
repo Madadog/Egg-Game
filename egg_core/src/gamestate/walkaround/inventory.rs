@@ -594,7 +594,7 @@ impl InventoryUi {
     pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
         let ui = self.build_ui(&*ctx);
-        let mouse = ctx.system.mouse();
+        let mouse = ctx.input.mouse;
         let mut mouse_clicked = false;
         if let Some(key) = ui.hit(mouse.pos()) {
             match key {
@@ -639,7 +639,7 @@ impl InventoryUi {
         }
 
         // Keyboard / gamepad navigation
-        let pad = ctx.system.controller();
+        let pad = ctx.input.controller();
         let (dx, dy) = dpad_delta(&pad, just_pressed);
         self.state.arrows(ctx.system, dx.into(), dy.into());
         if just_pressed(pad.a) && !mouse_clicked {

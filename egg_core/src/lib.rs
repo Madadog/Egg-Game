@@ -36,7 +36,7 @@ use crate::draw_state::DrawState;
 use crate::editor::map::ScrubRequest;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{CutsceneScrubber, GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
-use crate::platform::ConsoleApi;
+use crate::platform::{ConsoleApi, EggInput};
 use crate::rand::Lcg64Xsh32;
 use crate::render::{
     Canvas, Font, PrintOptions, print_to_centered_with_font, print_to_shadow_with_font,
@@ -54,6 +54,12 @@ use crate::world::map::MapStore;
 pub struct Ctx<'a, S: ConsoleApi> {
     pub draw: &'a mut DrawState,
     pub system: &'a mut S,
+    /// A whole frame's input, threaded in as data rather than pulled through the
+    /// console — the host decides which window's input a step sees (see
+    /// [`EggInput`](crate::platform::EggInput)). Read-only: a step observes the
+    /// frame's edges/held state, it never advances them (the host owns the
+    /// per-window `refresh` cadence).
+    pub input: &'a EggInput,
     pub maps: &'a mut MapStore,
     /// The game's pseudo-random generator. Lives on [`EggState`] (not the
     /// console) so randomness is a piece of game state, not a hardware service.
@@ -243,7 +249,7 @@ pub struct EggState {
     pub scrubber: Option<CutsceneScrubber>,
 }
 impl EggState {
-    pub fn run(&mut self, system: &mut impl platform::ConsoleApi) {
+    pub fn run(&mut self, system: &mut impl platform::ConsoleApi, input: &EggInput) {
         // Pull the persisted save in before any state reads it, and flush it out
         // after every state has had a chance to mutate it — so the same frame
         // that changes progress also writes it, and exit-time saving needs no
@@ -261,7 +267,7 @@ impl EggState {
                 .load_inventory(&self.save.inventory, &self.items);
         }
         self.time += 1;
-        if let Some(mode) = self.step_mode(system) {
+        if let Some(mode) = self.step_mode(system, input) {
             self.enter(mode);
         }
         // Serialise the live inventory into the save before it is flushed, so an
@@ -275,17 +281,22 @@ impl EggState {
     /// and draw where the mode owns one) and returning any requested transition.
     /// Each mode's state is a field on `self`; the four menu variants all drive
     /// the shared [`menu`](Self::menu).
-    fn step_mode(&mut self, system: &mut impl platform::ConsoleApi) -> Option<GameMode> {
+    fn step_mode(
+        &mut self,
+        system: &mut impl platform::ConsoleApi,
+        input: &EggInput,
+    ) -> Option<GameMode> {
         // The cutscene scrubber is a fullscreen modal over everything: drive +
         // draw it and skip the normal sim while a session is open.
         if self.scrubber.is_some() {
-            self.drive_scrubber(system);
+            self.drive_scrubber(system, input);
             return None;
         }
         let transition = {
             let mut ctx = Ctx {
                 draw: &mut self.draw_state,
                 system,
+                input,
                 maps: &mut self.maps,
                 rng: &mut self.rng,
                 script: &self.script,
@@ -676,6 +687,7 @@ mod tests {
         // can't outlive the call) and hands the walkaround in alongside (the bag
         // now lives on the walkaround), the way `step_mode` does.
         state.menu = MenuState::new();
+        let input = EggInput::new();
         let mut returned = None;
         for index in [1, 3, 3] {
             let mut walk = std::mem::take(&mut state.walkaround);
@@ -684,6 +696,7 @@ mod tests {
                 let mut ctx = Ctx {
                     draw: &mut state.draw_state,
                     system: &mut console,
+                    input: &input,
                     maps: &mut state.maps,
                     rng: &mut state.rng,
                     script: &state.script,

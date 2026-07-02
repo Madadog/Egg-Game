@@ -428,7 +428,7 @@ impl WalkaroundState {
         // walkaround mutably. B fast-forwards; on an `interruptible` scene a
         // just-pressed movement direction cancels it instead.
         let mut top = self.cutscene.pop().expect("non-empty checked above");
-        let pad = ctx.system.controller();
+        let pad = ctx.input.controller();
         let (idx, idy) = dpad_delta(&pad, just_pressed);
         let interrupted = top.is_interruptible() && (idx != 0 || idy != 0);
         let outcome = if interrupted {
@@ -824,6 +824,7 @@ impl WalkaroundState {
             self.map_viewer.scene_names = ctx.scenes.names();
             self.map_viewer.step_map_viewer(
                 ctx.system,
+                ctx.input,
                 &mut self.current_map,
                 ctx.maps,
                 self.camera.pos,
@@ -876,16 +877,16 @@ impl WalkaroundState {
             }
         }
 
-        if ctx.system.keyp(ScanCode::Digit5) && ctx.system.key(ScanCode::Ctrl) {
+        if ctx.input.keyp(ScanCode::Digit5) && ctx.input.key(ScanCode::Ctrl) {
             self.load_pmem(ctx);
         }
-        if ctx.system.keyp(ScanCode::Digit6) {
+        if ctx.input.keyp(ScanCode::Digit6) {
             ctx.draw.set_palette(&crate::platform::SWEETIE_16);
         }
-        if ctx.system.keyp(ScanCode::Digit7) {
+        if ctx.input.keyp(ScanCode::Digit7) {
             ctx.draw.set_palette(&crate::platform::NIGHT_16);
         }
-        if ctx.system.keyp(ScanCode::Digit8) {
+        if ctx.input.keyp(ScanCode::Digit8) {
             ctx.draw.set_palette(&crate::platform::B_W);
         }
 
@@ -893,7 +894,7 @@ impl WalkaroundState {
         let (mut dx, mut dy) = (0, 0);
         let mut interact = false;
 
-        let pad = ctx.system.controller();
+        let pad = ctx.input.controller();
         if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
@@ -914,7 +915,7 @@ impl WalkaroundState {
             if just_pressed(pad.b) {
                 self.dialogue.skip(ctx.system, ctx.font, ctx.save);
             }
-            if ctx.system.keyp(ScanCode::Q) && ctx.system.key(ScanCode::Ctrl) {
+            if ctx.input.keyp(ScanCode::Q) && ctx.input.key(ScanCode::Ctrl) {
                 self.dialogue.close();
             }
         }
@@ -931,10 +932,10 @@ impl WalkaroundState {
         if just_pressed(pad.x) {
             return Some(GameMode::DebugMenu);
         }
-        if ctx.system.any_btnpr() {
+        if ctx.input.any_btnpr() {
             self.player().flip_controls = Axis::None
         }
-        let noclip = if ctx.system.key(ScanCode::Ctrl) && ctx.system.key(ScanCode::Shift) {
+        let noclip = if ctx.input.key(ScanCode::Ctrl) && ctx.input.key(ScanCode::Shift) {
             dy *= 3;
             dx *= 4;
             true
@@ -1325,7 +1326,7 @@ impl WalkaroundState {
         }
         editor.draw_at(
             ctx.draw,
-            ctx.system,
+            ctx.input,
             ctx.font,
             &self.current_map,
             ctx.maps,
@@ -1728,6 +1729,9 @@ mod tests {
     /// short-lived `Ctx` of borrows into it.
     struct CtxParts {
         draw: crate::draw_state::DrawState,
+        /// This frame's input, threaded into the `Ctx` — a test injects presses
+        /// here (button edges, held movement) instead of into the console.
+        input: crate::platform::EggInput,
         maps: crate::world::map::MapStore,
         rng: crate::rand::Lcg64Xsh32,
         script: crate::data::script::Script,
@@ -1741,6 +1745,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 draw: crate::draw_state::DrawState::default(),
+                input: crate::platform::EggInput::new(),
                 maps: crate::world::map::MapStore::default(),
                 rng: crate::rand::Lcg64Xsh32::default(),
                 script: crate::data::script::Script::new(),
@@ -1764,6 +1769,7 @@ mod tests {
         let mut ctx = Ctx {
             draw: &mut parts.draw,
             system: console,
+            input: &parts.input,
             maps: &mut parts.maps,
             rng: &mut parts.rng,
             script: &parts.script,
@@ -1778,8 +1784,8 @@ mod tests {
 
     /// Set a one-frame rising edge on the primary controller's B button (down
     /// now, up last frame), so a single `step` sees `just_pressed(pad.b)` once.
-    fn press_b(console: &mut TestConsole) {
-        console.controllers[0].b = [true, false];
+    fn press_b(parts: &mut CtxParts) {
+        parts.input.controllers[0].b = [true, false];
     }
 
     /// Pressing the bag button opens the inventory overlay in place: `step`
@@ -1796,7 +1802,7 @@ mod tests {
         walk.inventory_ui.state = InventoryUiState::Close;
         assert!(!walk.inventory_ui.is_open(), "bag starts closed");
 
-        press_b(&mut console);
+        press_b(&mut parts);
         let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
 
         assert_eq!(trans, None, "opening the bag is not a mode transition");
@@ -1825,7 +1831,7 @@ mod tests {
         // nothing in the world should move.
         walk.inventory_ui.open(&mut console);
         assert!(walk.inventory_ui.is_open());
-        console.controllers[0].right = [true, true];
+        parts.input.controllers[0].right = [true, true];
 
         let player_before = walk.player_ref().pos;
         let creature_before = walk.entities[1].pos;
@@ -1856,7 +1862,7 @@ mod tests {
 
         // Bag closed -> overlay guard is inert; a held "right" moves the player.
         walk.inventory_ui.state = InventoryUiState::Close;
-        console.controllers[0].right = [true, true];
+        parts.input.controllers[0].right = [true, true];
 
         let before = walk.player_ref().pos;
         with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));

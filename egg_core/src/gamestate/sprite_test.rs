@@ -1,6 +1,6 @@
 use crate::Ctx;
 use crate::draw_state::{LayerId, PALETTE_MAP_IDENTITY};
-use crate::platform::{ConsoleApi, ConsoleHelper, SWEETIE_16, pressed};
+use crate::platform::{ConsoleApi, SWEETIE_16, pressed};
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
     Canvas, EdgePolicy, PrintOptions, SpriteOptions, Transform, print_to_centered_with_font,
@@ -52,7 +52,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
         }
     }
 
-    let pad = ctx.system.controller();
+    let pad = ctx.input.controller();
     {
         let canvas = &mut ctx.draw.rgba_canvas[LayerId::BG as usize];
         if pressed(pad.b) {
@@ -100,7 +100,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
             );
         }
 
-        let mouse_pos = ctx.system.mouse().pos();
+        let mouse_pos = ctx.input.mouse.pos();
         let grid_index = (i32::from(mouse_pos.x / 8), i32::from(mouse_pos.y / 8));
         let mouse_indice = indice as i32 + grid_index.0 + grid_index.1 * WIDTH as i32;
         let (grid_x, grid_y) = (grid_index.0 * 8, grid_index.1 * 8);
@@ -128,7 +128,7 @@ pub fn draw_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: u32) {
 }
 
 pub fn step_sprite_test(ctx: &mut Ctx<impl ConsoleApi>, indice: &mut u32) {
-    let pad = ctx.system.controller();
+    let pad = ctx.input.controller();
     if pressed(pad.up) && *indice >= WIDTH {
         *indice = indice.saturating_sub(WIDTH);
     }

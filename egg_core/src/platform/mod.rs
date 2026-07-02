@@ -6,42 +6,25 @@ use crate::{
 pub use audio::*;
 pub use consts::*;
 pub use input::*;
+pub use null_console::NullConsole;
 pub use scancode::*;
-pub use scrub_console::ScrubConsole;
 
 pub mod audio;
 pub mod consts;
 pub mod input;
+pub mod null_console;
 pub mod scancode;
-pub mod scrub_console;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
 /// this trait — see `DrawState`, the `Canvas` trait, and `print_to_with_font`.
-/// What stays here is input, audio, asset access, and the final
-/// `output_image()` surface that consoles composite into. Persistent progress
-/// is no longer a hardware concern: `SaveData` is game state (on `EggState`),
-/// flushed through the string-named file store below.
+/// Input is no longer pulled through it either: a whole frame's input is threaded
+/// in as data (see [`EggInput`] and [`Ctx::input`](crate::Ctx::input)). What
+/// stays here is host effects/services — quit, clipboard, audio, asset access,
+/// and the final `output_image()` surface that consoles composite into.
+/// Persistent progress is no longer a hardware concern: `SaveData` is game state
+/// (on `EggState`), flushed through the string-named file store below.
 pub trait ConsoleApi {
-    // Input
-    /// The four gamepads, mirroring [`ConsoleApi::mouse`]. Each [`Controller`]
-    /// holds `[current, previous]` per button; read edges with the shared
-    /// [`pressed`]/[`just_pressed`] helpers. See [`ConsoleHelper::controller`]
-    /// for the single-player shorthand.
-    fn controllers(&self) -> &[Controller; 4];
-
     fn exit(&mut self);
-    fn key(&self, scancode: ScanCode) -> bool;
-    fn keyp(&self, scancode: ScanCode) -> bool;
-    /// Edge-or-repeat: like [`keyp`](Self::keyp) on the initial press, then again
-    /// while held — `delay` fixed steps before the first repeat, then every
-    /// `rate`. Default = no repeat (the press edge only); the real console
-    /// overrides it with the held-key timing from `EggInput`.
-    fn key_repeat(&self, scancode: ScanCode, _delay: u16, _rate: u16) -> bool {
-        self.keyp(scancode)
-    }
-    /// Latest character entered by the user this frame (for text entry).
-    fn key_chars(&self) -> &[char];
-    fn mouse(&self) -> MouseInput;
 
     /// Read / write the host clipboard (for the text editor's copy/cut/paste).
     /// Default: no clipboard — `get` is `None`, `set` is a no-op — so a minimal
@@ -98,21 +81,6 @@ pub trait ConsoleHelper: ConsoleApi {
     fn play_sound(&mut self, sfx_data: SfxData) {
         self.sfx(sfx_data.id, sfx_data.options);
     }
-    /// Player one's [`Controller`], mirroring [`ConsoleApi::mouse`]. Returns a
-    /// copy; read it with the shared [`pressed`]/[`just_pressed`] helpers, e.g.
-    /// `just_pressed(system.controller().a)`.
-    fn controller(&self) -> Controller {
-        self.controllers()[0]
-    }
-    /// Returns true if any button on any controller was just pressed this
-    /// frame. Ignores button releases.
-    fn any_btnp(&self) -> bool {
-        self.controllers().iter().any(Controller::any_just_pressed)
-    }
-    /// Returns true if any button on any controller was pressed or released.
-    fn any_btnpr(&self) -> bool {
-        self.controllers().iter().any(Controller::changed)
-    }
 }
 
 #[cfg(test)]
@@ -126,7 +94,7 @@ pub mod test_console {
     use std::collections::HashMap;
 
     use crate::data::sound::music::MusicTrack;
-    use crate::platform::{Controller, MouseInput, ScanCode, SfxOptions};
+    use crate::platform::SfxOptions;
     use crate::render::image::{IndexedImage, RgbaImage};
 
     use super::ConsoleApi;
@@ -135,10 +103,11 @@ pub mod test_console {
     /// trait (the output surface) plus an `indexed_sprites` sheet some tests hand
     /// to sheet-reading helpers like [`crate::world::map::map_by_name`] — those read
     /// the sheet directly now (it lives on `DrawState`), not through the console.
+    /// Input is no longer a console service: a test that drives input builds an
+    /// [`EggInput`](crate::platform::EggInput) and threads it through the `Ctx`.
     /// Text rendering reads a [`Font`](crate::render::Font), which is game data
     /// now (not a console service), so a test that draws text builds one locally.
     pub struct TestConsole {
-        pub controllers: [Controller; 4],
         /// In-memory stand-in for the host's string-named file store, so tests
         /// can drive [`ConsoleApi::write_file`]/[`read_file`](ConsoleApi::read_file)
         /// (e.g. the engine's autosave round trip).
@@ -155,7 +124,6 @@ pub mod test_console {
     impl TestConsole {
         pub fn new() -> Self {
             Self {
-                controllers: [Controller::default(); 4],
                 files: HashMap::new(),
                 clipboard: None,
                 // One blank 256px-wide sheet row block: enough for the
@@ -173,22 +141,7 @@ pub mod test_console {
     }
 
     impl ConsoleApi for TestConsole {
-        fn controllers(&self) -> &[Controller; 4] {
-            &self.controllers
-        }
         fn exit(&mut self) {}
-        fn key(&self, _scancode: ScanCode) -> bool {
-            false
-        }
-        fn keyp(&self, _scancode: ScanCode) -> bool {
-            false
-        }
-        fn key_chars(&self) -> &[char] {
-            &[]
-        }
-        fn mouse(&self) -> MouseInput {
-            MouseInput::default()
-        }
         fn clipboard_get(&mut self) -> Option<String> {
             self.clipboard.clone()
         }

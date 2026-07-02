@@ -31,9 +31,7 @@ use crate::data::script::eggtext;
 use crate::data::script::message::{Message, TextContent};
 use crate::data::sound::music::MusicTrack;
 use crate::draw_state::{DrawState, LayerId};
-use crate::platform::{
-    ConsoleApi, Controller, MouseInput, ScanCode, SfxOptions, just_pressed, pressed,
-};
+use crate::platform::{ConsoleApi, EggInput, ScanCode, SfxOptions, just_pressed, pressed};
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
     Canvas, EdgePolicy, Font, PrintOptions, Transform, print_to_centered_with_font,
@@ -254,23 +252,8 @@ struct Preview {
 struct Muted<'a, C: ConsoleApi>(&'a mut C);
 
 impl<C: ConsoleApi> ConsoleApi for Muted<'_, C> {
-    fn controllers(&self) -> &[Controller; 4] {
-        self.0.controllers()
-    }
     fn exit(&mut self) {
         self.0.exit();
-    }
-    fn key(&self, s: ScanCode) -> bool {
-        self.0.key(s)
-    }
-    fn keyp(&self, s: ScanCode) -> bool {
-        self.0.keyp(s)
-    }
-    fn key_chars(&self) -> &[char] {
-        self.0.key_chars()
-    }
-    fn mouse(&self) -> MouseInput {
-        self.0.mouse()
     }
     fn music(&mut self, _track: Option<&MusicTrack>) {}
     fn sfx(&mut self, _id: &str, _opts: SfxOptions) {}
@@ -637,11 +620,11 @@ impl TextEditor {
     /// field and act on the result. Find searches incrementally as the query
     /// changes (Enter / Shift+Enter step to the next / previous match, wrapping);
     /// go-to jumps on Enter. Escape closes either. `shift` is this frame's Shift.
-    fn step_prompt(&mut self, system: &mut impl ConsoleApi, shift: bool) {
+    fn step_prompt(&mut self, input: &EggInput, shift: bool) {
         let Some(mut prompt) = self.prompt.take() else {
             return;
         };
-        let event = prompt.input.step(system);
+        let event = prompt.input.step(input);
         let query = prompt.input.text().to_string();
         match prompt.kind {
             PromptKind::Find => match event {
@@ -915,19 +898,26 @@ impl TextEditor {
     /// Advance one frame: route this view's already-mapped mouse + keyboard into
     /// the buffer. `fb_w`/`fb_h` are the view's framebuffer size (cursor space),
     /// so the click regions match what [`draw`](Self::draw) lays out.
-    pub fn step(&mut self, system: &mut impl ConsoleApi, font: &Font, fb_w: i32, fb_h: i32) {
+    pub fn step(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        input: &EggInput,
+        font: &Font,
+        fb_w: i32,
+        fb_h: i32,
+    ) {
         if self.path.is_none() {
             self.open(system, EGGTEXT_PATH, TextAnchor::Top);
         }
         let r = self.regions(font, fb_w, fb_h);
-        let ctrl = system.key(ScanCode::Ctrl);
+        let ctrl = input.key(ScanCode::Ctrl);
         // Shift extends a selection (Shift+arrow / Shift+click); read once for the
         // mouse and keyboard handling below.
-        let shift = system.key(ScanCode::Shift);
+        let shift = input.key(ScanCode::Shift);
 
         // A modal find / go-to-line prompt swallows all input until it closes.
         if self.prompt.is_some() {
-            self.step_prompt(system, shift);
+            self.step_prompt(input, shift);
             let layout = self.layout(font, &r);
             // A find / go-to match moves the caret, so always reveal it here.
             self.ensure_caret_visible_rows(&layout, r.visible_rows, true);
@@ -952,7 +942,7 @@ impl TextEditor {
         // Mouse: a click places the caret (Shift-click / drag extends the
         // selection); the outline jumps; the wheel scrolls whichever column the
         // cursor is over.
-        let mouse = system.mouse();
+        let mouse = input.mouse;
         let p = mouse.pos();
         let (mx, my) = (i32::from(p.x), i32::from(p.y));
         if just_pressed(mouse.left)
@@ -1056,81 +1046,81 @@ impl TextEditor {
         // typed text / navigation. Selection-aware: typing and a delete key
         // replace any selection, and Shift+motion extends it. Alt+Up/Down move the
         // current line.
-        let alt = system.key(ScanCode::Alt);
+        let alt = input.key(ScanCode::Alt);
         let mut changed = false;
-        if ctrl && system.keyp(ScanCode::S) {
+        if ctrl && input.keyp(ScanCode::S) {
             self.save_and_reload(system);
             self.mid_edit = false; // a save closes the current undo group
-        } else if ctrl && shift && system.keyp(ScanCode::O) {
+        } else if ctrl && shift && input.keyp(ScanCode::O) {
             self.cycle_dock(TextPanel::Outline); // Ctrl+Shift+O cycles the outline
             boundary = true;
-        } else if ctrl && shift && system.keyp(ScanCode::P) {
+        } else if ctrl && shift && input.keyp(ScanCode::P) {
             self.cycle_dock(TextPanel::Preview); // Ctrl+Shift+P cycles the preview
             boundary = true;
-        } else if ctrl && shift && system.keyp(ScanCode::M) {
+        } else if ctrl && shift && input.keyp(ScanCode::M) {
             self.cycle_main(); // Ctrl+Shift+M cycles which panel is the centre
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::O) {
+        } else if ctrl && input.keyp(ScanCode::O) {
             self.switch_file(system);
-        } else if ctrl && system.keyp(ScanCode::F) {
+        } else if ctrl && input.keyp(ScanCode::F) {
             self.open_prompt(PromptKind::Find);
-        } else if ctrl && system.keyp(ScanCode::G) {
+        } else if ctrl && input.keyp(ScanCode::G) {
             self.open_prompt(PromptKind::GoTo);
-        } else if ctrl && system.keyp(ScanCode::A) {
+        } else if ctrl && input.keyp(ScanCode::A) {
             self.field.select_all();
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::C) {
+        } else if ctrl && input.keyp(ScanCode::C) {
             self.copy(system);
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::X) {
+        } else if ctrl && input.keyp(ScanCode::X) {
             self.checkpoint_discrete();
             self.cut(system);
             changed = true;
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::V) {
+        } else if ctrl && input.keyp(ScanCode::V) {
             self.checkpoint_discrete();
             self.paste(system);
             changed = true;
             boundary = true;
-        } else if ctrl && shift && system.keyp(ScanCode::K) {
+        } else if ctrl && shift && input.keyp(ScanCode::K) {
             self.checkpoint_discrete();
             self.delete_line();
             changed = true;
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::D) {
+        } else if ctrl && input.keyp(ScanCode::D) {
             self.checkpoint_discrete();
             self.duplicate_line();
             changed = true;
             boundary = true;
-        } else if ctrl && system.key_repeat(ScanCode::Z, REPEAT_DELAY, REPEAT_RATE) {
+        } else if ctrl && input.key_repeat(ScanCode::Z, REPEAT_DELAY, REPEAT_RATE) {
             // Ctrl+Z undo, Ctrl+Shift+Z redo (both repeat while held).
             if shift {
                 self.redo();
             } else {
                 self.undo();
             }
-        } else if ctrl && system.key_repeat(ScanCode::Y, REPEAT_DELAY, REPEAT_RATE) {
+        } else if ctrl && input.key_repeat(ScanCode::Y, REPEAT_DELAY, REPEAT_RATE) {
             self.redo();
-        } else if ctrl && shift && system.keyp(ScanCode::LeftBracket) {
+        } else if ctrl && shift && input.keyp(ScanCode::LeftBracket) {
             self.toggle_fold_at_caret(); // Ctrl+Shift+[ folds/unfolds the caret's section
             boundary = true;
-        } else if alt && system.keyp(ScanCode::Z) {
+        } else if alt && input.keyp(ScanCode::Z) {
             self.wrap = !self.wrap; // Alt+Z toggles word-wrap
             if self.wrap {
                 self.h_scroll = 0;
             }
             self.goal_x = None;
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::Period) {
+        } else if ctrl && input.keyp(ScanCode::Period) {
             self.preview_next(); // Ctrl+. forward-skips the preview a turn
             boundary = true;
-        } else if ctrl && system.keyp(ScanCode::Comma) {
+        } else if ctrl && input.keyp(ScanCode::Comma) {
             self.preview_prev(); // Ctrl+, back a turn
             boundary = true;
         } else {
             // Typed text — replaces any selection; a whitespace insert closes the
             // undo group, so each word is its own undo step.
-            for c in system.key_chars() {
+            for c in input.key_chars() {
                 if !c.is_control() {
                     self.checkpoint();
                     self.field.edit(TextOp::Push(*c));
@@ -1140,13 +1130,13 @@ impl TextEditor {
             }
             // Navigation + edits auto-repeat while held (newlines, indents, caret
             // glide, paging); the cadence is the shared text-entry one.
-            if system.key_repeat(ScanCode::Return, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::Return, REPEAT_DELAY, REPEAT_RATE) {
                 self.checkpoint();
                 self.newline_autoindent(); // carries the line's leading whitespace
                 changed = true;
                 boundary = true;
             }
-            if system.key_repeat(ScanCode::Tab, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::Tab, REPEAT_DELAY, REPEAT_RATE) {
                 self.checkpoint();
                 if self.field.selection().is_some() {
                     // A selection indents / dedents every line it covers.
@@ -1170,15 +1160,15 @@ impl TextEditor {
             // Backspace / Delete / Ctrl+word-delete + Left / Right (shared with the
             // map editor's fields, and selection-aware). Checkpoint before a
             // delete; a length change means one happened.
-            if system.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE)
-                || system.key_repeat(ScanCode::Delete, REPEAT_DELAY, REPEAT_RATE)
+            if input.key_repeat(ScanCode::Backspace, REPEAT_DELAY, REPEAT_RATE)
+                || input.key_repeat(ScanCode::Delete, REPEAT_DELAY, REPEAT_RATE)
             {
                 self.checkpoint();
             }
             let len_before = self.field.text().len();
-            self.field.edit_keys(system);
+            self.field.edit_keys(input);
             changed |= self.field.text().len() != len_before;
-            if system.key_repeat(ScanCode::Up, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::Up, REPEAT_DELAY, REPEAT_RATE) {
                 if alt {
                     self.checkpoint_discrete();
                     self.move_line(false);
@@ -1189,7 +1179,7 @@ impl TextEditor {
                 }
                 boundary = true;
             }
-            if system.key_repeat(ScanCode::Down, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::Down, REPEAT_DELAY, REPEAT_RATE) {
                 if alt {
                     self.checkpoint_discrete();
                     self.move_line(true);
@@ -1200,21 +1190,21 @@ impl TextEditor {
                 }
                 boundary = true;
             }
-            if system.key_repeat(ScanCode::Home, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::Home, REPEAT_DELAY, REPEAT_RATE) {
                 self.smart_home(shift);
                 boundary = true;
             }
-            if system.key_repeat(ScanCode::End, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::End, REPEAT_DELAY, REPEAT_RATE) {
                 self.field.move_caret(TextOp::End, shift);
                 boundary = true;
             }
             let page = r.visible_rows.saturating_sub(1) as i32;
-            if system.key_repeat(ScanCode::PageUp, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::PageUp, REPEAT_DELAY, REPEAT_RATE) {
                 self.move_caret_visual(-page, shift, &layout, font);
                 vertical = true;
                 boundary = true;
             }
-            if system.key_repeat(ScanCode::PageDown, REPEAT_DELAY, REPEAT_RATE) {
+            if input.key_repeat(ScanCode::PageDown, REPEAT_DELAY, REPEAT_RATE) {
                 self.move_caret_visual(page, shift, &layout, font);
                 vertical = true;
                 boundary = true;
@@ -2837,7 +2827,7 @@ title = Hello
         ed.rebuild_outline();
 
         // Idle step (mouse still, no keys) then a draw with the caret at the top.
-        ed.step(&mut console, &Font::blank(), 240, 136);
+        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136);
         ed.draw(&mut draw, &Font::blank());
 
         // Drive the caret to the buffer end, let the visual caret-follow move the
@@ -3531,7 +3521,7 @@ title = Hello
         let mut ed = TextEditor::default();
         ed.open(&mut console, "script/en.eggtext", TextAnchor::Line(150));
         assert_eq!(ed.scroll, 0, "open resets the scroll");
-        ed.step(&mut console, &Font::blank(), 240, 136);
+        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136);
         assert!(ed.scroll > 0, "the step scrolled the deep caret into view");
     }
 

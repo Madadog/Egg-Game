@@ -137,8 +137,8 @@ pub fn primary_hotkeys(
     }
     // …or when the primary map editor is open — it owns the keyboard, so only
     // `L` (toggle the editor off) passes, while the editor's own shortcuts
-    // (Ctrl+Z/Y/S, Delete, 1-4) are read inside `step_map_viewer` via the
-    // shared console.
+    // (Ctrl+Z/Y/S, Delete, 1-4) are read inside `step_map_viewer` from the
+    // primary window's threaded input.
     if routing.primary_editor_open {
         if keys.just_pressed(KeyCode::KeyL) {
             game.state.walkaround.map_viewer.focused = false;

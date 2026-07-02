@@ -18,7 +18,7 @@ use crate::render::{PrintOptions, print_to_shadow_with_font, text_width};
 
 use self::walkaround::WalkaroundState;
 use crate::Ctx;
-use crate::platform::{ConsoleApi, ConsoleHelper};
+use crate::platform::ConsoleApi;
 
 pub use self::intro::IntroAnimation;
 pub use self::menu::MenuState;
@@ -67,7 +67,7 @@ impl Instructions {
     ) -> Option<GameMode> {
         self.timer = self.timer.saturating_add(1);
         let mut next = None;
-        if (self.timer > 60 || ctx.save.instructions_read) && ctx.system.any_btnp() {
+        if (self.timer > 60 || ctx.save.instructions_read) && ctx.input.any_btnp() {
             if ctx.save.instructions_read {
                 walkaround.load_pmem(ctx);
             } else {

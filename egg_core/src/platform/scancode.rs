@@ -1,8 +1,11 @@
 /// Keyboard scancodes. Values 1..=65 follow the TIC-80 numbering; values
 /// after that (Escape, F1..F12) are extensions specific to this console.
 ///
-/// Use these instead of bare numbers when calling `ConsoleApi::key` /
-/// `ConsoleApi::keyp` so the meaning of each key press stays obvious.
+/// Use these instead of bare numbers when calling [`EggInput::key`] /
+/// [`EggInput::keyp`] so the meaning of each key press stays obvious.
+///
+/// [`EggInput::key`]: crate::platform::EggInput::key
+/// [`EggInput::keyp`]: crate::platform::EggInput::keyp
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ScanCode {

@@ -19,7 +19,7 @@ use crate::gamestate::walkaround::WalkaroundState;
 use crate::geometry::{Hitbox, Vec2};
 use crate::data::scene::{self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion};
 use crate::platform::{
-    ConsoleApi, ConsoleHelper, MouseInput, ScanCode, dpad_delta, just_pressed, pressed,
+    ConsoleApi, EggInput, MouseInput, ScanCode, dpad_delta, just_pressed, pressed,
 };
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
@@ -2888,6 +2888,7 @@ impl MapViewer {
     pub fn step_map_viewer(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
@@ -2896,7 +2897,7 @@ impl MapViewer {
         save: &SaveData,
     ) {
         let screen = (system.width() as f32, system.height() as f32);
-        self.step_map_viewer_at(system, map, maps, camera_pos, screen, sheet, script, save);
+        self.step_map_viewer_at(system, input, map, maps, camera_pos, screen, sheet, script, save);
     }
 
     /// Like [`step_map_viewer`](Self::step_map_viewer) but with an explicit
@@ -2907,6 +2908,7 @@ impl MapViewer {
     pub fn step_map_viewer_at(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
@@ -2942,27 +2944,27 @@ impl MapViewer {
         // The live path recorder is fully modal (like warp placement).
         if self.path_recorder.is_some() {
             self.dock.recompute(screen);
-            self.step_path_recorder(system, map, maps, screen);
+            self.step_path_recorder(system, input, map, maps, screen);
             return;
         }
         // A fullscreen warp-destination placement session is fully modal: it draws
         // over the editor and captures all input until confirmed or cancelled.
         if self.warp_preview.is_some() {
             self.dock.recompute(screen);
-            self.step_warp_preview(system, map, maps, screen);
+            self.step_warp_preview(input, map, maps, screen);
             return;
         }
         // The scene picker is fully modal (like the recorder/warp placement).
         if self.scene_picker.is_some() {
             self.dock.recompute(screen);
-            self.step_scene_picker(system);
+            self.step_scene_picker(input);
             return;
         }
         // `R` opens the path recorder — but not while a text field or the maps
         // dialog is capturing keys (else typing an `r` would abort the edit).
         if self.editing.is_none()
             && !self.maps_dialog.is_active()
-            && system.keyp(ScanCode::R)
+            && input.keyp(ScanCode::R)
         {
             self.dock.recompute(screen);
             self.open_path_recorder(map, camera_pos);
@@ -2973,7 +2975,7 @@ impl MapViewer {
         // pushes the names in via `scene_names`.
         if self.editing.is_none()
             && !self.maps_dialog.is_active()
-            && system.keyp(ScanCode::P)
+            && input.keyp(ScanCode::P)
         {
             self.dock.recompute(screen);
             self.open_scene_picker();
@@ -2982,13 +2984,13 @@ impl MapViewer {
 
         if self.maps_dialog.is_active() {
             // A modal map dialog (new / rename / delete) captures all input.
-            self.step_maps_dialog(system, maps);
+            self.step_maps_dialog(system, input, maps);
         } else if self.editing.is_some() {
             // While a text field is focused all keys feed the buffer — don't let
             // editor shortcuts (incl. a typed "z") fire.
-            self.step_text_entry(system, map, maps);
+            self.step_text_entry(input, map, maps);
         } else {
-            self.handle_shortcuts(system, map, maps);
+            self.handle_shortcuts(system, input, map, maps);
         }
 
         // Tile the panels once; both this hit pass and the later draw pass read
@@ -3009,12 +3011,12 @@ impl MapViewer {
         // A modal map dialog (new / rename / delete) swallows all mouse
         // interaction with the panels and world; otherwise hit-test it.
         if !self.maps_dialog.is_active() {
-            self.step_mouse_input(system, map, maps, camera_pos, screen);
+            self.step_mouse_input(system, input, map, maps, camera_pos, screen);
         }
 
         // Controller fallback for the Layers tool (matches the old viewer).
         if self.tool == EditorTool::Layers {
-            let pad = system.controller();
+            let pad = input.controller();
             if just_pressed(pad.up) {
                 self.layer_index = self.layer_index.saturating_sub(1);
             }
@@ -3091,12 +3093,13 @@ impl MapViewer {
     fn step_mouse_input(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
         screen: (f32, f32),
     ) {
-        let mouse = system.mouse();
+        let mouse = input.mouse;
         let cursor = mouse.pos();
         if matches!(self.canvas_drag, CanvasDrag::Scrollbar { .. }) {
             // A panel scroll-bar drag owns the mouse.
@@ -3112,7 +3115,7 @@ impl MapViewer {
             // suppress panel and canvas input so it can't paint or re-select.
         } else if let Some(key) = self.global_bar_hit(cursor) {
             // The always-on undo/redo/save bar wins over the world beneath it.
-            self.handle_panel(system, map, maps, usize::MAX, key, camera_pos);
+            self.handle_panel(system, input, map, maps, usize::MAX, key, camera_pos);
         } else {
             // A wheel notch scrolls the panel under the cursor (any region of it).
             self.handle_panel_wheel(&mouse, map, maps);
@@ -3128,11 +3131,11 @@ impl MapViewer {
                 }
             }
             match panel_hit {
-                Some((idx, key)) => self.handle_panel(system, map, maps, idx, key, camera_pos),
+                Some((idx, key)) => self.handle_panel(system, input, map, maps, idx, key, camera_pos),
                 // World gate: canvas tools fire only over the leftover world view
                 // (not behind a docked strip) and only when nothing is dragging.
                 None if self.dock.solved.world.contains(cursor) => {
-                    self.handle_canvas(system, map, maps, camera_pos, &mouse)
+                    self.handle_canvas(input, map, maps, camera_pos, &mouse)
                 }
                 None => {}
             }
@@ -3271,34 +3274,35 @@ impl MapViewer {
     fn handle_shortcuts(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
     ) {
-        let ctrl = system.key(ScanCode::Ctrl);
-        let shift = system.key(ScanCode::Shift);
+        let ctrl = input.key(ScanCode::Ctrl);
+        let shift = input.key(ScanCode::Shift);
         if ctrl {
-            if system.keyp(ScanCode::Z) {
+            if input.keyp(ScanCode::Z) {
                 if shift {
                     self.redo(map, maps);
                 } else {
                     self.undo(map, maps);
                 }
             }
-            if system.keyp(ScanCode::Y) {
+            if input.keyp(ScanCode::Y) {
                 self.redo(map, maps);
             }
-            if system.keyp(ScanCode::S) {
+            if input.keyp(ScanCode::S) {
                 self.save(system, map, maps);
             }
             // Select-tool clipboard ops (Ctrl+C/X/V) on the active layer.
             if self.tool == EditorTool::Select {
-                if system.keyp(ScanCode::C) {
+                if input.keyp(ScanCode::C) {
                     self.selection_copy(maps, map);
                 }
-                if system.keyp(ScanCode::X) {
+                if input.keyp(ScanCode::X) {
                     self.selection_cut(maps, map);
                 }
-                if system.keyp(ScanCode::V) {
+                if input.keyp(ScanCode::V) {
                     self.selection_paste(maps, map);
                 }
             }
@@ -3307,7 +3311,7 @@ impl MapViewer {
         }
 
         // Delete: removes the selected object, or clears the Select marquee.
-        if system.keyp(ScanCode::Delete) {
+        if input.keyp(ScanCode::Delete) {
             if matches!(self.tool, EditorTool::Interactables | EditorTool::Warps) {
                 self.delete_object(map);
             } else if self.tool == EditorTool::Select {
@@ -3315,11 +3319,11 @@ impl MapViewer {
             }
         }
         // Escape drops the Select marquee.
-        if system.keyp(ScanCode::Escape) && self.tool == EditorTool::Select {
+        if input.keyp(ScanCode::Escape) && self.tool == EditorTool::Select {
             self.selection = None;
         }
         // G toggles the tile-grid + coordinate overlay.
-        if system.keyp(ScanCode::G) {
+        if input.keyp(ScanCode::G) {
             self.show_grid = !self.show_grid;
         }
         // Arrow keys nudge the selected object's hitbox (8px with Shift), each
@@ -3327,16 +3331,16 @@ impl MapViewer {
         if matches!(self.tool, EditorTool::Interactables | EditorTool::Warps) {
             let step = if shift { 8 } else { 1 };
             let (mut dx, mut dy) = (0i16, 0i16);
-            if system.keyp(ScanCode::Left) {
+            if input.keyp(ScanCode::Left) {
                 dx -= step;
             }
-            if system.keyp(ScanCode::Right) {
+            if input.keyp(ScanCode::Right) {
                 dx += step;
             }
-            if system.keyp(ScanCode::Up) {
+            if input.keyp(ScanCode::Up) {
                 dy -= step;
             }
-            if system.keyp(ScanCode::Down) {
+            if input.keyp(ScanCode::Down) {
                 dy += step;
             }
             if (dx != 0 || dy != 0) && self.selected.is_some() {
@@ -3351,15 +3355,15 @@ impl MapViewer {
 
         // Number-row tool switching, mirroring the tab order (5 = Select, the
         // Paint panel's sub-mode).
-        let tool = if system.keyp(ScanCode::Digit1) {
+        let tool = if input.keyp(ScanCode::Digit1) {
             Some(EditorTool::Layers)
-        } else if system.keyp(ScanCode::Digit2) {
+        } else if input.keyp(ScanCode::Digit2) {
             Some(EditorTool::Paint)
-        } else if system.keyp(ScanCode::Digit3) {
+        } else if input.keyp(ScanCode::Digit3) {
             Some(EditorTool::Interactables)
-        } else if system.keyp(ScanCode::Digit4) {
+        } else if input.keyp(ScanCode::Digit4) {
             Some(EditorTool::Warps)
-        } else if system.keyp(ScanCode::Digit5) {
+        } else if input.keyp(ScanCode::Digit5) {
             Some(EditorTool::Select)
         } else {
             None
@@ -3428,7 +3432,7 @@ impl MapViewer {
     /// map vanishes mid-session.
     fn step_warp_preview(
         &mut self,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         screen: (f32, f32),
@@ -3450,16 +3454,16 @@ impl MapViewer {
         let (sw, sh) = (screen.0 as i16, screen.1 as i16);
 
         // Z/Enter commit the working point; X/Esc discard (warp untouched).
-        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+        if input.keyp(ScanCode::Escape) || input.keyp(ScanCode::X) {
             self.warp_preview = None;
             return;
         }
-        if system.keyp(ScanCode::Return) || system.keyp(ScanCode::Z) {
+        if input.keyp(ScanCode::Return) || input.keyp(ScanCode::Z) {
             self.commit_warp_preview(&pv, map);
             return;
         }
 
-        let mouse = system.mouse();
+        let mouse = input.mouse;
         let cursor = mouse.pos();
         // The Confirm/Cancel buttons win a click over the map beneath them.
         if just_pressed(mouse.left) {
@@ -3477,15 +3481,15 @@ impl MapViewer {
         }
 
         // Arrow keys pan (held = continuous; Shift = faster).
-        let step = if system.key(ScanCode::Shift) {
+        let step = if input.key(ScanCode::Shift) {
             WARP_CAM_PAN_FAST
         } else {
             WARP_CAM_PAN
         };
-        if system.key(ScanCode::Left) { pv.camera.x -= step; }
-        if system.key(ScanCode::Right) { pv.camera.x += step; }
-        if system.key(ScanCode::Up) { pv.camera.y -= step; }
-        if system.key(ScanCode::Down) { pv.camera.y += step; }
+        if input.key(ScanCode::Left) { pv.camera.x -= step; }
+        if input.key(ScanCode::Right) { pv.camera.x += step; }
+        if input.key(ScanCode::Up) { pv.camera.y -= step; }
+        if input.key(ScanCode::Down) { pv.camera.y += step; }
         // Right-drag grabs and pans the map (left stays for placement).
         if just_pressed(mouse.right) {
             pv.pan_anchor = Some((cursor, pv.camera));
@@ -3651,23 +3655,23 @@ impl MapViewer {
 
     /// Step the modal scene picker: up/down move the highlight, Enter replays the
     /// chosen scene (parks a [`ScrubRequest`] the engine opens), Esc/X cancels.
-    fn step_scene_picker(&mut self, system: &mut impl ConsoleApi) {
+    fn step_scene_picker(&mut self, input: &EggInput) {
         let Some(mut picker) = self.scene_picker.clone() else {
             return;
         };
-        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+        if input.keyp(ScanCode::Escape) || input.keyp(ScanCode::X) {
             self.scene_picker = None;
             return;
         }
         let len = picker.names.len();
         if len > 0 {
-            if system.keyp(ScanCode::Up) {
+            if input.keyp(ScanCode::Up) {
                 picker.selected = picker.selected.saturating_sub(1);
             }
-            if system.keyp(ScanCode::Down) {
+            if input.keyp(ScanCode::Down) {
                 picker.selected = (picker.selected + 1).min(len - 1);
             }
-            if system.keyp(ScanCode::Return) {
+            if input.keyp(ScanCode::Return) {
                 let name = picker.names[picker.selected].clone();
                 self.pending_scrub = Some(ScrubRequest::ByName(name));
                 self.scene_picker = None;
@@ -3752,6 +3756,7 @@ impl MapViewer {
     fn step_path_recorder(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         screen: (f32, f32),
@@ -3760,22 +3765,22 @@ impl MapViewer {
         let (sw, sh) = (screen.0 as i16, screen.1 as i16);
         let (fw, fh) = Self::map_px_dims(map, maps, (sw, sh));
 
-        if system.keyp(ScanCode::Escape) || system.keyp(ScanCode::X) {
+        if input.keyp(ScanCode::Escape) || input.keyp(ScanCode::X) {
             self.path_recorder = None;
             return;
         }
-        if system.keyp(ScanCode::Return) || system.keyp(ScanCode::Z) {
+        if input.keyp(ScanCode::Return) || input.keyp(ScanCode::Z) {
             self.commit_path_recorder(system);
             return;
         }
         // `N` toggles noclip — but only before any movement is recorded, since the
         // flag is saved once for the whole replay (toggling mid-record would make
         // the replay re-collide segments differently than they were driven).
-        if system.keyp(ScanCode::N) && pr.runs.iter().all(|(d, _)| *d == (0, 0)) {
+        if input.keyp(ScanCode::N) && pr.runs.iter().all(|(d, _)| *d == (0, 0)) {
             pr.noclip = !pr.noclip;
         }
 
-        let mouse = system.mouse();
+        let mouse = input.mouse;
         let cursor = mouse.pos();
         if just_pressed(mouse.left) {
             match self.build_path_recorder_ui().hit_at(0, 0, cursor) {
@@ -3798,9 +3803,9 @@ impl MapViewer {
         // for the player-driving *primary* window, so a focused F8 view's dpad is
         // empty. Sum with the gamepad dpad and clamp so either source drives a step
         // (and holding an arrow on the primary, where both fire, isn't doubled).
-        let kx = system.key(ScanCode::Right) as i16 - system.key(ScanCode::Left) as i16;
-        let ky = system.key(ScanCode::Down) as i16 - system.key(ScanCode::Up) as i16;
-        let pad = system.controller();
+        let kx = input.key(ScanCode::Right) as i16 - input.key(ScanCode::Left) as i16;
+        let ky = input.key(ScanCode::Down) as i16 - input.key(ScanCode::Up) as i16;
+        let pad = input.controller();
         let (pdx, pdy) = dpad_delta(&pad, pressed);
         let dx0 = (kx + pdx).clamp(-1, 1);
         let dy0 = (ky + pdy).clamp(-1, 1);
@@ -3979,16 +3984,18 @@ impl MapViewer {
             .draw_at(0, 0, draw_state, font, LayerId::BG);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_panel(
         &mut self,
         system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         idx: usize,
         key: EditorKey,
         camera_pos: Vec2,
     ) {
-        let mouse = system.mouse();
+        let mouse = input.mouse;
         let click = just_pressed(mouse.left);
         // Clicking anywhere in a panel makes it the active canvas tool (the
         // global bar passes `usize::MAX`, which `activate_panel` ignores).
@@ -4576,14 +4583,14 @@ impl MapViewer {
 
     fn handle_canvas(
         &mut self,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
         mouse: &MouseInput,
     ) {
         match self.tool {
-            EditorTool::Paint => self.handle_paint(system, map, maps, camera_pos, mouse),
+            EditorTool::Paint => self.handle_paint(input, map, maps, camera_pos, mouse),
             EditorTool::Select => self.handle_select(camera_pos, mouse),
             EditorTool::Interactables | EditorTool::Warps => {
                 let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
@@ -4632,7 +4639,7 @@ impl MapViewer {
     /// drag out a filled rectangle. All of a press-drag-release is one undo step.
     fn handle_paint(
         &mut self,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &mut MapInfo,
         maps: &mut MapStore,
         camera_pos: Vec2,
@@ -4665,7 +4672,7 @@ impl MapViewer {
             return;
         }
 
-        let rect_mode = system.key(ScanCode::Shift);
+        let rect_mode = input.key(ScanCode::Shift);
         if rect_mode {
             // Shift held: drag a rectangle in world space, fill it on release.
             let world = Vec2::new(mouse.pos().x + camera_pos.x, mouse.pos().y + camera_pos.y);
@@ -5266,16 +5273,11 @@ impl MapViewer {
         });
     }
 
-    fn step_text_entry(
-        &mut self,
-        system: &mut impl ConsoleApi,
-        map: &mut MapInfo,
-        maps: &mut MapStore,
-    ) {
+    fn step_text_entry(&mut self, input: &EggInput, map: &mut MapInfo, maps: &mut MapStore) {
         let Some(edit) = self.editing.as_mut() else {
             return;
         };
-        match edit.buffer.step(system) {
+        match edit.buffer.step(input) {
             TextEvent::Active => {}
             TextEvent::Commit => {
                 self.commit_edit(map, maps);
@@ -5709,13 +5711,18 @@ impl MapViewer {
     /// Drive the active map dialog from the keyboard: New/Rename take a typed name
     /// (Return commits, Escape cancels); ConfirmDelete confirms on Return. The
     /// dialog is read under one borrow, the resulting op applied after it ends.
-    fn step_maps_dialog(&mut self, system: &mut impl ConsoleApi, maps: &mut MapStore) {
+    fn step_maps_dialog(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        input: &EggInput,
+        maps: &mut MapStore,
+    ) {
         let action = match &mut self.maps_dialog {
             MapsDialog::None => DialogAction::Keep,
             MapsDialog::New { name, w, h, focus } => {
-                if system.keyp(ScanCode::Escape) {
+                if input.keyp(ScanCode::Escape) {
                     DialogAction::Close
-                } else if system.keyp(ScanCode::Return) {
+                } else if input.keyp(ScanCode::Return) {
                     if *focus >= 2 {
                         DialogAction::Create(
                             name.text().trim().to_string(),
@@ -5734,17 +5741,17 @@ impl MapViewer {
                         _ => h,
                     };
                     let digits_only = *focus != 0;
-                    for c in system.key_chars() {
+                    for c in input.key_chars() {
                         let allowed = !c.is_control() && (!digits_only || c.is_ascii_digit());
                         if allowed {
                             field.edit(TextOp::Push(*c));
                         }
                     }
-                    field.edit_keys(system);
+                    field.edit_keys(input);
                     DialogAction::Keep
                 }
             }
-            MapsDialog::Rename { from, name } => match name.step(system) {
+            MapsDialog::Rename { from, name } => match name.step(input) {
                 TextEvent::Commit => {
                     DialogAction::Rename(from.clone(), name.text().trim().to_string())
                 }
@@ -5752,9 +5759,9 @@ impl MapViewer {
                 TextEvent::Active => DialogAction::Keep,
             },
             MapsDialog::ConfirmDelete(name) => {
-                if system.keyp(ScanCode::Return) {
+                if input.keyp(ScanCode::Return) {
                     DialogAction::Delete(name.clone())
-                } else if system.keyp(ScanCode::Escape) {
+                } else if input.keyp(ScanCode::Escape) {
                     DialogAction::Close
                 } else {
                     DialogAction::Keep
@@ -5766,9 +5773,9 @@ impl MapViewer {
                 h,
                 focus,
             } => {
-                if system.keyp(ScanCode::Escape) {
+                if input.keyp(ScanCode::Escape) {
                     DialogAction::Close
-                } else if system.keyp(ScanCode::Return) {
+                } else if input.keyp(ScanCode::Return) {
                     if *focus >= 1 {
                         // An emptied / invalid field keeps the map's CURRENT size
                         // (not the new-map default) so a stray backspace can't
@@ -5788,12 +5795,12 @@ impl MapViewer {
                     }
                 } else {
                     let field = if *focus == 0 { w } else { h };
-                    for c in system.key_chars() {
+                    for c in input.key_chars() {
                         if c.is_ascii_digit() {
                             field.edit(TextOp::Push(*c));
                         }
                     }
-                    field.edit_keys(system);
+                    field.edit_keys(input);
                     DialogAction::Keep
                 }
             }
@@ -5936,14 +5943,14 @@ impl MapViewer {
     pub fn draw_map_viewer(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         font: &Font,
         maps: &MapStore,
         walkaround: &WalkaroundState,
     ) {
         self.draw_at(
             draw_state,
-            system,
+            input,
             font,
             &walkaround.current_map,
             maps,
@@ -5973,7 +5980,7 @@ impl MapViewer {
     fn draw_grid(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         font: &Font,
         map: &MapInfo,
         maps: &MapStore,
@@ -6042,8 +6049,8 @@ impl MapViewer {
         // Cursor tile-coordinate readout, bottom-right — clear of the global
         // undo/redo/save bar at the world's top-left (which draws on top), even
         // when the world is only a little wider than that bar.
-        if world.contains(system.mouse().pos()) {
-            let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+        if world.contains(input.mouse.pos()) {
+            let (tx, ty) = world_tile(&input.mouse, camera_pos);
             let mut b = UiBuilder::<EditorKey>::new();
             let t = b
                 .text(format!("{tx},{ty}"))
@@ -6070,7 +6077,7 @@ impl MapViewer {
     pub fn draw_at(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         font: &Font,
         map: &MapInfo,
         maps: &MapStore,
@@ -6095,8 +6102,8 @@ impl MapViewer {
             return;
         }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
-        self.draw_grid(draw_state, system, font, map, maps, camera_pos);
-        self.draw_canvas_overlay(draw_state, system, map, camera_pos);
+        self.draw_grid(draw_state, input, font, map, maps, camera_pos);
+        self.draw_canvas_overlay(draw_state, input, map, camera_pos);
         // Draw each panel back-to-front from the geometry `step` already solved
         // (not a fresh layout against the live canvas) — so a framebuffer resize
         // between step and draw can't misregister hit vs. draw; it heals next
@@ -6584,15 +6591,15 @@ impl MapViewer {
     fn draw_canvas_overlay(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &MapInfo,
         camera_pos: Vec2,
     ) {
         match self.tool {
-            EditorTool::Paint => self.draw_paint_overlay(draw_state, system, camera_pos),
+            EditorTool::Paint => self.draw_paint_overlay(draw_state, input, camera_pos),
             EditorTool::Select => self.draw_select_overlay(draw_state, camera_pos),
             EditorTool::Interactables | EditorTool::Warps => {
-                self.draw_object_overlay(draw_state, system, map, camera_pos)
+                self.draw_object_overlay(draw_state, input, map, camera_pos)
             }
             EditorTool::Layers => {}
         }
@@ -6600,18 +6607,13 @@ impl MapViewer {
 
     /// Paint tool overlay: a Shift+drag rectangle-fill outline, or a dithered
     /// ghost of the brush footprint under the cursor with its outline.
-    fn draw_paint_overlay(
-        &self,
-        draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
-        camera_pos: Vec2,
-    ) {
+    fn draw_paint_overlay(&self, draw_state: &mut DrawState, input: &EggInput, camera_pos: Vec2) {
         let cx = i32::from(camera_pos.x);
         let cy = i32::from(camera_pos.y);
         let colour = draw_state.colour(11);
         if let Some(start) = self.drag {
             // Shift+drag rectangle fill: outline the tile-snapped region.
-            let m = system.mouse();
+            let m = input.mouse;
             let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
             let (x0, y0, x1, y1) = tile_bounds(start, world);
             draw_state.rgba(LayerId::BG).stroke_rect(
@@ -6624,7 +6626,7 @@ impl MapViewer {
         } else {
             // Soft brush preview: a dithered ghost of the tiles the brush
             // would stamp here, under a footprint outline.
-            let (tx, ty) = world_tile(&system.mouse(), camera_pos);
+            let (tx, ty) = world_tile(&input.mouse, camera_pos);
             let (px, py) = (tx * 8 - cx, ty * 8 - cy);
             let (bw, bh) = self.brush_size();
             let (bc, br) = (
@@ -6716,7 +6718,7 @@ impl MapViewer {
     fn draw_object_overlay(
         &self,
         draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
+        input: &EggInput,
         map: &MapInfo,
         camera_pos: Vec2,
     ) {
@@ -6740,17 +6742,12 @@ impl MapViewer {
                 colour,
             );
         }
-        self.draw_drag_preview(draw_state, system, camera_pos);
+        self.draw_drag_preview(draw_state, input, camera_pos);
     }
 
-    fn draw_drag_preview(
-        &self,
-        draw_state: &mut DrawState,
-        system: &mut impl ConsoleApi,
-        camera_pos: Vec2,
-    ) {
+    fn draw_drag_preview(&self, draw_state: &mut DrawState, input: &EggInput, camera_pos: Vec2) {
         if let Some(start) = self.drag {
-            let m = system.mouse();
+            let m = input.mouse;
             let world = Vec2::new(m.pos().x + camera_pos.x, m.pos().y + camera_pos.y);
             let h = hitbox_between(start, world);
             let colour = draw_state.colour(11);
@@ -7631,8 +7628,9 @@ mod tests {
         let start = ed.path_recorder.as_ref().unwrap().puppet.pos;
 
         let mut console = TestConsole::new();
-        console.controllers[0].right = [true, false]; // hold right this frame
-        ed.step_path_recorder(&mut console, &mut map, &mut store, (200.0, 150.0));
+        let mut input = EggInput::new();
+        input.controllers[0].right = [true, false]; // hold right this frame
+        ed.step_path_recorder(&mut console, &input, &mut map, &mut store, (200.0, 150.0));
 
         let after = ed.path_recorder.as_ref().unwrap().puppet.pos;
         assert!(
@@ -7734,7 +7732,6 @@ mod tests {
     /// a deleted target can't strand the editor in a placement view.
     #[test]
     fn warp_preview_self_closes_when_target_missing() {
-        use crate::platform::test_console::TestConsole;
         let mut store = MapStore::default();
         store.insert("dest", TiledMap::blank_modern(20, 15));
         let mut map = MapInfo::default();
@@ -7749,8 +7746,7 @@ mod tests {
 
         // Step with a store that no longer has the destination: the session closes.
         let mut empty = MapStore::default();
-        let mut console = TestConsole::new();
-        ed.step_warp_preview(&mut console, &mut map, &mut empty, (200.0, 150.0));
+        ed.step_warp_preview(&EggInput::new(), &mut map, &mut empty, (200.0, 150.0));
         assert!(
             ed.warp_preview.is_none(),
             "self-closes when the destination map is missing"
@@ -7866,6 +7862,7 @@ mod tests {
         };
         viewer.step_map_viewer_at(
             &mut console,
+            &EggInput::new(),
             &mut map_a,
             &mut store,
             Vec2::new(0, 0),
@@ -7888,6 +7885,7 @@ mod tests {
         // Stepping the same map keeps it all.
         viewer.step_map_viewer_at(
             &mut console,
+            &EggInput::new(),
             &mut map_a,
             &mut store,
             Vec2::new(0, 0),
@@ -7907,6 +7905,7 @@ mod tests {
         };
         viewer.step_map_viewer_at(
             &mut console,
+            &EggInput::new(),
             &mut map_b,
             &mut store,
             Vec2::new(0, 0),
@@ -7947,6 +7946,7 @@ mod tests {
         viewer.dock.set_float(1, Vec2::new(100, 30), 80, 60); // float the Paint panel
         viewer.step_map_viewer_at(
             &mut console,
+            &EggInput::new(),
             &mut map,
             &mut store,
             Vec2::new(0, 0),
@@ -7957,7 +7957,7 @@ mod tests {
         );
         // Force the drop-zone highlight branch.
         viewer.dock.solved.hot_edge = Some(Side::Right);
-        viewer.draw_at(&mut draw, &mut console, &Font::blank(), &map, &store, Vec2::new(0, 0));
+        viewer.draw_at(&mut draw, &EggInput::new(), &Font::blank(), &map, &store, Vec2::new(0, 0));
     }
 
     /// Stepping then drawing with the Dialog panel open, an object selected and a
@@ -7989,6 +7989,7 @@ mod tests {
         viewer.selected = Some(0);
         viewer.step_map_viewer_at(
             &mut console,
+            &EggInput::new(),
             &mut map,
             &mut store,
             Vec2::new(0, 0),
@@ -8005,7 +8006,7 @@ mod tests {
         );
         assert_eq!(viewer.dialogue_preview.len(), 1, "one previewed message");
 
-        viewer.draw_at(&mut draw, &mut console, &Font::blank(), &map, &store, Vec2::new(0, 0));
+        viewer.draw_at(&mut draw, &EggInput::new(), &Font::blank(), &map, &store, Vec2::new(0, 0));
     }
 
     /// Create → duplicate → rename → delete a map, checking the store and the
