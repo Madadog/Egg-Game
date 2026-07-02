@@ -64,8 +64,9 @@ pub struct WalkaroundState {
     /// map. The player (`entities[0]`) travels across maps; `entities[1..]`
     /// belong to `current_map` and are swapped through here on every change in
     /// [`load_map`](Self::load_map), so creatures stay on the map that spawned
-    /// them instead of bleeding into the next one. In-memory only for now — a
-    /// later pass persists it (see the per-map save design).
+    /// them instead of bleeding into the next one. Persisted through the save
+    /// ([`SaveData::map_entities`](crate::data::save::SaveData::map_entities)),
+    /// written in [`save`](Self::save) and restored in [`load_pmem`](Self::load_pmem).
     map_entities: BTreeMap<String, Vec<Shell>>,
     pub map_animations: Vec<Animation>,
     pub camera: Camera,
@@ -82,6 +83,11 @@ pub struct WalkaroundState {
     /// pushes a sub-cutscene (popped on finish), so map changes happen at
     /// cutscene boundaries with fresh requisition. Empty = normal gameplay.
     pub cutscene: Vec<Cutscene>,
+    /// Monotonic counter minting the collision-proof ids of `spawn`ed cutscene
+    /// actors (see [`mint_spawn_id`](Self::mint_spawn_id)). Walkaround-wide, not
+    /// per-cutscene, so sibling scenes on the stack never mint the same id; it
+    /// clones with the world, so the scrubber's re-sim stays deterministic.
+    spawn_counter: u64,
     pub bg_colour: u8,
     pub default_map_colliders: Vec<Collider>,
     /// Per-object "player was inside this hitbox last frame" latch, one slot per
@@ -120,11 +126,25 @@ impl WalkaroundState {
             inventory_ui: InventoryUi::new(),
             particles: ParticleList::new(),
             cutscene: Vec::new(),
+            spawn_counter: 0,
             bg_colour: 0,
             default_map_colliders: Vec::new(),
             inside_objects: Vec::new(),
             pending_warp: None,
         }
+    }
+
+    /// Mint a fresh, collision-proof id for a `spawn`ed cutscene actor: a reserved
+    /// prefix + a walkaround-wide monotonic counter. The leading control char
+    /// can't occur in an authored map-object name or eggscene token, and the
+    /// counter is unique across the whole world, so a minted id never matches a
+    /// pre-existing creature or another spawn — [`Cutscene::cleanup`] then removes
+    /// only the exact shells a scene spawned, and the author name resolves to this
+    /// id through the scene's actor table (not the ambiguous name itself).
+    pub(crate) fn mint_spawn_id(&mut self) -> String {
+        let id = format!("\u{1}cutscene-spawn:{}", self.spawn_counter);
+        self.spawn_counter += 1;
+        id
     }
 
     /// Access the player entity

@@ -98,9 +98,10 @@ pub struct DataFile {
     /// (`"ff"`, `"lm"`, …). Built into [`GameItems`].
     #[serde(default)]
     pub items: BTreeMap<String, ItemDef>,
-    /// Creature presets, keyed by the [`ShellPreset`](crate::world::player::ShellPreset)
-    /// name a save stores (`"ellie"`, `"critter"`, …). Schema-complete and
-    /// validated; not yet the runtime source (see the module docs).
+    /// Creature presets, keyed by the [`PresetId`](crate::world::player::PresetId)
+    /// name a save stores (`"ellie"`, `"critter"`, …). The live runtime source:
+    /// [`EggState::load_data`](crate::EggState::load_data) derives the runtime
+    /// [`Presets`] store from these.
     #[serde(default)]
     pub presets: BTreeMap<String, PresetDef>,
 }

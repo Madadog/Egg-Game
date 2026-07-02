@@ -128,9 +128,14 @@ impl Cutscene {
         for entity in &def.init {
             match entity {
                 GetEntity::Spawn { name, preset, pos } => {
-                    spawn_actor(walkaround, ctx, name, &preset.to_string(), *pos);
-                    spawned.push(name.clone());
-                    table.insert(name.clone(), EntityId::Id(name.clone()));
+                    // Stamp the shell with a minted, collision-proof id (not the
+                    // author name), so a `spawn` whose NAME collides with a live
+                    // map creature neither steals its resolution nor deletes it on
+                    // cleanup. The author name resolves to the minted id here.
+                    let id = walkaround.mint_spawn_id();
+                    spawn_actor(walkaround, ctx, &id, &preset.to_string(), *pos);
+                    spawned.push(id.clone());
+                    table.insert(name.clone(), EntityId::Id(id));
                 }
                 GetEntity::GetOrSpawn { name, preset, pos } => {
                     if walkaround.resolve(&EntityId::Id(name.clone())).is_none() {
@@ -399,9 +404,13 @@ impl Cutscene {
     }
 
     /// Fast-forward to the end (the B-button abort): snap every remaining move to
-    /// its final point and fire every remaining instant effect, so lasting side
-    /// effects still land, then mark the cutscene finished. Best-effort — a
-    /// `load`/`interact`/entity-relative target is just dropped, not chased.
+    /// its end state and fire every remaining instant effect, so lasting side
+    /// effects still land, then mark the cutscene finished. Each chain is snapped
+    /// instruction-by-instruction (so a trailing `face` doesn't strand the actor
+    /// mid-walk), including entity-relative and `record` moves. A `load` is
+    /// chased — its sub-scene is launched, skipped, and cleaned up in place (never
+    /// left on the stack) — so a skipped story scene can't silently drop a
+    /// sub-scene's flags, sound/music, interacts, or map change.
     pub fn skip<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
         // Close any live dialogue box first.
         if matches!(self.state, StepState::Dialogue { opened: true }) {
@@ -411,7 +420,7 @@ impl Cutscene {
             match content {
                 CutsceneContent::Move(chains) => {
                     for chain in chains {
-                        if let Some(ins) = chain.instructions.last() {
+                        for ins in &chain.instructions {
                             snap_motion(&chain.actor, &ins.motion, &self.table, walkaround);
                         }
                     }
@@ -436,8 +445,18 @@ impl Cutscene {
                 CutsceneContent::Interact { actor, target } => {
                     self.fire_interact(ctx, walkaround, actor, target)
                 }
-                // A `load` mid-skip is dropped rather than chased.
-                CutsceneContent::Wait(_) | CutsceneContent::Load(_) => {}
+                CutsceneContent::Load(name) => {
+                    // Chase the sub-scene so its lasting side effects still land,
+                    // then drop its transient actors — all in place, so nothing is
+                    // left running on the stack after the skip.
+                    if let Some(def) = ctx.scenes.get_cutscene(name).cloned() {
+                        let mut sub = Self::launch(&def, ctx, walkaround);
+                        sub.skip(ctx, walkaround);
+                        sub.cleanup(walkaround);
+                    }
+                }
+                // A wait has no lasting effect, so fast-forwarding past it is a no-op.
+                CutsceneContent::Wait(_) => {}
             }
             self.step += 1;
         }
@@ -447,6 +466,15 @@ impl Cutscene {
     /// Whether the cutscene has played every content step.
     pub fn is_finished(&self) -> bool {
         self.step >= self.content.len()
+    }
+
+    /// Resolve an actor `name` the way this scene's chains do: through the bound
+    /// actor table (so a `spawn`ed actor resolves to its minted id), then the
+    /// reserved `player`/`companion N`, then a bare id. A test seam for inspecting
+    /// a spawned actor whose real id is a minted, opaque string.
+    #[cfg(test)]
+    pub(crate) fn resolve_actor(&self, name: &str) -> EntityId {
+        resolve_name(name, &self.table)
     }
 }
 
@@ -468,14 +496,15 @@ fn resolve_name(name: &str, table: &HashMap<String, EntityId>) -> EntityId {
     EntityId::Id(name.to_string())
 }
 
-/// Spawn a fresh shell of `preset` at `pos`, stamped with `id = name`, as a
-/// puppet (`Wander` so it behaves as a creature after the scene; the AI loop is
-/// skipped while a cutscene plays, so it doesn't self-move mid-scene). Pushed as
-/// a top-level entity.
+/// Spawn a fresh shell of `preset` at `pos`, stamped with `id`, as a puppet
+/// (`Wander` so it behaves as a creature after the scene; the AI loop is skipped
+/// while a cutscene plays, so it doesn't self-move mid-scene). Pushed as a
+/// top-level entity. For a transient `spawn` the caller passes a minted,
+/// collision-proof id (see [`WalkaroundState::mint_spawn_id`]).
 fn spawn_actor<S: ConsoleApi>(
     walkaround: &mut WalkaroundState,
     ctx: &mut Ctx<S>,
-    name: &str,
+    id: &str,
     preset: &str,
     pos: Vec2,
 ) {
@@ -484,7 +513,7 @@ fn spawn_actor<S: ConsoleApi>(
         .spawn(&crate::world::player::PresetId::new(preset))
         .unwrap_or_default();
     shell.pos = pos;
-    shell.id = Some(name.to_string());
+    shell.id = Some(id.to_string());
     shell.move_mode = MoveMode::Wander;
     walkaround.spawn_shell(shell);
 }
@@ -556,7 +585,8 @@ fn step_motion<S: ConsoleApi>(
             None => (true, true),
         },
         Motion::MoveBesideHorizontal { target, gap } => {
-            let Some((spot, facing)) = beside_spot(target, *gap, table, walkaround) else {
+            let actor_w = path.shell_ref(walkaround).local_hitbox.w;
+            let Some((spot, facing)) = beside_spot(target, *gap, actor_w, table, walkaround) else {
                 return (true, true);
             };
             let (done, progressed) = move_toward(path, spot, time, elapsed, false, ctx, walkaround);
@@ -637,21 +667,20 @@ fn move_toward<S: ConsoleApi>(
     (done, progressed)
 }
 
-/// The point an actor stands to be *beside* `target`, plus the facing to look at
-/// it: `gap` px off the target's head-side (its horizontal facing; a vertically-
-/// facing target → the actor's nearest side), feet aligned. `None` if the target
-/// is absent.
+/// The point an actor (`actor_w` px wide) stands to be *beside* `target`, plus
+/// the facing to look at it: `gap` px off the target's head-side (its horizontal
+/// facing; a vertically-facing target → the actor's nearest side), feet aligned.
+/// `None` if the target is absent. On the left side the actor's own width sets
+/// the offset, so a wide actor lands flush rather than overlapping.
 fn beside_spot(
     target: &str,
     gap: i16,
+    actor_w: i16,
     table: &HashMap<String, EntityId>,
     walkaround: &WalkaroundState,
 ) -> Option<(Vec2, (i8, i8))> {
     let t = walkaround.resolve(&resolve_name(target, table))?;
     let t_box = t.hitbox();
-    // The actor's own width comes from the player by default (the common pet
-    // case); a precise per-actor width is a future refinement.
-    let actor_w = walkaround.player_ref().local_hitbox.w;
     // Head-side: the target's horizontal facing; if it faces vertically, fall
     // back to whichever side the player is already on (no crossing over).
     let right_side = if t.dir.0 != 0 {
@@ -715,8 +744,11 @@ fn replay_record<S: ConsoleApi>(
     elapsed + 1 >= total
 }
 
-/// Snap a motion to its end state for the skip path: moves jump to their point,
-/// teleports/faces apply, entity-relative motions are left where they are.
+/// Snap a motion to its end state for the skip path: point moves and teleports
+/// jump to their point; a `record` jumps by its cumulative RLE displacement;
+/// entity-relative motions (`to`/`beside`/`face`) resolve against the target's
+/// live (skip-time) position; faces apply. An entity-relative motion whose target
+/// is unresolvable at skip time leaves the actor in place (best-effort).
 fn snap_motion(
     actor: &str,
     motion: &Motion,
@@ -736,11 +768,46 @@ fn snap_motion(
         Motion::FaceDir(dx, dy) => {
             path.shell_mut(walkaround).face((*dx, *dy));
         }
-        // Entity-relative ends depend on a live target; leave the actor in place.
-        Motion::MoveToEntity(_)
-        | Motion::MoveBesideHorizontal { .. }
-        | Motion::FaceEntity(_)
-        | Motion::Record { .. } => {}
+        Motion::MoveToEntity(name) => {
+            // Resolve the target's position before borrowing the actor mutably.
+            if let Some(tp) = walkaround.resolve(&resolve_name(name, table)).map(|s| s.pos) {
+                let shell = path.shell_mut(walkaround);
+                shell.pos = tp;
+                shell.animate_stop();
+                shell.update_companions();
+            }
+        }
+        Motion::MoveBesideHorizontal { target, gap } => {
+            let actor_w = path.shell_ref(walkaround).local_hitbox.w;
+            if let Some((spot, facing)) = beside_spot(target, *gap, actor_w, table, walkaround) {
+                let shell = path.shell_mut(walkaround);
+                shell.pos = spot;
+                shell.face(facing);
+                shell.animate_stop();
+                shell.update_companions();
+            }
+        }
+        Motion::FaceEntity(name) => {
+            if let Some(tp) = walkaround.resolve(&resolve_name(name, table)).map(|s| s.pos) {
+                let from = path.shell_ref(walkaround).pos;
+                path.shell_mut(walkaround).face(facing_toward(from, tp));
+            }
+        }
+        Motion::Record { runs, .. } => {
+            // The path's net displacement is the sum of each run's (heading ×
+            // frames); best-effort (collision isn't re-walked at snap time).
+            let dx: i16 = runs.iter().map(|(d, n)| d.0 as i16 * *n as i16).sum();
+            let dy: i16 = runs.iter().map(|(d, n)| d.1 as i16 * *n as i16).sum();
+            let last_dir = runs.iter().rev().map(|(d, _)| *d).find(|d| *d != (0, 0));
+            let shell = path.shell_mut(walkaround);
+            shell.pos.x += dx;
+            shell.pos.y += dy;
+            if let Some(dir) = last_dir {
+                shell.face(dir);
+            }
+            shell.animate_stop();
+            shell.update_companions();
+        }
     }
 }
 
@@ -830,11 +897,12 @@ mod tests {
         for _ in 0..9 {
             h.frame(|ctx, w| cs.step(ctx, w));
         }
+        let actor = cs.resolve_actor("a");
         // Not yet arrived one frame before the budget.
-        let early = h.walk.resolve(&EntityId::Id("a".into())).unwrap().pos;
+        let early = h.walk.resolve(&actor).unwrap().pos;
         assert!(early.x < 30, "still travelling at frame 9 ({})", early.x);
         h.frame(|ctx, w| cs.step(ctx, w));
-        let arrived = h.walk.resolve(&EntityId::Id("a".into())).unwrap().pos;
+        let arrived = h.walk.resolve(&actor).unwrap().pos;
         assert_eq!(arrived.x, 30, "arrived exactly at the budget");
     }
 
@@ -889,8 +957,9 @@ mod tests {
             .clone();
         let mut h = Harness::new();
         let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let ghost = cs.resolve_actor("ghost");
         assert!(
-            h.walk.resolve(&EntityId::Id("ghost".into())).is_some(),
+            h.walk.resolve(&ghost).is_some(),
             "spawned for the scene",
         );
         // wait 1 → one frame to finish.
@@ -898,7 +967,7 @@ mod tests {
         assert!(matches!(outcome, Outcome::Finished));
         cs.cleanup(&mut h.walk);
         assert!(
-            h.walk.resolve(&EntityId::Id("ghost".into())).is_none(),
+            h.walk.resolve(&ghost).is_none(),
             "removed on finish",
         );
     }
@@ -984,9 +1053,8 @@ mod tests {
                     cs.step(ctx, w);
                 });
             }
-            h.walk
-                .resolve(&EntityId::Id("a".into()))
-                .map(|s| (s.pos, s.dir, s.walktime))
+            let actor = cs.resolve_actor("a");
+            h.walk.resolve(&actor).map(|s| (s.pos, s.dir, s.walktime))
         };
         assert_eq!(run(&def), run(&def), "two identical runs match exactly");
     }
@@ -1000,5 +1068,149 @@ mod tests {
         let mut h = Harness::new();
         let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
         assert_eq!(cs.content.len(), 2, "move + interact");
+    }
+
+    /// A `spawn` whose author name collides with a live map creature's id gets a
+    /// minted, collision-proof id: the scene resolves its actor to the spawned
+    /// shell (not the creature), and cleanup removes only the spawned shell —
+    /// the creature survives.
+    #[test]
+    fn spawn_cleanup_spares_a_name_colliding_creature() {
+        let def = scene::parse("#cutscene t\n    spawn dog critter 5 5\n    wait 1")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        // A live creature already carries the id the scene `spawn`s under.
+        let mut creature = crate::world::player::Shell::default();
+        creature.id = Some("dog".to_string());
+        creature.pos = Vec2::new(99, 99);
+        h.walk.spawn_shell(creature);
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let spawned = cs.resolve_actor("dog");
+        assert!(h.walk.resolve(&spawned).is_some(), "the spawned actor exists");
+        assert_ne!(
+            spawned,
+            EntityId::Id("dog".into()),
+            "the spawned actor has a minted id, not the author name",
+        );
+
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+        assert!(matches!(outcome, Outcome::Finished));
+        cs.cleanup(&mut h.walk);
+
+        let survivor = h.walk.resolve(&EntityId::Id("dog".into()));
+        assert!(survivor.is_some(), "the name-colliding creature survived cleanup");
+        assert_eq!(
+            survivor.unwrap().pos,
+            Vec2::new(99, 99),
+            "it's the original creature, untouched",
+        );
+        assert!(h.walk.resolve(&spawned).is_none(), "the spawned actor was removed");
+    }
+
+    /// Skipping (B) a scene that only `load`s a child still lands the child's
+    /// lasting side effects — the sub-scene is launched, skipped, and cleaned up
+    /// in place rather than dropped.
+    #[test]
+    fn skip_chases_a_loaded_subscene() {
+        let file = scene::parse(
+            "#cutscene parent\n    load child\n#cutscene child\n    set seen true\n    wait 100",
+        )
+        .unwrap();
+        let def = file.get_cutscene("parent").unwrap().clone();
+        let mut h = Harness::new();
+        h.scenes = file;
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.skip(ctx, w));
+        assert!(h.save.flag("seen"), "the loaded sub-scene's flag was set by the skip");
+        assert!(cs.is_finished(), "the parent skipped to the end");
+    }
+
+    /// Skipping a recorded-path scene snaps the actor by the path's cumulative
+    /// RLE displacement (was a no-op — the actor stayed at the start).
+    #[test]
+    fn skip_snaps_a_recorded_path_to_its_end() {
+        let def = scene::parse("#cutscene t\n    move\n        player: record noclip 1 0 10 0 1 5")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        h.walk.player().pos = Vec2::new(0, 0);
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.skip(ctx, w));
+        assert_eq!(
+            h.walk.player_ref().pos,
+            Vec2::new(10, 5),
+            "player snapped to the recorded path's cumulative end",
+        );
+    }
+
+    /// Skipping snaps an entity-relative move (`to NAME`) to its target's live
+    /// (skip-time) position (was left un-snapped at the start).
+    #[test]
+    fn skip_snaps_a_relative_move_to_its_target() {
+        let def = scene::parse(
+            "#cutscene t\n    spawn goal critter 40 20\n    move\n        player: to goal",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        let mut h = Harness::new();
+        h.walk.player().pos = Vec2::new(0, 0);
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.skip(ctx, w));
+        assert_eq!(
+            h.walk.player_ref().pos,
+            Vec2::new(40, 20),
+            "player snapped onto its live target",
+        );
+    }
+
+    /// A wide actor walking `beside` a target lands by its OWN width, not the
+    /// player's — flush against the target rather than offset.
+    #[test]
+    fn beside_uses_the_moving_actors_own_width() {
+        let def = scene::parse(
+            "#cutscene t\n\
+             \x20   spawn mover critter 0 50\n\
+             \x20   spawn target critter 100 50\n\
+             \x20   move\n\
+             \x20       mover: beside target in 8",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let mover_id = cs.resolve_actor("mover");
+        let target_id = cs.resolve_actor("target");
+        // The target faces left, so the mover stands on its left — the side whose
+        // offset is the mover's own width. Give the mover a distinctly wide hitbox.
+        let player_w = h.walk.player_ref().local_hitbox.w;
+        let wide = player_w + 13;
+        {
+            let tp = h.walk.resolve_path(&target_id).unwrap();
+            tp.shell_mut(&mut h.walk).dir = (-1, 0);
+            let mp = h.walk.resolve_path(&mover_id).unwrap();
+            mp.shell_mut(&mut h.walk).local_hitbox.w = wide;
+        }
+        for _ in 0..12 {
+            h.frame(|ctx, w| {
+                cs.step(ctx, w);
+            });
+        }
+        let target_box_x = h.walk.resolve(&target_id).unwrap().hitbox().x;
+        let mover = h.walk.resolve(&mover_id).unwrap();
+        assert_eq!(
+            mover.pos.x,
+            target_box_x - wide,
+            "landed by its own width ({wide}), not the player's ({player_w})",
+        );
     }
 }

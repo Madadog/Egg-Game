@@ -216,7 +216,10 @@ pub enum Motion {
     /// `teleport X Y` — jump instantly.
     Teleport(Vec2),
     /// `record [noclip] DX DY N …` — an RLE path (direction held for N frames),
-    /// authored by the path recorder. Replayed step-for-step.
+    /// authored by the path recorder. Replayed step-for-step at its recorded
+    /// frame counts, so it takes no `in N` budget: one is a parse-time error
+    /// (rescaling playback to a budget is future work), and the emitter never
+    /// writes one, so a recorded path round-trips.
     Record {
         runs: Vec<((i8, i8), u16)>,
         noclip: bool,
@@ -518,6 +521,14 @@ fn parse_motion(segment: &str, line_no: usize) -> Result<Instruction, ParseError
         "record" => parse_record(args, line_no)?,
         other => return Err(ParseError::new(line_no, format!("unknown motion `{other}`"))),
     };
+    // A `record` replays at its own frame counts; an `in N` budget on it would be
+    // a silent no-op, so reject it at parse time (fail loud beats a dropped budget).
+    if time != 0 && matches!(motion, Motion::Record { .. }) {
+        return Err(ParseError::new(
+            line_no,
+            "`record` takes no `in N` budget (it replays at its recorded frame counts)",
+        ));
+    }
     Ok(Instruction {
         motion,
         time,
@@ -701,7 +712,9 @@ fn emit_chain(chain: &Chain) -> String {
             if ins.required {
                 m.push('?');
             }
-            if ins.time != 0 {
+            // A `record` never carries an `in N` budget (parse rejects one), so
+            // never emit one either — otherwise a re-parse of the output would fail.
+            if ins.time != 0 && !matches!(ins.motion, Motion::Record { .. }) {
                 m.push_str(&format!(" in {}", ins.time));
             }
             m
@@ -891,6 +904,20 @@ mod tests {
             3
         );
         assert_eq!(parse("#wat name").unwrap_err().line, 1);
+    }
+
+    /// An `in N` budget on a `record` motion is a parse-time error (it would
+    /// otherwise be a silent no-op), pointed at its line. A budget-free `record`
+    /// still parses.
+    #[test]
+    fn record_rejects_an_in_budget() {
+        let err = parse("#cutscene c\n    move\n        a: record 1 0 10 in 5")
+            .unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(
+            parse("#cutscene c\n    move\n        a: record 1 0 10").is_ok(),
+            "a budget-free record still parses",
+        );
     }
 
     // --- emitter ---
