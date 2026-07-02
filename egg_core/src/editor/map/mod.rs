@@ -33,7 +33,7 @@ use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};
 use crate::world::animation::AnimFrame;
 use crate::world::interact::{InteractFn, Interaction};
 use crate::world::map::{
-    Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Trigger, Warp,
+    Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Plane, Trigger, Warp,
     WarpMode, map_by_name,
 };
 use crate::world::player::Shell;
@@ -222,13 +222,20 @@ enum EditAction {
     /// A layer in `source` was drag-reordered from index `from` to index `to`
     /// (remove + re-insert). Undo moves it back (`to` → `from`); redo replays it.
     LayerMove { source: String, from: usize, to: usize },
-    /// A layer at `index` in `source` was renamed (also the FG/BG toggle, which
-    /// flips the `fg` name prefix).
+    /// A layer at `index` in `source` was renamed.
     LayerRename {
         source: String,
         index: usize,
         before: String,
         after: String,
+    },
+    /// A tile layer at `index` in `source` had its draw [`Plane`] cycled (the
+    /// three-way BG → Sprite → FG toggle, writing the `plane` property).
+    LayerPlane {
+        source: String,
+        index: usize,
+        before: Plane,
+        after: Plane,
     },
     /// A tile layer's numeric property (offset / palette rotation) changed.
     LayerSetProp {
@@ -346,14 +353,14 @@ enum EditorKey {
     /// A layer row's visibility (eye) toggle.
     LayerVis(usize),
     /// Layers panel toolbar: add tile layer / duplicate / delete / move up /
-    /// move down / rename / toggle foreground.
+    /// move down / rename / cycle draw plane (BG → Sprite → FG).
     LayerAdd,
     LayerDup,
     LayerDel,
     LayerUp,
     LayerDown,
     LayerRename,
-    LayerFg,
+    LayerPlane,
     /// The scrollable tile palette viewport (drag to pan, click to pick a tile).
     PaletteView,
     Object(usize),
@@ -778,7 +785,11 @@ struct TextEdit {
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
     pub focused: bool,
-    pub fg: bool,
+    /// Which draw plane the Layers panel currently shows and edits into
+    /// (BG / Sprite / FG). Cycled by the panel title and the plane button; a
+    /// layer's plane-cycle follows the layer to its new list. Defaults to
+    /// [`Plane::Bg`].
+    pub plane: Plane,
     pub layer_index: usize,
     tool: EditorTool,
     /// The brush's top-left sheet tile. The brush spans `brush_w`×`brush_h` tiles
@@ -1316,7 +1327,7 @@ impl MapViewer {
     /// recording one [`EditAction::LayerMove`]. The collision layer is protected
     /// inside [`TiledMap::reorder_layer`].
     fn reorder_layer_to(&mut self, map: &mut MapInfo, maps: &mut MapStore, from: usize, to: usize) {
-        let list = if self.fg { &map.fg_layers } else { &map.layers };
+        let list = self.shown_layers(map);
         let (Some(src_from), Some(src_to)) = (
             list.get(from).map(|l| l.source_layer),
             list.get(to).map(|l| l.source_layer),
@@ -1923,8 +1934,12 @@ impl MapViewer {
         map: &MapInfo,
         maps: &MapStore,
     ) {
-        let layers = if self.fg { &map.fg_layers } else { &map.layers };
-        let title = if self.fg { "FG LAYERS:" } else { "BG LAYERS:" };
+        let layers = self.shown_layers(map);
+        let title = match self.plane {
+            Plane::Bg => "BG LAYERS:",
+            Plane::Sprite => "SPRITE LAYERS:",
+            Plane::Fg => "FG LAYERS:",
+        };
         rows.push(
             b.text(title)
                 .color(13)
@@ -1933,10 +1948,10 @@ impl MapViewer {
                 .id(),
         );
         // Toolbar (two rows): add / duplicate / delete; then move up / down /
-        // rename / toggle-foreground. The collision layer (bg #0) is protected
-        // from delete / move / rename / fg-flip — its identity is "first tile
-        // layer" and an fg-prefix would move it out and break collision.
-        let collision = !self.fg && self.layer_index == 0;
+        // rename / cycle plane. The collision layer (bg #0) is protected from
+        // delete / move / rename / plane-cycle — its identity is "first tile
+        // layer" and a non-bg plane would move it out and break collision.
+        let collision = self.plane == Plane::Bg && self.layer_index == 0;
         let add = Self::action_button(b, "+L", 11, true, EditorKey::LayerAdd);
         let dup = Self::action_button(b, "dup", 12, !collision, EditorKey::LayerDup);
         let del = Self::action_button(b, "del", 8, !collision, EditorKey::LayerDel);
@@ -1944,15 +1959,17 @@ impl MapViewer {
         let up = Self::action_button(b, "^", 12, !collision, EditorKey::LayerUp);
         let dn = Self::action_button(b, "v", 12, !collision, EditorKey::LayerDown);
         let ren = Self::action_button(b, "ren", 12, !collision, EditorKey::LayerRename);
-        // `fg` highlights when the current view is the foreground list.
-        let fg = Self::action_button(
+        // `pln` cycles the selected layer BG → Sprite → FG (writes the `plane`
+        // property, no rename); its label is the shown plane and it highlights
+        // (11) on the non-default planes.
+        let plane = Self::action_button(
             b,
-            "fg",
-            if self.fg { 11 } else { 12 },
+            plane_short(self.plane),
+            if self.plane == Plane::Bg { 12 } else { 11 },
             !collision,
-            EditorKey::LayerFg,
+            EditorKey::LayerPlane,
         );
-        rows.push(b.row(1.0, [up, dn, ren, fg]).id());
+        rows.push(b.row(1.0, [up, dn, ren, plane]).id());
 
         // A layer drag in progress recolours the grabbed row (grey) and the row
         // it would drop onto (green); see `reorder_drag`.
@@ -1971,7 +1988,7 @@ impl MapViewer {
                 .size(7.0, 7.0)
                 .key(EditorKey::LayerVis(i))
                 .id();
-            let is_collision = !self.fg && i == 0;
+            let is_collision = self.plane == Plane::Bg && i == 0;
             let renaming = matches!(
                 &self.editing,
                 Some(e) if e.field == EditField::LayerName && e.target == layer.source_layer
@@ -2032,7 +2049,7 @@ impl MapViewer {
     /// manually (see [`draw_palette`](Self::draw_palette) / the `PaletteView`
     /// handling), so it just reserves a box here.
     fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
-        let target = if self.fg { "FG" } else { "BG" };
+        let target = plane_short(self.plane).to_uppercase();
         let (bw, bh) = self.brush_size();
         let info = if bw > 1 || bh > 1 {
             format!(
@@ -2590,31 +2607,42 @@ impl MapViewer {
 
     // --- Helpers --------------------------------------------------------------
 
+    /// The layer list the Layers panel currently shows and edits, per
+    /// [`self.plane`](Self::plane).
+    fn shown_layers<'a>(&self, map: &'a MapInfo) -> &'a [LayerInfo] {
+        match self.plane {
+            Plane::Bg => &map.layers,
+            Plane::Sprite => &map.sprite_layers,
+            Plane::Fg => &map.fg_layers,
+        }
+    }
+    /// Mutable counterpart to [`shown_layers`](Self::shown_layers).
+    fn shown_layers_mut<'a>(&self, map: &'a mut MapInfo) -> &'a mut Vec<LayerInfo> {
+        match self.plane {
+            Plane::Bg => &mut map.layers,
+            Plane::Sprite => &mut map.sprite_layers,
+            Plane::Fg => &mut map.fg_layers,
+        }
+    }
+
     /// Toggle the visibility of the currently selected layer.
     fn toggle_layer(&self, map: &mut MapInfo) {
-        let layer = if self.fg {
-            map.fg_layers.get_mut(self.layer_index)
-        } else {
-            map.layers.get_mut(self.layer_index)
-        };
-        if let Some(layer) = layer {
+        let index = self.layer_index;
+        if let Some(layer) = self.shown_layers_mut(map).get_mut(index) {
             layer.visible = !layer.visible;
         }
     }
 
     fn layer_list_len(&self, map: &MapInfo) -> usize {
-        if self.fg {
-            map.fg_layers.len()
-        } else {
-            map.layers.len()
-        }
+        self.shown_layers(map).len()
     }
 
-    /// The `TiledMap` layer index of the currently-selected display layer (bg or
-    /// fg list at `layer_index`).
+    /// The `TiledMap` layer index of the currently-selected display layer (the
+    /// shown-plane list at `layer_index`).
     fn selected_source_layer(&self, map: &MapInfo) -> Option<usize> {
-        let list = if self.fg { &map.fg_layers } else { &map.layers };
-        list.get(self.layer_index).map(|l| l.source_layer)
+        self.shown_layers(map)
+            .get(self.layer_index)
+            .map(|l| l.source_layer)
     }
 
     /// Open the rename text field on the layer at store `index`, seeded with its
@@ -2662,29 +2690,25 @@ impl MapViewer {
         });
     }
 
-    /// Flip the layer at store `index` between the bg and fg draw lists by
-    /// toggling its `fg` name prefix (the one convention that decides it),
-    /// recorded as a rename so it undoes like any other.
-    fn toggle_layer_fg(&mut self, map: &MapInfo, maps: &mut MapStore, index: usize) {
-        let Some(before) = maps
-            .get(&map.source)
-            .and_then(|tm| tm.layer_name(index))
-            .map(str::to_string)
-        else {
+    /// Cycle the tile layer at store `index` through the BG → Sprite → FG draw
+    /// planes, writing its `plane` custom property (no rename), recorded as one
+    /// undoable step. The view follows the layer to whichever list it now belongs
+    /// to, so it doesn't vanish (the re-derive next frame settles its row).
+    fn cycle_layer_plane(&mut self, map: &MapInfo, maps: &mut MapStore, index: usize) {
+        let Some(tm) = maps.get_mut(&map.source) else {
             return;
         };
-        let after = toggle_fg_prefix(&before);
-        if after == before {
+        // Only tile layers carry a plane; an image layer stays on its name
+        // convention (its `set_layer_plane` no-ops).
+        if !matches!(tm.layers.get(index), Some(TiledMapLayer::TileLayer(_))) {
             return;
         }
-        if let Some(tm) = maps.get_mut(&map.source) {
-            tm.set_layer_name(index, &after);
-        }
-        // Follow the layer to whichever list it now belongs to, so it doesn't
-        // vanish from view (the re-derive next frame settles its row).
-        self.fg = after.to_lowercase().starts_with("fg");
+        let before = tm.layer_plane(index);
+        let after = before.cycle();
+        tm.set_layer_plane(index, after);
+        self.plane = after;
         self.layer_index = 0;
-        self.record(EditAction::LayerRename {
+        self.record(EditAction::LayerPlane {
             source: map.source.clone(),
             index,
             before,
@@ -2695,8 +2719,7 @@ impl MapViewer {
 
     /// The layer the paint tool writes into (selected in the Layers tool).
     fn active_layer<'a>(&self, map: &'a MapInfo) -> Option<&'a LayerInfo> {
-        let layers = if self.fg { &map.fg_layers } else { &map.layers };
-        layers.get(self.layer_index)
+        self.shown_layers(map).get(self.layer_index)
     }
 
     /// Real `map.objects` index of the active tab's object whose hitbox contains
@@ -2851,6 +2874,17 @@ impl MapViewer {
                 }
                 self.pending_reload = true;
             }
+            EditAction::LayerPlane {
+                source,
+                index,
+                before,
+                ..
+            } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.set_layer_plane(*index, *before);
+                }
+                self.pending_reload = true;
+            }
             EditAction::LayerSetProp {
                 source,
                 index,
@@ -2926,6 +2960,17 @@ impl MapViewer {
             } => {
                 if let Some(tm) = maps.get_mut(source) {
                     tm.set_layer_name(*index, after);
+                }
+                self.pending_reload = true;
+            }
+            EditAction::LayerPlane {
+                source,
+                index,
+                after,
+                ..
+            } => {
+                if let Some(tm) = maps.get_mut(source) {
+                    tm.set_layer_plane(*index, *after);
                 }
                 self.pending_reload = true;
             }
@@ -3091,7 +3136,8 @@ impl MapViewer {
                 self.toggle_layer(map);
             }
             if just_pressed(pad.b) {
-                self.fg = !self.fg;
+                self.plane = self.plane.cycle();
+                self.layer_index = 0;
             }
         }
 
@@ -3658,6 +3704,8 @@ impl MapViewer {
         let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
         draw_state.rgba(LayerId::BG).fill(bg);
         info.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+        // Static preview: sprite-plane layers draw flat (no live entities here).
+        info.draw_sprite_indexed(draw_state, LayerId::BG, tiled, cam, false);
 
         // The destination's objects, so you place against real geometry: each
         // object's static frame-0 sprite (if any) + a kind-coloured hitbox marker
@@ -4024,6 +4072,8 @@ impl MapViewer {
         let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
         draw_state.rgba(LayerId::BG).fill(bg);
         map.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
+        // Static preview: sprite-plane layers draw flat (no live entities here).
+        map.draw_sprite_indexed(draw_state, LayerId::BG, tiled, cam, false);
         map.draw_fg_indexed(draw_state, LayerId::BG, tiled, cam, false);
 
         // The recorded path as a polyline (colour 11), under the puppet.
@@ -4094,7 +4144,7 @@ impl MapViewer {
             }
             EditorKey::Title => {
                 if click {
-                    self.fg = !self.fg;
+                    self.plane = self.plane.cycle();
                     self.layer_index = 0;
                 }
             }
@@ -4107,7 +4157,7 @@ impl MapViewer {
                 if click {
                     self.layer_index = i;
                     // The protected collision layer (bg #0) can't be dragged.
-                    if self.fg || i != 0 {
+                    if self.plane != Plane::Bg || i != 0 {
                         self.canvas_drag = CanvasDrag::Reorder {
                             list: ReorderList::Layers,
                             from: i,
@@ -4212,12 +4262,12 @@ impl MapViewer {
                     self.begin_layer_rename(maps, &map.source, src);
                 }
             }
-            EditorKey::LayerFg => {
+            EditorKey::LayerPlane => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
                     && map.layers.first().map(|l| l.source_layer) != Some(src)
                 {
-                    self.toggle_layer_fg(map, maps, src);
+                    self.cycle_layer_plane(map, maps, src);
                 }
             }
             // Palette: wheel scrolls; a press starts a scroll-bar drag (edge grab
@@ -4729,8 +4779,11 @@ impl MapViewer {
         };
         // The first tile layer is the collision layer; painting it changes the
         // derived colliders, so flag a re-derive (see the host drain) — collision
-        // then takes effect immediately, without a map reload.
+        // then takes effect immediately, without a map reload. A sprite-plane
+        // paint likewise needs a re-derive: its flood-fill components (shape +
+        // baselines) are cached at load, not read live like bg/fg tiles.
         let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
+        let needs_reload = is_collision || self.plane == Plane::Sprite;
         let (tx, ty) = world_tile(mouse, camera_pos);
 
         // Middle-click eyedropper: lift the existing tile into a 1×1 brush.
@@ -4755,7 +4808,7 @@ impl MapViewer {
                 && let Some(start) = self.drag.take()
             {
                 self.fill_rect(maps, &source, layer, start, world);
-                if is_collision {
+                if needs_reload {
                     self.pending_reload = true;
                 }
             }
@@ -4780,7 +4833,7 @@ impl MapViewer {
             }
             if tx >= 0 && ty >= 0 {
                 self.paint_brush(maps, &source, layer, tx, ty, pressed(mouse.right));
-                if is_collision {
+                if needs_reload {
                     self.pending_reload = true;
                 }
             }
@@ -4920,16 +4973,19 @@ impl MapViewer {
     }
 
     /// The active tile layer for a Select op: `(source, source_layer,
-    /// is_collision)`, or `None` if the active layer isn't an editable tile
+    /// needs_reload)`, or `None` if the active layer isn't an editable tile
     /// layer (an image layer carries a bitmap, not cells). Mirrors the
-    /// [`handle_paint`](Self::handle_paint) target guard.
+    /// [`handle_paint`](Self::handle_paint) target guard; `needs_reload` is set
+    /// when editing the layer must re-derive runtime state — the collision layer
+    /// (colliders) or a sprite-plane layer (flood-fill components).
     fn selection_layer(&self, map: &MapInfo) -> Option<(String, usize, bool)> {
         let (source, layer) = self
             .active_layer(map)
             .filter(|l| l.kind == LayerKind::Tiles)
             .map(|l| (map.source.clone(), l.source_layer))?;
         let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
-        Some((source, layer, is_collision))
+        let needs_reload = is_collision || self.plane == Plane::Sprite;
+        Some((source, layer, needs_reload))
     }
 
     /// Copy the active layer's tiles under the marquee into the clipboard (cells
@@ -4969,7 +5025,7 @@ impl MapViewer {
 
     /// Clear every cell under the marquee to the empty tile, as one undo step.
     fn selection_delete(&mut self, maps: &mut MapStore, map: &MapInfo) {
-        let (Some(sel), Some((source, layer, is_collision))) =
+        let (Some(sel), Some((source, layer, needs_reload))) =
             (self.selection, self.selection_layer(map))
         else {
             return;
@@ -4992,7 +5048,7 @@ impl MapViewer {
             }
         }
         self.flush_stroke();
-        if is_collision {
+        if needs_reload {
             self.pending_reload = true;
         }
     }
@@ -5004,7 +5060,7 @@ impl MapViewer {
         let (Some(sel), Some(clip)) = (self.selection, self.clipboard.clone()) else {
             return;
         };
-        let Some((source, layer, is_collision)) = self.selection_layer(map) else {
+        let Some((source, layer, needs_reload)) = self.selection_layer(map) else {
             return;
         };
         self.stroke = Some(EditAction::Tiles {
@@ -5026,7 +5082,7 @@ impl MapViewer {
             }
         }
         self.flush_stroke();
-        if is_collision {
+        if needs_reload {
             self.pending_reload = true;
         }
     }
@@ -7034,7 +7090,12 @@ fn render_map_full(
     let palette = draw_state.palettes[0].as_slice();
 
     let mut full = RgbaImage::new(fw, fh);
-    for layer in info.layers.iter().chain(info.fg_layers.iter()) {
+    for layer in info
+        .layers
+        .iter()
+        .chain(info.sprite_layers.iter())
+        .chain(info.fg_layers.iter())
+    {
         if !layer.visible {
             continue;
         }
@@ -7231,24 +7292,14 @@ fn apply_layer_prop(maps: &mut MapStore, source: &str, index: usize, prop: Layer
     }
 }
 
-/// Toggle a layer name's foreground `fg` prefix (the marker `push_bg_or_fg` keys
-/// on). A leading `fg` counts as the marker only when it stands alone or is
-/// followed by a separator — so `fg water` toggles back to `water`, while a
-/// plain word like `fgrass` is left untouched (a harmless no-op) rather than
-/// corrupted to `rass`. A name that is only the prefix falls back to `layer`.
-fn toggle_fg_prefix(name: &str) -> String {
-    if let Some(rest) = name.to_lowercase().strip_prefix("fg") {
-        if rest.is_empty() || !rest.starts_with(|c: char| c.is_ascii_alphanumeric()) {
-            let stripped = name[2..].trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
-            return if stripped.is_empty() {
-                "layer".to_string()
-            } else {
-                stripped.to_string()
-            };
-        }
-        return name.to_string(); // "fg" glued to a word — not a clean marker.
+/// The short label for a draw [`Plane`], shown on the Layers panel's plane
+/// button and (upper-cased) the Paint tool's target readout.
+fn plane_short(plane: Plane) -> &'static str {
+    match plane {
+        Plane::Bg => "bg",
+        Plane::Sprite => "spr",
+        Plane::Fg => "fg",
     }
-    format!("fg {name}")
 }
 
 /// The tile [`TileSelection`] spanning world points `a`..=`b` (inclusive cells).
@@ -8687,10 +8738,11 @@ mod tests {
         assert!(maps.get_mut("m").unwrap().remove_layer_at(0).is_none());
     }
 
-    /// Renaming a layer commits to the store and is undoable; the FG toggle flips
-    /// the `fg` name prefix (and back), itself undoable.
+    /// Renaming a layer commits to the store and is undoable; the plane cycle
+    /// writes the `plane` property (BG → Sprite → FG) without renaming, itself
+    /// undoable.
     #[test]
-    fn layer_rename_and_fg_toggle() {
+    fn layer_rename_and_plane_cycle() {
         use crate::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(4, 4));
@@ -8725,13 +8777,19 @@ mod tests {
         v.redo(&mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
 
-        // FG toggle adds the `fg` prefix; a second toggle strips it; both undoable.
-        v.toggle_layer_fg(&map, &mut maps, 1);
-        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
-        v.toggle_layer_fg(&map, &mut maps, 1);
-        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
+        // Plane cycle writes the `plane` property (no rename): BG -> Sprite ->
+        // FG, each an undoable step; the layer name is untouched throughout.
+        assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Bg);
+        v.cycle_layer_plane(&map, &mut maps, 1);
+        assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Sprite);
+        assert_eq!(v.plane, Plane::Sprite, "view follows the layer");
+        v.cycle_layer_plane(&map, &mut maps, 1);
+        assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Fg);
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"), "no rename");
         v.undo(&mut map, &mut maps);
-        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+        assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Sprite);
+        v.redo(&mut map, &mut maps);
+        assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Fg);
 
         // An empty rename is ignored (a layer stays identifiable).
         v.editing = Some(TextEdit {
@@ -8740,7 +8798,7 @@ mod tests {
             target: 1,
         });
         v.commit_edit(&mut map, &mut maps);
-        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("fg water"));
+        assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
     }
 
     /// Drag-reordering a layer: a display-row move translates to the store's layer
@@ -9057,15 +9115,27 @@ mod tests {
         assert_eq!(music(&maps), None);
     }
 
-    /// The fg-prefix toggle round-trips a separated marker, leaves a glued word
-    /// alone (no corruption), and is case-insensitive.
+    /// A layer's `plane` property overrides the `fg` name fallback and cycles
+    /// through all three planes; choosing the plane the name already implies
+    /// leaves the layer clean (no property), so the fallback still applies.
     #[test]
-    fn fg_prefix_toggle_edge_cases() {
-        assert_eq!(toggle_fg_prefix("water"), "fg water");
-        assert_eq!(toggle_fg_prefix("fg water"), "water"); // round-trips
-        assert_eq!(toggle_fg_prefix("FG Bed"), "Bed"); // case-insensitive marker
-        assert_eq!(toggle_fg_prefix("fgrass"), "fgrass"); // glued word: untouched
-        assert_eq!(toggle_fg_prefix("fg"), "layer"); // bare prefix -> fallback
+    fn layer_plane_property_and_name_fallback() {
+        use crate::data::tiled::TiledMap;
+        let mut tm = TiledMap::blank_modern(2, 2);
+        // "Layer 1" — no `fg` prefix, so the name fallback is Bg.
+        assert_eq!(tm.layer_plane(1), Plane::Bg);
+        tm.set_layer_plane(1, Plane::Sprite);
+        assert_eq!(tm.layer_plane(1), Plane::Sprite);
+        tm.set_layer_plane(1, Plane::Fg);
+        assert_eq!(tm.layer_plane(1), Plane::Fg);
+        // Setting the plane the name already implies (Bg) drops the property.
+        tm.set_layer_plane(1, Plane::Bg);
+        assert_eq!(tm.layer_plane(1), Plane::Bg);
+        // An `fg`-prefixed name falls back to Fg; an explicit `plane` still wins.
+        tm.set_layer_name(1, "fg roof");
+        assert_eq!(tm.layer_plane(1), Plane::Fg);
+        tm.set_layer_plane(1, Plane::Bg);
+        assert_eq!(tm.layer_plane(1), Plane::Bg);
     }
 
     /// A name collision, a path-separator name and an empty name are all rejected.

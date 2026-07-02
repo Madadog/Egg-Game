@@ -12,7 +12,7 @@
 use crate::world::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
 use crate::world::interact::{InteractFn, Interaction};
-use crate::world::map::{Axis, LayerInfo, MapObject, ObjectEffect, Trigger, Warp, WarpMode};
+use crate::world::map::{Axis, LayerInfo, MapObject, ObjectEffect, Plane, Trigger, Warp, WarpMode};
 use crate::geometry::{Hitbox, Vec2};
 use crate::render::SpriteOptions;
 use crate::render::Rotate;
@@ -197,6 +197,25 @@ impl TileLayer {
                 r#type: "int".to_string(),
                 value: Value::from(rotate),
             });
+        }
+    }
+    /// This layer's draw [`Plane`]: the `plane` property if present, else the
+    /// name-based fallback ([`Plane::from_name`]). Read at load to route the
+    /// layer into the bg / sprite / fg lists.
+    pub fn plane(&self) -> Plane {
+        property_str(&self.properties, "plane")
+            .and_then(Plane::from_property)
+            .unwrap_or_else(|| Plane::from_name(&self.name))
+    }
+    /// Set the layer's draw [`Plane`] via the `plane` property (the editor's
+    /// three-way cycle). The property is dropped when it would only restate the
+    /// name-based fallback ([`Plane::from_name`]) — so a plain bg layer stays
+    /// propertyless, while a `sprite`/`fg` choice (or a bg that must countermand
+    /// an `fg`-prefixed name) is written explicitly. Never renames the layer.
+    pub fn set_plane(&mut self, plane: Plane) {
+        self.properties.retain(|p| p.name != "plane");
+        if plane != Plane::from_name(&self.name) {
+            self.properties.push(Property::string("plane", plane.name()));
         }
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut usize> {
@@ -1113,6 +1132,23 @@ impl TiledMap {
     pub fn set_layer_palette_rotate(&mut self, idx: usize, v: u8) {
         if let Some(TiledMapLayer::TileLayer(t)) = self.layers.get_mut(idx) {
             t.set_palette_rotate(v);
+        }
+    }
+
+    /// The tile layer at `idx`'s draw [`Plane`] (its `plane` property or name
+    /// fallback). [`Plane::Bg`] for an image/object layer or an out-of-range
+    /// index — the editor only cycles the plane of tile layers.
+    pub fn layer_plane(&self, idx: usize) -> Plane {
+        match self.layers.get(idx) {
+            Some(TiledMapLayer::TileLayer(t)) => t.plane(),
+            _ => Plane::Bg,
+        }
+    }
+    /// Set the tile layer at `idx`'s draw [`Plane`] via its `plane` property
+    /// (no-op for a non-tile layer). See [`TileLayer::set_plane`].
+    pub fn set_layer_plane(&mut self, idx: usize, plane: Plane) {
+        if let Some(TiledMapLayer::TileLayer(t)) = self.layers.get_mut(idx) {
+            t.set_plane(plane);
         }
     }
 

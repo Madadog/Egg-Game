@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
 use crate::geometry::{Collider, Hitbox, Vec2};
-use crate::render::MapOptions;
+use crate::render::{DrawParams, MapOptions, SpriteOptions};
 use crate::render::image::{IndexedImage, RgbaImage};
 use crate::world::animation::AnimFrame;
 use crate::world::camera::CameraBounds;
@@ -161,11 +161,12 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
 
     let mut layers = Vec::new();
     let mut fg_layers = Vec::new();
+    let mut sprite_layers = Vec::new();
     let mut seen_collision_tiles = false;
     for (i, layer) in map.layers.iter().enumerate() {
         match layer {
             // The first tile layer is the collision layer: invisible, colliders
-            // from the sprite art. Later tile layers draw, bg/fg by `fg` prefix.
+            // from the sprite art. Later tile layers draw, routed by their plane.
             TiledMapLayer::TileLayer(tile_layer) => {
                 if !seen_collision_tiles {
                     seen_collision_tiles = true;
@@ -184,29 +185,40 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
                     palette_rotate: tile_layer.palette_rotate(),
                     ..LayerInfo::DEFAULT_LAYER
                 };
-                push_bg_or_fg(&mut layers, &mut fg_layers, info, &tile_layer.name);
+                // A tile layer picks its plane from the `plane` property (else the
+                // `fg` name-prefix); a `sprite`-plane layer y-sorts against
+                // entities rather than drawing flat.
+                match tile_layer.plane() {
+                    Plane::Bg => layers.push(info),
+                    Plane::Sprite => sprite_layers.push(info),
+                    Plane::Fg => fg_layers.push(info),
+                }
             }
-            // A collision image layer is invisible data; a plain one draws.
+            // A collision image layer is invisible data; a plain one draws. Image
+            // layers stay on the bg/fg name convention (no `sprite` plane — that
+            // needs the tile-layer `plane` property; see [`Plane`]).
             TiledMapLayer::ImageLayer(image) => {
                 if image.is_collision() {
                     layers.push(painted_collision_layer(image, i));
                 } else {
-                    push_bg_or_fg(
-                        &mut layers,
-                        &mut fg_layers,
-                        image_draw_layer(image, i),
-                        &image.name,
-                    );
+                    let info = image_draw_layer(image, i);
+                    match Plane::from_name(&image.name) {
+                        Plane::Fg => fg_layers.push(info),
+                        _ => layers.push(info),
+                    }
                 }
             }
             TiledMapLayer::ObjectLayer(_) => {}
         }
     }
 
+    let sprite_components = sprite_components_of(map, &sprite_layers);
     let objects = map.parse_objects();
     MapInfo {
         layers,
         fg_layers,
+        sprite_layers,
+        sprite_components,
         objects,
         bg_colour: map.bg_colour().unwrap_or(0),
         camera_bounds: map.camera_stick().map(|(x, y)| CameraBounds::stick(x, y)),
@@ -221,21 +233,92 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
     }
 }
 
-/// Push a built [`LayerInfo`] into the bg or fg list by the Tiled layer-name
-/// `fg` prefix (case-insensitive) — the one convention shared by tile and image
-/// draw layers, so an `fg`-named painted overlay sits above sprites just like an
-/// `fg` tile layer does.
-fn push_bg_or_fg(
-    layers: &mut Vec<LayerInfo>,
-    fg_layers: &mut Vec<LayerInfo>,
-    info: LayerInfo,
-    name: &str,
-) {
-    if name.to_lowercase().starts_with("fg") {
-        fg_layers.push(info);
-    } else {
-        layers.push(info);
+/// Decompose every [`Plane::Sprite`] layer into y-sorting [`SpriteComponent`]s
+/// (see [`layer_sprite_components`]), in `sprite_layers` order. Components from
+/// different layers never merge — each layer flood-fills on its own — so the
+/// list is just the per-layer results concatenated.
+fn sprite_components_of(map: &TiledMap, sprite_layers: &[LayerInfo]) -> Vec<SpriteComponent> {
+    sprite_layers
+        .iter()
+        .flat_map(|layer| layer_sprite_components(map, layer))
+        .collect()
+}
+
+/// Flood-fill one sprite-plane layer's non-empty cells (tile id ≠ 0, i.e. the
+/// same cells that draw) into 4-connected [`SpriteComponent`]s. Each cell's world
+/// position and tile id are resolved through the exact math
+/// [`LayerInfo::draw_indexed`] uses (layer pixel offset + grid × 8; the tile id
+/// used directly as a sprite index), and the component's `baseline` is the bottom
+/// pixel edge of its lowest occupied row (offset included). The layer's
+/// `transparent` and `palette_rotate` ride onto every component so a cell draws
+/// identically to the flat layer.
+fn layer_sprite_components(map: &TiledMap, layer: &LayerInfo) -> Vec<SpriteComponent> {
+    let Some(TiledMapLayer::TileLayer(tile_layer)) = map.layers.get(layer.source_layer) else {
+        return Vec::new();
+    };
+    let w = layer.size.x.max(0) as usize;
+    let h = layer.size.y.max(0) as usize;
+    if w == 0 || h == 0 {
+        return Vec::new();
     }
+    // A cell holds a tile there iff its (sheet-local) id is non-zero — id 0 is the
+    // empty/transparent cell the layer skips when drawing.
+    let tile_at = |x: usize, y: usize| tile_layer.get(x, y).filter(|&id| id != 0);
+
+    let mut visited = vec![false; w * h];
+    let mut components = Vec::new();
+    for start_y in 0..h {
+        for start_x in 0..w {
+            if visited[start_y * w + start_x] || tile_at(start_x, start_y).is_none() {
+                continue;
+            }
+            // Depth-first flood over the 4-connected blob at this seed.
+            visited[start_y * w + start_x] = true;
+            let mut stack = vec![(start_x, start_y)];
+            let mut cells = Vec::new();
+            let mut lowest_row = start_y;
+            while let Some((x, y)) = stack.pop() {
+                let id = tile_at(x, y).unwrap_or(0);
+                cells.push(SpriteCell {
+                    world: Vec2::new(
+                        layer.offset.x.saturating_add((x as i16).saturating_mul(8)),
+                        layer.offset.y.saturating_add((y as i16).saturating_mul(8)),
+                    ),
+                    index: id as i32,
+                });
+                lowest_row = lowest_row.max(y);
+                let mut push = |nx: usize, ny: usize, stack: &mut Vec<(usize, usize)>| {
+                    let idx = ny * w + nx;
+                    if !visited[idx] && tile_at(nx, ny).is_some() {
+                        visited[idx] = true;
+                        stack.push((nx, ny));
+                    }
+                };
+                if x > 0 {
+                    push(x - 1, y, &mut stack);
+                }
+                if x + 1 < w {
+                    push(x + 1, y, &mut stack);
+                }
+                if y > 0 {
+                    push(x, y - 1, &mut stack);
+                }
+                if y + 1 < h {
+                    push(x, y + 1, &mut stack);
+                }
+            }
+            // Baseline: the bottom edge of the lowest occupied row, map-absolute.
+            let baseline = i32::from(layer.offset.y) + (lowest_row as i32 + 1) * 8;
+            components.push(SpriteComponent {
+                source_layer: layer.source_layer,
+                cells,
+                baseline,
+                transparent: layer.transparent,
+                palette_rotate: layer.palette_rotate,
+            });
+        }
+    }
+    components
 }
 
 /// The invisible collision [`LayerInfo`] for tile layer `source` (the map's
@@ -361,11 +444,153 @@ fn painted_colliders(pixels: &RgbaImage, w: i16, h: i16) -> Vec<Collider> {
     colliders
 }
 
+/// Which draw plane a map layer occupies relative to the entities (player,
+/// creatures, pickups) that y-sort by their feet:
+/// - [`Bg`](Self::Bg) — drawn entirely *under* every entity (the historical
+///   default), before the sorted sprite pass;
+/// - [`Sprite`](Self::Sprite) — its tiles y-sort *against* entities, so the
+///   player can pass both in front of and behind them (furniture/props);
+/// - [`Fg`](Self::Fg) — drawn entirely *over* every entity, after the sorted
+///   pass.
+///
+/// A layer opts in via a `plane` custom property (`"bg"`/`"sprite"`/`"fg"`);
+/// absent, it falls back to the historical name convention — an `fg` name-prefix
+/// (case-insensitive) means [`Fg`](Self::Fg), else [`Bg`](Self::Bg). The
+/// property, when present, wins. `Sprite` is only reachable via the property.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Plane {
+    /// Under every entity (the default).
+    #[default]
+    Bg,
+    /// Y-sorted against entities by each connected component's baseline.
+    Sprite,
+    /// Over every entity.
+    Fg,
+}
+impl Plane {
+    /// The lowercase `plane`-property spelling, shared by the codec (round-trip)
+    /// and the editor's plane-cycle button. Inverse of [`from_property`](Self::from_property).
+    pub fn name(self) -> &'static str {
+        match self {
+            Plane::Bg => "bg",
+            Plane::Sprite => "sprite",
+            Plane::Fg => "fg",
+        }
+    }
+    /// Parse a `plane` property value (case-insensitive), or `None` for an
+    /// unrecognised string (the caller then falls back to the name convention).
+    pub fn from_property(value: &str) -> Option<Self> {
+        Some(match value.to_ascii_lowercase().as_str() {
+            "bg" => Plane::Bg,
+            "sprite" => Plane::Sprite,
+            "fg" => Plane::Fg,
+            _ => return None,
+        })
+    }
+    /// The plane a layer named `name` falls back to when it carries no `plane`
+    /// property: [`Fg`](Self::Fg) for the `fg` name-prefix (case-insensitive),
+    /// else [`Bg`](Self::Bg). Never [`Sprite`](Self::Sprite) — that needs the
+    /// explicit property.
+    pub fn from_name(name: &str) -> Self {
+        if name.to_lowercase().starts_with("fg") {
+            Plane::Fg
+        } else {
+            Plane::Bg
+        }
+    }
+    /// The next plane in the BG → Sprite → FG → BG cycle (the editor's three-way
+    /// toggle).
+    pub fn cycle(self) -> Self {
+        match self {
+            Plane::Bg => Plane::Sprite,
+            Plane::Sprite => Plane::Fg,
+            Plane::Fg => Plane::Bg,
+        }
+    }
+}
+
+/// One cell of a [`SpriteComponent`]: a single 8×8 tile placed in the world.
+/// Resolved at load through the exact math [`LayerInfo::draw_indexed`] uses, so
+/// drawing it as a 1×1 sprite is bit-identical to the layer drawing it as a tile.
+#[derive(Clone, Debug)]
+pub struct SpriteCell {
+    /// World-pixel top-left of this cell (the layer's pixel offset + grid × 8),
+    /// pre-camera. Subtract the camera at draw time.
+    pub world: Vec2,
+    /// The sheet-local tile id drawn here — used directly as a sprite index.
+    pub index: i32,
+}
+
+/// A 4-connected blob of non-empty cells on a [`Plane::Sprite`] layer, drawn as
+/// one y-sorted unit. Every cell shares the component's [`baseline`](Self::baseline)
+/// as its sort key, so the whole prop sorts against entities by its lowest edge —
+/// the player passes behind it above that line and in front of it below.
+///
+/// Components never span layers: each sprite-plane layer flood-fills
+/// independently, which is the authoring escape hatch for making two touching
+/// props sort separately (put them on separate sprite layers).
+#[derive(Clone, Debug)]
+pub struct SpriteComponent {
+    /// The [`LayerInfo::source_layer`] of the sprite-plane layer this component
+    /// came from, so the draw loop can honour that layer's `visible` flag live —
+    /// the eye toggle flips `visible` without a reload, so visibility can't be
+    /// baked into the derive.
+    pub source_layer: usize,
+    /// This component's cells (world position + tile id), in flood-fill order.
+    pub cells: Vec<SpriteCell>,
+    /// The bottom pixel edge of the component's lowest row, in **map-absolute**
+    /// pixels (layer offset included). The y-sort key is `baseline − camera.y`,
+    /// so it lands in the same camera-relative space as [`DrawParams::bottom`](crate::render::DrawParams::bottom).
+    pub baseline: i32,
+    /// Colour key skipped when a cell draws (the layer's `transparent`).
+    pub transparent: Option<u8>,
+    /// Per-layer palette rotation applied when a cell draws.
+    pub palette_rotate: u8,
+}
+impl SpriteComponent {
+    /// This component's y-sort key at camera y `cam_y`: its map-absolute
+    /// `baseline` shifted into the camera-relative space
+    /// [`DrawParams::bottom`](crate::render::DrawParams::bottom) returns, so an
+    /// entity and a component sort by the same measure.
+    pub fn sort_key(&self, cam_y: i32) -> i32 {
+        self.baseline - cam_y
+    }
+    /// One 1×1-tile [`DrawParams`] per cell, positioned camera-relative. Drawn,
+    /// each is bit-identical to the sprite-plane layer drawing that cell as a
+    /// tile (same sheet index, transparency, palette rotation, destination).
+    pub fn cell_params(&self, cam_x: i32, cam_y: i32) -> impl Iterator<Item = DrawParams> + '_ {
+        let transparent = self.transparent;
+        let palette_rotate = self.palette_rotate;
+        self.cells.iter().map(move |cell| {
+            DrawParams::new(
+                cell.index,
+                i32::from(cell.world.x) - cam_x,
+                i32::from(cell.world.y) - cam_y,
+                SpriteOptions {
+                    transparent,
+                    ..SpriteOptions::default()
+                },
+                None,
+                palette_rotate,
+            )
+        })
+    }
+}
+
 /// Metadata necessary to load a map into Walkaround.
 #[derive(Clone, Debug, Default)]
 pub struct MapInfo {
     pub layers: Vec<LayerInfo>,
     pub fg_layers: Vec<LayerInfo>,
+    /// Y-sorting draw layers ([`Plane::Sprite`]): the editor lists/edits these
+    /// like the bg/fg lists, but they don't draw as a flat pass — their tiles
+    /// are grouped into [`sprite_components`](Self::sprite_components) that sort
+    /// against entities.
+    pub sprite_layers: Vec<LayerInfo>,
+    /// The connected-component decomposition of [`sprite_layers`](Self::sprite_layers),
+    /// derived at load and re-derived through the editor's reload seam. Draw-only
+    /// (no colliders).
+    pub sprite_components: Vec<SpriteComponent>,
     /// The map's triggerable objects (warps + interactions) in one ordered
     /// list — the walk loop scans them in vector order, so order is gameplay.
     pub objects: Vec<MapObject>,
@@ -399,6 +624,38 @@ impl MapInfo {
         debug: bool,
     ) {
         for l in &self.fg_layers {
+            l.draw_indexed(draw_state, layer, map, offset, debug);
+        }
+    }
+    /// The sprite-plane components whose source layer is currently **visible**.
+    /// The editor's eye toggle flips a [`sprite_layers`](Self::sprite_layers)
+    /// entry's `visible` without a reload, so `draw_world` filters here at draw
+    /// time rather than baking visibility into the derived components (mirroring
+    /// [`LayerInfo::draw_indexed`]'s `!visible` early-return). A component with no
+    /// matching layer — which shouldn't occur — counts as visible.
+    pub fn visible_sprite_components(&self) -> impl Iterator<Item = &SpriteComponent> {
+        self.sprite_components.iter().filter(move |c| {
+            self.sprite_layers
+                .iter()
+                .find(|l| l.source_layer == c.source_layer)
+                .is_none_or(|l| l.visible)
+        })
+    }
+
+    /// Draw the sprite-plane layers **flat** (as plain tiles, in layer order),
+    /// for the static editor previews that render a map without the live
+    /// entities to y-sort against (warp-destination placement, the path
+    /// recorder). The live world instead draws these through the y-sorted
+    /// [`sprite_components`](Self::sprite_components) in `draw_world`.
+    pub fn draw_sprite_indexed(
+        &self,
+        draw_state: &mut crate::draw_state::DrawState,
+        layer: crate::draw_state::LayerId,
+        map: &TiledMap,
+        offset: Vec2,
+        debug: bool,
+    ) {
+        for l in &self.sprite_layers {
             l.draw_indexed(draw_state, layer, map, offset, debug);
         }
     }
@@ -466,7 +723,6 @@ pub struct LayerInfo {
     /// [`LayerKind`]). The tile and image variants share one list so file order
     /// — and thus draw order — is preserved across both.
     pub kind: LayerKind,
-    // pub display_mode: BG, FG, Object
 }
 impl LayerInfo {
     pub const DEFAULT_LAYER: Self = Self {
@@ -1056,6 +1312,321 @@ mod tests {
         assert!(!lab.layers[0].visible);
         assert_eq!(lab.layers[0].colliders.len(), 16);
         assert!(lab.fg_layers.is_empty());
+        assert!(lab.sprite_layers.is_empty());
+        assert!(lab.sprite_components.is_empty());
+    }
+
+    // --- Sprite-plane layers --------------------------------------------------
+
+    /// A tile layer carrying `data`, an optional `plane` property and a vertical
+    /// pixel offset — the fixture the sprite-plane tests build maps from.
+    fn plane_tile_layer(
+        name: &str,
+        w: usize,
+        h: usize,
+        data: Vec<usize>,
+        plane: Option<Plane>,
+        offsety: f64,
+    ) -> TiledMapLayer {
+        let mut properties = Vec::new();
+        if let Some(p) = plane {
+            properties.push(crate::data::tiled::Property::string("plane", p.name()));
+        }
+        TiledMapLayer::TileLayer(TileLayer {
+            width: w,
+            height: h,
+            data,
+            name: name.to_string(),
+            offsety,
+            properties,
+            ..Default::default()
+        })
+    }
+
+    /// A `w`×`h` tile-data grid with the listed cells set to a non-zero tile id.
+    fn occupied_grid(w: usize, h: usize, cells: &[(usize, usize)]) -> Vec<usize> {
+        let mut data = vec![0usize; w * h];
+        for &(x, y) in cells {
+            data[y * w + x] = 5;
+        }
+        data
+    }
+
+    /// Build + resolve a modern map from `layers` (an object layer is appended so
+    /// it counts as modern), returning its [`MapInfo`].
+    fn info_from_layers(layers: Vec<TiledMapLayer>, w: usize, h: usize) -> MapInfo {
+        let console = TestConsole::new();
+        let mut all = layers;
+        all.push(TiledMapLayer::ObjectLayer(ObjectLayer {
+            name: "obj".to_string(),
+            objects: Vec::new(),
+        }));
+        let map = TiledMap {
+            width: w,
+            height: h,
+            layers: all,
+            tilesets: Vec::new(),
+            properties: Vec::new(),
+        };
+        let mut store = MapStore::default();
+        store.insert("m", map);
+        map_by_name(&console.indexed_sprites, "m", &store).expect("m resolves")
+    }
+
+    /// The `plane` property routes a tile layer to the sprite / fg / bg list and
+    /// wins over the `fg` name-prefix; a bare `fg`-named layer still falls back to
+    /// fg without a property.
+    #[test]
+    fn sprite_plane_classification() {
+        let info = info_from_layers(
+            vec![
+                plane_tile_layer("collision", 2, 2, vec![0; 4], None, 0.0),
+                plane_tile_layer("props", 2, 2, vec![0; 4], Some(Plane::Sprite), 0.0),
+                plane_tile_layer("roof", 2, 2, vec![0; 4], Some(Plane::Fg), 0.0),
+                plane_tile_layer("fgWall", 2, 2, vec![0; 4], None, 0.0),
+                plane_tile_layer("fgThing", 2, 2, vec![0; 4], Some(Plane::Bg), 0.0),
+            ],
+            2,
+            2,
+        );
+        // Sprite plane: only the `plane=sprite` layer (source 1).
+        let sprite: Vec<usize> = info.sprite_layers.iter().map(|l| l.source_layer).collect();
+        assert_eq!(sprite, vec![1]);
+        // Fg: the `plane=fg` layer (2) and the bare `fg`-named layer (3, fallback).
+        let fg: Vec<usize> = info.fg_layers.iter().map(|l| l.source_layer).collect();
+        assert_eq!(fg, vec![2, 3]);
+        // Bg: collision (0) plus fgThing, whose `plane=bg` countermands its `fg`
+        // name (4) — the property wins over the prefix.
+        let bg: Vec<usize> = info.layers.iter().map(|l| l.source_layer).collect();
+        assert_eq!(bg, vec![0, 4]);
+    }
+
+    /// One sprite layer with two disjoint blobs (an L-shape + a separate column)
+    /// flood-fills into two components with the right cell counts; each baseline
+    /// is its lowest row's bottom edge, the layer's `offsety` included.
+    #[test]
+    fn flood_fill_splits_blobs_and_computes_baseline() {
+        // L-shape: (0,1),(1,1),(0,2) — lowest row 2. Column: (3,3),(3,4) — row 4.
+        let cells = [(0, 1), (1, 1), (0, 2), (3, 3), (3, 4)];
+        let info = info_from_layers(
+            vec![
+                plane_tile_layer("collision", 5, 5, vec![0; 25], None, 0.0),
+                plane_tile_layer(
+                    "props",
+                    5,
+                    5,
+                    occupied_grid(5, 5, &cells),
+                    Some(Plane::Sprite),
+                    5.0,
+                ),
+            ],
+            5,
+            5,
+        );
+        assert_eq!(info.sprite_components.len(), 2, "two disjoint blobs");
+        let mut counts: Vec<usize> = info.sprite_components.iter().map(|c| c.cells.len()).collect();
+        counts.sort();
+        assert_eq!(counts, vec![2, 3]);
+        let l_blob = info
+            .sprite_components
+            .iter()
+            .find(|c| c.cells.len() == 3)
+            .unwrap();
+        let column = info
+            .sprite_components
+            .iter()
+            .find(|c| c.cells.len() == 2)
+            .unwrap();
+        // Baseline = offsety(5) + (lowest_row + 1) * 8.
+        assert_eq!(l_blob.baseline, 5 + (2 + 1) * 8);
+        assert_eq!(column.baseline, 5 + (4 + 1) * 8);
+        // Cell world positions include the layer offset: the column's top cell is
+        // grid (3,3) → (24, 5 + 24).
+        assert!(column.cells.iter().any(|c| c.world == Vec2::new(24, 29)));
+        // Draw metadata rides onto the component from the layer.
+        assert_eq!(l_blob.transparent, Some(0));
+    }
+
+    /// The same cells bridged into one 4-connected shape flood-fill into a single
+    /// component.
+    #[test]
+    fn flood_fill_merges_touching_cells() {
+        // A connected shape: (1,1)-(0,1)-(0,2)-(0,3)-(0,4).
+        let cells = [(1, 1), (0, 1), (0, 2), (0, 3), (0, 4)];
+        let info = info_from_layers(
+            vec![
+                plane_tile_layer("collision", 5, 5, vec![0; 25], None, 0.0),
+                plane_tile_layer(
+                    "props",
+                    5,
+                    5,
+                    occupied_grid(5, 5, &cells),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+            ],
+            5,
+            5,
+        );
+        assert_eq!(info.sprite_components.len(), 1, "touching cells merge");
+        assert_eq!(info.sprite_components[0].cells.len(), 5);
+        assert_eq!(info.sprite_components[0].baseline, (4 + 1) * 8);
+    }
+
+    /// Two sprite layers each holding a cell at the *same* grid position stay two
+    /// components — each layer flood-fills on its own, so overlapping props on
+    /// separate layers never merge (the authoring escape hatch).
+    #[test]
+    fn flood_fill_never_merges_across_sprite_layers() {
+        let info = info_from_layers(
+            vec![
+                plane_tile_layer("collision", 3, 3, vec![0; 9], None, 0.0),
+                plane_tile_layer(
+                    "a",
+                    3,
+                    3,
+                    occupied_grid(3, 3, &[(1, 1)]),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+                plane_tile_layer(
+                    "b",
+                    3,
+                    3,
+                    occupied_grid(3, 3, &[(1, 1)]),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+            ],
+            3,
+            3,
+        );
+        assert_eq!(info.sprite_layers.len(), 2);
+        assert_eq!(
+            info.sprite_components.len(),
+            2,
+            "overlapping cells on different layers don't merge"
+        );
+    }
+
+    /// A `plane=sprite` layer survives a `to_tmj` → `from_json` round-trip: the
+    /// re-parsed map still classifies it as a sprite plane with its component.
+    #[test]
+    fn plane_property_round_trips_through_tmj() {
+        use crate::data::tiled::{Tileset, from_json};
+        let console = TestConsole::new();
+        let map = TiledMap {
+            width: 2,
+            height: 2,
+            layers: vec![
+                plane_tile_layer("collision", 2, 2, vec![0; 4], None, 0.0),
+                plane_tile_layer(
+                    "props",
+                    2,
+                    2,
+                    occupied_grid(2, 2, &[(0, 0)]),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+                TiledMapLayer::ObjectLayer(ObjectLayer {
+                    name: "obj".to_string(),
+                    objects: Vec::new(),
+                }),
+            ],
+            tilesets: vec![Tileset {
+                firstgid: 1,
+                source: "tiles.tsj".to_string(),
+            }],
+            properties: Vec::new(),
+        };
+        let json = map.to_tmj(&map.parse_objects());
+        let reparsed = from_json(json.as_bytes()).unwrap();
+        let mut store = MapStore::default();
+        store.insert("m", reparsed);
+        let info = map_by_name(&console.indexed_sprites, "m", &store).unwrap();
+        assert_eq!(info.sprite_layers.len(), 1, "sprite plane survives save/load");
+        assert_eq!(info.sprite_components.len(), 1);
+        assert_eq!(info.sprite_components[0].cells.len(), 1);
+    }
+
+    /// The y-sort tie rule: replaying `draw_world`'s keyed list (components pushed
+    /// before entities, then a stable sort) an entity draws in front of a
+    /// component when its feet are below the baseline *or exactly on it*, and
+    /// behind when its feet are above.
+    #[test]
+    fn sprite_component_sorts_against_entity_feet() {
+        let component = SpriteComponent {
+            source_layer: 0,
+            cells: Vec::new(),
+            baseline: 100,
+            transparent: Some(0),
+            palette_rotate: 0,
+        };
+        let cam_y = 0;
+        let order = |feet: i32| -> Vec<&'static str> {
+            let mut list: Vec<(i32, &'static str)> = Vec::new();
+            // Component first (matches `draw_world`), then the entity.
+            list.push((component.sort_key(cam_y), "component"));
+            let entity = DrawParams::new(0, 0, feet - 8, SpriteOptions::default(), None, 0);
+            assert_eq!(entity.bottom(), feet, "1×1 sprite bottom = y + 8");
+            list.push((entity.bottom(), "entity"));
+            list.sort_by_key(|(k, _)| *k); // stable, like the draw loop
+            list.into_iter().map(|(_, name)| name).collect()
+        };
+        assert_eq!(order(120), vec!["component", "entity"], "feet below → in front");
+        assert_eq!(order(80), vec!["entity", "component"], "feet above → behind");
+        assert_eq!(
+            order(100),
+            vec!["component", "entity"],
+            "feet on the baseline → entity in front (tie)"
+        );
+    }
+
+    /// Hiding a sprite layer (the editor's eye toggle flips `LayerInfo.visible`
+    /// without a reload) drops its components from the live draw list, while a
+    /// visible layer's components stay — the filter is applied at draw time.
+    #[test]
+    fn hidden_sprite_layer_excluded_from_draw() {
+        let mut info = info_from_layers(
+            vec![
+                plane_tile_layer("collision", 3, 3, vec![0; 9], None, 0.0),
+                plane_tile_layer(
+                    "a",
+                    3,
+                    3,
+                    occupied_grid(3, 3, &[(0, 0)]),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+                plane_tile_layer(
+                    "b",
+                    3,
+                    3,
+                    occupied_grid(3, 3, &[(2, 2)]),
+                    Some(Plane::Sprite),
+                    0.0,
+                ),
+            ],
+            3,
+            3,
+        );
+        // Both layers visible → both components draw.
+        assert_eq!(info.sprite_components.len(), 2);
+        assert_eq!(info.visible_sprite_components().count(), 2);
+        // Hide layer "a" (source_layer 1), exactly as the eye toggle does.
+        for layer in info.sprite_layers.iter_mut() {
+            if layer.source_layer == 1 {
+                layer.visible = false;
+            }
+        }
+        // Only layer "b"'s component (source_layer 2) remains in the draw list;
+        // the components themselves are untouched (no reload needed).
+        let drawn: Vec<usize> = info
+            .visible_sprite_components()
+            .map(|c| c.source_layer)
+            .collect();
+        assert_eq!(drawn, vec![2]);
+        assert_eq!(info.sprite_components.len(), 2, "derive is untouched");
     }
 
     /// The constructors set the trigger from the effect kind: warps default to

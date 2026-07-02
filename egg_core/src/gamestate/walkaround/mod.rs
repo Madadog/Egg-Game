@@ -879,6 +879,11 @@ impl WalkaroundState {
                     self.current_map.camera_bounds = fresh.camera_bounds;
                     self.current_map.layers = fresh.layers;
                     self.current_map.fg_layers = fresh.fg_layers;
+                    // Sprite-plane layers + their derived components re-derive too,
+                    // so an editor paint/plane-cycle recomputes the y-sorting blobs
+                    // live (a stale `sprite_components` would draw the old shape).
+                    self.current_map.sprite_layers = fresh.sprite_layers;
+                    self.current_map.sprite_components = fresh.sprite_components;
                 }
             }
             return None;
@@ -1256,10 +1261,24 @@ impl WalkaroundState {
         // Particles
         self.particles.draw_indexed(ctx.draw, BG, -cam_x, -cam_y);
 
-        // Collect sprites for drawing
-        let mut sprites: Vec<DrawParams> = Vec::new();
+        // Collect sprites for drawing, each paired with its y-sort key. Entities
+        // key on their feet (`DrawParams::bottom`); a sprite-plane component's
+        // cells all key on the component's baseline.
+        let mut sprites: Vec<(i32, DrawParams)> = Vec::new();
 
-        sprites.push(self.player_ref().draw_params(camera_pos));
+        // Sprite-plane components go in FIRST, so on a baseline tie (an entity's
+        // feet exactly on the component's baseline) the stable sort below leaves
+        // the later-pushed entity after the component — i.e. drawn in front.
+        // Only components whose source layer is visible — the eye toggle flips
+        // `visible` without a reload, so the filter is live here (like the flat
+        // draw paths), not baked into the derive.
+        for component in self.current_map.visible_sprite_components() {
+            let key = component.sort_key(cam_y);
+            sprites.extend(component.cell_params(cam_x, cam_y).map(|dp| (key, dp)));
+        }
+
+        let player = self.player_ref().draw_params(camera_pos);
+        sprites.push((player.bottom(), player));
 
         // `map_animations` is 1:1 with the sprited objects in order, so zip the
         // two together and skip drawing any pickup already collected in this save
@@ -1275,26 +1294,31 @@ impl WalkaroundState {
                 continue;
             }
             let hitbox = object.hitbox;
-            sprites.push(DrawParams::new(
+            let dp = DrawParams::new(
                 anim.current_frame().spr_id.into(),
                 anim.current_frame().pos.x as i32 + hitbox.x as i32 - cam_x,
                 anim.current_frame().pos.y as i32 + hitbox.y as i32 - cam_y,
                 anim.current_frame().options.clone(),
                 anim.current_frame().outline_colour,
                 anim.current_frame().palette_rotate,
-            ));
+            );
+            sprites.push((dp.bottom(), dp));
         }
 
         // Every shell — leaders and their nested companions — draws through the
         // one Y-sorted list, so the dog sorts against the player and the map by
         // its feet line like any other entity (no separate companion pass).
-        sprites.extend(self.all_shells().map(|s| s.draw_params(camera_pos)));
+        sprites.extend(self.all_shells().map(|s| {
+            let dp = s.draw_params(camera_pos);
+            (dp.bottom(), dp)
+        }));
 
-        // Sort sprites in order of Y index
-        sprites.sort_by_key(|sprite| sprite.bottom());
+        // Stable sort by key: components pushed before entities keep entities in
+        // front on a tie (see above).
+        sprites.sort_by_key(|(key, _)| *key);
 
         // Draw sprites
-        for options in sprites {
+        for (_, options) in sprites {
             options.draw_to(ctx.draw, BG);
         }
 
