@@ -7,6 +7,8 @@
 //! tab lists only objects of its kind, mapping its display rows to real vector
 //! indices — so the UX is unchanged while the data model is unified.
 
+use std::collections::BTreeSet;
+
 use crate::data::script::message::Message;
 use crate::data::{
     save::SaveData,
@@ -438,6 +440,11 @@ enum EditorKey {
     /// Dialog panel: open the current dialogue in the text editor (the canonical
     /// edit route) — parks a [`TextOpenReq`] for the host to act on.
     DlgOpenText,
+    /// Interacts tab: un-take / re-take the selected pickup for testing — flips
+    /// its collected state in this save (parks [`MapViewer::pending_taken_toggle`]
+    /// for the host). Distinct from the [`Removable`](CycleField::Removable)
+    /// authoring toggle, which marks *whether* the object is a pickup at all.
+    TakenToggle,
 }
 
 /// The music playback-speed presets the Setup panel cycles through (1.0 = normal).
@@ -902,6 +909,17 @@ pub struct MapViewer {
     /// The save's small-text setting, cached each step so the preview box wraps
     /// exactly as in-game without threading `SaveData` into the draw pass.
     dialogue_small_text: bool,
+    /// The save's [`taken`](SaveData::taken) set, cached each step so the objects
+    /// panel can badge collected pickups without threading `SaveData` into the
+    /// draw pass (the same reason `dialogue_*` are cached). Read via
+    /// [`is_object_taken`](Self::is_object_taken).
+    taken: BTreeSet<String>,
+    /// The `<map>#<id>` key of a pickup whose collected state the editor wants
+    /// flipped — its un-take / re-take test toggle. Parked here because the editor
+    /// never holds `&mut SaveData`; the host drains it into `save.taken` (see the
+    /// `pending_*` drain seam in walkaround `step` / views `update_views`). `None`
+    /// when nothing's requested.
+    pub pending_taken_toggle: Option<String>,
 }
 
 impl MapViewer {
@@ -2102,6 +2120,18 @@ impl MapViewer {
         rows.push(b.row(1.0, [clear]).id());
     }
 
+    /// Whether `object` (on `map`) is a pickup already collected in this save —
+    /// its `<map>#<id>` key is in the cached [`taken`](Self::taken) snapshot. Only
+    /// a removable object with a stable id can be taken; everything else reads
+    /// `false`. Mirrors [`WalkaroundState::object_taken`], the use-time skip this
+    /// badges (so the panel shows exactly what gameplay hides).
+    fn is_object_taken(&self, map: &MapInfo, object: &MapObject) -> bool {
+        object.removable
+            && object
+                .id
+                .is_some_and(|id| self.taken.contains(&SaveData::taken_key(&map.source, id)))
+    }
+
     fn build_objects(
         &self,
         b: &mut UiBuilder<EditorKey>,
@@ -2133,7 +2163,7 @@ impl MapViewer {
             .filter(|(_, o)| kind.matches(o))
             .enumerate()
         {
-            let label = match &object.effect {
+            let mut label = match &object.effect {
                 ObjectEffect::Warp(w) => {
                     let dest = w.map.as_deref().unwrap_or("-");
                     format!("{row}: ->{dest}")
@@ -2143,9 +2173,17 @@ impl MapViewer {
                 ObjectEffect::Interact(Interaction::Func(_)) => format!("{row}: <fn>"),
                 ObjectEffect::Interact(Interaction::None) => format!("{row}: <->"),
             };
+            // A collected pickup stays listed (it's still in the map data) but
+            // reads as "gone in this save": marked and dimmed, distinct from the
+            // white selection fill.
+            let taken = self.is_object_taken(map, object);
+            if taken {
+                label.push_str(" [taken]");
+            }
             rows.push(
                 b.text(label)
                     .small(true)
+                    .color(if taken { 8 } else { 12 })
                     .full_width(7.0)
                     .fill_if(Some(i) == self.selected, 15)
                     .key(EditorKey::Object(i))
@@ -2232,6 +2270,7 @@ impl MapViewer {
                     }
                     self.cycle_row(b, rows, CycleField::Trigger, "trig", object.trigger.name());
                     // Consume-on-interact: does this interaction pick up / vanish?
+                    // (Authoring: *whether* it's a pickup — not this save's state.)
                     self.cycle_row(
                         b,
                         rows,
@@ -2239,6 +2278,27 @@ impl MapViewer {
                         "take",
                         removable_label(object.removable),
                     );
+                    // Only a removable object with a stable id can be collected;
+                    // for those, show this save's collected state and a test toggle
+                    // to un-take / re-take it (distinct from the "take" authoring
+                    // toggle above). Fires through `pending_taken_toggle`.
+                    if object.removable && object.id.is_some() {
+                        let taken = self.is_object_taken(map, object);
+                        self.header_row(
+                            b,
+                            rows,
+                            format!("collected: {}", if taken { "yes" } else { "no" }),
+                            7.0,
+                        );
+                        let toggle = Self::action_button(
+                            b,
+                            if taken { "un-take" } else { "re-take" },
+                            14,
+                            true,
+                            EditorKey::TakenToggle,
+                        );
+                        rows.push(b.row(2.0, [toggle]).id());
+                    }
                 }
             }
             self.build_sprite_frames(b, rows, object);
@@ -2935,6 +2995,9 @@ impl MapViewer {
         // Follow the selection into the Dialog panel and resolve its faithful
         // preview, so both the hit pass and draw pass read cached state.
         self.sync_dialogue(map, script, save);
+        // Cache the save's taken set so the objects panel can badge collected
+        // pickups in the draw pass (which has no `SaveData`).
+        self.taken = save.taken.clone();
 
         // Restore the saved dock layout once, lazily, on first focus (primary).
         if self.persist && !self.dock.loaded {
@@ -4219,6 +4282,15 @@ impl MapViewer {
             EditorKey::DeleteObject => {
                 if click {
                     self.delete_object(map);
+                }
+            }
+            // Un-take / re-take the selected pickup: park its `<map>#<id>` key for
+            // the host to flip in `save.taken` (the editor never holds the save).
+            EditorKey::TakenToggle => {
+                if click
+                    && let Some(id) = self.selected.and_then(|i| map.objects.get(i)).and_then(|o| o.id)
+                {
+                    self.pending_taken_toggle = Some(SaveData::taken_key(&map.source, id));
                 }
             }
             // Select the frame for editing, and arm a drag-reorder (a release in
@@ -8347,6 +8419,90 @@ mod tests {
         assert!(!map.objects[0].removable, "toggle undone");
         v.redo(&mut map, &mut maps);
         assert!(map.objects[0].removable, "toggle redone");
+    }
+
+    /// `is_object_taken` reads the cached save snapshot: a removable object whose
+    /// `<map>#<id>` key is in `taken` reads taken (badged + skipped-preview);
+    /// a not-yet-collected sibling, or a non-removable object, never does.
+    #[test]
+    fn is_object_taken_reads_cached_taken_set() {
+        let map = MapInfo {
+            source: "town".to_string(),
+            objects: vec![
+                MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")
+                    .with_id(Some(5))
+                    .with_removable(true),
+                MapObject::dialogue(Hitbox::new(8, 0, 8, 8), "s")
+                    .with_id(Some(6))
+                    .with_removable(true),
+                MapObject::dialogue(Hitbox::new(16, 0, 8, 8), "n").with_id(Some(7)),
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+        v.taken = BTreeSet::from([SaveData::taken_key("town", 5)]);
+        assert!(v.is_object_taken(&map, &map.objects[0]), "id 5 is collected");
+        assert!(
+            !v.is_object_taken(&map, &map.objects[1]),
+            "id 6 is not in the taken set"
+        );
+        assert!(
+            !v.is_object_taken(&map, &map.objects[2]),
+            "a non-removable object is never taken"
+        );
+    }
+
+    /// The Interacts tab's un-take / re-take toggle parks the selected pickup's
+    /// `<map>#<id>` key for the host to flip in `save.taken` (the editor never
+    /// holds `&mut SaveData`) — distinct from the `removable` authoring toggle. An
+    /// id-less object can't be recorded, so it parks nothing.
+    #[test]
+    fn taken_toggle_parks_selected_pickup_key() {
+        let mut console = crate::platform::test_console::TestConsole::new();
+        let mut input = crate::platform::EggInput::new();
+        input.mouse.left = [true, false]; // a just-pressed click edge
+        let mut maps = MapStore::default();
+        let mut map = MapInfo {
+            source: "town".to_string(),
+            objects: vec![
+                MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "k")
+                    .with_id(Some(5))
+                    .with_removable(true),
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer {
+            selected: Some(0),
+            ..Default::default()
+        };
+        v.handle_panel(
+            &mut console,
+            &input,
+            &mut map,
+            &mut maps,
+            usize::MAX,
+            EditorKey::TakenToggle,
+            Vec2::new(0, 0),
+        );
+        assert_eq!(
+            v.pending_taken_toggle.as_deref(),
+            Some("town#5"),
+            "the toggle parks the selected pickup's key"
+        );
+
+        // An id-less object has no durable key to record under: park nothing.
+        v.pending_taken_toggle = None;
+        map.objects[0].id = None;
+        v.handle_panel(
+            &mut console,
+            &input,
+            &mut map,
+            &mut maps,
+            usize::MAX,
+            EditorKey::TakenToggle,
+            Vec2::new(0, 0),
+        );
+        assert_eq!(v.pending_taken_toggle, None, "id-less object parks nothing");
     }
 
     /// The feature-complete frame fields: offset / size / scale / palette-rotate

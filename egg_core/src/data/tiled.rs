@@ -1749,6 +1749,52 @@ mod tests {
         );
     }
 
+    /// Data-loss guard for the collect-then-save path: a removable pickup the
+    /// player has collected stays in the live map object list (it's skipped at
+    /// use-time, not removed — see
+    /// [`WalkaroundState::take_object`](crate::gamestate::walkaround::WalkaroundState)),
+    /// so serialising the map from the editor still writes it out. Here the whole
+    /// object list (pickup id 5 + sign id 2) is handed to `to_tmj`, standing in
+    /// for the editor saving a map whose id-5 pickup is already taken; both
+    /// objects survive with their ids, so no authored data is dropped.
+    #[test]
+    fn to_tmj_keeps_collected_pickup() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {"id": 5, "x": 0, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [
+                        {"name": "description", "type": "string", "value": "key"},
+                        {"name": "removable", "type": "string", "value": "true"}
+                     ]},
+                    {"id": 2, "x": 8, "y": 0, "width": 8, "height": 8, "type": "",
+                     "properties": [{"name": "description", "type": "string", "value": "sign"}]}
+                ]
+            }]
+        }"#;
+        let map: TiledMap = serde_json::from_str(json).unwrap();
+        let objects = map.parse_objects();
+
+        // The collected pickup is still in the list saved out (no load-time
+        // filter); to_tmj writes both objects with their ids and the removable
+        // marker on the pickup — the pickup is not lost.
+        let reloaded: TiledMap = serde_json::from_str(&map.to_tmj(&objects)).unwrap();
+        let out = reloaded.parse_objects();
+        assert_eq!(
+            out.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![Some(5), Some(2)],
+            "the taken pickup is written out alongside the sign"
+        );
+        assert_eq!(
+            out.iter().map(|o| o.removable).collect::<Vec<_>>(),
+            vec![true, false],
+            "the pickup keeps its removable marker"
+        );
+    }
+
     #[test]
     fn tmj_round_trips_warp() {
         let json = r#"{

@@ -575,6 +575,12 @@ pub fn update_views(
                     );
                 }
             }
+            // The editor never gets `&mut` engine state, so its un-take / re-take
+            // test toggle parks the object's `<map>#<id>` key; flip it in the
+            // shared save here (the toggle affects every window at once).
+            if let Some(key) = view.editor.pending_taken_toggle.take() {
+                g.state.save.toggle_taken(&key);
+            }
             // A layer or Setup edit from this view: re-derive the shared map's
             // layer lists and scalar metadata (bg colour, camera framing) using
             // this view's sprite sheet, preserving objects/camera/player. The live

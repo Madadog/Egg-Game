@@ -205,13 +205,15 @@ impl SaveData {
 
     /// The [`taken`](Self::taken) key a removable object is recorded under: its
     /// map name and stable [`id`](crate::world::map::MapObject::id), joined so the same
-    /// local id on two different maps never collides.
-    fn taken_key(map: &str, id: usize) -> String {
+    /// local id on two different maps never collides. `pub(crate)` so the map
+    /// editor can name the same key when un-taking / re-taking for testing.
+    pub(crate) fn taken_key(map: &str, id: usize) -> String {
         format!("{map}#{id}")
     }
 
     /// Record a removable object (by map name + stable id) as consumed, so every
-    /// later load of that map filters it out.
+    /// later use of that map skips it — its interaction won't fire and its sprite
+    /// won't draw (the object stays in the map data so the editor still shows it).
     pub fn mark_taken(&mut self, map: &str, id: usize) {
         self.taken.insert(Self::taken_key(map, id));
     }
@@ -219,6 +221,15 @@ impl SaveData {
     /// Whether a removable object (by map name + stable id) has been consumed.
     pub fn is_taken(&self, map: &str, id: usize) -> bool {
         self.taken.contains(&Self::taken_key(map, id))
+    }
+
+    /// Flip a taken entry by its full `<map>#<id>` key (see
+    /// [`taken_key`](Self::taken_key)) — the map editor's un-take / re-take test
+    /// toggle. Removes the key if present, inserts it otherwise.
+    pub fn toggle_taken(&mut self, key: &str) {
+        if !self.taken.remove(key) {
+            self.taken.insert(key.to_string());
+        }
     }
 }
 

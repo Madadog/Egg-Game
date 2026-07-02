@@ -735,9 +735,11 @@ pub struct MapObject {
     pub id: Option<usize>,
     /// Whether interacting with this object *consumes* it: a pickup that vanishes
     /// once taken and stays gone. On interaction the engine records it (by
-    /// [`id`](Self::id)) in the save's `taken` set and drops it from the live map;
-    /// every later load of this map filters it back out (see
-    /// [`load_map_by_name`](crate::gamestate::walkaround::WalkaroundState::load_map_by_name)).
+    /// [`id`](Self::id)) in the save's `taken` set (see
+    /// [`take_object`](crate::gamestate::walkaround::WalkaroundState)). The object
+    /// then stays in the map *data* — so the editor can still show and edit it —
+    /// but the walk loop skips it at use-time: its interaction won't fire and its
+    /// sprite won't draw while its `<map>#<id>` key is in `taken`.
     /// Authored as a `removable` object property; only meaningful for interaction
     /// objects (warps fire on touch and are never "taken").
     pub removable: bool,
