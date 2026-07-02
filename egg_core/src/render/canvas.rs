@@ -104,6 +104,11 @@ pub trait Canvas {
     {
         let sw = src.width() as i32;
         let sh = src.height() as i32;
+        // An empty source samples nothing — and under `EdgePolicy::Clamp` the
+        // `sx.clamp(0, sw - 1)` below would panic with min > max when sw == 0.
+        if sw == 0 || sh == 0 {
+            return;
+        }
         let dw = self.width() as i32;
         let dh = self.height() as i32;
         let scale = xform.scale.max(1) as i32;

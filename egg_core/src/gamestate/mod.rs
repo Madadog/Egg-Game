@@ -65,7 +65,7 @@ impl Instructions {
         ctx: &mut Ctx<impl ConsoleApi>,
         walkaround: &mut WalkaroundState,
     ) -> Option<GameMode> {
-        self.timer += 1;
+        self.timer = self.timer.saturating_add(1);
         let mut next = None;
         if (self.timer > 60 || ctx.save.instructions_read) && ctx.system.any_btnp() {
             if ctx.save.instructions_read {

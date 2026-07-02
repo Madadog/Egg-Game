@@ -124,7 +124,17 @@ impl Hitbox {
     pub fn y_intersects(&self, other: Hitbox) -> bool {
         self.y <= other.ey() && self.ey() >= other.y
     }
-    pub fn xy_intersects(&self, other: Hitbox) -> bool {
+    /// Whether the boxes overlap — the standard AABB test: overlap on *both*
+    /// axes. [`touches`](Self::touches) is the same test under its established
+    /// call-site name.
+    pub fn intersects(&self, other: Hitbox) -> bool {
+        self.x_intersects(other) && self.y_intersects(other)
+    }
+    /// Whether the boxes overlap on *at least one* axis — true for boxes merely
+    /// sharing a column or row band. NOT an overlap test (that's
+    /// [`intersects`](Self::intersects)); currently unused, kept just in case a
+    /// same-row/same-column check is ever wanted.
+    pub fn intersects_on_either_axis(&self, other: Hitbox) -> bool {
         self.x_intersects(other) || self.y_intersects(other)
     }
     pub fn x_intersects_point(&self, point: Vec2) -> bool {
@@ -137,7 +147,7 @@ impl Hitbox {
         self.x_intersects_point(other) && self.y_intersects_point(other)
     }
     pub fn touches(&self, other: Hitbox) -> bool {
-        self.x_intersects(other) && self.y_intersects(other)
+        self.intersects(other)
     }
     pub fn offset_xy(&self, x: i16, y: i16) -> Self {
         Self {

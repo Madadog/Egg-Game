@@ -5016,6 +5016,12 @@ impl MapViewer {
         let Some(mut copy) = map.objects.get(i).cloned() else {
             return;
         };
+        // A disk-loaded object carries a stable Tiled `id`; cloning it would make
+        // the duplicate share that id, and `to_tmj` only mints fresh ids for
+        // `None`. Two same-id objects collapse in the save's `taken` set (keyed by
+        // id), so collecting one removable pickup would filter out both on load.
+        // Clear it so the duplicate gets its own id on save.
+        copy.id = None;
         copy.hitbox.x += 8;
         copy.hitbox.y += 8;
         map.objects.push(copy);

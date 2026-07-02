@@ -467,16 +467,40 @@ impl TextEditor {
     /// open empty (the editor can still create them). Used both on first entry
     /// and by the Dialogue panel's link (via the host's `poll_text_open`).
     pub fn open(&mut self, system: &mut impl ConsoleApi, path: &str, anchor: TextAnchor) {
-        let text = system
-            .read_file(path)
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .unwrap_or_default();
+        // A present-but-undecodable file is NOT the same as a missing one: only a
+        // missing file opens blank (so the editor can still create it). Decoding a
+        // non-UTF-8 file to "" and then saving would erase it — refuse instead and
+        // leave the current buffer untouched.
+        let text = match system.read_file(path) {
+            None => String::new(),
+            Some(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(_) => {
+                    self.status = format!("{path}: not valid UTF-8 — not opened");
+                    return;
+                }
+            },
+        };
         self.field = TextField::new(text);
         self.path = Some(path.to_string());
         self.scroll = 0;
         self.h_scroll = 0;
         self.outline_scroll = 0;
         self.dirty = false;
+        // Per-file mutable state must not leak across a file switch. A stale undo
+        // stack would restore the *previous* file's text into this buffer — and
+        // the next Ctrl+S would write it to disk; folds are keyed to the old
+        // outline, and the goal column / drag-select / find-prompt / live preview
+        // all reference the old buffer.
+        self.undo.clear();
+        self.redo.clear();
+        self.mid_edit = false;
+        self.folded.clear();
+        self.goal_x = None;
+        self.dragging = false;
+        self.prompt = None;
+        self.last_caret = 0;
+        self.preview = Preview::default();
         self.status = path.to_string();
         self.rebuild_outline();
         match anchor {

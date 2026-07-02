@@ -79,12 +79,16 @@ pub fn primary_hotkeys(
     // Text-editor mode (F2 ↔ F1) for the primary window — the main-window peer of
     // the per-view toggle. Function keys, so they fire even while text mode is
     // capturing keys (F1 is the escape hatch out). The editor itself is stepped +
-    // drawn in `step_state`.
-    if keys.just_pressed(KeyCode::F2) {
-        game.text_mode = true;
-    }
-    if keys.just_pressed(KeyCode::F1) {
-        game.text_mode = false;
+    // drawn in `step_state`. Gated on the primary driving input: a focused view's
+    // own F2 (its editor toggle) must not also flip the primary into text mode
+    // and freeze it, since `ButtonInput<KeyCode>` is global across windows.
+    if drives_player {
+        if keys.just_pressed(KeyCode::F2) {
+            game.text_mode = true;
+        }
+        if keys.just_pressed(KeyCode::F1) {
+            game.text_mode = false;
+        }
     }
     // In text mode every key feeds the buffer; skip the F8 view-spawn, pause and
     // debug/cheat shortcuts so typed text can't fire them.

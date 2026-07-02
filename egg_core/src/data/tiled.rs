@@ -208,13 +208,19 @@ impl TileLayer {
     /// Subtract each tile's tileset `firstgid` so tile ids become sheet-local.
     pub fn flatten_gids(&mut self, tilesets: &[Tileset]) {
         for tile in self.data.iter_mut() {
-            let max_gid = tilesets
+            // Strip Tiled's flip/rotate flag bits (the top 3 bits of the GID)
+            // before resolving the tileset. A flagged GID is otherwise a huge
+            // number that resolves to an empty (walkable) collider, draws blank,
+            // and overflows the `(index / 32) * 2048` sheet math on wasm32 (where
+            // usize is 32-bit).
+            let gid = *tile & 0x1FFF_FFFF;
+            let firstgid = tilesets
                 .iter()
                 .map(|ts| ts.firstgid)
-                .filter(|&gid| *tile >= gid)
+                .filter(|&fg| gid >= fg)
                 .max()
                 .unwrap_or(0);
-            *tile -= max_gid;
+            *tile = gid - firstgid;
         }
     }
     pub fn into_layer_info(self, source_layer: usize) -> LayerInfo {
@@ -228,9 +234,11 @@ impl From<TileLayer> for LayerInfo {
     fn from(other: TileLayer) -> Self {
         Self {
             origin: Vec2::new(0, 0),
+            // `unwrap_or(0)`: a layer wider/taller than i16::MAX is malformed —
+            // degrade to an empty size rather than panicking on the conversion.
             size: Vec2::new(
-                other.width.try_into().unwrap(),
-                other.height.try_into().unwrap(),
+                other.width.try_into().unwrap_or(0),
+                other.height.try_into().unwrap_or(0),
             ),
             offset: Vec2::new(0, 0),
             ..Self::DEFAULT_LAYER

@@ -41,21 +41,26 @@ impl LoopMode {
         matches!(self, LoopMode::Loop)
     }
     pub fn loop_index(&self, index: usize, len: usize) -> usize {
-        debug_assert!(len > 0);
+        // Total over all inputs: an empty frame set (which the caller still must
+        // not index) returns 0 rather than dividing/underflowing, and every
+        // branch keeps its result below `len` so unvalidated `loop_range` bounds
+        // from data can't index past the end.
+        if len == 0 {
+            return 0;
+        }
         match self {
             LoopMode::Loop => index % len,
             &LoopMode::LoopRange(mut start, mut end) => {
+                // Clamp the authored range into the frame set, then normalise it.
+                start = start.min(len - 1);
+                end = end.min(len - 1);
+                if start > end {
+                    mem::swap(&mut start, &mut end);
+                }
                 if index > end {
-                    if start > end {
-                        mem::swap(&mut start, &mut end);
-                    }
-                    let len = end - start + 1;
-                    if len == 1 {
-                        end
-                    } else {
-                        let zeroed_index = index - (end + 1);
-                        start + (zeroed_index % len)
-                    }
+                    let span = end - start + 1;
+                    let zeroed_index = index - (end + 1);
+                    start + (zeroed_index % span)
                 } else {
                     index
                 }
@@ -1006,6 +1011,33 @@ impl Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loop_index_is_total_on_degenerate_frames() {
+        // An empty frame set must not divide-by-zero (`Loop`) or underflow
+        // (`Hold`/reversed range); it returns 0 instead of panicking.
+        assert_eq!(LoopMode::Loop.loop_index(5, 0), 0);
+        assert_eq!(LoopMode::Hold.loop_index(5, 0), 0);
+        assert_eq!(LoopMode::LoopRange(2, 1).loop_index(5, 0), 0);
+        // Every mode must keep its result inside the frame set, even with a
+        // reversed or out-of-range loop range from unvalidated `data.toml`.
+        let len = 3;
+        let modes = [
+            LoopMode::Loop,
+            LoopMode::Hold,
+            LoopMode::LoopRange(1, 99),
+            LoopMode::LoopRange(99, 1),
+            LoopMode::LoopRange(5, 5),
+        ];
+        for mode in &modes {
+            for index in 0..50 {
+                assert!(
+                    mode.loop_index(index, len) < len,
+                    "{mode:?} produced an out-of-range index for tick {index}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn companion_snaps_to_the_leaders_trail_tail() {

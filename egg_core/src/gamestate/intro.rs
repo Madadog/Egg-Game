@@ -56,9 +56,12 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 fg.stroke_circle(cx - 30, cy - 32, 3, 4);
                 fg.fill_circle(cx - 30, cy - 30, 3, 12);
                 fg.fill_circle(cx - 30, cy - 32, 2, 12);
-                for _ in 0..420 {
-                    let x = ctx.rng.next_u32() as i32 % (fw as i32);
-                    let y = ctx.rng.next_u32() as i32 % (fh as i32);
+                for _ in 0..200 {
+                    // Unsigned modulo: `next_u32() as i32 % w` keeps the sign, so
+                    // the `>= 0` guard below dropped ~half of each axis (~75% of
+                    // stars). Reduce before the cast so every star lands on-screen.
+                    let x = (ctx.rng.next_u32() % fw as u32) as i32;
+                    let y = (ctx.rng.next_u32() % fh as u32) as i32;
                     if x >= 0 && y >= 0 && (x as u32) < fw && (y as u32) < fh {
                         fg.set_pixel(x as u32, y as u32, 12);
                     }
@@ -84,8 +87,8 @@ pub fn draw_animation(t: u16, ctx: &mut Ctx<impl ConsoleApi>) -> bool {
                 fg.fill_circle(cx, cy, t, 15);
                 fg.stroke_circle(cx, cy, t, 2);
                 let (horizontal, vertical) = (
-                    (ctx.rng.next_u32() % 2) as i8 - 1,
-                    (ctx.rng.next_u32() % 2) as i8 - 1,
+                    (ctx.rng.next_u32() % 3) as i8 - 1,
+                    (ctx.rng.next_u32() % 3) as i8 - 1,
                 );
                 if local_time > 400 {
                     if local_time < 450 {

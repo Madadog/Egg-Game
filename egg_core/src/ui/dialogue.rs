@@ -510,6 +510,13 @@ pub fn fit_string(
             line_length = i
         };
     }
+    // Always make progress: when even the first word is wider than `wrap_width`,
+    // still take that one word (it overflows the line) so the caller's `skip`
+    // advances. Otherwise `fit_paragraph` would `skip += 0` forever, pushing a
+    // newline each pass until it exhausts memory.
+    if line_length == 0 && len > 0 {
+        line_length = 1;
+    }
     (
         take_words(string, line_length, start_word),
         line_length,
@@ -605,5 +612,19 @@ mod tests {
         let mut empty = with_text("");
         empty.finish_line();
         assert_eq!(empty.characters, 0);
+    }
+
+    #[test]
+    fn fit_paragraph_terminates_on_an_over_wide_word() {
+        // A fully-opaque atlas makes every glyph 8px wide, so even a single
+        // character is wider than this 4px wrap width — the case that used to
+        // spin `fit_paragraph` forever (`skip += 0`). It must return promptly and
+        // still emit both words (each on its own overflowing line).
+        let mut font = Font::blank();
+        font.image_mut().data_mut().fill(255);
+        font.refresh();
+        let out = fit_paragraph(&font, "AAA BBB", 4, false, false);
+        assert!(out.contains("AAA"), "got {out:?}");
+        assert!(out.contains("BBB"), "got {out:?}");
     }
 }

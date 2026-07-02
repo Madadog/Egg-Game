@@ -147,8 +147,11 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
     // pure-painted map with no tile layer still has a sane size for the camera.
     let (width, height) = match map.layers.first() {
         Some(TiledMapLayer::TileLayer(layer)) => (
-            layer.width.try_into().unwrap(),
-            layer.height.try_into().unwrap(),
+            // `unwrap_or(0)` like the painted arm below: a map wider/taller than
+            // i16::MAX is malformed, but degrade to an empty (size-0) layer rather
+            // than panicking on the conversion.
+            layer.width.try_into().unwrap_or(0),
+            layer.height.try_into().unwrap_or(0),
         ),
         _ => (
             map.width.try_into().unwrap_or(0),
@@ -172,8 +175,8 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
                 let info = LayerInfo {
                     origin: Vec2::new(0, 0),
                     size: Vec2::new(
-                        tile_layer.width.try_into().unwrap(),
-                        tile_layer.height.try_into().unwrap(),
+                        tile_layer.width.try_into().unwrap_or(0),
+                        tile_layer.height.try_into().unwrap_or(0),
                     ),
                     offset: Vec2::new(tile_layer.offsetx as i16, tile_layer.offsety as i16),
                     source_layer: i,
@@ -965,12 +968,20 @@ pub fn layer_collides(point: Vec2, layer: &LayerInfo) -> bool {
 /// (`px`, `py`) (both taken mod 8 by [`Collider::get`]). `false` when the cell
 /// is out of range or the layer has no colliders.
 fn collider_at(layer: &LayerInfo, map_point: Vec2, px: usize, py: usize) -> bool {
-    if layer.size.x <= 0 {
+    // Out of range (including negative coords left of / above the layer) → no
+    // collider, matching the old behaviour where such indices wrapped to a huge
+    // usize and missed the `Vec`.
+    if layer.size.x <= 0 || map_point.x < 0 || map_point.y < 0 {
         return false;
     }
+    // Compute the row-major index in usize: `map_point.y * size.x` overflows i16
+    // on a layer more than ~180 tiles wide (a 256×256 map trips it), panicking in
+    // debug and wrapping in release.
+    let cols = layer.size.x as usize;
+    let index = (map_point.x as usize % cols) + (map_point.y as usize) * cols;
     layer
         .colliders
-        .get((map_point.x % layer.size.x) as usize + (map_point.y * layer.size.x) as usize)
+        .get(index)
         .map(|collider| collider.get(px, py))
         .unwrap_or_default()
 }

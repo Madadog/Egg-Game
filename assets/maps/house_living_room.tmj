@@ -277,7 +277,7 @@
             {
               "name": "anim",
               "type": "string",
-              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":35,\"duration\":30,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":3,\"h\":2},\"outline_colour\":null,\"palette_rotate\":0}]"
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":35,\"duration\":30,\"options\":{\"id\":0,\"transparent\":0,\"w\":3,\"h\":2},\"outline_colour\":null,\"palette_rotate\":0}]"
             }
           ],
           "rotation": 0,
@@ -295,7 +295,7 @@
             {
               "name": "anim",
               "type": "string",
-              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":576,\"duration\":30,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":2,\"h\":3},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":578,\"duration\":30,\"options\":{\"id\":0,\"x_offset\":0,\"y_offset\":0,\"transparent\":0,\"scale\":1,\"flip\":\"None\",\"rotate\":\"None\",\"w\":2,\"h\":3},\"outline_colour\":1,\"palette_rotate\":0}]"
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":576,\"duration\":30,\"options\":{\"id\":0,\"transparent\":0,\"w\":2,\"h\":3},\"outline_colour\":1,\"palette_rotate\":0},{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":578,\"duration\":30,\"options\":{\"id\":0,\"transparent\":0,\"w\":2,\"h\":3},\"outline_colour\":1,\"palette_rotate\":0}]"
             }
           ],
           "rotation": 0,
@@ -304,6 +304,29 @@
           "width": 8,
           "x": 105,
           "y": 56
+        },
+        {
+          "height": 16,
+          "id": 10,
+          "name": "",
+          "properties": [
+            {
+              "name": "cutscene",
+              "type": "string",
+              "value": "house_living_room_path"
+            },
+            {
+              "name": "anim",
+              "type": "string",
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":36,\"duration\":1,\"options\":{\"id\":0,\"transparent\":0,\"w\":2,\"h\":2},\"outline_colour\":1,\"palette_rotate\":0}]"
+            }
+          ],
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 16,
+          "x": 92,
+          "y": 52
         }
       ],
       "opacity": 1,
@@ -314,7 +337,7 @@
     }
   ],
   "nextlayerid": 7,
-  "nextobjectid": 10,
+  "nextobjectid": 11,
   "orientation": "orthogonal",
   "renderorder": "right-down",
   "tiledversion": "1.11.2",

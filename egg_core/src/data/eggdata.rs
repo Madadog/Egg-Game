@@ -189,7 +189,8 @@ impl PresetDef {
     /// The collision box this preset spawns with.
     pub fn hitbox(&self) -> Hitbox {
         let [x, y, w, h] = self.hitbox;
-        Hitbox::new(x, y, w, h)
+        // Sanitise inputs, avoid `Hitbox::new` assert panic.
+        Hitbox::new(x, y, w.max(1), h.max(1))
     }
     /// The full [`ShellSprites`] for this preset — the walk grid (cloned straight
     /// from the deserialised [`WalkSprites`]) plus the `others` strip.
@@ -226,7 +227,17 @@ pub struct SpriteSet {
 }
 impl SpriteSet {
     fn build(&self) -> SpriteAnimation {
-        SpriteAnimation::from_sprite_ids(&self.ids, self.w, self.h).with_flip(self.flip.clone())
+        // `SpriteAnimation::get_frame` indexes its frames unconditionally, so an
+        // empty strip (a `data.toml` typo) would panic at draw time. Fall back to
+        // a single frame so the animation is always non-empty — a missing strip
+        // degrades to a visible placeholder sprite rather than a crash.
+        let fallback = [0i32];
+        let ids = if self.ids.is_empty() {
+            &fallback[..]
+        } else {
+            &self.ids[..]
+        };
+        SpriteAnimation::from_sprite_ids(ids, self.w, self.h).with_flip(self.flip.clone())
     }
 }
 
