@@ -30,7 +30,7 @@ use crate::data::scene::{
 use crate::data::sound::music::MusicTrack;
 use crate::data::sound::{self};
 use crate::geometry::Vec2;
-use crate::platform::{ConsoleApi, ConsoleHelper, just_pressed, pressed};
+use crate::platform::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed, pressed};
 use crate::world::player::{EntityId, MoveMode};
 
 use super::{EntityPath, WalkaroundState};
@@ -386,6 +386,26 @@ impl Cutscene {
             return false;
         }
         let pad = ctx.input.controller();
+        // A choice menu takes over input: up/down moves the highlight, A picks.
+        // Under the scrubber the dpad is neutral and A reads as a permanent
+        // rising edge, so this deterministically auto-picks the first option
+        // (the same auto-advance the scrubber relies on for plain dialogue).
+        if walkaround.dialogue.is_choosing() {
+            let (_, ddy) = dpad_delta(&pad, just_pressed);
+            if ddy != 0 {
+                walkaround.dialogue.move_choice(ddy as i32);
+            }
+            if just_pressed(pad.a)
+                && !walkaround
+                    .dialogue
+                    .confirm_choice(ctx.system, ctx.font, ctx.save)
+                && !walkaround.dialogue.is_choosing()
+                && walkaround.dialogue.current_text.is_some()
+            {
+                walkaround.dialogue.close();
+            }
+            return !walkaround.dialogue.is_active();
+        }
         walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
         if pressed(pad.a) {
             walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
@@ -400,7 +420,7 @@ impl Cutscene {
         {
             walkaround.dialogue.close();
         }
-        walkaround.dialogue.current_text.is_none() && walkaround.dialogue.next_text.is_empty()
+        !walkaround.dialogue.is_active()
     }
 
     /// Fire the `target` actor's intrinsic [`Shell::interaction`], with `actor`
@@ -1254,6 +1274,47 @@ mod tests {
             target_box_x - wide,
             "landed by its own width ({wide}), not the player's ({player_w})",
         );
+    }
+
+    /// A `#choice` inside a cutscene resolves deterministically under the
+    /// scrubber's neutral input: A held as a permanent rising edge + a neutral
+    /// dpad auto-picks the FIRST option (mirroring plain-dialogue auto-advance),
+    /// so a re-sim is reproducible. Here that means the first option's flag is
+    /// set and the cutscene finishes.
+    #[test]
+    fn cutscene_choice_auto_picks_the_first_option() {
+        let mut h = Harness::new();
+        h.script.set_base(
+            crate::data::script::eggtext::parse(
+                "#flag picked_a\n#flag picked_b\n#dialogue ask\n\
+                 \x20   Pick one:\n\
+                 \x20   #choice\n\
+                 \x20   #option A\n\
+                 \x20   #set picked_a true\n\
+                 \x20   #option B\n\
+                 \x20   #set picked_b true",
+            )
+            .unwrap(),
+        );
+        let def = scene::parse("#cutscene t\n    dialogue ask")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        // The scrubber's sim_input: A a permanent rising edge, dpad neutral.
+        h.input.controllers[0].a = [true, false];
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let mut finished = false;
+        for _ in 0..60 {
+            if matches!(h.frame(|ctx, w| cs.step(ctx, w)), Outcome::Finished) {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "the dialogue choice cutscene ran to completion");
+        assert!(h.save.flag("picked_a"), "auto-picked the first option");
+        assert!(!h.save.flag("picked_b"));
     }
 
     // --- camera verb ---

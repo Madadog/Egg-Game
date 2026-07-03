@@ -3251,6 +3251,13 @@ title = Hello
             vec![(7, 13, Keyword), (14, 16, Number)],
             "a trailing directive still colours"
         );
+        // A `#choice` block: the header and each `#option` colour as directives
+        // (the option's display text falls to the generic argument-name role).
+        assert_eq!(roles("  #choice"), vec![(2, 9, Keyword)]);
+        assert_eq!(
+            roles("  #option Tea"),
+            vec![(2, 9, Keyword), (10, 13, Name)]
+        );
         // A string escape overlays the string span.
         assert_eq!(
             roles("x = \"a\\nb\""),

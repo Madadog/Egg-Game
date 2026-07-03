@@ -74,11 +74,34 @@
 //!     characters trade left/right automatically. An explicit `#flip` still
 //!     overrides it for that message.
 //!
+//! ## Choices
+//!
+//! A `#choice` opens an interactive menu. It takes the rest of its message —
+//! any text above it is the prompt shown with the options — and is a list of
+//! `#option TEXT` lines, each followed by the `#set NAME BOOL` flags it writes
+//! when picked (the same `#set` that fires inline elsewhere). It needs at least
+//! two options; the picked option's flags then steer later dialogue through the
+//! ordinary `#if` (evaluated on the next lookup — a choice records the decision,
+//! the world reacts to the flag). No `#end` — the block runs to the message's
+//! end (its blank line).
+//!
+//! ```text
+//! #flag chose_tea
+//! #flag chose_coffee
+//! #dialogue barista
+//!     What'll it be?
+//!     #choice
+//!     #option Tea
+//!     #set chose_tea true
+//!     #option "Coffee, black"
+//!     #set chose_coffee true
+//! ```
+//!
 //! Escapes understood in text and labels: `\n` `\t` `\r` `\\` `\"` `\#`.
 
 use std::collections::BTreeSet;
 
-use super::{ContentDef, DialogueDef, Entry, MessageDef, ScriptFile, SegmentDef};
+use super::{ChoiceOptionDef, ContentDef, DialogueDef, Entry, MessageDef, ScriptFile, SegmentDef};
 
 /// A parse failure, carrying the 1-based source line it occurred on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -508,7 +531,21 @@ fn parse_message(
     let mut have_portrait = false;
     let mut have_text = false;
 
-    for &(line_no, logical) in lines {
+    for (idx, &(line_no, logical)) in lines.iter().enumerate() {
+        // `#choice` opens an interactive menu. It consumes the rest of the
+        // message (its `#option`/`#set` lines), so the whole block stays in one
+        // page with any preceding text as the prompt; nothing may follow it.
+        if let Some(args) = strip_directive(logical, "choice") {
+            if !args.is_empty() {
+                return Err(ParseError::new(
+                    line_no,
+                    "`#choice` takes no arguments (put the prompt on the line above)",
+                ));
+            }
+            let options = parse_choice(&lines[idx + 1..], line_no, flags)?;
+            def.content.push(ContentDef::Choice(options));
+            break;
+        }
         // `#set NAME BOOL` takes two arguments, so it is parsed as a whole line
         // rather than through the single-arg `directive_segments` splitter.
         if let Some(rest) = logical.strip_prefix("#set")
@@ -585,6 +622,76 @@ fn parse_message(
         flip,
         autoflip,
     })
+}
+
+/// The `#option`/`#set` lines following a `#choice` header, as an option list.
+/// Each `#option TEXT` opens an option (text stripped/unescaped, `"quotes"`
+/// honoured like any dialogue line); the `#set NAME BOOL` lines beneath it are
+/// the flags it writes when picked — the exact same `#set` machinery the box
+/// fires elsewhere. A `#choice` needs at least two options, each with non-empty
+/// text; a `#set` before the first `#option`, or any other line, is a
+/// line-pointed error, as is a `#set` naming an undeclared flag.
+fn parse_choice(
+    lines: &[(usize, &str)],
+    header_line: usize,
+    flags: &BTreeSet<String>,
+) -> Result<Vec<ChoiceOptionDef>, ParseError> {
+    let mut options: Vec<ChoiceOptionDef> = Vec::new();
+    for &(line_no, logical) in lines {
+        if is_comment(logical) {
+            continue;
+        }
+        if let Some(rest) = strip_directive(logical, "option") {
+            let text = parse_value(rest);
+            if text.is_empty() {
+                return Err(ParseError::new(line_no, "`#option` needs display text"));
+            }
+            options.push(ChoiceOptionDef {
+                text,
+                sets: Vec::new(),
+            });
+        } else if let Some(rest) = strip_directive(logical, "set") {
+            let (name, bool_arg) = split_first_word(rest);
+            if name.is_empty() {
+                return Err(ParseError::new(line_no, "`#set` needs `NAME BOOL`"));
+            }
+            check_flag(name, line_no, flags)?;
+            let value = parse_bool(Some(bool_arg.trim()), line_no).map_err(|_| {
+                ParseError::new(line_no, "`#set` needs `NAME true` or `NAME false`")
+            })?;
+            let Some(option) = options.last_mut() else {
+                return Err(ParseError::new(
+                    line_no,
+                    "`#set` inside `#choice` must follow an `#option`",
+                ));
+            };
+            option.sets.push((name.to_string(), value));
+        } else {
+            return Err(ParseError::new(
+                line_no,
+                "only `#option` and `#set` may appear inside `#choice`",
+            ));
+        }
+    }
+    if options.len() < 2 {
+        return Err(ParseError::new(
+            header_line,
+            "a `#choice` needs at least two `#option`s",
+        ));
+    }
+    Ok(options)
+}
+
+/// If `logical` is the directive `#word` — bare, or `#word` followed by
+/// whitespace and args — return the trimmed argument text (`""` when bare).
+/// Returns `None` for a different word, so `#option` never matches `#optionx`.
+fn strip_directive<'a>(logical: &'a str, word: &str) -> Option<&'a str> {
+    let rest = logical.strip_prefix('#')?.strip_prefix(word)?;
+    if rest.is_empty() || rest.starts_with([' ', '\t']) {
+        Some(rest.trim())
+    } else {
+        None
+    }
 }
 
 /// Drop mid-message `#flip`s that don't actually change the current side, so a
@@ -1082,5 +1189,106 @@ mod tests {
             3
         );
         assert_eq!(parse("#dialogue d\n    Hi.\n    #end").unwrap_err().line, 3);
+    }
+
+    #[test]
+    fn choice_block_parses_prompt_options_and_sets() {
+        // The prompt text and the `#choice` stay in one message; each `#option`
+        // carries its display text and the `#set`s beneath it.
+        let messages = convo(
+            "#flag tea\n#flag coffee\n#dialogue d\n\
+             \x20   What'll it be?\n\
+             \x20   #choice\n\
+             \x20   #option Tea\n\
+             \x20   #set tea true\n\
+             \x20   #option \"Coffee, black\"\n\
+             \x20   #set coffee true",
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].content,
+            vec![
+                ContentDef::Text("What'll it be?".into()),
+                ContentDef::Choice(vec![
+                    ChoiceOptionDef {
+                        text: "Tea".into(),
+                        sets: vec![("tea".into(), true)],
+                    },
+                    ChoiceOptionDef {
+                        text: "Coffee, black".into(),
+                        sets: vec![("coffee".into(), true)],
+                    },
+                ]),
+            ],
+        );
+    }
+
+    #[test]
+    fn choice_option_may_set_several_flags() {
+        let messages = convo(
+            "#flag a\n#flag b\n#dialogue d\n\
+             \x20   #choice\n\
+             \x20   #option Both\n\
+             \x20   #set a true\n\
+             \x20   #set b false\n\
+             \x20   #option Neither",
+        );
+        assert_eq!(
+            messages[0].content,
+            vec![ContentDef::Choice(vec![
+                ChoiceOptionDef {
+                    text: "Both".into(),
+                    sets: vec![("a".into(), true), ("b".into(), false)],
+                },
+                ChoiceOptionDef {
+                    text: "Neither".into(),
+                    sets: vec![],
+                },
+            ])],
+        );
+    }
+
+    #[test]
+    fn choice_needs_two_options() {
+        // One option → error pointing at the `#choice` header (line 3).
+        let err = parse("#flag a\n#dialogue d\n    #choice\n    #option Only\n    #set a true")
+            .unwrap_err();
+        assert_eq!(err.line, 3);
+    }
+
+    #[test]
+    fn choice_set_undeclared_flag_errors_at_the_line() {
+        let err =
+            parse("#dialogue d\n    #choice\n    #option A\n    #set nope true\n    #option B")
+                .unwrap_err();
+        assert_eq!(err.line, 4);
+    }
+
+    #[test]
+    fn choice_option_needs_text() {
+        let err = parse("#flag a\n#dialogue d\n    #choice\n    #option\n    #option B")
+            .unwrap_err();
+        assert_eq!(err.line, 4);
+    }
+
+    #[test]
+    fn choice_takes_no_arguments() {
+        let err = parse("#dialogue d\n    #choice now\n    #option A\n    #option B").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn choice_set_before_option_errors() {
+        let err =
+            parse("#flag a\n#dialogue d\n    #choice\n    #set a true\n    #option A\n    #option B")
+                .unwrap_err();
+        assert_eq!(err.line, 4);
+    }
+
+    #[test]
+    fn choice_rejects_stray_lines() {
+        let err = parse("#dialogue d\n    #choice\n    #option A\n    loose text\n    #option B")
+            .unwrap_err();
+        assert_eq!(err.line, 4);
     }
 }
