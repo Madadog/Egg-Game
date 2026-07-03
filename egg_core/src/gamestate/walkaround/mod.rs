@@ -611,7 +611,7 @@ impl WalkaroundState {
 
     /// Launch `def` and arm it on this world's cutscene stack — the scrubber's
     /// snapshot setup. After this, [`play_cutscene`](Self::play_cutscene) (hence
-    /// [`measure_cutscene`](Self::measure_cutscene)/[`sim_cutscene_to`](Self::sim_cutscene_to))
+    /// [`replay_cutscene`](Self::replay_cutscene)/[`sim_cutscene_to`](Self::sim_cutscene_to))
     /// drives the scene. Keeps [`Cutscene`] construction inside this module.
     pub(crate) fn arm_cutscene<S: ConsoleApi>(&mut self, def: &CutsceneDef, ctx: &mut Ctx<S>) {
         let cs = Cutscene::launch(def, ctx, self);
