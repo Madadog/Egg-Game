@@ -424,10 +424,7 @@ impl SfxAssets {
 fn sfx_stems() -> Vec<String> {
     let mut stems = Vec::new();
     let Ok(entries) = std::fs::read_dir("assets/sfx") else {
-        return egg_core::data::sound::SFX_IDS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        return egg_core::data::sound::sfx_ids();
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -442,10 +439,7 @@ fn sfx_stems() -> Vec<String> {
 
 #[cfg(target_arch = "wasm32")]
 fn sfx_stems() -> Vec<String> {
-    egg_core::data::sound::SFX_IDS
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    egg_core::data::sound::sfx_ids()
 }
 
 /// Standard audio playback at the game's mixing volume.

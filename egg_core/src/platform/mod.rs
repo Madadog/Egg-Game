@@ -79,7 +79,8 @@ impl<T: ConsoleApi> ConsoleHelper for T {}
 pub trait ConsoleHelper: ConsoleApi {
     // Helper functions
     fn play_sound(&mut self, sfx_data: SfxData) {
-        self.sfx(sfx_data.id, sfx_data.options);
+        let SfxData { id, options } = sfx_data;
+        self.sfx(&id, options);
     }
 }
 

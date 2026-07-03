@@ -668,9 +668,9 @@ fn parse_trigger(s: &str) -> Option<Trigger> {
 /// Map a `sound` property name to a known sound effect.
 fn parse_sound(s: &str) -> Option<SfxData> {
     Some(match s.to_ascii_lowercase().as_str() {
-        "door" => sound::DOOR,
-        "stairs_down" => sound::STAIRS_DOWN,
-        "stairs_up" => sound::STAIRS_UP,
+        "door" => sound::door(),
+        "stairs_down" => sound::stairs_down(),
+        "stairs_up" => sound::stairs_up(),
         _ => return None,
     })
 }
@@ -692,11 +692,11 @@ fn axis_name(axis: &Axis) -> Option<&'static str> {
 
 /// Reverse of [`parse_sound`].
 fn sound_name(sfx: &SfxData) -> Option<&'static str> {
-    Some(if sfx.id == sound::DOOR.id {
+    Some(if sfx.id == sound::door().id {
         "door"
-    } else if sfx.id == sound::STAIRS_DOWN.id {
+    } else if sfx.id == sound::stairs_down().id {
         "stairs_down"
-    } else if sfx.id == sound::STAIRS_UP.id {
+    } else if sfx.id == sound::stairs_up().id {
         "stairs_up"
     } else {
         return None;

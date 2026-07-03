@@ -110,7 +110,7 @@ impl MenuState {
         let menu_index = self.index;
         if old_index != menu_index {
             self.exit_hover(old_index);
-            ctx.system.play_sound(sound::CLICK);
+            ctx.system.play_sound(sound::click());
         }
         let (index, action) = if just_pressed(pad.a) || clicked {
             (Some(menu_index), true)
@@ -120,7 +120,7 @@ impl MenuState {
             (None, false)
         };
         if action {
-            ctx.system.play_sound(sound::INTERACT);
+            ctx.system.play_sound(sound::interact());
             self.click(index, ctx, walkaround_state)
         } else {
             None

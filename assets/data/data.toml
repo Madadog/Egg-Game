@@ -37,6 +37,18 @@
 #   SpriteOptions: `id` (sheet sprite), `w`/`h` (tile footprint, default 1),
 #   `transparent` (colour-key index), and optional `flip`/`x_offset`/`y_offset`/
 #   `scale`/`rotate`. Defaulted fields are omitted.
+#
+# --- sound effects ---
+# `[sfx.<name>]`, keyed by the canonical name the engine and script name a sound
+# by (`sound::pop()`, a `#sound pop` in dialogue). Fields:
+#   file   = "14_pop"    the `.ogg` file stem under assets/sfx/ the host plays
+#   note   = 0           playback note   (default 0)
+#   octave = 5           playback octave (default 5; the piano is one lower)
+#
+# --- dialogue portraits ---
+# `[portraits.<name>]`, keyed by the script name a message names. Fields:
+#   spr_ids = [tl, tr, bl, br]   the four 8x8 sprite cells, row-major
+#   offset  = [x, y]             pixel nudge applied on top of the draw position
 
 [items.chegg]
 sprite = 524
@@ -979,3 +991,119 @@ loop_range = [
     1,
     2,
 ]
+
+# --- sound effects (see header) ---
+
+[sfx.piano]
+file = "1_piano"
+octave = 4
+
+[sfx.equip_obtained]
+file = "2_obtained"
+
+[sfx.deny]
+file = "3_deny"
+
+[sfx.alert_up]
+file = "4_alert_up"
+
+[sfx.alert_down]
+file = "5_alert_down"
+
+[sfx.save]
+file = "6_save"
+
+[sfx.reject]
+file = "7_reject"
+
+[sfx.item_up]
+file = "8_item_up"
+
+[sfx.item_swap]
+file = "9_item_swap"
+
+[sfx.item_down]
+file = "10_item_down"
+
+[sfx.interact]
+file = "11_interact"
+
+[sfx.click]
+file = "12_bip"
+
+[sfx.door]
+file = "13_door"
+
+[sfx.pop]
+file = "14_pop"
+
+[sfx.click_pop]
+file = "15_click_pop"
+
+[sfx.fanfare]
+file = "16_fanfare"
+
+[sfx.gain]
+file = "17_gain"
+
+[sfx.loss]
+file = "18_loss"
+
+[sfx.stairs_down]
+file = "19_stairs_down"
+
+[sfx.stairs_up]
+file = "20_stairs_up"
+
+[sfx.footstep_plain]
+file = "21_footstep_plain"
+
+# --- dialogue portraits (see header) ---
+
+[portraits.y_normal]
+spr_ids = [920, 921, 952, 953]
+offset = [8, 13]
+
+[portraits.y_look]
+spr_ids = [980, 981, 1012, 1013]
+offset = [8, 15]
+
+[portraits.y_close]
+spr_ids = [982, 983, 1012, 1013]
+offset = [8, 15]
+
+[portraits.y_oof]
+spr_ids = [1014, 1015, 1012, 1013]
+offset = [8, 15]
+
+[portraits.y_no]
+spr_ids = [984, 985, 1016, 1013]
+offset = [8, 15]
+
+[portraits.y_yell]
+spr_ids = [986, 987, 1018, 1019]
+offset = [3, 11]
+
+[portraits.y_away]
+spr_ids = [988, 989, 1020, 1021]
+offset = [8, 13]
+
+[portraits.y_smug]
+spr_ids = [990, 991, 1022, 1023]
+offset = [3, 7]
+
+[portraits.y_frus]
+spr_ids = [926, 927, 958, 959]
+offset = [3, 7]
+
+[portraits.y_hmm]
+spr_ids = [924, 925, 956, 957]
+offset = [3, 7]
+
+[portraits.y_regret]
+spr_ids = [922, 923, 954, 955]
+offset = [8, 13]
+
+[portraits.horror]
+spr_ids = [661, 662, 693, 694]
+offset = [10, 10]

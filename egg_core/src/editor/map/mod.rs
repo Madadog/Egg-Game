@@ -7712,9 +7712,9 @@ fn mode_label(mode: &WarpMode) -> &'static str {
 fn sound_label(sound: &Option<SfxData>) -> &'static str {
     match sound {
         None => "none",
-        Some(s) if s.id == sound::DOOR.id => "door",
-        Some(s) if s.id == sound::STAIRS_DOWN.id => "dn",
-        Some(s) if s.id == sound::STAIRS_UP.id => "up",
+        Some(s) if s.id == sound::door().id => "door",
+        Some(s) if s.id == sound::stairs_down().id => "dn",
+        Some(s) if s.id == sound::stairs_up().id => "up",
         Some(_) => "?",
     }
 }
@@ -7755,9 +7755,9 @@ fn cycle_trigger(trigger: Trigger) -> Trigger {
 
 fn cycle_sound(sound: &Option<SfxData>) -> Option<SfxData> {
     match sound {
-        None => Some(sound::DOOR),
-        Some(s) if s.id == sound::DOOR.id => Some(sound::STAIRS_DOWN),
-        Some(s) if s.id == sound::STAIRS_DOWN.id => Some(sound::STAIRS_UP),
+        None => Some(sound::door()),
+        Some(s) if s.id == sound::door().id => Some(sound::stairs_down()),
+        Some(s) if s.id == sound::stairs_down().id => Some(sound::stairs_up()),
         _ => None,
     }
 }

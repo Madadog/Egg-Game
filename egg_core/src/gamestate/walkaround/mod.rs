@@ -419,7 +419,7 @@ impl WalkaroundState {
                 let dog = PresetId::dog();
                 if self.player_ref().companions.iter().any(|c| c.preset == dog) {
                     self.player().companions.retain(|c| c.preset != dog);
-                    system.play_sound(sound::ALERT_DOWN);
+                    system.play_sound(sound::alert_down());
                     Some("dog_relinquished")
                 } else {
                     let slot = self.player_ref().companions.len();
@@ -428,12 +428,12 @@ impl WalkaroundState {
                     shell.interaction = Some(crate::world::player::pet_marker());
                     shell.pos = ppos;
                     self.player().companions.push(shell);
-                    system.play_sound(sound::EQUIP_OBTAINED);
+                    system.play_sound(sound::equip_obtained());
                     Some("dog_obtained")
                 }
             }
             InteractFn::Note(note) => {
-                system.play_sound(sound::PIANO.with_note(*note));
+                system.play_sound(sound::piano().with_note(*note));
                 None
             }
             InteractFn::Piano(origin) => {
@@ -459,7 +459,7 @@ impl WalkaroundState {
                     )
                     .with_velocity(Vec2::new(0, -1)),
                 );
-                system.play_sound(sound::PIANO.with_note(note as i32));
+                system.play_sound(sound::piano().with_note(note as i32));
                 None
             }
             InteractFn::AddCreatures(x) => {
@@ -482,7 +482,7 @@ impl WalkaroundState {
                 // intrinsic effect its `interact` step fires. `pet_timer` counts
                 // down in the walk loop, so it plays out after the scene ends.
                 self.player().pet_timer = Some(90);
-                system.play_sound(sound::POP);
+                system.play_sound(sound::pop());
                 None
             }
         }
@@ -1114,7 +1114,7 @@ impl WalkaroundState {
             }
         } else {
             if self.dialogue.characters == 0 {
-                ctx.system.play_sound(sound::INTERACT);
+                ctx.system.play_sound(sound::interact());
             }
             self.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
             if pressed(pad.a) {
@@ -1249,7 +1249,7 @@ impl WalkaroundState {
             } else {
                 let next = t.saturating_sub(1);
                 if next > 0 && next.is_multiple_of(20) {
-                    ctx.system.play_sound(sound::POP);
+                    ctx.system.play_sound(sound::pop());
                 }
                 self.player().pet_timer = (next > 0).then_some(next);
             }
