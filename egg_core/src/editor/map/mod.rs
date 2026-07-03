@@ -476,6 +476,12 @@ enum EditorKey {
     /// for the host). Distinct from the [`Removable`](CycleField::Removable)
     /// authoring toggle, which marks *whether* the object is a pickup at all.
     TakenToggle,
+    /// Objects panel: accept autocomplete suggestion `n` (index into the live
+    /// [`autocomplete_suggestions`](MapViewer::autocomplete_suggestions) list) for
+    /// the interaction key / gate-flag field being edited — commits that whole
+    /// vocabulary entry and closes the field. The click counterpart to Tab, which
+    /// accepts the top (highlighted) match.
+    Suggest(usize),
 }
 
 /// The music playback-speed presets the Setup panel cycles through (1.0 = normal).
@@ -1177,6 +1183,52 @@ impl MapViewer {
     /// The field currently focused for text entry, if any.
     fn editing_field(&self) -> Option<EditField> {
         self.editing.as_ref().map(|e| e.field)
+    }
+
+    /// The known vocabulary a text field autocompletes against, or `None` for a
+    /// free-form / numeric field (no dropdown). An interaction's dialogue key and
+    /// a warp's pre-warp narration key both complete against the script's declared
+    /// dialogue keys ([`dialogue_keys`](Self::dialogue_keys)); the gate fields
+    /// (`if` / `unless` / `sets`) against the declared `#flag` vocabulary
+    /// ([`flag_names`](Self::flag_names)) — the same list the gate `?` marker
+    /// checks. Both lists are refreshed each focused step and arrive sorted.
+    fn autocomplete_vocab(&self, field: EditField) -> Option<&[String]> {
+        match field {
+            EditField::Key | EditField::Narration => Some(&self.dialogue_keys),
+            EditField::CondIf | EditField::CondUnless | EditField::Sets => Some(&self.flag_names),
+            _ => None,
+        }
+    }
+
+    /// The live autocomplete suggestions for the field being edited: the top few
+    /// vocabulary entries that prefix-match the current buffer. Empty when no
+    /// field is focused, the field takes free-form / numeric input, or nothing
+    /// matches. The panel renders these under the field; the first is the Tab
+    /// target.
+    fn autocomplete_suggestions(&self) -> Vec<String> {
+        let Some(edit) = self.editing.as_ref() else {
+            return Vec::new();
+        };
+        let Some(vocab) = self.autocomplete_vocab(edit.field) else {
+            return Vec::new();
+        };
+        autocomplete_matches(vocab, edit.buffer.text())
+    }
+
+    /// Accept autocomplete suggestion `i` for the field being edited: replace the
+    /// edit buffer with that whole vocabulary entry, commit it to the object, and
+    /// close the field — the click / Tab counterpart to typing the full key and
+    /// pressing Return. A no-op when no field is focused or the index is stale.
+    fn accept_suggestion(&mut self, map: &mut MapInfo, maps: &mut MapStore, i: usize) {
+        let Some(pick) = self.autocomplete_suggestions().into_iter().nth(i) else {
+            return;
+        };
+        let Some(edit) = self.editing.as_mut() else {
+            return;
+        };
+        edit.buffer = TextField::new(pick);
+        self.commit_edit(map, maps);
+        self.stop_editing();
     }
 
     /// The primary editor: like [`default`](Default::default) but it persists its
@@ -2865,6 +2917,25 @@ impl MapViewer {
                 .key(EditorKey::Field(field))
                 .id(),
         );
+        // While a vocabulary field (an interaction key or gate flag) is being
+        // edited, list the top prefix matches from its known vocabulary as
+        // clickable rows directly under it. The first is the Tab target, filled
+        // to mark it. Empty for numeric / free-form fields, so those add nothing.
+        if editing {
+            for (i, suggestion) in self.autocomplete_suggestions().into_iter().enumerate() {
+                let top = i == 0;
+                rows.push(
+                    b.text(truncate(&suggestion, 16))
+                        .small(true)
+                        .color(if top { 0 } else { 12 })
+                        .full_width(7.0)
+                        .fill(if top { 11 } else { 0 })
+                        .outline(13)
+                        .key(EditorKey::Suggest(i))
+                        .id(),
+                );
+            }
+        }
     }
 
     fn cycle_row(
@@ -5173,6 +5244,13 @@ impl MapViewer {
                     self.dialogue_pick = Some(key);
                 }
             }
+            // A picked autocomplete suggestion commits that whole vocabulary entry
+            // into the field being edited (the click counterpart to Tab).
+            EditorKey::Suggest(i) => {
+                if click {
+                    self.accept_suggestion(map, maps, i);
+                }
+            }
             EditorKey::DlgMsgPrev => {
                 if click {
                     self.dialogue_msg = self.dialogue_msg.saturating_sub(1);
@@ -5967,6 +6045,17 @@ impl MapViewer {
     }
 
     fn step_text_entry(&mut self, input: &EggInput, map: &mut MapInfo, maps: &mut MapStore) {
+        if self.editing.is_none() {
+            return;
+        }
+        // Tab accepts the top autocomplete match (when the field offers one) —
+        // committing that whole vocabulary entry, the keyboard counterpart to
+        // clicking the highlighted suggestion. Tab is inert in the buffer itself
+        // (a control char), so it's free to mean "accept" here.
+        if input.keyp(ScanCode::Tab) && !self.autocomplete_suggestions().is_empty() {
+            self.accept_suggestion(map, maps, 0);
+            return;
+        }
         let Some(edit) = self.editing.as_mut() else {
             return;
         };
@@ -7593,6 +7682,24 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         s.chars().take(n).collect()
     }
+}
+
+/// How many autocomplete suggestions the objects panel offers under an
+/// interaction key / gate-flag field while it's being edited.
+const AUTOCOMPLETE_MAX: usize = 5;
+
+/// The vocabulary entries that prefix-match `prefix`, for the key/flag field
+/// autocomplete dropdown: a case-sensitive `starts_with` filter that keeps the
+/// vocabulary's own (already alphabetically sorted) order and caps the result at
+/// [`AUTOCOMPLETE_MAX`]. An entry equal to `prefix` is dropped — a fully-typed
+/// name has nothing left to complete, so the dropdown vanishes once it matches.
+fn autocomplete_matches(vocab: &[String], prefix: &str) -> Vec<String> {
+    vocab
+        .iter()
+        .filter(|entry| entry.as_str() != prefix && entry.starts_with(prefix))
+        .take(AUTOCOMPLETE_MAX)
+        .cloned()
+        .collect()
 }
 
 /// Splice one emitted `#cutscene NAME …` block into raw `.eggscene` source,
@@ -10332,6 +10439,84 @@ mod tests {
             interaction_kind_label(&Interaction::Cutscene(String::new())),
             "scene"
         );
+    }
+
+    fn vocab(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The key/flag autocomplete matcher: a prefix filter that preserves the
+    /// vocabulary's (sorted) order, caps at [`AUTOCOMPLETE_MAX`], drops an exact
+    /// match, and treats an empty prefix as "show the first few".
+    #[test]
+    fn autocomplete_matches_filters_caps_and_orders() {
+        let words = vocab(&[
+            "door_open", "door_shut", "gate", "gate_two", "greet", "wave",
+        ]);
+        // Prefix filter, keeping input order.
+        assert_eq!(
+            autocomplete_matches(&words, "door"),
+            vocab(&["door_open", "door_shut"])
+        );
+        // Case-sensitive: an upper-case prefix matches nothing here.
+        assert!(autocomplete_matches(&words, "Door").is_empty());
+        // A fully-typed name has nothing left to complete — the exact entry is
+        // dropped, but longer entries sharing it as a prefix stay.
+        assert_eq!(autocomplete_matches(&words, "gate"), vocab(&["gate_two"]));
+        // No match ⇒ empty.
+        assert!(autocomplete_matches(&words, "zzz").is_empty());
+        // Empty prefix offers the first few, in order.
+        assert_eq!(
+            autocomplete_matches(&words, ""),
+            vocab(&["door_open", "door_shut", "gate", "gate_two", "greet"]),
+            "capped at AUTOCOMPLETE_MAX (5), preserving order"
+        );
+        // The cap holds when many entries share the prefix.
+        let many: Vec<String> = (0..9).map(|n| format!("flag_{n}")).collect();
+        let hits = autocomplete_matches(&many, "flag_");
+        assert_eq!(hits.len(), AUTOCOMPLETE_MAX);
+        assert_eq!(hits, vocab(&["flag_0", "flag_1", "flag_2", "flag_3", "flag_4"]));
+    }
+
+    /// `autocomplete_suggestions` routes each editable field to the right
+    /// vocabulary — dialogue keys for an interaction/narration key, the `#flag`
+    /// vocabulary for the gate fields — reads the live buffer as the prefix, and
+    /// stays empty for a numeric field (no dropdown).
+    #[test]
+    fn autocomplete_suggestions_pick_vocab_per_field() {
+        let mut v = MapViewer {
+            dialogue_keys: vocab(&["greet_dog", "greet_egg", "wave"]),
+            flag_names: vocab(&["met_dog", "met_egg"]),
+            ..Default::default()
+        };
+        // No field focused ⇒ nothing to suggest.
+        assert!(v.autocomplete_suggestions().is_empty());
+        // A dialogue key field completes against the dialogue keys.
+        v.editing = Some(TextEdit {
+            field: EditField::Key,
+            buffer: TextField::new("greet"),
+            target: 0,
+        });
+        assert_eq!(
+            v.autocomplete_suggestions(),
+            vocab(&["greet_dog", "greet_egg"])
+        );
+        // A warp's narration key shares that vocabulary.
+        v.editing.as_mut().unwrap().field = EditField::Narration;
+        assert_eq!(
+            v.autocomplete_suggestions(),
+            vocab(&["greet_dog", "greet_egg"])
+        );
+        // A gate flag field completes against the `#flag` vocabulary.
+        v.editing = Some(TextEdit {
+            field: EditField::CondIf,
+            buffer: TextField::new("met"),
+            target: 0,
+        });
+        assert_eq!(v.autocomplete_suggestions(), vocab(&["met_dog", "met_egg"]));
+        // A numeric field has no vocabulary ⇒ no dropdown.
+        v.editing.as_mut().unwrap().field = EditField::HitX;
+        assert!(v.autocomplete_suggestions().is_empty());
     }
 
     /// A primary editor saves its dock arrangement and a fresh primary restores
