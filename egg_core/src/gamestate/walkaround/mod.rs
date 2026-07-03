@@ -1101,10 +1101,10 @@ impl WalkaroundState {
             let (_, ddy) = dpad_delta(&pad, just_pressed);
             if ddy != 0 {
                 self.dialogue.move_choice(ddy as i32);
-                ctx.system.play_sound(sound::INTERACT);
+                ctx.system.play_sound(sound::interact());
             }
             if just_pressed(pad.a) {
-                ctx.system.play_sound(sound::INTERACT);
+                ctx.system.play_sound(sound::interact());
                 // Confirm; if the choice was the last content and nothing more
                 // opened, close the box.
                 let opened = self.dialogue.confirm_choice(ctx.system, ctx.font, ctx.save);
