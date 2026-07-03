@@ -705,6 +705,7 @@ impl Shell {
     /// the trail this companion rides. Depth-1: a companion's own followers (if
     /// any) aren't recursed here.
     pub fn update_companions(&mut self) {
+        let count = self.companions.len();
         let trail = &self.trail;
         let walktime = trail.walktime();
         for (i, companion) in self.companions.iter_mut().enumerate() {
@@ -712,7 +713,7 @@ impl Shell {
                 MoveMode::Companion { slot } => slot,
                 _ => i,
             };
-            let (pos, dir) = trail.sample(slot);
+            let (pos, dir) = trail.sample(slot, count);
             companion.pos = pos;
             companion.face(dir);
             companion.walktime = u16::from(walktime);
@@ -933,15 +934,27 @@ impl<const N: usize> CompanionTrail<N> {
     pub fn walktime(&self) -> u8 {
         self.walktime
     }
-    /// The `(pos, dir)` a companion in `slot` follows. Slot 0 — the lone dog, and
-    /// the nearest of several — rides the oldest breadcrumb (the trail's tail, `N`
-    /// steps back), settling a fixed gap behind the leader; deeper slots ride more
-    /// recent samples. Preserves the old breadcrumb follow distance.
-    pub fn sample(&self, slot: usize) -> (Vec2, (i8, i8)) {
-        match slot {
-            0 => self.oldest(),
-            _ => self.mid(),
-        }
+    /// The `(pos, dir)` the companion in `slot` follows, given the leader's total
+    /// `count` of companions. Companions ride evenly-spaced breadcrumbs: slot 0
+    /// trails closest to the leader and each higher slot proportionally further
+    /// back, with the deepest slot settled on the trail's tail (`oldest`, `N` steps
+    /// back — the fixed follow gap a lone companion keeps). A single companion
+    /// (`count == 1`) therefore rides the tail exactly as before, unchanged.
+    ///
+    /// Consecutive slots sit `(N - 1) / count` breadcrumbs apart, so past `count ==
+    /// N - 1` companions that spacing drops below one breadcrumb and adjacent slots
+    /// round onto the same sample (they visibly bunch). The practical cap is thus
+    /// `N - 1` distinctly-spaced companions — 15 for the `N = 16` trail every
+    /// [`Shell`] owns; a 16th and beyond just share the tail.
+    pub fn sample(&self, slot: usize, count: usize) -> (Vec2, (i8, i8)) {
+        let count = count.max(1);
+        let slot = slot.min(count - 1);
+        // Depth from the leader: slot 0 is the shallowest (rank `count - 1`), the
+        // deepest slot rank 0 on the tail. Scaling the rank by `(N - 1) / count`
+        // spaces them evenly and, at `count == 1`, lands slot 0 on `oldest`.
+        let rank = count - 1 - slot;
+        let index = (N - 1) * rank / count;
+        (self.positions[index], self.directions[index])
     }
 }
 
@@ -1054,7 +1067,7 @@ mod tests {
             leader.apply_motion(1, 0);
         }
         leader.update_companions();
-        let (tail, _) = leader.trail.sample(0);
+        let (tail, _) = leader.trail.sample(0, 1);
         assert_eq!(
             leader.companions[0].pos, tail,
             "companion rides the trail tail",
@@ -1063,6 +1076,82 @@ mod tests {
             leader.companions[0].pos.x < leader.pos.x,
             "companion trails behind the leader",
         );
+    }
+
+    /// Fill a fresh `N = 16` trail so `positions[k].x == k` — the oldest tail at
+    /// `x = 0`, the newest head at `x = 15`. Sampling then reads back the exact
+    /// breadcrumb index each slot lands on (its `x`), so the spacing tests can pin
+    /// concrete indices instead of eyeballing "further back".
+    fn indexed_trail() -> CompanionTrail<16> {
+        let mut trail = CompanionTrail::<16>::new();
+        for k in 0..16 {
+            trail.push(Vec2::new(k, 0), (1, 0));
+        }
+        trail
+    }
+
+    /// The single-companion pin: with one companion, slot 0 rides the trail tail
+    /// (`oldest`) exactly as it did before the multi-companion spacing — the lone
+    /// dog's follow gap is unchanged.
+    #[test]
+    fn sample_single_companion_matches_oldest() {
+        let trail = indexed_trail();
+        assert_eq!(trail.sample(0, 1), trail.oldest());
+        assert_eq!(trail.sample(0, 1).0.x, 0, "lone companion sits on the tail");
+    }
+
+    /// Multiple companions get distinct, evenly-spaced samples ordered by slot:
+    /// slot 0 nearest the leader, each higher slot further back, the deepest on the
+    /// tail — no more stacking slots 1+ on one `mid` sample.
+    #[test]
+    fn sample_spaces_companions_distinctly_and_ordered() {
+        let trail = indexed_trail();
+
+        // Two companions: companion 2 (slot 1) sits further back — a lower trail
+        // index (older breadcrumb) — than companion 1 (slot 0), and the deepest is
+        // on the tail.
+        let (c1, _) = trail.sample(0, 2);
+        let (c2, _) = trail.sample(1, 2);
+        assert_ne!(c1.x, c2.x, "two companions no longer stack");
+        assert!(c2.x < c1.x, "companion 2 trails further back than companion 1");
+        assert_eq!(c2.x, 0, "the deepest companion rides the tail");
+
+        // Three companions: three distinct indices, strictly further back per slot,
+        // evenly stepped down the trail (15/3 = 5 breadcrumbs apart).
+        let xs: Vec<i16> = (0..3).map(|slot| trail.sample(slot, 3).0.x).collect();
+        assert_eq!(xs, vec![10, 5, 0], "evenly spaced, deepest slot on the tail");
+    }
+
+    /// Spacing stays sane in the degenerate cases: a just-started (short) trail
+    /// where breadcrumbs haven't spread yet, and asking for more companions than
+    /// the buffer can distinctly space. Samples never invert (a higher slot is
+    /// never nearer the leader than a lower one) and always come from the buffer.
+    #[test]
+    fn sample_short_trail_and_overflow_stay_sane() {
+        // Just started walking: seed the buffer at the spawn point (as
+        // `reattach_sprites` does), then only a couple of real steps.
+        let mut trail = CompanionTrail::<16>::new();
+        trail.fill(Vec2::new(100, 100), (0, 1));
+        trail.push(Vec2::new(100, 100), (0, 1));
+        trail.push(Vec2::new(100, 99), (0, 1));
+        // Every companion clusters at the seeded spawn region — none scatters to a
+        // stale (0, 0) breadcrumb.
+        for slot in 0..3 {
+            let (pos, _) = trail.sample(slot, 3);
+            assert!(pos.x == 100 && (99..=100).contains(&pos.y));
+        }
+
+        // The `x == index` trail lets us assert ordering directly. Even past the
+        // `N - 1 = 15` distinct cap, backness is monotonic (equal, never inverted).
+        let indexed = indexed_trail();
+        for count in [1usize, 2, 15, 16, 40] {
+            let mut prev = i16::MAX;
+            for slot in 0..count {
+                let x = indexed.sample(slot, count).0.x;
+                assert!(x <= prev, "slot {slot} of {count} is not nearer than its predecessor");
+                prev = x;
+            }
+        }
     }
 
     /// Spawn a built-in shell from the embedded `data.toml` — the data is the

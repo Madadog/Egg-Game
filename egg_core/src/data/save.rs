@@ -41,19 +41,8 @@ pub struct SaveData {
     #[serde(default)]
     pub taken: BTreeSet<String>,
 
-    // House
-    pub dog_fed: bool,
-    pub living_room_seen: bool,
-
     // Egg
     pub egg_count: u16,
-
-    // Supermarket
-    pub supermarket_thief: bool,
-    pub supermarket_key_access: bool,
-    pub supermarket_backroom: bool,
-
-    pub wilderness_egg_found: bool,
 
     pub egg_pop_count: u8,
 
@@ -146,13 +135,7 @@ impl Default for SaveData {
             manual_doors: false,
             flags: BTreeSet::new(),
             taken: BTreeSet::new(),
-            dog_fed: false,
-            living_room_seen: false,
             egg_count: 0,
-            supermarket_thief: false,
-            supermarket_key_access: false,
-            supermarket_backroom: false,
-            wilderness_egg_found: false,
             egg_pop_count: 0,
             is_night: false,
             shell_key: false,
@@ -255,6 +238,30 @@ mod tests {
 
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert_eq!(save.current_map_name, None);
+    }
+
+    /// A save written before the inert progression bools were removed still
+    /// carries their keys (`dog_fed`, `supermarket_thief`, …). With no
+    /// `deny_unknown_fields` on [`SaveData`], those now-unknown keys are ignored
+    /// on load rather than erroring, so old saves keep working.
+    #[test]
+    fn old_save_with_removed_bools_still_loads() {
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        for removed in [
+            "dog_fed",
+            "living_room_seen",
+            "supermarket_thief",
+            "supermarket_key_access",
+            "supermarket_backroom",
+            "wilderness_egg_found",
+        ] {
+            obj.insert(removed.to_string(), serde_json::json!(true));
+        }
+        let save: SaveData =
+            serde_json::from_value(value).expect("save with removed bools still loads");
+        // The unknown keys are simply dropped; the rest of the save is intact.
+        assert_eq!(save, SaveData::default());
     }
 
     /// A populated save survives a pretty-print/parse round trip unchanged —
