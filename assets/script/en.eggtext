@@ -13,6 +13,9 @@
 // --- Story flags ---
 
 #flag house_stairwell_window_interacted
+// Day/night: engine-set (walkaround palette + debug toggles) but declared here so
+// dialogue may branch on it (`#if is_night`) and set it (`#set is_night true`).
+#flag is_night
 
 // --- UI labels ---
 

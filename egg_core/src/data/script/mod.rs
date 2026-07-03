@@ -510,6 +510,30 @@ mod tests {
         assert_eq!(plain(&script.get_dialogue("d", &save)), "After.");
     }
 
+    /// `is_night` is an ordinary declared flag, so dialogue branches on it like
+    /// any other — confirming the day/night state (now a plain flag, not a typed
+    /// bool) is reachable from `#if is_night` once `#flag is_night` is declared.
+    #[test]
+    fn is_night_flag_branches_dialogue() {
+        use crate::data::save::IS_NIGHT_FLAG;
+        let script = script(
+            "#flag is_night\n\
+             #dialogue d\n\
+             \x20   #if is_night\n\
+             \x20   Good evening.\n\
+             \x20   #else\n\
+             \x20   Good morning.\n\
+             \x20   #end",
+        );
+
+        let mut save = SaveData::default();
+        // Day (flag unset) → the `#else` branch.
+        assert_eq!(plain(&script.get_dialogue("d", &save)), "Good morning.");
+        // Night (flag set) → the `#if` branch.
+        save.set_flag(IS_NIGHT_FLAG, true);
+        assert_eq!(plain(&script.get_dialogue("d", &save)), "Good evening.");
+    }
+
     #[test]
     fn get_dialogue_skips_an_if_without_else_when_unset() {
         let script = script(

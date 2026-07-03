@@ -9,6 +9,15 @@ use crate::world::player::Shell;
 /// `localStorage` entry on web) — see `ConsoleApi::write_file`/`read_file`.
 pub const SAVE_PATH: &str = "save.json";
 
+/// The [`flags`](SaveData::flags) name the day/night palette rides on. A plain
+/// story flag like any other, so dialogue (`#set is_night true` / `#if is_night`),
+/// object gates (`if`/`unless is_night`) and cutscene `set` steps can all read and
+/// write the world's day/night state with no dedicated machinery — the walkaround
+/// paints [`NIGHT_16`](crate::platform::NIGHT_16) when it is set and
+/// [`SWEETIE_16`](crate::platform::SWEETIE_16) otherwise. Named here (not spelled
+/// as a bare literal at each site) because the engine reads it from several files.
+pub const IS_NIGHT_FLAG: &str = "is_night";
+
 /// Misc. progression flags and numbers. Persisted to the player's storage
 /// device and restored across runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,8 +54,6 @@ pub struct SaveData {
     pub egg_count: u16,
 
     pub egg_pop_count: u8,
-
-    pub is_night: bool,
 
     // Shell
     pub shell_key: bool,
@@ -137,7 +144,6 @@ impl Default for SaveData {
             taken: BTreeSet::new(),
             egg_count: 0,
             egg_pop_count: 0,
-            is_night: false,
             shell_key: false,
             shell_curiosity: false,
             shell_matryoshka: false,
@@ -153,6 +159,25 @@ impl Default for SaveData {
 }
 
 impl SaveData {
+    /// Parse a save from its stored JSON, folding legacy fields forward. The
+    /// derive tolerates unknown keys (no `deny_unknown_fields`), so a stale key
+    /// is normally dropped silently — but a field that has since *become a flag*
+    /// must be carried over, not lost. This reads those keys off the raw JSON
+    /// before [`from_value`](serde_json::from_value) discards them and
+    /// re-expresses them as flags. Today that is the old `is_night` bool: a save
+    /// written when it was a dedicated field loads with the [`IS_NIGHT_FLAG`]
+    /// flag set to match, so the world's day/night state survives the promotion.
+    pub fn from_json(bytes: &[u8]) -> serde_json::Result<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        // Read the legacy bool before `from_value` drops the now-unknown key.
+        let legacy_night = value.get("is_night").and_then(|v| v.as_bool()) == Some(true);
+        let mut save: Self = serde_json::from_value(value)?;
+        if legacy_night {
+            save.set_flag(IS_NIGHT_FLAG, true);
+        }
+        Ok(save)
+    }
+
     /// Set (or clear) a named story [`flag`](Self::flag). Setting inserts the
     /// name; clearing removes it, so the stored set only ever holds the flags
     /// that are currently true.
@@ -350,6 +375,41 @@ mod tests {
         let save: SaveData = serde_json::from_value(value).expect("old save still loads");
         assert!(save.flags.is_empty());
         assert!(!save.flag("anything"));
+    }
+
+    /// A save written when `is_night` was a dedicated bool (since promoted to the
+    /// [`IS_NIGHT_FLAG`] flag) migrates on load: a legacy night save comes back
+    /// with the flag set, so day/night survives the field's removal. A legacy day
+    /// save (the bool `false`, or the key absent entirely) leaves the flag clear.
+    #[test]
+    fn legacy_is_night_bool_migrates_to_flag() {
+        // Night: the legacy bool was `true` -> the flag is set on load.
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("is_night".to_string(), serde_json::json!(true));
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let night = SaveData::from_json(&bytes).expect("legacy night save loads");
+        assert!(
+            night.flag(IS_NIGHT_FLAG),
+            "the legacy is_night bool migrates to the flag"
+        );
+
+        // Day: the legacy bool was `false` -> the flag stays clear.
+        let mut value = serde_json::to_value(SaveData::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("is_night".to_string(), serde_json::json!(false));
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let day = SaveData::from_json(&bytes).expect("legacy day save loads");
+        assert!(!day.flag(IS_NIGHT_FLAG));
+
+        // A modern save carries no `is_night` key at all and also reads as day.
+        let bytes = serde_json::to_vec(&SaveData::default()).unwrap();
+        let modern = SaveData::from_json(&bytes).expect("modern save loads");
+        assert!(!modern.flag(IS_NIGHT_FLAG));
     }
 
     /// `mark_taken`/`is_taken` record and read consumed removable pickups by map

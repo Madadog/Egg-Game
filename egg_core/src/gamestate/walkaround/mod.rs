@@ -111,6 +111,13 @@ pub struct WalkaroundState {
     /// (warp, save-load, debug jump, initial spawn) funnels through `load_map`,
     /// this fires the hook exactly once per load however the map was entered.
     pending_enter_scan: bool,
+    /// The day/night state currently painted into the palette, or `None` before
+    /// the first paint. [`step`](Self::step) reconciles it against the
+    /// [`IS_NIGHT_FLAG`](crate::data::save::IS_NIGHT_FLAG) save flag each frame
+    /// (see [`sync_day_night_palette`](Self::sync_day_night_palette)) and repaints
+    /// only on a change — so a dialogue/gate/cutscene flip of the flag swaps
+    /// day↔night live, while a one-off debug palette (Digit8's B/W) is left alone.
+    day_night_shown: Option<bool>,
 }
 impl Default for WalkaroundState {
     fn default() -> Self {
@@ -181,6 +188,7 @@ impl WalkaroundState {
             inside_objects: Vec::new(),
             pending_warp: None,
             pending_enter_scan: false,
+            day_night_shown: None,
         }
     }
 
@@ -956,6 +964,44 @@ impl WalkaroundState {
         self.inventory_ui.inventory.to_save()
     }
 
+    /// Reconcile the world palette with the day/night save flag
+    /// ([`IS_NIGHT_FLAG`](crate::data::save::IS_NIGHT_FLAG)): paint
+    /// [`NIGHT_16`](crate::platform::NIGHT_16) when it is set, else
+    /// [`SWEETIE_16`](crate::platform::SWEETIE_16). Change-gated against
+    /// [`day_night_shown`](Self::day_night_shown), so it repaints only when the
+    /// flag actually flips — making a dialogue `#set is_night …`, an object gate,
+    /// or a cutscene `set` step swap the world live, while leaving a one-off debug
+    /// palette (Digit8's B/W) in place until day/night genuinely changes. Cheap
+    /// enough to call every frame; the guard is what keeps it from stomping.
+    fn sync_day_night_palette(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
+        let night = ctx.save.flag(crate::data::save::IS_NIGHT_FLAG);
+        if self.day_night_shown != Some(night) {
+            self.day_night_shown = Some(night);
+            ctx.draw.set_palette(if night {
+                &crate::platform::NIGHT_16
+            } else {
+                &crate::platform::SWEETIE_16
+            });
+        }
+    }
+
+    /// Set the day/night state directly: record it in the
+    /// [`IS_NIGHT_FLAG`](crate::data::save::IS_NIGHT_FLAG) save flag and repaint
+    /// the world palette to match, at once. The immediate path used by the debug
+    /// palette toggles (walkaround Digit6/Digit7, the debug menu's palette entries)
+    /// so they still flip day↔night even from the B/W debug view; ordinary
+    /// day/night changes go through the flag alone and are picked up next frame by
+    /// [`sync_day_night_palette`](Self::sync_day_night_palette).
+    pub fn set_day_night<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, night: bool) {
+        ctx.save.set_flag(crate::data::save::IS_NIGHT_FLAG, night);
+        self.day_night_shown = Some(night);
+        ctx.draw.set_palette(if night {
+            &crate::platform::NIGHT_16
+        } else {
+            &crate::platform::SWEETIE_16
+        });
+    }
+
     pub fn step<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> Option<GameMode> {
         // While the primary map editor is open, mirror live frame edits into the
         // cached animations before advancing them, so the in-world sprite updates
@@ -969,6 +1015,11 @@ impl WalkaroundState {
             .for_each(|anim| anim.advance());
 
         self.particles.step();
+
+        // Keep the world's day/night palette in step with the save flag before
+        // anything early-returns, so a `#set is_night …` fired from a running
+        // cutscene or an open dialogue box repaints the world (next frame) too.
+        self.sync_day_night_palette(ctx);
 
         if self.play_cutscene(ctx) {
             return None;
@@ -1068,11 +1119,14 @@ impl WalkaroundState {
         if ctx.input.keyp(ScanCode::Digit5) && ctx.input.key(ScanCode::Ctrl) {
             self.load_pmem(ctx);
         }
+        // Digit6/Digit7 toggle day/night through the save flag (so the change
+        // persists and dialogue/gates see it); Digit8 is a one-off B/W debug view
+        // the day/night sync deliberately leaves alone.
         if ctx.input.keyp(ScanCode::Digit6) {
-            ctx.draw.set_palette(&crate::platform::SWEETIE_16);
+            self.set_day_night(ctx, false);
         }
         if ctx.input.keyp(ScanCode::Digit7) {
-            ctx.draw.set_palette(&crate::platform::NIGHT_16);
+            self.set_day_night(ctx, true);
         }
         if ctx.input.keyp(ScanCode::Digit8) {
             ctx.draw.set_palette(&crate::platform::B_W);
@@ -2479,6 +2533,72 @@ mod tests {
             ),
             "and reopens on its options page"
         );
+    }
+
+    /// The `is_night` save flag drives the world palette through `step`: set it
+    /// (as a dialogue `#set`, an object gate or a cutscene step would) and the
+    /// next `step` repaints NIGHT_16; clear it and it repaints SWEETIE_16 — so
+    /// flipping the flag flips day↔night live.
+    #[test]
+    fn is_night_flag_drives_world_palette() {
+        use crate::data::save::IS_NIGHT_FLAG;
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+
+        // Day by default: the first step paints (and settles on) SWEETIE.
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(
+            parts.draw.palettes[0][0],
+            crate::platform::SWEETIE_16[0],
+            "the day palette is the default"
+        );
+
+        // Setting the flag repaints night on the next step.
+        parts.save.set_flag(IS_NIGHT_FLAG, true);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(
+            parts.draw.palettes[0][0],
+            crate::platform::NIGHT_16[0],
+            "setting is_night paints the night palette"
+        );
+
+        // Clearing it repaints day again.
+        parts.save.set_flag(IS_NIGHT_FLAG, false);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(
+            parts.draw.palettes[0][0],
+            crate::platform::SWEETIE_16[0],
+            "clearing is_night paints the day palette"
+        );
+    }
+
+    /// The Digit7 debug key toggles night *through the flag* (not by painting the
+    /// palette directly), so the change persists in the save and dialogue/gates
+    /// can see it — and Digit6 toggles back to day the same way.
+    #[test]
+    fn night_debug_key_sets_flag_and_palette() {
+        use crate::data::save::IS_NIGHT_FLAG;
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+
+        // Digit7: night. The flag is set and the palette is night. (A fresh
+        // `EggInput` has no prior-frame keys, so this one press reads as an edge.)
+        parts.input.press_key(ScanCode::Digit7);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert!(parts.save.flag(IS_NIGHT_FLAG), "Digit7 sets the is_night flag");
+        assert_eq!(parts.draw.palettes[0][0], crate::platform::NIGHT_16[0]);
+
+        // Digit6: back to day. Reset the input first (the host would `refresh`
+        // between frames), so only Digit6 reads as pressed this step.
+        parts.input = crate::platform::EggInput::new();
+        parts.input.press_key(ScanCode::Digit6);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert!(!parts.save.flag(IS_NIGHT_FLAG), "Digit6 clears the is_night flag");
+        assert_eq!(parts.draw.palettes[0][0], crate::platform::SWEETIE_16[0]);
     }
 
     /// Arm `src`'s single cutscene on a fresh world at the origin, ready to
