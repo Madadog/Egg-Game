@@ -413,6 +413,16 @@ impl EggState {
         }
     }
 
+    /// Re-load `data.toml` from the host's file store, *bypassing* the once-guard
+    /// [`load_data`](Self::load_data) honours, so an external edit picked up by the
+    /// host's native hot-reload re-installs the item/preset registries. Same
+    /// parse+install and last-good-wins error semantics as `load_data` (a
+    /// missing/malformed file leaves the current registries untouched).
+    pub fn reload_data(&mut self, system: &mut impl platform::ConsoleApi) {
+        self.data_loaded = false;
+        self.load_data(system);
+    }
+
     /// Flush the save to the host's file store when it differs from the last
     /// value written. A serialisation failure logs and skips — a failed save
     /// never crashes the game.

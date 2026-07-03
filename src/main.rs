@@ -14,6 +14,8 @@ use script_asset::{SceneAsset, ScriptAsset, ScriptPlugin};
 use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
 
 mod fantasy_console;
+#[cfg(not(target_arch = "wasm32"))]
+mod hot_reload;
 mod hotkeys;
 mod script_asset;
 mod tiled;
@@ -83,8 +85,8 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
 
-    App::new()
-        .insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
+    let mut app = App::new();
+    app.insert_resource(ClearColor(Color::srgb(0.102, 0.110, 0.173)))
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -114,8 +116,12 @@ fn main() {
         .add_plugins(ConsolePlugin)
         .add_plugins(views::ViewsPlugin)
         .add_plugins(hotkeys::HotkeysPlugin)
-        .add_plugins(CorePlugin)
-        .run();
+        .add_plugins(CorePlugin);
+    // Native asset hot-reload: re-read the authoring files when they change on
+    // disk. Web has no filesystem to poll (its persistence is localStorage).
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(hot_reload::HotReloadPlugin);
+    app.run();
 }
 
 /// Core simulation + app plugin: the [`EggGame`] resource, the fixed-timestep
@@ -312,6 +318,29 @@ fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(SfxAssets::new(&assets));
 }
 
+/// Prefer a persisted asset override (a web editor write) over the Bevy-loaded
+/// `bundled` asset, parsing the override bytes with `parse`. On native
+/// [`fantasy_console::asset_override`] is always `None`, so this returns
+/// `bundled` unchanged (zero behaviour change); on web a present override is
+/// parsed and used, so an in-game edit survives a reload. A malformed override
+/// logs and falls back to `bundled`, so a bad persisted edit can't wedge boot.
+fn prefer_override<T>(
+    path: &str,
+    bundled: Option<T>,
+    parse: impl FnOnce(&[u8]) -> Result<T, String>,
+) -> Option<T> {
+    match fantasy_console::asset_override(path) {
+        Some(bytes) => match parse(&bytes) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                warn!("Ignoring invalid persisted override for {path}: {e}");
+                bundled
+            }
+        },
+        None => bundled,
+    }
+}
+
 // Bevy system parameters: each `Res`/`ResMut` is a distinct world access, so the
 // arity is structural — bundling them into a `SystemParam` would only hide it.
 #[allow(clippy::too_many_arguments)]
@@ -334,9 +363,16 @@ fn load_assets(
         let Some(manifest) = manifest else { return };
         match assets.get_load_state(manifest.0.id()) {
             Some(s) if s.is_loaded() => {
-                if let Some(loaded) = manifests.get(&manifest.0) {
-                    info!("Manifest loaded: {} map(s).", loaded.0.maps.len());
-                    commands.insert_resource(GameAssets::from_manifest(&assets, &loaded.0));
+                // Prefer a persisted manifest override (web editor writes) over the
+                // bundled copy; on native there's no override so the Bevy asset is
+                // used unchanged.
+                let bundled = manifests.get(&manifest.0).map(|m| m.0.clone());
+                let manifest = prefer_override("game.manifest", bundled, |b| {
+                    egg_core::data::tiled::manifest_from_json(b).map_err(|e| e.to_string())
+                });
+                if let Some(manifest) = manifest {
+                    info!("Manifest loaded: {} map(s).", manifest.maps.len());
+                    commands.insert_resource(GameAssets::from_manifest(&assets, &manifest));
                 }
             }
             Some(s) if s.is_failed() => panic!("Could not load game.manifest: {s:?}"),
@@ -421,9 +457,16 @@ fn load_assets(
     let map_images = game_assets.map_images.as_deref().unwrap_or_default();
     let mut loaded = Vec::new();
     for (name, handle) in game_assets.map_names.iter().zip(&game_assets.maps) {
-        match maps.get(handle) {
-            Some(map) => {
-                let mut map = map.0.clone();
+        // Prefer a persisted `.tmj` override (web editor writes) over the Bevy copy;
+        // this also lets a brand-new map that exists only as an override load even
+        // though its bundled fetch failed. On native the override is None, so this
+        // is exactly the Bevy-loaded map as before.
+        let bundled = maps.get(handle).map(|m| m.0.clone());
+        let map = prefer_override(&format!("maps/{name}.tmj"), bundled, |b| {
+            egg_core::data::tiled::from_json(b).map_err(|e| e.to_string())
+        });
+        match map {
+            Some(mut map) => {
                 attach_map_images(&mut map, name, map_images, &images);
                 state.state.maps.insert(name.clone(), map);
                 loaded.push(name.clone());
@@ -436,13 +479,32 @@ fn load_assets(
         loaded.len(),
         game_assets.map_names.len()
     );
-    if let Some(script) = scripts.get(&game_assets.script) {
-        state.state.script.set_base(script.0.clone());
+    // Dialogue + cutscenes each prefer a persisted override (web editor writes)
+    // over the bundled copy, re-parsed through the same seams the F2 editor's
+    // live-reload uses; on native the override is None, so the Bevy asset stands.
+    let script_file = prefer_override(
+        "script/en.eggtext",
+        scripts.get(&game_assets.script).map(|s| s.0.clone()),
+        |b| {
+            let text = std::str::from_utf8(b).map_err(|e| e.to_string())?;
+            egg_core::data::script::eggtext::parse(text).map_err(|e| e.to_string())
+        },
+    );
+    if let Some(file) = script_file {
+        state.state.script.set_base(file);
     }
     // The cutscene registry installs alongside the dialogue (both are essentials,
     // so they've settled by here).
-    if let Some(scene) = scenes.get(&game_assets.scenes) {
-        state.state.set_scenes(scene.0.clone());
+    let scene_file = prefer_override(
+        "data/main.eggscene",
+        scenes.get(&game_assets.scenes).map(|s| s.0.clone()),
+        |b| {
+            let text = std::str::from_utf8(b).map_err(|e| e.to_string())?;
+            egg_core::data::scene::parse(text).map_err(|e| e.to_string())
+        },
+    );
+    if let Some(file) = scene_file {
+        state.state.set_scenes(file);
     }
     state.loaded = true;
     info!("Finished loading assets.");

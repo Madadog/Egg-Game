@@ -42,6 +42,9 @@ pub struct FantasyConsole {
 
 impl FantasyConsole {
     pub fn new() -> Self {
+        // Announce any persisted editor overrides up front (web only).
+        #[cfg(target_arch = "wasm32")]
+        log_asset_overrides();
         Self {
             output_screen: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             font: Font::blank(),
@@ -222,24 +225,32 @@ impl ConsoleApi for FantasyConsole {
             Err(e) => info!("write_file: failed to write {}: {e}", dest.display()),
         }
     }
-    /// Web build: user data is a `localStorage` entry keyed by the path string
-    /// (so the historical `"save.json"` key keeps working byte-for-byte); other
-    /// writes have no filesystem to land in, so they're logged and dropped.
+    /// Web build: every write lands in `localStorage`. The save (user data) keeps
+    /// its historical raw-path key (`"save.json"`) byte-for-byte; asset-namespace
+    /// writes (maps, manifest, eggtext, eggscene, editor layout, `data.toml`)
+    /// persist under a prefixed key ([`ASSET_OVERRIDE_PREFIX`]) so an in-game edit
+    /// survives a reload instead of silently vanishing. Binary art (PNGs) can't
+    /// ride in a JS string, so it's logged and dropped as before.
     #[cfg(target_arch = "wasm32")]
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
-        if is_user_data(path) {
-            let json = String::from_utf8_lossy(bytes);
-            if let Some(storage) = local_storage()
-                && let Err(e) = storage.set_item(path, &json)
-            {
-                info!("Failed to write save to localStorage: {e:?}");
-            }
+        let key = if is_user_data(path) {
+            path.to_string()
+        } else if std::str::from_utf8(bytes).is_ok() {
+            format!("{ASSET_OVERRIDE_PREFIX}{path}")
+        } else {
+            info!(
+                "File write not persisted on web (binary {path}, {} bytes)",
+                bytes.len()
+            );
             return;
+        };
+        let Some(storage) = local_storage() else { return };
+        // Both branches above guarantee valid UTF-8, so the lossy cast is exact.
+        if let Err(e) = storage.set_item(&key, &String::from_utf8_lossy(bytes)) {
+            // Most likely the storage quota. Log loudly and drop — a failed
+            // authoring save must never take down the game.
+            info!("Failed to persist {key} to localStorage (quota?): {e:?}");
         }
-        info!(
-            "File write not persisted on web ({path}, {} bytes)",
-            bytes.len()
-        );
     }
 
     /// Read a file back from the same namespaces [`write_file`](Self::write_file)
@@ -263,8 +274,10 @@ impl ConsoleApi for FantasyConsole {
         let dest = asset_path(path)?;
         std::fs::read(&dest).ok()
     }
-    /// Web build: user data is read from `localStorage`; nothing else is
-    /// readable (no filesystem), so other paths return `None`.
+    /// Web build: user data is read from `localStorage` by its raw path key. For
+    /// asset paths, a persisted editor override ([`asset_override`]) is preferred —
+    /// the bundled copy is served by Bevy's async loader (HTTP), not through this
+    /// call, so absent an override there's nothing to return here (`None`).
     #[cfg(target_arch = "wasm32")]
     fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
         if is_user_data(path) {
@@ -276,7 +289,7 @@ impl ConsoleApi for FantasyConsole {
                 }
             };
         }
-        None
+        asset_override(path)
     }
 
     fn output_image(&mut self) -> &mut RgbaImage {
@@ -355,6 +368,61 @@ fn local_storage() -> Option<web_sys::Storage> {
             info!("localStorage unavailable: {e:?}");
             None
         }
+    }
+}
+
+/// `localStorage` key prefix for persisted asset overrides (editor writes that
+/// must survive a reload). Distinct from the save's raw-path key so the two
+/// namespaces can't collide and the overrides stay enumerable at boot.
+#[cfg(target_arch = "wasm32")]
+const ASSET_OVERRIDE_PREFIX: &str = "egg-asset:";
+
+/// The persisted authoring override for a bundled asset, if any.
+///
+/// On **web** this is the `localStorage` entry an in-game editor wrote, so an
+/// edit survives a reload even though the bundled copy is re-fetched fresh each
+/// boot — the startup loader prefers it over the Bevy-loaded asset. On
+/// **native** there is no override layer (the on-disk file the loader read *is*
+/// the source of truth, and external edits are picked up by the hot-reload
+/// poller), so this is always `None` and the Bevy asset stands unchanged.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn asset_override(_path: &str) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn asset_override(path: &str) -> Option<Vec<u8>> {
+    let key = format!("{ASSET_OVERRIDE_PREFIX}{path}");
+    match local_storage()?.get_item(&key) {
+        Ok(value) => value.map(String::into_bytes),
+        Err(e) => {
+            info!("Failed to read asset override {key} from localStorage: {e:?}");
+            None
+        }
+    }
+}
+
+/// One-time boot log of the asset paths currently served from a persisted
+/// override, so it's obvious the running game isn't on the bundled assets. Cheap
+/// (one pass over the `localStorage` key list); logs nothing when there are no
+/// overrides.
+#[cfg(target_arch = "wasm32")]
+fn log_asset_overrides() {
+    let Some(storage) = local_storage() else { return };
+    let len = storage.length().unwrap_or(0);
+    let mut overridden = Vec::new();
+    for i in 0..len {
+        if let Ok(Some(key)) = storage.key(i)
+            && let Some(path) = key.strip_prefix(ASSET_OVERRIDE_PREFIX)
+        {
+            overridden.push(path.to_string());
+        }
+    }
+    if !overridden.is_empty() {
+        info!(
+            "Serving {} asset(s) from a persisted editor override: {overridden:?}",
+            overridden.len()
+        );
     }
 }
 
