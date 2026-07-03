@@ -81,6 +81,14 @@ enum EditField {
     ToY,
     /// A warp's pre-warp narration dialogue key (empty buffer ⇒ no narration).
     Narration,
+    /// The object's flag [`Gate`](crate::world::map::Gate) fields — a story-flag
+    /// name each (an empty buffer clears that condition to `None`). Common to
+    /// every object kind. `CondIf` = fires only while set; `CondUnless` = fires
+    /// only while clear; `Sets` = the flag set when the object fires (the one-shot
+    /// latch).
+    CondIf,
+    CondUnless,
+    Sets,
     /// The `note` Func interaction's pitch (an `i32`).
     Pitch,
     /// The `add_creatures` Func interaction's spawn count (a `usize`).
@@ -948,6 +956,12 @@ pub struct MapViewer {
     /// Cutscene names the engine pushes in each focused frame (it owns the
     /// registry, the editor doesn't) so the scene picker can list them.
     pub scene_names: Vec<String>,
+    /// The declared `#flag` vocabulary the engine pushes in each focused frame
+    /// (it owns the loaded script, the editor doesn't), so an object's gate
+    /// fields (`if` / `unless` / `sets`) can flag an undeclared name — a typo that
+    /// would otherwise make the object silently never fire. Same refresh cadence
+    /// as [`scene_names`](Self::scene_names).
+    pub flag_names: Vec<String>,
     /// An open scene-picker session (fully modal): choose a scene to scrub.
     scene_picker: Option<ScenePicker>,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
@@ -2406,8 +2420,52 @@ impl MapViewer {
                     }
                 }
             }
+            // The flag gate (`if` / `unless` / `sets`) is common to every object
+            // kind — shown once below the per-kind params, above the sprite.
+            self.build_gate(b, rows, object);
             self.build_sprite_frames(b, rows, object);
         }
+    }
+
+    /// The selected object's flag [`Gate`](crate::world::map::Gate): the `if` /
+    /// `unless` conditions and the `sets` one-shot latch. Each is a free-text
+    /// story-flag name (empty ⇒ that condition is unset). A name not in the loaded
+    /// `#flag` vocabulary ([`flag_names`](MapViewer::flag_names)) is marked with a
+    /// trailing `?`, so a typo — which would silently make the object never fire —
+    /// is visible while authoring. Common to every object kind.
+    fn build_gate(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, object: &MapObject) {
+        rows.push(b.spacer(2.0).id());
+        self.header_row(b, rows, "gate:", 7.0);
+        self.gate_field(b, rows, EditField::CondIf, "if", object.gate.if_flag.as_deref());
+        self.gate_field(
+            b,
+            rows,
+            EditField::CondUnless,
+            "unless",
+            object.gate.unless_flag.as_deref(),
+        );
+        self.gate_field(b, rows, EditField::Sets, "sets", object.gate.sets.as_deref());
+    }
+
+    /// One gate field row: `-` when unset, the flag name otherwise, with a
+    /// trailing `?` when that name isn't in the declared `#flag` vocabulary. The
+    /// marker is display-only (the edit buffer, and so what commits, is untouched).
+    fn gate_field(
+        &self,
+        b: &mut UiBuilder<EditorKey>,
+        rows: &mut Vec<NodeId>,
+        field: EditField,
+        label: &str,
+        flag: Option<&str>,
+    ) {
+        let undeclared =
+            flag.is_some_and(|f| !f.is_empty() && !self.flag_names.iter().any(|n| n == f));
+        let value = match flag {
+            Some(f) if !f.is_empty() && undeclared => format!("{f} ?"),
+            Some(f) if !f.is_empty() => f.to_string(),
+            _ => "-".to_string(),
+        };
+        self.field_row(b, rows, field, label, &value);
     }
 
     /// The selected object's animated-sprite controls: a row per frame (tile id +
@@ -3191,6 +3249,9 @@ impl MapViewer {
         // Cache the save's taken set so the objects panel can badge collected
         // pickups in the draw pass (which has no `SaveData`).
         self.taken = save.taken.clone();
+        // Cache the declared flag vocabulary so the objects panel can flag an
+        // undeclared name in an object's gate field (a typo that never fires).
+        self.flag_names = script.flags().into_iter().collect();
 
         // Restore the saved dock layout once, lazily, on first focus (primary).
         if self.persist && !self.dock.loaded {
@@ -5503,6 +5564,18 @@ impl MapViewer {
                 Some(ObjectEffect::Interact(Interaction::Func(InteractFn::GiveItem(key)))),
                 EditField::Item,
             ) => key.clone(),
+            // The flag gate lives on the object itself, not the effect (common to
+            // every kind). An unset condition seeds empty, so leaving the field
+            // blank commits back to `None`.
+            (_, EditField::CondIf) => object
+                .and_then(|o| o.gate.if_flag.clone())
+                .unwrap_or_default(),
+            (_, EditField::CondUnless) => object
+                .and_then(|o| o.gate.unless_flag.clone())
+                .unwrap_or_default(),
+            (_, EditField::Sets) => object
+                .and_then(|o| o.gate.sets.clone())
+                .unwrap_or_default(),
             // Hitbox geometry lives on the object itself, not the effect.
             (_, EditField::HitX) => object.map(|o| o.hitbox.x.to_string()).unwrap_or_default(),
             (_, EditField::HitY) => object.map(|o| o.hitbox.y.to_string()).unwrap_or_default(),
@@ -5684,6 +5757,25 @@ impl MapViewer {
             EditField::Narration => self.modify_warp(map, |w| {
                 // Empty buffer clears narration; otherwise it's the dialogue key.
                 w.narration = (!buffer.is_empty()).then(|| buffer.clone());
+            }),
+            // Gate fields: the flag name is stored verbatim (empty buffer clears
+            // that condition to `None`). Validated against the `#flag` vocabulary
+            // only for display (the `?` marker), not on commit — so an author can
+            // type a name before declaring it in the script.
+            EditField::CondIf => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i) {
+                    object.gate.if_flag = (!buffer.is_empty()).then(|| buffer.clone());
+                }
+            }),
+            EditField::CondUnless => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i) {
+                    object.gate.unless_flag = (!buffer.is_empty()).then(|| buffer.clone());
+                }
+            }),
+            EditField::Sets => self.modify_object(map, |map, i| {
+                if let Some(object) = map.objects.get_mut(i) {
+                    object.gate.sets = (!buffer.is_empty()).then(|| buffer.clone());
+                }
             }),
             EditField::Pitch => {
                 if let Ok(pitch) = buffer.parse::<i32>() {
@@ -7648,12 +7740,16 @@ fn cycle_mode(mode: &WarpMode) -> WarpMode {
     }
 }
 
-/// Advance the trigger cycle row: Touch → Press → Any → Touch.
+/// Advance the trigger cycle row: Touch → Press → Any → Enter → Touch. `Enter`
+/// (the map-enter hook) only does anything on a cutscene interaction, but it's in
+/// the cycle for every object so it can be authored in place; on other kinds it
+/// simply never fires (see [`Trigger::Enter`]).
 fn cycle_trigger(trigger: Trigger) -> Trigger {
     match trigger {
         Trigger::Touch => Trigger::Press,
         Trigger::Press => Trigger::Any,
-        Trigger::Any => Trigger::Touch,
+        Trigger::Any => Trigger::Enter,
+        Trigger::Enter => Trigger::Touch,
     }
 }
 

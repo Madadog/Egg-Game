@@ -12,7 +12,9 @@
 use crate::world::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
 use crate::world::interact::{InteractFn, Interaction};
-use crate::world::map::{Axis, LayerInfo, MapObject, ObjectEffect, Plane, Trigger, Warp, WarpMode};
+use crate::world::map::{
+    Axis, Gate, LayerInfo, MapObject, ObjectEffect, Plane, Trigger, Warp, WarpMode,
+};
 use crate::geometry::{Hitbox, Vec2};
 use crate::render::SpriteOptions;
 use crate::render::Rotate;
@@ -475,8 +477,22 @@ impl TiledObject {
         let object = self
             .apply_trigger(object)
             .with_id((self.id != 0).then_some(self.id))
-            .with_removable(self.is_removable());
+            .with_removable(self.is_removable())
+            .with_gate(self.gate());
         Some(object)
+    }
+    /// Read this object's flag [`Gate`] from its `if` / `unless` / `sets`
+    /// properties (each naming a story flag; empty/absent ⇒ that condition is
+    /// unset). Parsed for any object kind, so a warp, dialogue, cutscene or func
+    /// can all be flag-gated. Inverse of the gate emission in [`object_to_tmj`]
+    /// (which uses [`Gate::properties`]).
+    fn gate(&self) -> Gate {
+        let flag = |name| self.prop(name).filter(|s| !s.is_empty()).map(str::to_string);
+        Gate {
+            if_flag: flag("if"),
+            unless_flag: flag("unless"),
+            sets: flag("sets"),
+        }
     }
     /// Whether a `removable` property marks this object as a consume-on-interact
     /// pickup (see [`MapObject::removable`](crate::world::map::MapObject::removable)).
@@ -644,6 +660,7 @@ fn parse_trigger(s: &str) -> Option<Trigger> {
         "touch" => Trigger::Touch,
         "press" => Trigger::Press,
         "any" => Trigger::Any,
+        "enter" => Trigger::Enter,
         _ => return None,
     })
 }
@@ -719,6 +736,14 @@ fn object_to_tmj(object: &MapObject, id: usize) -> Option<Value> {
         && let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut)
     {
         properties.push(prop_str("removable", "true"));
+    }
+    // The flag gate (`if` / `unless` / `sets`) round-trips the parse
+    // ([`TiledObject::gate`]); [`Gate::properties`] emits only the set fields, so
+    // an ungated object emits nothing and its file stays byte-stable.
+    if let Some(properties) = value.get_mut("properties").and_then(Value::as_array_mut) {
+        for (name, flag) in object.gate.properties() {
+            properties.push(prop_str(name, flag));
+        }
     }
     Some(value)
 }
@@ -1470,7 +1495,7 @@ fn is_scalar(v: &Value) -> bool {
 mod tests {
     use super::{GameManifest, TiledMap, TiledMapLayer, from_json, manifest_from_json};
     use crate::world::interact::{InteractFn, Interaction};
-    use crate::world::map::{MapObject, ObjectEffect, Trigger, WarpMode};
+    use crate::world::map::{Gate, MapObject, ObjectEffect, Trigger, WarpMode};
     use crate::render::image::RgbaImage;
 
     /// The single image layer of a parsed map (panics if it has none) — the
@@ -2239,6 +2264,73 @@ mod tests {
                {"name":"narration","type":"string","value":""}"#,
         );
         assert_eq!(warp_narration(&empty.parse_objects()[0]), None);
+    }
+
+    /// The flag gate (`if` / `unless` / `sets`) parses on any object kind and
+    /// round-trips all three flag names; an ungated object carries the default
+    /// gate and emits none of the properties (byte-stable, like a default trigger).
+    #[test]
+    fn tmj_round_trips_gate_conditions() {
+        let map = one_object_map(
+            "",
+            r#"{"name":"description","type":"string","value":"k"},
+               {"name":"if","type":"string","value":"has_key"},
+               {"name":"unless","type":"string","value":"door_open"},
+               {"name":"sets","type":"string","value":"door_open"}"#,
+        );
+        let objects = map.parse_objects();
+        assert_eq!(objects[0].gate.if_flag.as_deref(), Some("has_key"));
+        assert_eq!(objects[0].gate.unless_flag.as_deref(), Some("door_open"));
+        assert_eq!(objects[0].gate.sets.as_deref(), Some("door_open"));
+
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let gate = reloaded.parse_objects()[0].gate.clone();
+        assert_eq!(gate.if_flag.as_deref(), Some("has_key"));
+        assert_eq!(gate.unless_flag.as_deref(), Some("door_open"));
+        assert_eq!(gate.sets.as_deref(), Some("door_open"));
+
+        // An ungated object: default gate, and none of the gate properties are
+        // serialised (so an existing file with no gate stays byte-stable).
+        let plain = one_object_map("", r#"{"name":"description","type":"string","value":"k"}"#);
+        let plain_objects = plain.parse_objects();
+        assert_eq!(plain_objects[0].gate, Gate::default());
+        let plain_out = plain.to_tmj(&plain_objects);
+        assert!(!plain_out.contains("\"unless\""), "no unless emitted");
+        assert!(!plain_out.contains("\"sets\""), "no sets emitted");
+        assert_eq!(
+            from_json(plain_out.as_bytes()).unwrap().parse_objects()[0].gate,
+            Gate::default(),
+            "ungated round-trip stays ungated"
+        );
+
+        // An empty gate value is treated as absent (that condition unset).
+        let empty = one_object_map(
+            "",
+            r#"{"name":"description","type":"string","value":"k"},
+               {"name":"if","type":"string","value":""}"#,
+        );
+        assert_eq!(empty.parse_objects()[0].gate.if_flag, None);
+    }
+
+    /// A `trigger: "enter"` (the map-enter hook) parses to [`Trigger::Enter`] and
+    /// round-trips — it's never an effect-kind default, so it always serialises.
+    #[test]
+    fn tmj_round_trips_enter_trigger() {
+        let map = one_object_map(
+            "",
+            r#"{"name":"cutscene","type":"string","value":"intro"},
+               {"name":"trigger","type":"string","value":"enter"}"#,
+        );
+        let objects = map.parse_objects();
+        assert_eq!(objects[0].trigger, Trigger::Enter);
+        assert!(matches!(
+            &objects[0].effect,
+            ObjectEffect::Interact(Interaction::Cutscene(n)) if n == "intro"
+        ));
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        assert_eq!(reloaded.parse_objects()[0].trigger, Trigger::Enter);
     }
 
     /// A tile read/write past the right edge (`x >= width`) returns `None`
