@@ -239,7 +239,7 @@ impl Dialogue {
             if let Some(print_time) = &mut self.print_time {
                 *print_time += 1;
                 if !silent_char && *print_time % 2 == 0 && !self.is_line_done() {
-                    system.play_sound(sound::POP);
+                    system.play_sound(sound::pop());
                 }
             }
             self.step_text(amount);
@@ -381,7 +381,8 @@ impl Dialogue {
                 outline_colour,
             );
             height += 4;
-            portrait.draw_offset(
+            crate::ui::portrait::draw_offset(
+                portrait,
                 draw_state,
                 layer,
                 Vec2::new(

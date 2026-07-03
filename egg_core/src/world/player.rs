@@ -611,7 +611,7 @@ impl Shell {
         };
 
         if (self.walktime + 15).is_multiple_of(20) {
-            system.play_sound(sound::FOOTSTEP_PLAIN.with_note(17));
+            system.play_sound(sound::footstep_plain().with_note(17));
         }
 
         // No tile source loaded for this map (e.g. the empty default map):

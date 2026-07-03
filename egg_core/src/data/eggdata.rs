@@ -24,6 +24,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::data::portraits::Portrait;
+use crate::data::sound::SfxDef;
 use crate::geometry::Hitbox;
 use crate::world::player::{
     CreatureState, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer, WalkSprites,
@@ -89,9 +91,9 @@ impl Default for GameItems {
     }
 }
 
-/// A parsed `data.toml` file: the whole game's language-invariant data. Both
-/// sections default to empty, so a file may carry only `[items]` (as the shipped
-/// one does today) or only `[presets]`, and an absent section is simply empty.
+/// A parsed `data.toml` file: the whole game's language-invariant data. Every
+/// section defaults to empty, so a file may carry only `[items]` (as the shipped
+/// one once did) or only `[presets]`, and an absent section is simply empty.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DataFile {
     /// The item registry, keyed by the persistent item id a save stores
@@ -104,6 +106,16 @@ pub struct DataFile {
     /// [`Presets`] store from these.
     #[serde(default)]
     pub presets: BTreeMap<String, PresetDef>,
+    /// Sound effects, keyed by the canonical name the engine and script name
+    /// them by (`"pop"`, `"door"`, …). Built into the [`Sounds`](crate::data::sound::Sounds)
+    /// store; the file stem + note/octave a sound plays at.
+    #[serde(default)]
+    pub sfx: BTreeMap<String, SfxDef>,
+    /// Dialogue portraits, keyed by the script name a message names
+    /// (`"y_normal"`, `"horror"`, …). Built into the
+    /// [`Portraits`](crate::data::portraits::Portraits) store.
+    #[serde(default)]
+    pub portraits: BTreeMap<String, Portrait>,
 }
 
 /// Parse a `data.toml` document. A malformed file is the caller's to tolerate
