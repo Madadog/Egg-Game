@@ -13,7 +13,7 @@ use crate::ui::dialogue::Dialogue;
 use crate::world::animation::Animation;
 use crate::world::camera::Camera;
 use crate::world::interact::{InteractFn, Interaction};
-use crate::world::map::{Axis, MapInfo, MapObject, ObjectEffect, map_by_name};
+use crate::world::map::{Axis, MapInfo, MapObject, ObjectEffect, Trigger, map_by_name};
 use crate::world::particles::{Particle, ParticleDraw, ParticleList};
 use crate::world::player::{EntityId, MoveMode, PresetId, Shell};
 use crate::gamestate::GameMode;
@@ -103,6 +103,14 @@ pub struct WalkaroundState {
     /// the warp's hitbox with the box open can't re-fire it. Cleared on apply and
     /// defensively in [`load_map`](Self::load_map).
     pending_warp: Option<crate::world::map::Warp>,
+    /// Armed by [`load_map`](Self::load_map): the just-loaded map hasn't yet had
+    /// its map-enter hook scanned. [`step`](Self::step) consumes it once — after
+    /// the cutscene/editor/overlay guards — to launch the first `Enter`-triggered
+    /// cutscene whose [`Gate`](crate::world::map::Gate) allows it (see
+    /// [`launch_map_enter`](Self::launch_map_enter)). Because every entry path
+    /// (warp, save-load, debug jump, initial spawn) funnels through `load_map`,
+    /// this fires the hook exactly once per load however the map was entered.
+    pending_enter_scan: bool,
 }
 impl Default for WalkaroundState {
     fn default() -> Self {
@@ -172,6 +180,7 @@ impl WalkaroundState {
             default_map_colliders: Vec::new(),
             inside_objects: Vec::new(),
             pending_warp: None,
+            pending_enter_scan: false,
         }
     }
 
@@ -324,6 +333,12 @@ impl WalkaroundState {
         // Defensive: a debug map switch mid-narration must not carry a pending
         // teleport onto the new map.
         self.pending_warp = None;
+        // Arm the map-enter hook scan for the next `step`: a freshly loaded map
+        // gets one chance to launch its `Enter`-triggered cutscene. Set on every
+        // load (warp, save-load, debug jump, initial spawn), so the hook composes
+        // uniformly with each entry path; the gate + `sets` latch keep a one-shot
+        // beat from replaying.
+        self.pending_enter_scan = true;
 
         // Swap per-map entities: park the leaving map's non-player entities
         // (`entities[1..]`) under its name and restore the entering map's, so
@@ -853,6 +868,51 @@ impl WalkaroundState {
         object.removable && object.id.is_some_and(|id| save.is_taken(source, id))
     }
 
+    /// Apply a fired object's `sets` latch: set its [`Gate`](crate::world::map::Gate)'s
+    /// `sets` flag (if any) in the save. Called at every firing site — a
+    /// touch/press warp or interaction, and the map-enter hook — so the one-shot
+    /// mechanism is uniform: an object gated `unless X` with `sets X` fires once,
+    /// sets `X`, and its own gate then holds it off forever (persisted through the
+    /// normal save flags). Idempotent; a no-op for an object with no `sets` flag.
+    fn set_object_flag(object: &MapObject, save: &mut SaveData) {
+        if let Some(flag) = &object.gate.sets {
+            save.set_flag(flag, true);
+        }
+    }
+
+    /// Launch a freshly-loaded map's one-shot map-enter cutscene, if it has one
+    /// whose flag gate currently allows it. Scans this map's objects (first-wins,
+    /// mirroring the walk loop's object scan) for an [`Trigger::Enter`] cutscene
+    /// interaction whose [`Gate`](crate::world::map::Gate) passes against the live
+    /// save, latches its `sets` flag, and pushes the launched cutscene onto the
+    /// stack — [`play_cutscene`](Self::play_cutscene) drives it from the next
+    /// frame. Returns whether it launched one. An unknown cutscene name logs and
+    /// launches nothing, *without* latching the flag (so a fixed typo can still
+    /// fire) — matching [`fire_interaction`](Self::fire_interaction). `Enter` on a
+    /// non-cutscene effect is ignored here (and never fires in the touch/press
+    /// scan either, since it allows neither), so a stray `Enter` warp is inert.
+    fn launch_map_enter<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> bool {
+        let hit = self.current_map.objects.iter().position(|o| {
+            o.trigger == Trigger::Enter
+                && o.gate.allows(ctx.save)
+                && matches!(&o.effect, ObjectEffect::Interact(Interaction::Cutscene(_)))
+        });
+        let Some(i) = hit else { return false };
+        let ObjectEffect::Interact(Interaction::Cutscene(name)) =
+            self.current_map.objects[i].effect.clone()
+        else {
+            unreachable!("position() only matched a cutscene interaction");
+        };
+        let Some(def) = ctx.get_cutscene(&name).cloned() else {
+            info!("launch_map_enter: unknown cutscene {name:?}");
+            return false;
+        };
+        Self::set_object_flag(&self.current_map.objects[i], ctx.save);
+        let cutscene = Cutscene::launch(&def, ctx, self);
+        self.cutscene.push(cutscene);
+        true
+    }
+
     /// Step the open bag overlay and translate its state into an optional mode
     /// transition. Drives the inventory's own input/step, then maps: `Close`
     /// resumes the world next frame (no transition — we're already in
@@ -977,6 +1037,20 @@ impl WalkaroundState {
             let trans = self.step_inventory(ctx);
             if self.inventory_ui.pauses() {
                 return trans;
+            }
+        }
+
+        // A freshly loaded map opens its one-shot map-enter cutscene here, once,
+        // before the player gets control. Placed after the cutscene guard (so it
+        // never fires over a running scene — `play_cutscene` returns early while a
+        // scene plays, deferring the scan until the stack drains) and after the
+        // editor/overlay guards (so it doesn't fire mid-authoring). If it launches,
+        // return so the scene takes over next frame instead of also stepping the
+        // world this frame.
+        if self.pending_enter_scan {
+            self.pending_enter_scan = false;
+            if self.launch_map_enter(ctx) {
+                return None;
             }
         }
 
@@ -1209,6 +1283,7 @@ impl WalkaroundState {
             match &object.effect {
                 ObjectEffect::Warp(warp)
                     if warp_hit.is_none()
+                        && object.gate.allows(ctx.save)
                         && object
                             .trigger
                             .warp_fires(touched, probed, &warp.mode, manual_doors) =>
@@ -1220,6 +1295,7 @@ impl WalkaroundState {
                 // its interaction never fires again. Warps are never "taken".
                 ObjectEffect::Interact(_)
                     if interact_hit.is_none()
+                        && object.gate.allows(ctx.save)
                         && !Self::object_taken(object, &self.current_map.source, ctx.save)
                         && object
                             .trigger
@@ -1236,6 +1312,10 @@ impl WalkaroundState {
                 unreachable!("warp_hit only records Warp effects");
             };
             let target = target.clone();
+            // Latch the object's `sets` flag *before* firing: a warp's `fire_warp`
+            // can load a new map (replacing the object vec), so read it while it's
+            // still here.
+            Self::set_object_flag(&self.current_map.objects[i], ctx.save);
             // Plays the sound, then either narrates-then-defers or teleports now.
             self.fire_warp(ctx, target);
         } else if let Some(i) = interact_hit {
@@ -1246,6 +1326,9 @@ impl WalkaroundState {
             else {
                 unreachable!("interact_hit only records Interact effects");
             };
+            // Latch the object's `sets` flag when it fires (the one-shot side
+            // effect), before running the interaction.
+            Self::set_object_flag(&self.current_map.objects[i], ctx.save);
             // The bag now lives on `self`, so lift it out for the duration of the
             // call (which also borrows `self` mutably) and put it straight back.
             let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
@@ -1493,7 +1576,7 @@ impl WalkaroundState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::map::{LayerInfo, MapObject, Trigger, Warp};
+    use crate::world::map::{Gate, LayerInfo, MapObject, Trigger, Warp};
     use crate::geometry::Hitbox;
     use crate::platform::test_console::TestConsole;
 
@@ -1810,6 +1893,178 @@ mod tests {
             3,
             "un-taking restores the pickup's interaction"
         );
+    }
+
+    /// An interaction's flag [`Gate`] decides *whether* it fires, orthogonally to
+    /// its trigger. A press-fired `AddCreatures(0)` gated `if has_key` is blocked
+    /// while that flag is clear (nothing spawns) and fires once it's set —
+    /// exercised through the real `step`, so the object-scan gate check is what's
+    /// under test. Observability is the same trick as the taken-pickup test: a
+    /// spawn shows up in `entities.len()`.
+    #[test]
+    fn gated_interaction_blocks_then_allows() {
+        use crate::world::interact::InteractFn;
+
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+
+        // A press-fired spawner whose hitbox blankets the player (so a facing
+        // A-press always probes it), gated `if has_key`.
+        let gated = MapObject::func(Hitbox::new(0, 0, 200, 200), InteractFn::AddCreatures(0))
+            .with_gate(Gate {
+                if_flag: Some("has_key".into()),
+                ..Gate::default()
+            });
+        let map = MapInfo {
+            source: "town".to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            objects: vec![gated],
+            ..MapInfo::default()
+        };
+        walk.load_map(&mut console, map);
+        walk.player().pos = Vec2::new(40, 40);
+        walk.player().dir = (0, 1);
+        walk.inventory_ui.state = InventoryUiState::Close;
+
+        let press_a = |parts: &mut CtxParts| parts.input.controllers[0].a = [true, false];
+        let release_a = |parts: &mut CtxParts| parts.input.controllers[0].a = [false, false];
+
+        // Flag clear: the gate blocks the interaction — a press spawns nothing.
+        assert_eq!(walk.entities.len(), 1, "just the player at start");
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.entities.len(), 1, "gate blocks while has_key is clear");
+
+        // Set the flag: the gate now allows it, and a fresh press fires it once.
+        parts.save.set_flag("has_key", true);
+        release_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.entities.len(), 2, "gate allows once has_key is set");
+    }
+
+    /// A one-shot object (`unless done` + `sets done`) fires once, latches its
+    /// flag, and its own gate then holds it off — and the flag persists across a
+    /// JSON save round-trip so it stays blocked on a fresh load. The whole loop:
+    /// fire → set → persist → gate-blocks. Fires an observable `AddCreatures(0)`.
+    #[test]
+    fn one_shot_object_fires_once_and_persists() {
+        use crate::world::interact::InteractFn;
+
+        let one_shot = || {
+            MapObject::func(Hitbox::new(0, 0, 200, 200), InteractFn::AddCreatures(0)).with_gate(
+                Gate {
+                    unless_flag: Some("done".into()),
+                    sets: Some("done".into()),
+                    ..Gate::default()
+                },
+            )
+        };
+        let map = || MapInfo {
+            source: "town".to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            objects: vec![one_shot()],
+            ..MapInfo::default()
+        };
+
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map());
+        walk.player().pos = Vec2::new(40, 40);
+        walk.player().dir = (0, 1);
+        walk.inventory_ui.state = InventoryUiState::Close;
+
+        let press_a = |parts: &mut CtxParts| parts.input.controllers[0].a = [true, false];
+        let release_a = |parts: &mut CtxParts| parts.input.controllers[0].a = [false, false];
+
+        // First press: fires once, spawns a creature, and latches `done`.
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.entities.len(), 2, "one-shot fires the first time");
+        assert!(parts.save.flag("done"), "firing latched its `sets` flag");
+
+        // Press again: its own `unless done` gate now blocks it (fired once).
+        release_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.entities.len(), 2, "the latch blocks a second firing");
+
+        // The flag persists across a JSON save round-trip.
+        let json = serde_json::to_string(&parts.save).expect("serialise save");
+        parts.save = serde_json::from_str(&json).expect("deserialise save");
+        assert!(parts.save.flag("done"), "one-shot flag survives save/load");
+
+        // A fresh walkaround loads the same map with the persisted save: the gate
+        // is still closed, so even a valid press doesn't re-fire it.
+        let mut reloaded = WalkaroundState::new();
+        reloaded.load_map(&mut console, map());
+        reloaded.player().pos = Vec2::new(40, 40);
+        reloaded.player().dir = (0, 1);
+        reloaded.inventory_ui.state = InventoryUiState::Close;
+        release_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx));
+        assert_eq!(
+            reloaded.entities.len(),
+            1,
+            "the persisted one-shot flag keeps it blocked on reload"
+        );
+    }
+
+    /// The map-enter hook: an [`Trigger::Enter`] cutscene object launches its
+    /// scene when the map *loads* (not on any player contact), once, subject to
+    /// the flag gate. A one-shot enter beat (`unless seen` + `sets seen`) fires on
+    /// the first load and latches `seen`; a re-load then finds the gate closed and
+    /// launches nothing — the beat plays exactly once. It composes with every
+    /// entry path because they all funnel through `load_map` (which arms the scan).
+    #[test]
+    fn map_enter_cutscene_fires_once_when_gated() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        // Register a trivial cutscene so the enter hook has something to launch.
+        parts.scenes.cutscenes.insert(
+            "intro".to_string(),
+            crate::data::scene::CutsceneDef::default(),
+        );
+
+        let enter = MapObject::new(
+            Hitbox::new(0, 0, 8, 8),
+            ObjectEffect::Interact(Interaction::Cutscene("intro".to_string())),
+            None,
+        )
+        .with_trigger(Trigger::Enter)
+        .with_gate(Gate {
+            unless_flag: Some("seen".into()),
+            sets: Some("seen".into()),
+            ..Gate::default()
+        });
+        let map = || MapInfo {
+            source: "town".to_string(),
+            layers: vec![LayerInfo::DEFAULT_LAYER],
+            objects: vec![enter.clone()],
+            ..MapInfo::default()
+        };
+        walk.load_map(&mut console, map());
+        walk.inventory_ui.state = InventoryUiState::Close;
+
+        // First step after load: the enter scan launches the scene and latches
+        // `seen` (before the player gets control).
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.cutscene.len(), 1, "map-enter hook launched the cutscene");
+        assert!(parts.save.flag("seen"), "enter hook latched its one-shot flag");
+
+        // Simulate the scene finishing (drain the stack), then re-enter the map:
+        // the gate is now closed, so nothing relaunches — the beat played once.
+        walk.cutscene.clear();
+        walk.load_map(&mut console, map());
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        assert_eq!(walk.cutscene.len(), 0, "gated enter hook does not replay");
     }
 
     /// `load_map_by_name` no longer filters out already-taken removable objects:

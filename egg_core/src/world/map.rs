@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::data::save::SaveData;
 use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
 use crate::geometry::{Collider, Hitbox, Vec2};
@@ -863,20 +864,33 @@ impl From<LayerInfo> for MapOptions {
     }
 }
 
-/// How a [`MapObject`] is triggered — the *authored geometry* half of the firing
+/// How a [`MapObject`] is triggered — the *authored occasion* half of the firing
 /// decision (the map author's intent for this object), independent of the effect
 /// kind and of any player preference:
 /// - [`Touch`](Self::Touch) — fires only when the player's body overlaps the
 ///   hitbox (a step-on trigger);
 /// - [`Press`](Self::Press) — fires only when the player presses the interact
 ///   button while facing into the hitbox;
-/// - [`Any`](Self::Any) — fires on either path.
+/// - [`Any`](Self::Any) — fires on either path;
+/// - [`Enter`](Self::Enter) — fires once when the *map loads*, not on any player
+///   contact; the map-enter hook. Its hitbox is ignored (the whole map is its
+///   trigger), so it's how a room opens a story beat on arrival. Only meaningful
+///   for a cutscene interaction (see [`crate::world::interact::Interaction::Cutscene`]);
+///   on a warp or other effect it never fires (the enter pass only launches
+///   cutscenes, and [`allows_touch`](Self::allows_touch)/[`allows_press`](Self::allows_press)
+///   are both false, so the touch/press scan skips it too).
+///
+/// This is orthogonal to the [`Gate`] (the *whether* axis — flag conditions):
+/// `Trigger` says *when* an object may fire, `Gate` says *whether* it may fire
+/// this save. They compose — e.g. an `Enter` cutscene gated `unless seen` that
+/// `sets seen` is a one-shot on-enter beat.
 ///
 /// Defaults preserve the historical effect-driven behaviour and are set by the
 /// constructors, not by `Default`: warps default to [`Any`](Self::Any) (a door
 /// you can walk into or press), interactions to [`Press`](Self::Press) (a sign
-/// you must face and read). See [`MapObject`] for how this composes with the
-/// effect kind, the warp [`WarpMode`], and warp narration.
+/// you must face and read); [`Enter`](Self::Enter) is never a default (only
+/// authored). See [`MapObject`] for how this composes with the effect kind, the
+/// warp [`WarpMode`], and warp narration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Trigger {
     /// Fires on body-touch only.
@@ -886,6 +900,9 @@ pub enum Trigger {
     Press,
     /// Fires on either body-touch or a facing press.
     Any,
+    /// Fires once when the map is loaded (the map-enter hook), ignoring the
+    /// hitbox and all player contact. Only launches a cutscene interaction.
+    Enter,
 }
 impl Trigger {
     /// Whether this trigger fires on body-touch.
@@ -903,6 +920,7 @@ impl Trigger {
             Self::Touch => "touch",
             Self::Press => "press",
             Self::Any => "any",
+            Self::Enter => "enter",
         }
     }
     /// The trigger an effect of `effect`'s kind defaults to when none is
@@ -947,6 +965,60 @@ impl Trigger {
     ) -> bool {
         let touch_suppressed = manual_doors && matches!(mode, WarpMode::Interact);
         (self.allows_touch() && touched && !touch_suppressed) || (self.allows_press() && probed)
+    }
+}
+
+/// The *whether* half of a [`MapObject`]'s firing decision: a flag gate that
+/// blocks or allows the object independently of its [`Trigger`] (the *when/how*
+/// half). All three fields name a story flag from the same vocabulary dialogue
+/// uses (`#flag`-declared, stored in [`SaveData::flags`](crate::data::save::SaveData::flags),
+/// toggled by dialogue `#set` and read by `#if`), so an object condition and a
+/// dialogue branch can gate on the very same flag:
+/// - [`if_flag`](Self::if_flag) — fires only while this flag is **set** (the
+///   `if` property);
+/// - [`unless_flag`](Self::unless_flag) — fires only while this flag is **clear**
+///   (the `unless` property);
+/// - [`sets`](Self::sets) — a flag **set when the object fires** (the `sets`
+///   property), the one-shot side effect.
+///
+/// The common one-shot is `unless X` + `sets X`: the object fires once, sets `X`,
+/// and its own gate then holds it off forever — persisted through the normal save
+/// flags. The two gates can name different flags than `sets` for open-ended
+/// prerequisite/side-effect chains. Default (every field `None`) is no gate: the
+/// object always fires, exactly as before this axis existed, so unauthored
+/// objects and old maps are unaffected.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Gate {
+    /// Fires only when this flag is set. `None` = no requirement.
+    pub if_flag: Option<String>,
+    /// Fires only when this flag is clear. `None` = no bar.
+    pub unless_flag: Option<String>,
+    /// A flag set (true) when the object fires — the one-shot latch. `None` = no
+    /// side effect.
+    pub sets: Option<String>,
+}
+impl Gate {
+    /// Whether an object with this gate may fire against the live `save`: its
+    /// `if` flag (if any) must be set and its `unless` flag (if any) clear. An
+    /// empty gate always allows. The `sets` side effect is applied separately at
+    /// fire time (see [`MapObject`]'s firing sites), not here.
+    pub fn allows(&self, save: &SaveData) -> bool {
+        self.if_flag.as_deref().is_none_or(|f| save.flag(f))
+            && self.unless_flag.as_deref().is_none_or(|f| !save.flag(f))
+    }
+    /// The authored `.tmj` properties this gate serialises to, in `if`, `unless`,
+    /// `sets` order — only the set fields, so an ungated object emits nothing and
+    /// its file stays byte-stable. The inverse of the gate parse in
+    /// [`TiledObject::gate`](crate::data::tiled). Each pair is `(property name,
+    /// flag value)`.
+    pub fn properties(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        [
+            ("if", &self.if_flag),
+            ("unless", &self.unless_flag),
+            ("sets", &self.sets),
+        ]
+        .into_iter()
+        .filter_map(|(name, flag)| flag.as_deref().map(|value| (name, value)))
     }
 }
 
@@ -999,6 +1071,13 @@ pub struct MapObject {
     /// Authored as a `removable` object property; only meaningful for interaction
     /// objects (warps fire on touch and are never "taken").
     pub removable: bool,
+    /// The flag gate deciding *whether* this object fires this save (the `if` /
+    /// `unless` conditions) and what flag it sets when it does (`sets`) — the
+    /// one-shot machinery. Orthogonal to [`trigger`](Self::trigger) (which decides
+    /// *when/how*): every object kind reads it, checked at each firing site. The
+    /// default [`Gate`] (all `None`) is no gate, so an unauthored object always
+    /// fires. Authored as `if` / `unless` / `sets` object properties.
+    pub gate: Gate,
 }
 
 /// What a [`MapObject`] does when triggered: warp the player, or run an
@@ -1022,6 +1101,7 @@ impl MapObject {
             sprite,
             id: None,
             removable: false,
+            gate: Gate::default(),
         }
     }
     /// Set this object's stable Tiled [`id`](Self::id) (its identity within the
@@ -1071,10 +1151,16 @@ impl MapObject {
         self.sprite = Some(frames);
         self
     }
-    /// Override the trigger axis (touch / press / either), replacing the
-    /// effect-kind default the constructor picked.
+    /// Override the trigger axis (touch / press / either / on-enter), replacing
+    /// the effect-kind default the constructor picked.
     pub fn with_trigger(mut self, trigger: Trigger) -> Self {
         self.trigger = trigger;
+        self
+    }
+    /// Set this object's flag [`Gate`] (the `if` / `unless` conditions and the
+    /// `sets` one-shot latch). The default gate allows the object always.
+    pub fn with_gate(mut self, gate: Gate) -> Self {
+        self.gate = gate;
         self
     }
     /// Set the warp's pre-warp narration dialogue key (warp objects only): when
@@ -1249,6 +1335,42 @@ mod tests {
     use super::*;
     use crate::data::tiled::{ObjectLayer, TileLayer};
     use crate::platform::test_console::TestConsole;
+
+    /// [`Gate::allows`] reads the same save flags dialogue does: an empty gate
+    /// always allows; `if` requires its flag set; `unless` requires its flag
+    /// clear; the two compose (both must hold). `sets` is a fire-time side effect,
+    /// not part of the allow decision.
+    #[test]
+    fn gate_allows_composes_if_and_unless() {
+        let mut save = SaveData::default();
+        assert!(Gate::default().allows(&save), "empty gate always allows");
+
+        let if_key = Gate {
+            if_flag: Some("has_key".into()),
+            ..Gate::default()
+        };
+        assert!(!if_key.allows(&save), "if-flag unset ⇒ blocked");
+        save.set_flag("has_key", true);
+        assert!(if_key.allows(&save), "if-flag set ⇒ allowed");
+
+        let unless_open = Gate {
+            unless_flag: Some("door_open".into()),
+            ..Gate::default()
+        };
+        assert!(unless_open.allows(&save), "unless-flag clear ⇒ allowed");
+        save.set_flag("door_open", true);
+        assert!(!unless_open.allows(&save), "unless-flag set ⇒ blocked");
+
+        // Both conditions compose: needs has_key set AND door_open clear.
+        let both = Gate {
+            if_flag: Some("has_key".into()),
+            unless_flag: Some("door_open".into()),
+            sets: Some("door_open".into()),
+        };
+        assert!(!both.allows(&save), "door_open set blocks despite has_key");
+        save.set_flag("door_open", false);
+        assert!(both.allows(&save), "has_key set and door_open clear ⇒ allowed");
+    }
 
     /// A tiny self-contained modern map: one 4×4 tile layer (the collision
     /// layer) plus an empty object layer (which is what marks it as modern).
