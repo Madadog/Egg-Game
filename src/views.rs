@@ -599,6 +599,11 @@ pub fn update_views(
                     g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
                     g.state.walkaround.current_map.layers = fresh.layers;
                     g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
+                    // Sprite-plane layers + their derived components re-derive too,
+                    // so a plane-cycle or spr-layer paint from this window doesn't
+                    // strand the layer in a stale list (it would look deleted).
+                    g.state.walkaround.current_map.sprite_layers = fresh.sprite_layers;
+                    g.state.walkaround.current_map.sprite_components = fresh.sprite_components;
                 }
             }
         }
