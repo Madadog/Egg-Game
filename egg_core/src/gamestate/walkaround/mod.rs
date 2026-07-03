@@ -537,13 +537,24 @@ impl WalkaroundState {
                 }
             }
         }
-        // Keep the camera on the player while a scene plays (the normal follow
-        // update below is skipped during cutscenes) — so the player stays framed
-        // as it walks and pets, with no snap when the scene ends. A per-scene
-        // camera target is a future verb.
+        // Point the camera where the active scene wants it (the normal follow
+        // update below is skipped during cutscenes, so this is the sole camera
+        // driver while a scene plays). The default focus follows the player; a
+        // `camera` step retargets to an actor or a fixed map point. Reading the
+        // focus off the top of the stack each frame gives restore for free: a
+        // sub-scene's pop leaves the parent's focus in effect, and the final pop
+        // (drained stack) lands back on the player with no snap. Bounds still
+        // clamp — the centring routes through `Camera::center_on`.
+        let focus = self
+            .cutscene
+            .last()
+            .and_then(|cs| cs.camera_focus(self))
+            .unwrap_or_else(|| {
+                Vec2::new(self.player_ref().pos.x + 4, self.player_ref().pos.y - 2)
+            });
         self.camera.center_on(
-            self.player_ref().pos.x + 4,
-            self.player_ref().pos.y - 2,
+            focus.x,
+            focus.y,
             ctx.system.width() as i16,
             ctx.system.height() as i16,
         );

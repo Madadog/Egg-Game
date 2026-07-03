@@ -24,7 +24,9 @@
 use std::collections::HashMap;
 
 use crate::Ctx;
-use crate::data::scene::{Chain, CutsceneContent, CutsceneDef, EntityRef, GetEntity, Motion};
+use crate::data::scene::{
+    CameraTarget, Chain, CutsceneContent, CutsceneDef, EntityRef, GetEntity, Motion,
+};
 use crate::data::sound::music::MusicTrack;
 use crate::data::sound::{self};
 use crate::geometry::Vec2;
@@ -61,6 +63,10 @@ pub struct Cutscene {
     /// Set when a required (`?`) motion is blocked; [`step`](Self::step) then
     /// reports [`Outcome::Cancelled`].
     aborted: bool,
+    /// Where this scene points the camera, set by a `camera` step. `None` follows
+    /// the player (the default, and where the scene lands back when it ends). Read
+    /// live each frame by [`camera_focus`](Self::camera_focus).
+    camera: Option<CameraTarget>,
 }
 
 /// The live state of the content step a [`Cutscene`] is on.
@@ -166,6 +172,7 @@ impl Cutscene {
             state: StepState::Pending,
             interruptible: def.interruptible,
             aborted: false,
+            camera: None,
         }
     }
 
@@ -179,6 +186,23 @@ impl Cutscene {
     /// [`WalkaroundState::replay_cutscene`](super::WalkaroundState::replay_cutscene)).
     pub(super) fn active_step(&self) -> usize {
         self.step
+    }
+
+    /// The map-pixel point this scene currently centres the camera on, or `None`
+    /// to follow the player — the default focus, what the scene resets to when it
+    /// ends, and the fallback when a `camera ACTOR` target can't be resolved.
+    /// [`play_cutscene`](super::WalkaroundState::play_cutscene) calls this on the
+    /// top-of-stack scene each frame. An actor focus is read live (a followed
+    /// actor that walks pulls the camera along); player/actor foci carry the same
+    /// +4/-2 hitbox-centre offset the follow camera uses, while a fixed point is
+    /// centred exactly as authored.
+    pub(super) fn camera_focus(&self, walkaround: &WalkaroundState) -> Option<Vec2> {
+        match self.camera.as_ref()? {
+            CameraTarget::Point(p) => Some(*p),
+            CameraTarget::Actor(name) => walkaround
+                .resolve(&resolve_name(name, &self.table))
+                .map(|s| Vec2::new(s.pos.x + 4, s.pos.y - 2)),
+        }
     }
 
     /// Drive one frame. Chains the instant steps (sound/flag/…) into the same
@@ -241,6 +265,12 @@ impl Cutscene {
                     }
                     CutsceneContent::SetFlag(name, value) => {
                         ctx.save.set_flag(name, *value);
+                        self.state = StepState::Done;
+                    }
+                    CutsceneContent::Camera(target) => {
+                        // Retarget the scene camera; the per-frame centring in
+                        // `play_cutscene` reads it back via `camera_focus`.
+                        self.camera = Some(target.clone());
                         self.state = StepState::Done;
                     }
                     CutsceneContent::Load(name) => {
@@ -462,6 +492,11 @@ impl Cutscene {
                         sub.cleanup(walkaround);
                     }
                 }
+                // Apply camera steps in order so the scene's final camera target
+                // matches full playback — though when a whole scene is skipped it
+                // finishes and pops immediately, so `play_cutscene` re-derives the
+                // camera from what's left on the stack (the parent, or the player).
+                CutsceneContent::Camera(target) => self.camera = Some(target.clone()),
                 // A wait has no lasting effect, so fast-forwarding past it is a no-op.
                 CutsceneContent::Wait(_) => {}
             }
@@ -1218,6 +1253,226 @@ mod tests {
             mover.pos.x,
             target_box_x - wide,
             "landed by its own width ({wide}), not the player's ({player_w})",
+        );
+    }
+
+    // --- camera verb ---
+
+    use crate::world::camera::{Camera, CameraBounds};
+
+    /// The camera position `Camera::center_on` produces for a focus point under
+    /// unbounded (Free) framing — the reference a camera-verb test compares
+    /// against, so it tracks the real centring/screen size rather than hardcoding.
+    fn center_ref(focus: Vec2, system: &TestConsole) -> Vec2 {
+        let mut cam = Camera::new(Vec2::new(0, 0), CameraBounds::free());
+        cam.center_on(focus.x, focus.y, system.width() as i16, system.height() as i16);
+        cam.pos
+    }
+
+    /// Launch `src`'s single scene and arm it on the world's own stack (Free
+    /// camera bounds, so tests read the raw centring), with the player at `player`.
+    fn arm(src: &str, player: Vec2) -> Harness {
+        let def = scene::parse(src)
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        h.walk.player().pos = player;
+        h.walk.camera.bounds = CameraBounds::free();
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.walk.cutscene.push(cs);
+        h
+    }
+
+    /// `camera ACTOR` centres the camera on that actor's live position (with the
+    /// same +4/-2 framing the follow camera uses), not the player.
+    #[test]
+    fn camera_verb_follows_an_actor() {
+        // The actor is stationary at (100, 80); no chain moves it.
+        let mut h = arm(
+            "#cutscene t\n    spawn a critter 100 80\n    camera a\n    wait 30",
+            Vec2::new(0, 0),
+        );
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(104, 78), &h.system),
+            "camera centres on the followed actor (+4/-2)",
+        );
+        assert_ne!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(4, -2), &h.system),
+            "it left the player",
+        );
+    }
+
+    /// `camera X Y` centres the camera exactly on that fixed map point.
+    #[test]
+    fn camera_verb_holds_a_fixed_point() {
+        let mut h = arm(
+            "#cutscene t\n    camera 150 90\n    wait 30",
+            Vec2::new(0, 0),
+        );
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(150, 90), &h.system),
+            "camera centres exactly on the authored point (no hitbox offset)",
+        );
+    }
+
+    /// When the scene ends the camera lands back on the player, with no per-scene
+    /// target left stranding it.
+    #[test]
+    fn camera_returns_to_player_when_the_scene_ends() {
+        let mut h = arm(
+            "#cutscene t\n    camera 150 90\n    wait 3",
+            Vec2::new(30, 20),
+        );
+        while h.frame(|ctx, w| w.play_cutscene(ctx)) {}
+        assert!(h.walk.cutscene.is_empty(), "scene finished");
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(34, 18), &h.system),
+            "camera restored to the player at scene end",
+        );
+    }
+
+    /// Skipping (B) mid-scene leaves the camera exactly where full playback would:
+    /// the scene finishes, so the camera is back on the player rather than stranded
+    /// on the mid-scene target.
+    #[test]
+    fn camera_skip_matches_full_playback() {
+        let src = "#cutscene t\n    camera 150 90\n    wait 100";
+        let player = Vec2::new(30, 20);
+
+        // Full playback to the end.
+        let mut full = arm(src, player);
+        while full.frame(|ctx, w| w.play_cutscene(ctx)) {}
+        let full_end = full.walk.camera.pos;
+
+        // Skip: one frame arms the camera on the target, the next presses B.
+        let mut skip = arm(src, player);
+        skip.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(
+            skip.walk.camera.pos,
+            center_ref(Vec2::new(150, 90), &skip.system),
+            "camera is on the target mid-scene, before the skip",
+        );
+        skip.input.controllers[0].b = [true, false];
+        skip.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+
+        assert!(skip.walk.cutscene.is_empty(), "B skipped the scene to the end");
+        assert_eq!(
+            skip.walk.camera.pos, full_end,
+            "skipped camera end-state matches full playback",
+        );
+        assert_eq!(
+            full_end,
+            center_ref(Vec2::new(34, 18), &skip.system),
+            "and both are back on the player",
+        );
+    }
+
+    /// A sub-scene sets its own camera focus; when it pops, the parent's focus is
+    /// restored, and the player once the whole stack drains.
+    #[test]
+    fn camera_restores_parent_focus_after_a_subscene() {
+        let file = scene::parse(
+            "#cutscene parent\n    camera 150 90\n    load child\n    wait 5\n\
+             #cutscene child\n    camera 40 40\n    wait 5",
+        )
+        .unwrap();
+        let def = file.get_cutscene("parent").unwrap().clone();
+        let mut h = Harness::new();
+        h.scenes = file;
+        h.walk.player().pos = Vec2::new(30, 20);
+        h.walk.camera.bounds = CameraBounds::free();
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.walk.cutscene.push(cs);
+
+        // Two frames in, the child is driving: its fixed-point focus is live.
+        for _ in 0..2 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+        }
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(40, 40), &h.system),
+            "child's focus while it plays",
+        );
+
+        // The child (a 5-frame wait) pops; the parent — its focus restored — is now
+        // the top of the stack, still on its own wait.
+        for _ in 0..6 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+        }
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(150, 90), &h.system),
+            "parent's focus restored after the sub-scene ended",
+        );
+
+        while h.frame(|ctx, w| w.play_cutscene(ctx)) {}
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(34, 18), &h.system),
+            "back on the player once the whole stack drained",
+        );
+    }
+
+    /// A fixed-point target still clamps to the map's `camera_bounds` (the centring
+    /// routes through `Camera::center_on`, so bounds are honoured).
+    #[test]
+    fn camera_target_respects_map_bounds() {
+        let def = scene::parse("#cutscene t\n    camera 9000 9000\n    wait 30")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        // Default walkaround bounds are the tight `Camera::default()` range
+        // (x∈[0,60], y∈[0,64]); a far-off target must clamp into it.
+        let cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.walk.cutscene.push(cs);
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(
+            h.walk.camera.pos,
+            Vec2::new(60, 64),
+            "far target clamped to the map's camera bounds",
+        );
+    }
+
+    /// The camera is pure engine state, so the scrubber's re-sim reproduces it: two
+    /// seeks to the same frame land the camera identically, and it has left the
+    /// player to track the moving actor it follows.
+    #[test]
+    fn camera_is_deterministic_under_resim() {
+        let mut h = arm(
+            "#cutscene t\n    spawn a critter 60 40\n    camera a\n    move\n        a: walk 90 40 in 8\n    wait 3",
+            Vec2::new(0, 0),
+        );
+        let a = h.frame(|ctx, w| w.sim_cutscene_to(6, ctx));
+        let b = h.frame(|ctx, w| w.sim_cutscene_to(6, ctx));
+        assert_eq!(a.camera.pos, b.camera.pos, "re-sim reproduces the camera");
+        assert_ne!(
+            a.camera.pos,
+            center_ref(Vec2::new(4, -2), &h.system),
+            "camera followed the moving actor, not the player",
         );
     }
 }

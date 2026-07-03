@@ -69,6 +69,7 @@
 //! | `interact ACTOR TARGET`  | fire TARGET's intrinsic interaction |
 //! | `load NAME`              | push a sub-cutscene (popped on its finish) |
 //! | `wait N`                 | hold for N frames |
+//! | `camera ACTOR` / `camera X Y` | point the scene camera at an actor / a fixed map point |
 //! | `sound NAME` / `music [NAME]` / `set FLAG BOOL` | effects (carried over) |
 //!
 //! ## Chains & motions
@@ -158,6 +159,18 @@ pub enum CutsceneContent {
     Music(Option<String>),
     /// Set a named save flag.
     SetFlag(String, bool),
+    /// Retarget the scene camera (`camera ACTOR` / `camera X Y`); it follows the
+    /// target until retargeted again, resetting to the player when the scene ends.
+    Camera(CameraTarget),
+}
+
+/// Where a `camera` step points the scene camera.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CameraTarget {
+    /// `camera ACTOR` — follow an actor's live position (re-read each frame).
+    Actor(String),
+    /// `camera X Y` — hold a fixed map point.
+    Point(Vec2),
 }
 
 /// One actor's timed motion sequence within a [`CutsceneContent::Move`].
@@ -347,7 +360,7 @@ fn parse_cutscene(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
                 }
                 def.content.push(CutsceneContent::Move(chains));
             }
-            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" => {
+            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" | "camera" => {
                 seen_content = true;
                 def.content.push(parse_content(verb, args, line_no)?);
                 i += 1;
@@ -436,8 +449,31 @@ fn parse_content(verb: &str, args: &str, line_no: usize) -> Result<CutsceneConte
                 target: target.to_string(),
             }
         }
+        "camera" => CutsceneContent::Camera(parse_camera(args, line_no)?),
         _ => unreachable!("parse_content only called for known content verbs"),
     })
+}
+
+/// Parse a `camera` argument: two integer tokens are a fixed `X Y` point, a
+/// single token is an actor name to follow (the same one-vs-two-token split
+/// `face NAME` / `face DX DY` uses).
+fn parse_camera(args: &str, line_no: usize) -> Result<CameraTarget, ParseError> {
+    let mut parts = args.split_whitespace();
+    let first = parts
+        .next()
+        .ok_or_else(|| ParseError::new(line_no, "`camera` needs `ACTOR` or `X Y`"))?;
+    match parts.next() {
+        Some(second) => {
+            if parts.next().is_some() {
+                return Err(ParseError::new(line_no, "`camera` takes `ACTOR` or `X Y`"));
+            }
+            let err = || ParseError::new(line_no, "`camera X Y` needs integers");
+            let x = first.parse().map_err(|_| err())?;
+            let y = second.parse().map_err(|_| err())?;
+            Ok(CameraTarget::Point(Vec2::new(x, y)))
+        }
+        None => Ok(CameraTarget::Actor(first.to_string())),
+    }
 }
 
 /// Parse one `actor: motion; motion; …` chain line.
@@ -700,6 +736,10 @@ fn emit_content(step: &CutsceneContent) -> String {
         CutsceneContent::Music(Some(track)) => format!("    music {track}\n"),
         CutsceneContent::Music(None) => "    music\n".to_string(),
         CutsceneContent::SetFlag(name, value) => format!("    set {name} {value}\n"),
+        CutsceneContent::Camera(CameraTarget::Actor(name)) => format!("    camera {name}\n"),
+        CutsceneContent::Camera(CameraTarget::Point(p)) => {
+            format!("    camera {} {}\n", p.x, p.y)
+        }
     }
 }
 
@@ -885,6 +925,35 @@ mod tests {
         );
     }
 
+    /// `camera ACTOR` follows a named actor; `camera X Y` holds a fixed point.
+    /// A single token is always an actor (even numeric); two tokens are a point.
+    #[test]
+    fn camera_targets_parse() {
+        let def = one(
+            "#cutscene c\n\
+             \x20   camera dog\n\
+             \x20   camera 120 64\n\
+             \x20   camera player",
+        );
+        assert_eq!(
+            def.content,
+            vec![
+                CutsceneContent::Camera(CameraTarget::Actor("dog".into())),
+                CutsceneContent::Camera(CameraTarget::Point(Vec2::new(120, 64))),
+                CutsceneContent::Camera(CameraTarget::Actor("player".into())),
+            ]
+        );
+    }
+
+    /// A `camera` with no target, or a two-token point that isn't integers, or
+    /// three tokens, is a parse error pointed at its line.
+    #[test]
+    fn camera_errors_point_at_the_line() {
+        assert_eq!(parse("#cutscene c\n    camera").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera 1 x").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera 1 2 3").unwrap_err().line, 2);
+    }
+
     #[test]
     fn errors_point_at_the_line() {
         assert_eq!(parse("#cutscene c\n    bogus 1").unwrap_err().line, 2);
@@ -938,7 +1007,9 @@ mod tests {
              \x20   move\n\
              \x20       ellie: walk 5 6 in 12; beside fido\n\
              \x20       fido: to ellie\n\
+             \x20   camera fido\n\
              \x20   dialogue hello\n\
+             \x20   camera 5 6\n\
              \x20   wait 10\n\
              \x20   interact ellie fido\n\
              #cutscene b\n\
