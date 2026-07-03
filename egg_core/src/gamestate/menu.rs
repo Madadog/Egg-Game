@@ -248,10 +248,12 @@ impl MenuState {
                 let walk = walkaround_state;
                 match x {
                     0 => {
-                        ctx.draw.set_palette(&crate::platform::SWEETIE_16);
+                        // Day/night rides the save flag now, so route the debug
+                        // toggles through it (and repaint at once for feedback).
+                        walk.set_day_night(ctx, false);
                     }
                     1 => {
-                        ctx.draw.set_palette(&crate::platform::NIGHT_16);
+                        walk.set_day_night(ctx, true);
                     }
                     2 => {
                         ctx.draw.set_palette(&crate::platform::B_W);

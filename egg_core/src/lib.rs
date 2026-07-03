@@ -314,6 +314,11 @@ impl EggState {
                     next
                 }
                 GameMode::Animation => self.intro.step(&mut ctx),
+                // Every menu flavour shares this one dispatch — `enter` is what
+                // makes them differ. `InventoryOptions` is the bag's Options page
+                // (a menu, reached from the overlay), NOT a second inventory
+                // route: the bag itself is stepped/drawn only under `Walkaround`,
+                // as an overlay the walkaround owns (see `step_inventory`).
                 GameMode::MainMenu
                 | GameMode::InventoryOptions
                 | GameMode::DebugMenu
@@ -369,7 +374,9 @@ impl EggState {
         }
         self.save_loaded = true;
         if let Some(bytes) = system.read_file(SAVE_PATH) {
-            match serde_json::from_slice(&bytes) {
+            // `from_json` (not a bare `from_slice`) so a save written with the old
+            // `is_night` bool migrates that state onto the modern flag on load.
+            match SaveData::from_json(&bytes) {
                 Ok(data) => self.save = data,
                 Err(e) => log::error!("Failed to parse save ({SAVE_PATH}): {e}"),
             }
