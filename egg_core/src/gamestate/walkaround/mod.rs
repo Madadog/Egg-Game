@@ -219,6 +219,30 @@ impl WalkaroundState {
             .flat_map(|leader| leader.companions.iter().chain(std::iter::once(leader)))
     }
 
+    /// The actors the map editor's path recorder can record: `(token, position)`
+    /// for the player, each of its companions, and every named top-level creature
+    /// on the current map. The `token` is exactly what a cutscene chain names
+    /// (`player`, `companion N`, or a `Shell::id`), so the recorder can emit it
+    /// verbatim; the position seeds the puppet so clicked waypoints land relative
+    /// to where the actor really is. Companionless nameless creatures are skipped —
+    /// a chain can't refer to them. Pushed into the editor each focused frame (it
+    /// can't see this tree itself).
+    pub fn recorder_actors(&self) -> Vec<(String, Vec2)> {
+        let Some(player) = self.entities.first() else {
+            return Vec::new();
+        };
+        let mut actors = vec![("player".to_string(), player.pos)];
+        for (slot, companion) in player.companions.iter().enumerate() {
+            actors.push((format!("companion {slot}"), companion.pos));
+        }
+        for entity in &self.entities[1..] {
+            if let Some(id) = &entity.id {
+                actors.push((id.clone(), entity.pos));
+            }
+        }
+        actors
+    }
+
     /// Resolve an [`EntityId`] against the live entity tree: the player is
     /// `entities[0]`, a companion is `entities[0].companions[slot]`, and an
     /// [`EntityId::Id`] is the first shell whose [`Shell::id`] matches. `None`
@@ -985,6 +1009,10 @@ impl WalkaroundState {
             // list them (it doesn't otherwise see the registry). Refreshed each
             // focused frame, so a just-recorded scene shows up.
             self.map_viewer.scene_names = ctx.scenes.names();
+            // And the live actors, so the recorder can pick which one it records
+            // (computed first — the getter borrows `self`, the field is on `self`).
+            let recorder_actors = self.recorder_actors();
+            self.map_viewer.recorder_actors = recorder_actors;
             self.map_viewer.step_map_viewer(
                 ctx.system,
                 ctx.input,
