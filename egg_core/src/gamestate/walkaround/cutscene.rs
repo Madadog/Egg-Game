@@ -174,6 +174,13 @@ impl Cutscene {
         self.interruptible
     }
 
+    /// Index of the content step currently playing — the scrubber samples this
+    /// each re-sim frame to map frames onto authored beats (see
+    /// [`WalkaroundState::replay_cutscene`](super::WalkaroundState::replay_cutscene)).
+    pub(super) fn active_step(&self) -> usize {
+        self.step
+    }
+
     /// Drive one frame. Chains the instant steps (sound/flag/…) into the same
     /// frame; the first frame-consuming step (`move`/`dialogue`/`wait`) returns
     /// [`Outcome::Running`]. A `load` returns [`Outcome::Load`]; the end returns
@@ -923,7 +930,7 @@ mod tests {
         h.walk.cutscene.push(cs);
 
         // `walk … in 10` runs exactly 10 frames then finishes.
-        let total = h.frame(|ctx, w| w.measure_cutscene(ctx));
+        let total = h.frame(|ctx, w| w.replay_cutscene(50, ctx).total);
         assert_eq!(total, 10, "10-frame move measured");
 
         // Seek midway and to the end (a fresh re-sim from the snapshot each time).

@@ -110,6 +110,47 @@ impl Default for WalkaroundState {
     }
 }
 
+/// A precomputed re-simulation of an armed cutscene: its length, where each
+/// authored beat begins, and a **snapshot ladder** — cloned worlds captured at a
+/// fixed frame stride — so the scrubber can seek to any frame by replaying only
+/// from the nearest snapshot at or below it, instead of from frame 0 every time
+/// (which makes dragging quadratic in scene length).
+///
+/// Built once by [`WalkaroundState::replay_cutscene`] from the armed base world.
+/// That snapshot never mutates for a scrubber session's lifetime (every seek
+/// re-sims a clone), so the ladder can't serve a stale frame — a change to the
+/// scene, its source text, or the base world reopens the scrubber, rebuilding
+/// the ladder from scratch.
+pub(crate) struct CutsceneReplay {
+    /// Total frames the scene runs (one per
+    /// [`play_cutscene`](WalkaroundState::play_cutscene) step).
+    pub total: usize,
+    /// Start frame of each authored beat, in play order: the first frame at which
+    /// a new content step becomes the active frame-consuming beat. `beats[0]` is
+    /// always `0` (the opening pose); instant steps (sound/flag/…) fold into the
+    /// next visible beat and get no marker of their own.
+    pub beats: Vec<usize>,
+    /// Frames between consecutive keyframes.
+    stride: usize,
+    /// The snapshot ladder: `keyframes[i]` is the world at frame `i * stride`.
+    /// `keyframes[0]` is the armed frame-0 snapshot; the last rung is the largest
+    /// multiple of `stride` not past [`total`](Self::total). Never empty.
+    keyframes: Vec<WalkaroundState>,
+}
+
+impl CutsceneReplay {
+    /// The world at `frame`, replayed from the nearest keyframe at or below it —
+    /// at most `stride - 1` steps forward, rather than `frame` steps from 0.
+    /// Because the re-sim is deterministic this is identical to
+    /// [`sim_cutscene_to`](WalkaroundState::sim_cutscene_to) for every frame, just
+    /// cheaper; a `frame` past the scene end clamps to the last rung's tail, as
+    /// the naive path does.
+    pub(crate) fn seek<S: ConsoleApi>(&self, frame: usize, ctx: &mut Ctx<S>) -> WalkaroundState {
+        let rung = (frame / self.stride).min(self.keyframes.len() - 1);
+        self.keyframes[rung].sim_cutscene_to(frame - rung * self.stride, ctx)
+    }
+}
+
 impl WalkaroundState {
     pub fn new() -> Self {
         Self {
@@ -499,23 +540,6 @@ impl WalkaroundState {
     /// ~27 min at 60fps — far beyond any authored cutscene.
     pub(crate) const SCRUB_MAX_FRAMES: usize = 100_000;
 
-    /// Re-simulate this world's cutscene stack to completion on a CLONE,
-    /// returning the number of frames it runs (one per [`play_cutscene`] step).
-    /// The clone leaves `self` untouched, so the scrubber can measure a scene's
-    /// length and then seek into it freely. Capped at [`SCRUB_MAX_FRAMES`](Self::SCRUB_MAX_FRAMES)
-    /// so a scene that never terminates can't hang the editor.
-    pub(crate) fn measure_cutscene<S: ConsoleApi>(&self, ctx: &mut Ctx<S>) -> usize {
-        let mut world = self.clone();
-        let mut frames = 0;
-        while world.play_cutscene(ctx) {
-            frames += 1;
-            if frames >= Self::SCRUB_MAX_FRAMES {
-                break;
-            }
-        }
-        frames
-    }
-
     /// Re-simulate `frame` steps on a CLONE (clamped by the scene ending) and
     /// return the world at that frame — what the scrubber draws as its ghost.
     /// A pure re-sim from the post-launch snapshot, so any playhead position is
@@ -532,9 +556,62 @@ impl WalkaroundState {
         world
     }
 
+    /// The base (bottom-of-stack) cutscene's active content step, or `None` once
+    /// the stack has drained. The base scene is `cutscene[0]`: a `load` step
+    /// pushes sub-cutscenes *above* it, so its own step index tracks the
+    /// top-level authored beats throughout the scene — the cursor
+    /// [`replay_cutscene`](Self::replay_cutscene) samples to place beat markers.
+    fn base_beat(&self) -> Option<usize> {
+        self.cutscene.first().map(Cutscene::active_step)
+    }
+
+    /// Re-simulate this world's armed cutscene stack to completion on a CLONE,
+    /// capturing in one pass everything the scrubber needs: the total length, the
+    /// start frame of each authored beat, and a snapshot ladder (a cloned world
+    /// every `stride` frames) for cheap seeking. See [`CutsceneReplay`]. Leaves
+    /// `self` untouched and caps at [`SCRUB_MAX_FRAMES`](Self::SCRUB_MAX_FRAMES);
+    /// `stride` is clamped non-zero.
+    pub(crate) fn replay_cutscene<S: ConsoleApi>(
+        &self,
+        stride: usize,
+        ctx: &mut Ctx<S>,
+    ) -> CutsceneReplay {
+        let stride = stride.max(1);
+        let mut world = self.clone();
+        // Frame 0 is the armed snapshot: the first rung of the ladder and the
+        // opening beat's start.
+        let mut keyframes = vec![world.clone()];
+        let mut beats = vec![0usize];
+        let mut last_beat = world.base_beat();
+        let mut frames = 0;
+        while world.play_cutscene(ctx) {
+            frames += 1;
+            // A new content step became the active frame-consuming beat ⇒ a
+            // boundary. The drained-stack `None` on the final cleanup frame is
+            // the scene ending, not a new beat.
+            let beat = world.base_beat();
+            if beat.is_some() && beat != last_beat {
+                beats.push(frames);
+                last_beat = beat;
+            }
+            if frames.is_multiple_of(stride) {
+                keyframes.push(world.clone());
+            }
+            if frames >= Self::SCRUB_MAX_FRAMES {
+                break;
+            }
+        }
+        CutsceneReplay {
+            total: frames,
+            beats,
+            stride,
+            keyframes,
+        }
+    }
+
     /// Launch `def` and arm it on this world's cutscene stack — the scrubber's
     /// snapshot setup. After this, [`play_cutscene`](Self::play_cutscene) (hence
-    /// [`measure_cutscene`](Self::measure_cutscene)/[`sim_cutscene_to`](Self::sim_cutscene_to))
+    /// [`replay_cutscene`](Self::replay_cutscene)/[`sim_cutscene_to`](Self::sim_cutscene_to))
     /// drives the scene. Keeps [`Cutscene`] construction inside this module.
     pub(crate) fn arm_cutscene<S: ConsoleApi>(&mut self, def: &CutsceneDef, ctx: &mut Ctx<S>) {
         let cs = Cutscene::launch(def, ctx, self);
@@ -2111,5 +2188,112 @@ mod tests {
             ),
             "and reopens on its options page"
         );
+    }
+
+    /// Arm `src`'s single cutscene on a fresh world at the origin, ready to
+    /// replay — the setup `open_scrubber` performs before measuring.
+    fn armed_scene(src: &str, console: &mut TestConsole, parts: &mut CtxParts) -> WalkaroundState {
+        let def = crate::data::scene::parse(src)
+            .expect("parse scene")
+            .get_cutscene("t")
+            .expect("cutscene t")
+            .clone();
+        let mut walk = WalkaroundState::new();
+        walk.player().pos = Vec2::new(0, 0);
+        with_ctx(console, parts, |ctx| walk.arm_cutscene(&def, ctx));
+        walk
+    }
+
+    /// The snapshot ladder is a faithful seek index: for a scene long enough to
+    /// span several rungs, seeking to *every* frame from the nearest rung yields
+    /// exactly the world the naive replay-from-0 does — the invariant the ladder
+    /// exists to preserve, made cheap.
+    #[test]
+    fn snapshot_ladder_seek_matches_naive_resim_at_every_frame() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        // Two sequential legs so the scene outlasts the small stride below.
+        let walk = armed_scene(
+            "#cutscene t\n    move\n        player: walk 40 0 in 20\n    move\n        player: walk 40 12 in 16",
+            &mut console,
+            &mut parts,
+        );
+
+        // A signature strong enough to catch any divergence in the replayed world.
+        let sig = |w: &WalkaroundState| -> Vec<Vec2> { w.entities.iter().map(|e| e.pos).collect() };
+        with_ctx(&mut console, &mut parts, |ctx| {
+            let stride = 7;
+            let replay = walk.replay_cutscene(stride, ctx);
+            // 20 + 16 frame legs, sharing the frame the first move hands off to
+            // the second (the same instant step boundary as back-to-back waits).
+            assert_eq!(replay.total, 35, "20 + 16 legs sharing the hand-off frame");
+            assert!(
+                replay.keyframes.len() >= 5,
+                "a 35-frame scene at stride 7 makes several rungs (got {})",
+                replay.keyframes.len(),
+            );
+            for frame in 0..=replay.total + 3 {
+                let via_ladder = replay.seek(frame, ctx);
+                let naive = walk.sim_cutscene_to(frame, ctx);
+                assert_eq!(
+                    sig(&via_ladder),
+                    sig(&naive),
+                    "ladder seek diverges from the naive re-sim at frame {frame}",
+                );
+            }
+        });
+    }
+
+    /// The ladder still seeks correctly when the stride exceeds the whole scene
+    /// (a single rung at frame 0 — the small-scene degenerate case).
+    #[test]
+    fn snapshot_ladder_with_one_rung_still_seeks() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let walk = armed_scene(
+            "#cutscene t\n    move\n        player: walk 30 0 in 10",
+            &mut console,
+            &mut parts,
+        );
+        with_ctx(&mut console, &mut parts, |ctx| {
+            let replay = walk.replay_cutscene(50, ctx);
+            assert_eq!(replay.keyframes.len(), 1, "one rung: the scene is shorter than the stride");
+            for frame in 0..=replay.total {
+                assert_eq!(
+                    replay.seek(frame, ctx).player_ref().pos,
+                    walk.sim_cutscene_to(frame, ctx).player_ref().pos,
+                    "single-rung seek matches naive at frame {frame}",
+                );
+            }
+        });
+    }
+
+    /// Per-step offsets: `beats` records the start frame of each authored content
+    /// step, in play order — a boundary each time a new frame-consuming step
+    /// becomes active, with the opening beat pinned at 0.
+    #[test]
+    fn replay_reports_beat_offsets_per_content_step() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+
+        // Two back-to-back waits: the second begins the frame the first ends.
+        let waits = armed_scene("#cutscene t\n    wait 5\n    wait 7", &mut console, &mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| {
+            let replay = waits.replay_cutscene(50, ctx);
+            assert_eq!(replay.total, 11, "5 + 7, sharing the hand-off frame");
+            assert_eq!(replay.beats, vec![0, 5], "wait #1 opens at 0, wait #2 at 5");
+        });
+
+        // A move then a wait: the move opens the scene, the wait begins as it ends.
+        let move_wait = armed_scene(
+            "#cutscene t\n    move\n        player: walk 30 0 in 10\n    wait 3",
+            &mut console,
+            &mut parts,
+        );
+        with_ctx(&mut console, &mut parts, |ctx| {
+            let replay = move_wait.replay_cutscene(50, ctx);
+            assert_eq!(replay.beats, vec![0, 10], "move at 0, wait at 10");
+            assert_eq!(replay.total, 12, "10-frame move + 3-frame wait sharing frame 10");
+        });
     }
 }
