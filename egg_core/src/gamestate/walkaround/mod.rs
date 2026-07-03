@@ -1072,7 +1072,10 @@ impl WalkaroundState {
         let mut interact = false;
 
         let pad = ctx.input.controller();
-        if self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty() {
+        // Captured before any handling: a choice open at frame start owns this
+        // frame's A press, so the generic advance below must not also spend it.
+        let choosing = self.dialogue.is_choosing();
+        if !self.dialogue.is_active() {
             (dx, dy) = dpad_delta(&pad, pressed);
             if just_pressed(pad.b) {
                 // Open the bag overlay in place. No mode change: the overlay
@@ -1080,6 +1083,23 @@ impl WalkaroundState {
                 // the next frame, and `draw` composites it over the world.
                 self.inventory_ui.open(ctx.system);
                 return None;
+            }
+        } else if choosing {
+            // Choice menu: up/down moves the highlight, A confirms (writing the
+            // picked option's flags and resuming playback).
+            let (_, ddy) = dpad_delta(&pad, just_pressed);
+            if ddy != 0 {
+                self.dialogue.move_choice(ddy as i32);
+                ctx.system.play_sound(sound::INTERACT);
+            }
+            if just_pressed(pad.a) {
+                ctx.system.play_sound(sound::INTERACT);
+                // Confirm; if the choice was the last content and nothing more
+                // opened, close the box.
+                let opened = self.dialogue.confirm_choice(ctx.system, ctx.font, ctx.save);
+                if !opened && !self.dialogue.is_choosing() && self.dialogue.current_text.is_some() {
+                    self.dialogue.close();
+                }
             }
         } else {
             if self.dialogue.characters == 0 {
@@ -1096,7 +1116,7 @@ impl WalkaroundState {
                 self.dialogue.close();
             }
         }
-        if just_pressed(pad.a) && self.dialogue.is_line_done() {
+        if !choosing && just_pressed(pad.a) && self.dialogue.is_line_done() {
             interact = true;
             if self.dialogue.next_text(ctx.system, ctx.font, ctx.save, false) {
                 interact = false;
@@ -1238,8 +1258,9 @@ impl WalkaroundState {
         // already played at fire time; this apply is silent). Skipping the dialogue
         // with B empties the queue the same way, so it warps then too.
         if self.pending_warp.is_some() {
-            let box_closed =
-                self.dialogue.current_text.is_none() && self.dialogue.next_text.is_empty();
+            // Also wait out an open choice menu: `is_active` covers a pending
+            // `#choice` that has no current line or queued text.
+            let box_closed = !self.dialogue.is_active();
             if box_closed && let Some(warp) = self.pending_warp.take() {
                 self.apply_warp(ctx, warp);
             }
@@ -1498,6 +1519,10 @@ impl WalkaroundState {
                 true,
             );
         }
+        // The choice menu (if any) stacks above the box; a no-op otherwise, and
+        // it draws even without a prompt page (a prompt-less `#choice`).
+        self.dialogue
+            .draw_choice(ctx.draw, BG, ctx.font, ctx.save.small_text_on);
         if debug_info.map_info {
             // Warp hitboxes in colour 12, interaction hitboxes in colour 14;
             // the player hitbox shares the warps' colour.

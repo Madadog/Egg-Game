@@ -26,7 +26,7 @@ use crate::{
 use crate::render::{Font, PrintOptions, SpriteOptions, print_to_with_font};
 
 use crate::data::portraits::Portrait;
-use crate::data::script::message::{Message, TextContent};
+use crate::data::script::message::{ChoiceOption, Message, TextContent};
 use crate::data::sound;
 
 /// The dialogue [`PrintOptions`]: defaults plus the caller's small-text setting
@@ -36,6 +36,17 @@ pub fn print_options(small_text: bool) -> PrintOptions {
         small_text,
         ..Default::default()
     }
+}
+
+/// A live [`TextContent::Choice`]: the options being offered and the highlighted
+/// index. Set when the box consumes a `Choice` item and cleared once the player
+/// confirms (see [`Dialogue::confirm_choice`]). While it is `Some`, the box is
+/// "choosing" — auto-advance is suspended and the driver routes directional
+/// input to [`move_choice`](Dialogue::move_choice) instead of the world.
+#[derive(Clone, Debug)]
+pub struct ChoiceState {
+    pub options: Vec<ChoiceOption>,
+    pub selected: usize,
 }
 
 #[derive(Clone)]
@@ -49,6 +60,8 @@ pub struct Dialogue {
     pub portrait: Option<Portrait>,
     pub dark_theme: bool,
     pub flip_portrait: bool,
+    /// The open choice menu, if the box is currently awaiting a selection.
+    pub choice: Option<ChoiceState>,
 }
 impl Dialogue {
     pub const fn default() -> Self {
@@ -62,6 +75,7 @@ impl Dialogue {
             portrait: None,
             dark_theme: false,
             flip_portrait: false,
+            choice: None,
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -195,6 +209,16 @@ impl Dialogue {
                 save.set_flag(&name, value);
                 true
             }
+            // Open the menu and stop: playback blocks here until the driver calls
+            // [`confirm_choice`](Self::confirm_choice). `Choice` is neither auto
+            // nor skip, so `next_text` returns after consuming it.
+            TextContent::Choice(options) => {
+                self.choice = Some(ChoiceState {
+                    options,
+                    selected: 0,
+                });
+                true
+            }
         }
     }
     pub fn fit_text(&self, font: &Font, small_text: bool, string: &str) -> String {
@@ -253,6 +277,11 @@ impl Dialogue {
         self.characters = (self.characters + amount).min(self.char_count().saturating_sub(1));
     }
     pub fn can_autoadvance(&self) -> bool {
+        // A pending choice blocks the queue: don't tick past it into whatever
+        // follows until the player has picked.
+        if self.choice.is_some() {
+            return false;
+        }
         if let Some(content) = self.next_text.last() {
             content.is_auto()
         } else {
@@ -274,6 +303,50 @@ impl Dialogue {
         if self.current_text.is_some() {
             self.characters = self.char_count().saturating_sub(1);
         }
+    }
+    /// Whether the box is awaiting a choice selection (a `#choice` menu is open).
+    /// While true the driver routes directional input to [`move_choice`](Self::move_choice)
+    /// and confirm to [`confirm_choice`](Self::confirm_choice), not the world.
+    pub fn is_choosing(&self) -> bool {
+        self.choice.is_some()
+    }
+    /// Whether the box is doing anything — showing text, holding queued content,
+    /// or waiting on a choice. Callers gate world input / movement on this; a
+    /// choice with no prompt has no `current_text`, so it must be counted too.
+    pub fn is_active(&self) -> bool {
+        self.current_text.is_some() || !self.next_text.is_empty() || self.choice.is_some()
+    }
+    /// Move the choice highlight by `delta` rows (negative up), wrapping around
+    /// the ends. A no-op if no choice is open.
+    pub fn move_choice(&mut self, delta: i32) {
+        if let Some(choice) = &mut self.choice {
+            let len = choice.options.len() as i32;
+            if len > 0 {
+                let next = (choice.selected as i32 + delta).rem_euclid(len);
+                choice.selected = next as usize;
+            }
+        }
+    }
+    /// Confirm the highlighted option: write its flags through `save.set_flag`
+    /// (the same path as `#set`), clear the menu, and resume playback with the
+    /// content that followed the `#choice`. Returns whatever [`next_text`](Self::next_text)
+    /// returns (whether a further line opened). A no-op returning `false` if no
+    /// choice is open.
+    pub fn confirm_choice(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        font: &Font,
+        save: &mut SaveData,
+    ) -> bool {
+        let Some(choice) = self.choice.take() else {
+            return false;
+        };
+        if let Some(option) = choice.options.get(choice.selected) {
+            for (name, value) in &option.sets {
+                save.set_flag(name, *value);
+            }
+        }
+        self.next_text(system, font, save, false)
     }
     #[allow(clippy::too_many_arguments)]
     pub fn draw_dialogue_portrait(
@@ -449,6 +522,68 @@ impl Dialogue {
             draw_state, layer, font, small_text, string, timer, 0, 0, 0,
         )
     }
+
+    /// Draw the open `#choice` menu as a bordered panel stacked just above the
+    /// dialogue box: one option per row, the highlighted one filled in the
+    /// bright selection colour (palette #9, the same unmistakable blue the text
+    /// editor uses) with a `>` cursor. A no-op when no choice is open, so the
+    /// draw site can call it unconditionally after the box.
+    pub fn draw_choice(
+        &self,
+        draw_state: &mut DrawState,
+        layer: LayerId,
+        font: &Font,
+        small_text: bool,
+    ) {
+        use crate::render::Canvas;
+        let Some(choice) = &self.choice else {
+            return;
+        };
+
+        let (screen_w, screen_h) = draw_state.size();
+        let w = self.width as i32;
+        let box_h = 24;
+        let row_h = 8;
+        let pad = 3;
+
+        let panel_h = choice.options.len() as i32 * row_h + pad * 2;
+        let x = (screen_w - w) / 2;
+        // Sit just above where the dialogue box lands (a 2px gap), so a prompt
+        // page and its options read as one stacked unit.
+        let box_top = (screen_h - box_h) - 4;
+        let y = box_top - panel_h - 2;
+
+        // Resolve colours before the mutable canvas borrow (mirrors the box).
+        let bg = draw_state.colour(if self.dark_theme { 1 } else { 2 });
+        let outline = draw_state.colour(if self.dark_theme { 1 } else { 3 });
+        let text_col = draw_state.colour(12);
+        let sel = draw_state.colour(9);
+
+        let options = print_options(small_text);
+        let canvas = draw_state.rgba(layer);
+        canvas.outlined_rect(x, y, w, panel_h, bg, outline);
+        for (i, option) in choice.options.iter().enumerate() {
+            let row_y = y + pad + i as i32 * row_h;
+            let selected = i == choice.selected;
+            if selected {
+                canvas.fill_rect(x + 1, row_y - 1, w - 2, row_h, sel);
+            }
+            let marker = if selected { ">" } else { " " };
+            let line = format!("{marker} {}", option.text);
+            print_to_with_font(
+                font,
+                canvas,
+                &line,
+                x + pad,
+                row_y,
+                text_col,
+                PrintOptions {
+                    color: 12,
+                    ..options.clone()
+                },
+            );
+        }
+    }
 }
 
 impl Debug for Dialogue {
@@ -461,6 +596,7 @@ impl Debug for Dialogue {
             .field("delay", &self.delay)
             .field("print_time", &self.print_time)
             .field("portrait", &self.portrait)
+            .field("choice", &self.choice)
             .finish()
     }
 }
@@ -612,6 +748,81 @@ mod tests {
         let mut empty = with_text("");
         empty.finish_line();
         assert_eq!(empty.characters, 0);
+    }
+
+    #[test]
+    fn choice_menu_moves_wraps_confirms_and_sets_the_flag() {
+        use crate::data::script::message::ChoiceOption;
+        use crate::platform::NullConsole;
+
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        let options = vec![
+            ChoiceOption {
+                text: "Tea".into(),
+                sets: vec![("chose_tea".into(), true)],
+            },
+            ChoiceOption {
+                text: "Coffee".into(),
+                sets: vec![("chose_coffee".into(), true)],
+            },
+            ChoiceOption {
+                text: "Nothing".into(),
+                sets: vec![],
+            },
+        ];
+        let messages = vec![Message::default().with_content(vec![
+            TextContent::text("What'll it be?"),
+            TextContent::Choice(options),
+        ])];
+        d.set_messages(&mut console, &font, &mut save, &messages);
+
+        // The prompt page shows first; the box is active but not yet choosing.
+        assert!(d.is_active());
+        assert!(!d.is_choosing());
+        // Advancing past the prompt opens the menu at the first option.
+        d.next_text(&mut console, &font, &mut save, false);
+        assert!(d.is_choosing());
+        assert_eq!(d.choice.as_ref().unwrap().selected, 0);
+        // Up from the top wraps to the last option; down wraps back.
+        d.move_choice(-1);
+        assert_eq!(d.choice.as_ref().unwrap().selected, 2);
+        d.move_choice(1);
+        assert_eq!(d.choice.as_ref().unwrap().selected, 0);
+        // Highlight "Coffee" and confirm: it writes that option's flag, clears
+        // the menu, and (nothing followed) leaves the box ready to close.
+        d.move_choice(1);
+        let opened = d.confirm_choice(&mut console, &font, &mut save);
+        assert!(!opened, "no content followed the choice");
+        assert!(!d.is_choosing());
+        assert!(save.flag("chose_coffee"));
+        assert!(!save.flag("chose_tea"));
+    }
+
+    #[test]
+    fn a_pending_choice_blocks_auto_advance() {
+        use crate::data::script::message::ChoiceOption;
+        // Even with auto-text queued after it, the box must not tick past an open
+        // choice.
+        let mut d = Dialogue {
+            current_text: Some("prompt".into()),
+            choice: Some(ChoiceState {
+                options: vec![ChoiceOption {
+                    text: "ok".into(),
+                    sets: vec![],
+                }],
+                selected: 0,
+            }),
+            next_text: vec![TextContent::auto("after")],
+            ..Dialogue::default()
+        };
+        assert!(!d.can_autoadvance());
+        // Clearing the choice lets the queued auto-text advance again.
+        d.choice = None;
+        assert!(d.can_autoadvance());
     }
 
     #[test]

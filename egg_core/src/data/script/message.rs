@@ -48,11 +48,19 @@ pub enum TextContent {
     /// (it is a `is_skip` item, consumed in place), so the flag flips at the
     /// observable moment the dialogue plays past it. See [`crate::data::script::eggtext`].
     SetFlag(String, bool),
+    /// An interactive branch point — the `#choice` block. Presents `options` in
+    /// the dialogue box and blocks playback (neither [`is_auto`](Self::is_auto)
+    /// nor [`is_skip`](Self::is_skip)) until the player picks one; the picked
+    /// option's flags are then written through the same [`SetFlag`](Self::SetFlag)
+    /// machinery (`save.set_flag`) and playback continues. Follow-up text
+    /// branches on those flags through the ordinary `#if` flatten on the next
+    /// [`get_dialogue`](crate::data::script::Script::get_dialogue).
+    Choice(Vec<ChoiceOption>),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
-        !matches!(self, Text { pause: true, .. } | Pause)
+        !matches!(self, Text { pause: true, .. } | Pause | Choice(_))
     }
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
@@ -135,6 +143,17 @@ impl Message {
         }
         out
     }
+}
+
+/// One selectable option of a [`TextContent::Choice`] — the `#option` line of a
+/// `#choice` block. `text` is what the menu shows; `sets` is the flags it writes
+/// when picked, each a `(name, value)` applied exactly like a `#set`
+/// ([`TextContent::SetFlag`]). An option may set zero flags (a "never mind" that
+/// just closes the menu).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChoiceOption {
+    pub text: String,
+    pub sets: Vec<(String, bool)>,
 }
 
 impl From<&str> for Message {

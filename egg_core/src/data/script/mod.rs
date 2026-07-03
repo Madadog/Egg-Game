@@ -39,7 +39,7 @@ pub mod eggtext;
 pub mod message;
 
 use crate::data::save::SaveData;
-use crate::data::script::message::{Message, TextContent};
+use crate::data::script::message::{ChoiceOption, Message, TextContent};
 use crate::data::{portraits, sound};
 
 // --- on-disk schema (deserialized as-is, names not yet resolved) ---
@@ -146,6 +146,19 @@ pub enum ContentDef {
     /// Set (or clear) a named save flag when playback reaches this point — the
     /// `#set NAME BOOL` directive. JSON: `{"set_flag": ["name", true]}`.
     SetFlag(String, bool),
+    /// An interactive menu — the `#choice` block. JSON:
+    /// `{"choice": [{"text": "Yes", "sets": [["flag", true]]}, ...]}`.
+    Choice(Vec<ChoiceOptionDef>),
+}
+
+/// One option of a [`ContentDef::Choice`]: its menu text and the flags it sets
+/// when picked (`sets` defaults to none). JSON:
+/// `{"text": "Tea", "sets": [["chose_tea", true]]}`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ChoiceOptionDef {
+    pub text: String,
+    #[serde(default)]
+    pub sets: Vec<(String, bool)>,
 }
 
 fn default_true() -> bool {
@@ -170,6 +183,15 @@ impl ContentDef {
             ContentDef::Pause => TextContent::Pause,
             ContentDef::Flip(b) => TextContent::Flip(b),
             ContentDef::SetFlag(name, value) => TextContent::SetFlag(name, value),
+            ContentDef::Choice(options) => TextContent::Choice(
+                options
+                    .into_iter()
+                    .map(|o| ChoiceOption {
+                        text: o.text,
+                        sets: o.sets,
+                    })
+                    .collect(),
+            ),
         })
     }
 }
@@ -552,5 +574,73 @@ mod tests {
         assert_eq!(script.list("things"), ["one", "two", "three"]);
         assert_eq!(script.list_get("things", 1).as_deref(), Some("two"));
         assert_eq!(script.list_get("things", 9), None);
+    }
+
+    #[test]
+    fn choice_resolves_to_a_runtime_choice_item() {
+        // A `#choice` survives flatten as message content (no new segment kind);
+        // the conversation carries a runtime `Choice` with each option's flags.
+        let script = script(
+            "#flag chose_tea\n\
+             #dialogue ask\n\
+             \x20   Tea or coffee?\n\
+             \x20   #choice\n\
+             \x20   #option Tea\n\
+             \x20   #set chose_tea true\n\
+             \x20   #option Coffee",
+        );
+        let convo = script.get_dialogue("ask", &SaveData::default());
+        let options = convo
+            .iter()
+            .flat_map(|m| &m.content)
+            .find_map(|c| match c {
+                TextContent::Choice(options) => Some(options),
+                _ => None,
+            })
+            .expect("a Choice content item");
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].text, "Tea");
+        assert_eq!(options[0].sets, vec![("chose_tea".to_string(), true)]);
+        assert!(options[1].sets.is_empty());
+    }
+
+    #[test]
+    fn a_pick_flag_branches_a_later_if() {
+        // The end-to-end story: picking an option sets a flag through the same
+        // `set_flag` path the box uses, and a *later* `get_dialogue` flattens the
+        // ordinary `#if` to the matching branch — no second branching system.
+        let script = script(
+            "#flag chose_tea\n\
+             #dialogue ask\n\
+             \x20   #choice\n\
+             \x20   #option Tea\n\
+             \x20   #set chose_tea true\n\
+             \x20   #option Coffee\n\
+             #dialogue react\n\
+             \x20   #if chose_tea\n\
+             \x20   Enjoy your tea.\n\
+             \x20   #else\n\
+             \x20   Coffee it is.\n\
+             \x20   #end",
+        );
+        // Before any pick, the `#else` branch shows.
+        let mut save = SaveData::default();
+        assert_eq!(plain(&script.get_dialogue("react", &save)), "Coffee it is.");
+
+        // Apply the tea option's flags exactly as `Dialogue::confirm_choice` does.
+        let convo = script.get_dialogue("ask", &save);
+        let options = convo
+            .iter()
+            .flat_map(|m| &m.content)
+            .find_map(|c| match c {
+                TextContent::Choice(o) => Some(o.clone()),
+                _ => None,
+            })
+            .expect("a Choice");
+        for (name, value) in &options[0].sets {
+            save.set_flag(name, *value);
+        }
+        // Now the `#if` flattens to the tea branch.
+        assert_eq!(plain(&script.get_dialogue("react", &save)), "Enjoy your tea.");
     }
 }
