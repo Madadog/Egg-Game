@@ -791,6 +791,27 @@ fn emit_motion(motion: &Motion) -> String {
     }
 }
 
+/// Whether `name` is acceptable as a `#cutscene` scene name: a non-empty run of
+/// ASCII identifier characters (letters, digits, `_`). The header grammar only
+/// requires "one whitespace-free word", but the shipped names are all snake_case
+/// identifiers, so the recorder holds new names to that same shape — it round-
+/// trips through the header (no whitespace to eat, no `#`/`//` to be mistaken for
+/// a block/comment) and reads as a name rather than punctuation.
+pub fn is_identifier_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Whether `name` is a reserved actor token — `player` or `companion N` — that a
+/// chain resolves without any init binding (see the runtime's `resolve_name`). A
+/// non-reserved actor is a map creature referenced by its `Shell::id`, which the
+/// recorder pairs with a `find NAME` init so the binding is explicit + fail-safe.
+pub fn is_reserved_actor(name: &str) -> bool {
+    name == "player"
+        || name
+            .strip_prefix("companion")
+            .is_some_and(|slot| slot.trim().parse::<usize>().is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1026,5 +1047,42 @@ mod tests {
         assert!(!file.cutscenes.is_empty(), "expected shipped cutscenes");
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
         assert_eq!(file, reparsed);
+    }
+
+    #[test]
+    fn identifier_name_accepts_snake_case_rejects_the_rest() {
+        assert!(is_identifier_name("house_living_room_path"));
+        assert!(is_identifier_name("pet_dog"));
+        assert!(is_identifier_name("scene2"));
+        assert!(!is_identifier_name(""), "empty is not a name");
+        assert!(!is_identifier_name("two words"), "whitespace breaks the header");
+        assert!(!is_identifier_name("has-dash"));
+        assert!(!is_identifier_name("bad#name"));
+    }
+
+    /// A name typed as a valid identifier survives a header round-trip (so the
+    /// recorder's rename validation and the parser agree on what a name is).
+    #[test]
+    fn valid_identifier_names_round_trip_through_a_header() {
+        for name in ["fresh_path", "scene2", "a"] {
+            assert!(is_identifier_name(name));
+            let def = CutsceneDef {
+                content: vec![CutsceneContent::Wait(1)],
+                ..Default::default()
+            };
+            let src = emit_cutscene(name, &def);
+            let file = parse(&src).expect("re-parses");
+            assert!(file.get_cutscene(name).is_some(), "name survives: {src}");
+        }
+    }
+
+    #[test]
+    fn reserved_actor_is_player_or_companion_slot() {
+        assert!(is_reserved_actor("player"));
+        assert!(is_reserved_actor("companion 0"));
+        assert!(is_reserved_actor("companion 3"));
+        assert!(!is_reserved_actor("companion"), "a slot is required");
+        assert!(!is_reserved_actor("dog"), "a map creature id is not reserved");
+        assert!(!is_reserved_actor("player2"));
     }
 }

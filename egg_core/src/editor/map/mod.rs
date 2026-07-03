@@ -253,6 +253,12 @@ enum EditAction {
         before: f64,
         after: f64,
     },
+    /// A cutscene block in `main.eggscene` was created / replaced / renamed by the
+    /// path recorder. The registry lives with the host, not the editor, and the
+    /// smallest thing the editor owns is the file's full source, so undo/redo swap
+    /// the whole `.eggscene` text (`before`/`after`) and re-install it (write +
+    /// live-reload) — the same seam the forward save uses.
+    SceneEdit { before: String, after: String },
 }
 
 /// Cap on each undo/redo stack. Tile strokes can be large, so this is a count of
@@ -408,6 +414,12 @@ enum EditorKey {
     PathRecOk,
     /// Discard the live path recording.
     PathRecCancel,
+    /// Focus the recorder's scene-name field to rename the recording.
+    PathRecName,
+    /// Cycle the recorded actor (player / companion / a live map creature).
+    PathRecActor,
+    /// The recorder's map canvas — a click here drops a `MoveToPoint` waypoint.
+    PathRecCanvas,
     Field(EditField),
     Cycle(CycleField),
     /// Selects the empty tile (0) as the brush — i.e. an eraser.
@@ -546,15 +558,28 @@ struct ScenePicker {
 /// the dpad over the current map, capturing its per-frame heading as an RLE
 /// [`Motion::Record`], then save it as a one-actor cutscene to `main.eggscene`.
 /// The camera auto-follows the puppet, so the dpad is free to drive.
+///
+/// The recording is a single actor's chain built as an ordered mix of two kinds
+/// of segment: **walked** runs (the dpad, RLE — buffered live in [`runs`](Self::runs)
+/// then folded into a [`Motion::Record`]) and **clicked** waypoints (a map click
+/// drops a [`Motion::MoveToPoint`]). Committed segments accumulate in
+/// [`instructions`](Self::instructions); the trailing walk buffer is folded in at
+/// commit, so walking and clicking compose in author order.
 #[derive(Debug, Clone)]
 struct PathRecorder {
     /// The driven puppet — `pos` is the live cursor; it uses the player's sprites.
     puppet: Shell,
-    /// The recorded RLE: `(heading, frames-held)` runs in order. Stores the
-    /// *commanded* heading each frame (collision is re-applied at replay), idle
-    /// `(0,0)` included, so the path round-trips through `Motion::Record`.
+    /// The *trailing* walked RLE: `(heading, frames-held)` runs since the last
+    /// waypoint (or the start). Stores the *commanded* heading each frame
+    /// (collision is re-applied at replay), idle `(0,0)` included, so the path
+    /// round-trips through `Motion::Record`. Folded into a `Record` instruction
+    /// when a waypoint interrupts it or at commit.
     runs: Vec<((i8, i8), u16)>,
-    /// The puppet's position each frame, for drawing the path polyline.
+    /// Committed instructions in author order: folded `Record` runs interleaved
+    /// with clicked `MoveToPoint` waypoints. The live [`runs`](Self::runs) tail is
+    /// appended to this at commit.
+    instructions: Vec<Instruction>,
+    /// The puppet's position each frame (and each waypoint), for the path polyline.
     path: Vec<Vec2>,
     /// Camera top-left (map px) — the 1:1 render's pan offset, tracking the puppet.
     camera: Vec2,
@@ -562,6 +587,120 @@ struct PathRecorder {
     noclip: bool,
     /// The cutscene name the recording saves under.
     name: String,
+    /// The selectable actors — `(token, start position)` — snapshotted at open
+    /// from the host-pushed [`recorder_actors`](MapViewer::recorder_actors). The
+    /// `token` is what a chain names (`player`, `companion N`, or a creature id);
+    /// the position seeds the puppet so clicked waypoints land relative to where
+    /// the actor really is. Never empty (falls back to `player` at the view centre).
+    actors: Vec<(String, Vec2)>,
+    /// Which of [`actors`](Self::actors) this recording drives.
+    actor: usize,
+    /// The active scene-name edit, when the name field is focused. `Some` swallows
+    /// all keys (so typing a name can't drive the puppet or trip a hotkey); `None`
+    /// is the normal driving mode.
+    naming: Option<TextField>,
+    /// A transient one-line hint under the banner (rename validation, "replaces
+    /// existing", the picked actor). Cleared when it no longer applies.
+    status: Option<String>,
+}
+
+impl PathRecorder {
+    /// The token of the actor this recording drives (`player` / `companion N` / a
+    /// creature id) — what the emitted chain names.
+    fn actor_token(&self) -> &str {
+        self.actors
+            .get(self.actor)
+            .map_or("player", |(token, _)| token.as_str())
+    }
+
+    /// Fold the live walked buffer into a trimmed [`Motion::Record`] instruction,
+    /// leaving the buffer empty. Leading + trailing idle is trimmed per run so a
+    /// reaction pause (before a click, or between segments) isn't baked in;
+    /// interior idle is intentional timing and survives. An all-idle buffer folds
+    /// to nothing.
+    fn fold_walk_run(&mut self) {
+        let mut runs = std::mem::take(&mut self.runs);
+        while runs.first().is_some_and(|(d, _)| *d == (0, 0)) {
+            runs.remove(0);
+        }
+        while runs.last().is_some_and(|(d, _)| *d == (0, 0)) {
+            runs.pop();
+        }
+        if !runs.is_empty() {
+            self.instructions.push(Instruction::new(
+                Motion::Record {
+                    runs,
+                    noclip: self.noclip,
+                },
+                0,
+            ));
+        }
+    }
+
+    /// Append a clicked waypoint: flush the walked buffer, add a `walk`/`noclip`
+    /// move-to (per the `noclip` flag), and jump the puppet there so the next
+    /// segment continues from the waypoint.
+    fn place_waypoint(&mut self, point: Vec2) {
+        self.fold_walk_run();
+        let motion = if self.noclip {
+            Motion::MoveToPointNoclip(point)
+        } else {
+            Motion::MoveToPoint(point)
+        };
+        self.instructions.push(Instruction::new(motion, 0));
+        self.puppet.pos = point;
+        self.path.push(point);
+    }
+
+    /// Switch the recorded actor, discarding any in-progress path and re-seating
+    /// the puppet on the new actor's start position (so its waypoints land
+    /// relative to where it really is).
+    fn select_actor(&mut self, idx: usize) {
+        if self.actors.is_empty() {
+            return;
+        }
+        self.actor = idx % self.actors.len();
+        let start = self.actors[self.actor].1;
+        self.puppet.pos = start;
+        self.runs.clear();
+        self.instructions.clear();
+        self.path = vec![start];
+        let token = self.actor_token().to_string();
+        self.status = Some(format!("actor: {token}"));
+    }
+
+    /// Whether any path has been laid down yet (a walked frame or a waypoint) —
+    /// gates the noclip toggle, which must be fixed before the first segment.
+    fn has_recorded(&self) -> bool {
+        !self.instructions.is_empty() || self.runs.iter().any(|(d, _)| *d != (0, 0))
+    }
+
+    /// Pan the follow-camera to keep the puppet centred, clamped to the map.
+    fn follow_camera(&mut self, sw: i16, sh: i16, fw: i16, fh: i16) {
+        self.camera.x = clamp_camera(self.puppet.pos.x - sw / 2, fw, sw);
+        self.camera.y = clamp_camera(self.puppet.pos.y - sh / 2, fh, sh);
+    }
+}
+
+#[cfg(test)]
+impl PathRecorder {
+    /// A player recorder for tests: a walked `runs` buffer under `name`, no
+    /// waypoints, no naming, at the origin. Tests override individual fields.
+    fn test(runs: Vec<((i8, i8), u16)>, name: &str) -> Self {
+        Self {
+            puppet: Shell::default(),
+            runs,
+            instructions: Vec::new(),
+            path: vec![Vec2::new(0, 0)],
+            camera: Vec2::new(0, 0),
+            noclip: false,
+            name: name.to_string(),
+            actors: vec![("player".to_string(), Vec2::new(0, 0))],
+            actor: 0,
+            naming: None,
+            status: None,
+        }
+    }
 }
 /// Side (px) of the square animated-sprite preview box in the Objects panel.
 const SPRITE_PREVIEW_PX: f32 = 40.0;
@@ -956,6 +1095,13 @@ pub struct MapViewer {
     /// Cutscene names the engine pushes in each focused frame (it owns the
     /// registry, the editor doesn't) so the scene picker can list them.
     pub scene_names: Vec<String>,
+    /// The live actors the engine pushes in each focused frame — `(token, map
+    /// position)` for the player, its companions, and every named creature on the
+    /// current map — so the path recorder can pick which one it records (it can't
+    /// see the walkaround's entities itself). Same refresh cadence as
+    /// [`scene_names`](Self::scene_names). Empty in an extra view, where the
+    /// recorder falls back to the player alone.
+    pub recorder_actors: Vec<(String, Vec2)>,
     /// The declared `#flag` vocabulary the engine pushes in each focused frame
     /// (it owns the loaded script, the editor doesn't), so an object's gate
     /// fields (`if` / `unless` / `sets`) can flag an undeclared name — a typo that
@@ -2982,17 +3128,17 @@ impl MapViewer {
     /// add/remove, so undo restores list shape as well as contents. The action is
     /// cloned out of the history before reverting because `revert` needs `&mut
     /// self`, which can't coexist with a borrow into `self.history`.
-    fn undo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
+    fn undo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, maps: &mut MapStore) {
         if let Some(action) = self.history.undo().cloned() {
-            self.revert(map, maps, &action);
+            self.revert(system, map, maps, &action);
             self.status.edited();
         }
     }
 
     /// Redo the most recently undone edit (Ctrl+Y / Ctrl+Shift+Z).
-    fn redo(&mut self, map: &mut MapInfo, maps: &mut MapStore) {
+    fn redo(&mut self, system: &mut impl ConsoleApi, map: &mut MapInfo, maps: &mut MapStore) {
         if let Some(action) = self.history.redo().cloned() {
-            self.reapply(map, maps, &action);
+            self.reapply(system, map, maps, &action);
             self.status.edited();
         }
     }
@@ -3008,8 +3154,16 @@ impl MapViewer {
         }
     }
 
-    /// Reverse an action's effect (the undo direction).
-    fn revert(&mut self, map: &mut MapInfo, maps: &mut MapStore, action: &EditAction) {
+    /// Reverse an action's effect (the undo direction). `system` is only used by
+    /// the scene edit (which re-installs a file); the map/object/layer actions
+    /// ignore it.
+    fn revert(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        action: &EditAction,
+    ) {
         match action {
             EditAction::Tiles {
                 source,
@@ -3101,11 +3255,22 @@ impl MapViewer {
                 apply_layer_prop(maps, source, *index, *prop, *before);
                 self.pending_reload = true;
             }
+            // Undo a scene edit by re-installing the file as it was before it.
+            EditAction::SceneEdit { before, .. } => {
+                self.install_scene_source(system, before.clone());
+            }
         }
     }
 
-    /// Re-perform an action's effect (the redo direction).
-    fn reapply(&mut self, map: &mut MapInfo, maps: &mut MapStore, action: &EditAction) {
+    /// Re-perform an action's effect (the redo direction). `system` is only used by
+    /// the scene edit; the other actions ignore it.
+    fn reapply(
+        &mut self,
+        system: &mut impl ConsoleApi,
+        map: &mut MapInfo,
+        maps: &mut MapStore,
+        action: &EditAction,
+    ) {
         match action {
             EditAction::Tiles {
                 source,
@@ -3189,6 +3354,10 @@ impl MapViewer {
             } => {
                 apply_layer_prop(maps, source, *index, *prop, *after);
                 self.pending_reload = true;
+            }
+            // Redo a scene edit by re-installing the post-edit file.
+            EditAction::SceneEdit { after, .. } => {
+                self.install_scene_source(system, after.clone());
             }
         }
     }
@@ -3284,7 +3453,7 @@ impl MapViewer {
             && input.keyp(ScanCode::R)
         {
             self.dock.recompute(screen);
-            self.open_path_recorder(map, camera_pos);
+            self.open_path_recorder(map, maps, camera_pos);
             return;
         }
         // `P` opens the scene picker — pick any saved cutscene to replay in the
@@ -3604,13 +3773,13 @@ impl MapViewer {
         if ctrl {
             if input.keyp(ScanCode::Z) {
                 if shift {
-                    self.redo(map, maps);
+                    self.redo(system, map, maps);
                 } else {
-                    self.undo(map, maps);
+                    self.undo(system, map, maps);
                 }
             }
             if input.keyp(ScanCode::Y) {
-                self.redo(map, maps);
+                self.redo(system, map, maps);
             }
             if input.keyp(ScanCode::S) {
                 self.save(system, map, maps);
@@ -4051,17 +4220,36 @@ impl MapViewer {
         );
     }
 
-    fn open_path_recorder(&mut self, map: &MapInfo, camera_pos: Vec2) {
+    fn open_path_recorder(&mut self, map: &MapInfo, maps: &MapStore, camera_pos: Vec2) {
         let (sw, sh) = self.dock.solved.screen;
-        let start = Vec2::new(camera_pos.x + sw as i16 / 2, camera_pos.y + sh as i16 / 2);
-        let puppet = Shell::default().with_pos(start);
+        let view_centre = Vec2::new(camera_pos.x + sw / 2, camera_pos.y + sh / 2);
+        // The host pushes the live actors each focused frame; fall back to the
+        // player at the view centre (an extra view, which isn't fed the list).
+        let actors = if self.recorder_actors.is_empty() {
+            vec![("player".to_string(), view_centre)]
+        } else {
+            self.recorder_actors.clone()
+        };
+        // Seed the puppet on the first actor so clicked waypoints land relative to
+        // where it really is; centre the camera on it (clamped to the map).
+        let start = actors[0].1;
+        let (fw, fh) = Self::map_px_dims(map, maps, (sw, sh));
+        let camera = Vec2::new(
+            clamp_camera(start.x - sw / 2, fw, sw),
+            clamp_camera(start.y - sh / 2, fh, sh),
+        );
         self.path_recorder = Some(PathRecorder {
-            puppet,
+            puppet: Shell::default().with_pos(start),
             runs: Vec::new(),
+            instructions: Vec::new(),
             path: vec![start],
-            camera: camera_pos,
+            camera,
             noclip: false,
             name: format!("{}_path", map.source),
+            actors,
+            actor: 0,
+            naming: None,
+            status: None,
         });
     }
 
@@ -4088,18 +4276,35 @@ impl MapViewer {
         let (sw, sh) = (screen.0 as i16, screen.1 as i16);
         let (fw, fh) = Self::map_px_dims(map, maps, (sw, sh));
 
+        // The name field, while focused, swallows every key — so typing a name
+        // can't drive the puppet, toggle noclip, or trip the save/cancel keys.
+        if pr.naming.is_some() {
+            self.step_recorder_naming(&mut pr, input);
+            self.path_recorder = Some(pr);
+            return;
+        }
+
         if input.keyp(ScanCode::Escape) || input.keyp(ScanCode::X) {
             self.path_recorder = None;
             return;
         }
         if input.keyp(ScanCode::Return) || input.keyp(ScanCode::Z) {
+            self.path_recorder = Some(pr);
             self.commit_path_recorder(system);
+            return;
+        }
+        // `Tab` cycles which actor is recorded (player / companions / map creatures).
+        if input.keyp(ScanCode::Tab) {
+            pr.select_actor(pr.actor + 1);
+            pr.follow_camera(sw, sh, fw, fh);
+            self.path_recorder = Some(pr);
             return;
         }
         // `N` toggles noclip — but only before any movement is recorded, since the
         // flag is saved once for the whole replay (toggling mid-record would make
-        // the replay re-collide segments differently than they were driven).
-        if input.keyp(ScanCode::N) && pr.runs.iter().all(|(d, _)| *d == (0, 0)) {
+        // the replay re-collide segments differently than they were driven, and it
+        // also governs whether clicked waypoints emit `walk` or `noclip`).
+        if input.keyp(ScanCode::N) && !pr.has_recorded() {
             pr.noclip = !pr.noclip;
         }
 
@@ -4108,11 +4313,37 @@ impl MapViewer {
         if just_pressed(mouse.left) {
             match self.build_path_recorder_ui().hit_at(0, 0, cursor) {
                 Some(EditorKey::PathRecOk) => {
+                    self.path_recorder = Some(pr);
                     self.commit_path_recorder(system);
                     return;
                 }
                 Some(EditorKey::PathRecCancel) => {
                     self.path_recorder = None;
+                    return;
+                }
+                Some(EditorKey::PathRecName) => {
+                    // Focus the name field, primed with the current name.
+                    pr.naming = Some(TextField::new(pr.name.clone()));
+                    pr.status = None;
+                    self.path_recorder = Some(pr);
+                    return;
+                }
+                Some(EditorKey::PathRecActor) => {
+                    pr.select_actor(pr.actor + 1);
+                    pr.follow_camera(sw, sh, fw, fh);
+                    self.path_recorder = Some(pr);
+                    return;
+                }
+                Some(EditorKey::PathRecCanvas) => {
+                    // A click on the map area drops a `MoveToPoint` waypoint at the
+                    // clicked map pixel — authoring a path without walking it.
+                    let point = Vec2::new(
+                        (cursor.x + pr.camera.x).clamp(0, fw - 1),
+                        (cursor.y + pr.camera.y).clamp(0, fh - 1),
+                    );
+                    pr.place_waypoint(point);
+                    pr.follow_camera(sw, sh, fw, fh);
+                    self.path_recorder = Some(pr);
                     return;
                 }
                 _ => {}
@@ -4147,14 +4378,40 @@ impl MapViewer {
         pr.path.push(pr.puppet.pos);
 
         // Camera follows the puppet, clamped to the map.
-        pr.camera.x = clamp_camera(pr.puppet.pos.x - sw / 2, fw, sw);
-        pr.camera.y = clamp_camera(pr.puppet.pos.y - sh / 2, fh, sh);
+        pr.follow_camera(sw, sh, fw, fh);
 
         self.path_recorder = Some(pr);
     }
 
-    /// Save the recording as a one-actor (`player`) cutscene named `<map>_path`,
-    /// merged into the on-disk `.eggscene` registry (so other cutscenes survive),
+    /// Step the focused scene-name field: feed it the frame's keys, and on Return
+    /// validate the typed name. A valid identifier is accepted (flagged "replaces
+    /// existing" when it collides with a saved scene, since re-recording under a
+    /// name overwrites it); anything else keeps the field open with a hint. Escape
+    /// abandons the edit, leaving the previous name.
+    fn step_recorder_naming(&mut self, pr: &mut PathRecorder, input: &EggInput) {
+        let Some(mut field) = pr.naming.take() else {
+            return;
+        };
+        match field.step(input) {
+            TextEvent::Active => pr.naming = Some(field),
+            TextEvent::Cancel => pr.status = None,
+            TextEvent::Commit => {
+                let candidate = field.text().trim().to_string();
+                if scene::is_identifier_name(&candidate) {
+                    let replaces = self.scene_names.iter().any(|n| n == &candidate);
+                    pr.name = candidate;
+                    pr.status = replaces.then(|| format!("replaces existing '{}'", pr.name));
+                } else {
+                    pr.status = Some("name: letters, digits, _ only".into());
+                    pr.naming = Some(field);
+                }
+            }
+        }
+    }
+
+    /// Save the recording as a one-actor cutscene (the chosen actor's chain), under
+    /// the recorder's name, merged into the on-disk `.eggscene` registry (so other
+    /// cutscenes survive) and recorded as one undoable [`EditAction::SceneEdit`],
     /// then signal the host to re-parse + live-reload it. The editor writes the
     /// file itself (it holds the console); only the install is host-deferred.
     fn commit_path_recorder(&mut self, system: &mut impl ConsoleApi) {
@@ -4182,28 +4439,41 @@ impl MapViewer {
             );
             return;
         }
-        let Some(pr) = self.path_recorder.take() else { return };
-        // Trim leading + trailing idle (the reaction-time pauses before the first
-        // press and after the last); keep interior idles — those are real timing.
-        let mut runs = pr.runs;
-        while runs.first().is_some_and(|(d, _)| *d == (0, 0)) {
-            runs.remove(0);
-        }
-        while runs.last().is_some_and(|(d, _)| *d == (0, 0)) {
-            runs.pop();
-        }
-        if runs.is_empty() {
+        let Some(mut pr) = self.path_recorder.take() else {
+            return;
+        };
+        // A name should already be a valid identifier (the field validates it, and
+        // the `<map>_path` default is always valid), but guard defensively: never
+        // emit a header the file can't re-parse. Keep the recording to retry.
+        if !scene::is_identifier_name(&pr.name) {
+            pr.status = Some("name: letters, digits, _ only".into());
+            self.path_recorder = Some(pr);
             return;
         }
-        let motion = Motion::Record {
-            runs,
-            noclip: pr.noclip,
+        // Fold the trailing walked buffer into the instruction list (each segment
+        // is edge-trimmed as it's folded — see `fold_walk_run`). Nothing recorded
+        // ⇒ nothing to save.
+        pr.fold_walk_run();
+        if pr.instructions.is_empty() {
+            return;
+        }
+        let actor = pr.actor_token().to_string();
+        // A non-reserved actor is a map creature referenced by id; bind it with a
+        // `find` init so the chain resolves it explicitly (and fail-safely if it's
+        // gone). `player`/`companion N` resolve without any binding.
+        let init = if scene::is_reserved_actor(&actor) {
+            Vec::new()
+        } else {
+            vec![scene::GetEntity::GetOrIgnore {
+                name: actor.clone(),
+            }]
         };
         let chain = Chain {
-            actor: "player".to_string(),
-            instructions: vec![Instruction::new(motion, 0)],
+            actor,
+            instructions: pr.instructions.clone(),
         };
         let def = CutsceneDef {
+            init,
             content: vec![CutsceneContent::Move(vec![chain])],
             ..Default::default()
         };
@@ -4213,19 +4483,36 @@ impl MapViewer {
             scene::parse(&merged).is_ok(),
             "merged source must re-parse: {merged}"
         );
-        system.write_file(SCENE_PATH, merged.as_bytes());
-        self.pending_scene = Some(merged);
+        // Route the write through the History as one undoable edit (before = the
+        // file as read, after = the merge), so Ctrl+Z reverts the whole recording.
+        self.install_scene_source(system, merged.clone());
+        self.record(EditAction::SceneEdit {
+            before: raw,
+            after: merged,
+        });
         // Save-and-play: drop straight into the scrubber on what was just
         // recorded — replayed directly from `def`, so it needn't wait for the
         // on-disk scene to live-reload back into the registry.
         self.pending_scrub = Some(ScrubRequest::Recorded(pr.name.clone(), def));
-        self.status.edited();
     }
 
-    /// The recorder chrome: a `PATH RECORDER` banner + a bottom bar (hint +
-    /// save/cancel). Shared by the hit pass and the draw pass.
+    /// Write an `.eggscene` source to disk and stage it for the host's live-reload
+    /// (re-parse → `set_scenes`). The single seam the recorder's save and its
+    /// undo/redo share — the editor owns the file; only the registry install is
+    /// host-deferred (see [`pending_scene`](Self::pending_scene)).
+    fn install_scene_source(&mut self, system: &mut impl ConsoleApi, source: String) {
+        system.write_file(SCENE_PATH, source.as_bytes());
+        self.pending_scene = Some(source);
+    }
+
+    /// The recorder chrome: a `PATH RECORDER` banner, a clickable name + actor row,
+    /// an optional status line, and a bottom bar (hint + save/cancel). The central
+    /// spacer is the map canvas — a click there drops a waypoint. Shared by the hit
+    /// pass and the draw pass.
     fn build_path_recorder_ui(&self) -> Ui<EditorKey> {
         let (sw, sh) = self.dock.solved.screen;
+        let pr = self.path_recorder.as_ref();
+        let naming = pr.is_some_and(|pr| pr.naming.is_some());
         let mut b = UiBuilder::new();
         let banner = b
             .text("PATH RECORDER")
@@ -4235,8 +4522,45 @@ impl MapViewer {
             .full_width(8.0)
             .fill(11)
             .id();
+        // Name: shows the live edit buffer (with caret) while focused, else the
+        // committed name; clicking it focuses the field.
+        let name_text = match pr {
+            Some(pr) if pr.naming.is_some() => {
+                format!("name: {}", pr.naming.as_ref().unwrap().display())
+            }
+            Some(pr) => format!("name: {}", pr.name),
+            None => "name:".to_string(),
+        };
+        let name_row = b
+            .text(name_text)
+            .small(true)
+            .color(if naming { 0 } else { 12 })
+            .full_width(7.0)
+            .fill(if naming { 14 } else { 0 })
+            .key(EditorKey::PathRecName)
+            .id();
+        let actor_row = b
+            .text(format!(
+                "actor: {}   [Tab]",
+                pr.map_or("player", |pr| pr.actor_token())
+            ))
+            .small(true)
+            .color(12)
+            .full_width(7.0)
+            .key(EditorKey::PathRecActor)
+            .id();
+        let mut top = vec![banner, name_row, actor_row];
+        if let Some(status) = pr.and_then(|pr| pr.status.as_ref()) {
+            top.push(
+                b.text(status.clone())
+                    .small(true)
+                    .color(9)
+                    .full_width(7.0)
+                    .id(),
+            );
+        }
         let hint = b
-            .text("dpad = drive   N = noclip   Z = save   X = cancel")
+            .text("dpad/click = path   Tab = actor   N = noclip   Z = save   X = cancel")
             .small(true)
             .color(13)
             .grow(1.0)
@@ -4260,9 +4584,11 @@ impl MapViewer {
             .key(EditorKey::PathRecCancel)
             .id();
         let bottom = b.row(2.0, [hint, ok, cancel]).pad(1.0).id();
-        let spacer = b.spacer(0.0).grow(1.0).id();
+        // The central spacer is the clickable map canvas (waypoint placement).
+        let canvas = b.spacer(0.0).grow(1.0).key(EditorKey::PathRecCanvas).id();
+        let header = b.column(0.0, top).id();
         let root = b
-            .column(0.0, [banner, spacer, bottom])
+            .column(0.0, [header, canvas, bottom])
             .size(sw as f32, sh as f32)
             .id();
         b.finish(root, (sw as f32, sh as f32))
@@ -4632,10 +4958,15 @@ impl MapViewer {
             }
             // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
             // (it's modal), so they never arrive through the normal panel dispatch.
+            // The recorder's own controls (save/cancel/name/actor/canvas) are the
+            // same — hit-tested inside `step_path_recorder`, never here.
             EditorKey::WarpPreviewOk
             | EditorKey::WarpPreviewCancel
             | EditorKey::PathRecOk
-            | EditorKey::PathRecCancel => {}
+            | EditorKey::PathRecCancel
+            | EditorKey::PathRecName
+            | EditorKey::PathRecActor
+            | EditorKey::PathRecCanvas => {}
             // Press on a panel's scroll bar: begin a thumb drag, capturing the grab
             // offset so the thumb tracks the cursor rather than snapping under it.
             EditorKey::PanelScroll(pidx) => {
@@ -4710,12 +5041,12 @@ impl MapViewer {
             }
             EditorKey::Undo => {
                 if click {
-                    self.undo(map, maps);
+                    self.undo(system, map, maps);
                 }
             }
             EditorKey::Redo => {
                 if click {
-                    self.redo(map, maps);
+                    self.redo(system, map, maps);
                 }
             }
             EditorKey::Save => {
@@ -7799,6 +8130,7 @@ fn sync_store(maps: &mut MapStore, name: &str, json: &str) {
 mod tests {
     use super::*;
     use crate::data::script::eggtext;
+    use crate::platform::null_console::NullConsole;
 
     fn tiles(cells: Vec<(i32, i32, usize, usize)>) -> EditAction {
         EditAction::Tiles {
@@ -7900,14 +8232,10 @@ mod tests {
     fn path_recorder_commit_emits_and_merges_a_record_cutscene() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![((1, 0), 5), ((0, 1), 3)],
-            path: vec![Vec2::new(0, 0)],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "town_path".to_string(),
-        });
+        ed.path_recorder = Some(PathRecorder::test(
+            vec![((1, 0), 5), ((0, 1), 3)],
+            "town_path",
+        ));
         let mut console = TestConsole::new();
         // A pre-existing cutscene on disk must survive the merge.
         console.write_file(SCENE_PATH, b"#cutscene other\n    wait 5");
@@ -7940,14 +8268,7 @@ mod tests {
     fn path_recorder_save_preserves_comments_and_other_scenes() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![((1, 0), 5)],
-            path: vec![Vec2::new(0, 0)],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "town_path".to_string(),
-        });
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
         let original = "// a hand-authored header\n// keep me\n#cutscene other\n    wait 5\n";
         console.write_file(SCENE_PATH, original.as_bytes());
@@ -7969,14 +8290,7 @@ mod tests {
     fn path_recorder_save_replaces_an_existing_same_name_block() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![((1, 0), 5)],
-            path: vec![Vec2::new(0, 0)],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "town_path".to_string(),
-        });
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
         // An old town_path (a bare wait) plus a neighbour to preserve.
         let original = "#cutscene town_path\n    wait 99\n\n#cutscene other\n    wait 5\n";
@@ -8004,7 +8318,7 @@ mod tests {
         let mut store = MapStore::default();
         let mut map = MapInfo::default();
         let mut ed = MapViewer::primary();
-        ed.open_path_recorder(&map, Vec2::new(0, 0));
+        ed.open_path_recorder(&map, &store, Vec2::new(0, 0));
         let start = ed.path_recorder.as_ref().unwrap().puppet.pos;
 
         let mut console = TestConsole::new();
@@ -8040,14 +8354,7 @@ mod tests {
     fn path_recorder_ignores_an_empty_recording() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![((0, 0), 30)],
-            path: vec![],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "town_path".to_string(),
-        });
+        ed.path_recorder = Some(PathRecorder::test(vec![((0, 0), 30)], "town_path"));
         let mut console = TestConsole::new();
         ed.commit_path_recorder(&mut console);
         assert!(ed.pending_scene.is_none(), "nothing recorded, nothing saved");
@@ -8059,14 +8366,7 @@ mod tests {
     fn path_recorder_does_not_clobber_an_unparseable_scene_file() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![((1, 0), 5)],
-            path: vec![],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "town_path".to_string(),
-        });
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
         let bad = b"#cutscene broken\n    bogusverb 1 2";
         console.write_file(SCENE_PATH, bad);
@@ -8082,20 +8382,16 @@ mod tests {
     fn path_recorder_trims_outer_idle_keeps_inner() {
         use crate::platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
-        ed.path_recorder = Some(PathRecorder {
-            puppet: Shell::default(),
-            runs: vec![
+        ed.path_recorder = Some(PathRecorder::test(
+            vec![
                 ((0, 0), 10),
                 ((1, 0), 5),
                 ((0, 0), 4),
                 ((0, 1), 3),
                 ((0, 0), 20),
             ],
-            path: vec![],
-            camera: Vec2::new(0, 0),
-            noclip: false,
-            name: "p".to_string(),
-        });
+            "p",
+        ));
         let mut console = TestConsole::new();
         ed.commit_path_recorder(&mut console);
         let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
@@ -8106,6 +8402,231 @@ mod tests {
             panic!("record");
         };
         assert_eq!(runs, &vec![((1, 0), 5), ((0, 0), 4), ((0, 1), 3)]);
+    }
+
+    /// The move of a chosen map creature: the emitted scene binds it with a `find`
+    /// init and its chain names the creature's id (as a hand-authored scene does).
+    #[test]
+    fn path_recorder_records_a_chosen_map_creature() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        let mut pr = PathRecorder::test(vec![((1, 0), 4)], "dog_path");
+        pr.actors = vec![
+            ("player".to_string(), Vec2::new(0, 0)),
+            ("dog".to_string(), Vec2::new(50, 50)),
+        ];
+        pr.actor = 1; // the dog
+        ed.path_recorder = Some(pr);
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+
+        let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
+        let def = file.get_cutscene("dog_path").unwrap();
+        assert_eq!(
+            def.init,
+            vec![scene::GetEntity::GetOrIgnore { name: "dog".into() }],
+            "a map creature is bound with a `find` init"
+        );
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(chains[0].actor, "dog", "the chain names the creature");
+    }
+
+    /// The player needs no init binding — `player` resolves without one.
+    #[test]
+    fn path_recorder_player_actor_emits_no_init() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 4)], "p_path"));
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+        let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
+        assert!(
+            file.get_cutscene("p_path").unwrap().init.is_empty(),
+            "the player is a reserved actor — no binding"
+        );
+    }
+
+    /// A committed recording is one undoable edit: undo re-installs the file as it
+    /// was before, redo puts the recording back (both write disk + stage a reload).
+    #[test]
+    fn path_recorder_commit_is_undoable() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        let mut map = MapInfo::default();
+        let mut maps = MapStore::default();
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
+        let mut console = TestConsole::new();
+        let before = "#cutscene other\n    wait 5\n";
+        console.write_file(SCENE_PATH, before.as_bytes());
+
+        ed.commit_path_recorder(&mut console);
+        let after = ed.pending_scene.clone().expect("staged");
+        assert!(after.contains("#cutscene town_path"), "recorded: {after}");
+
+        // Undo restores the pre-recording file and stages it for reload.
+        ed.undo(&mut console, &mut map, &mut maps);
+        let on_disk = String::from_utf8(console.read_file(SCENE_PATH).unwrap()).unwrap();
+        assert_eq!(on_disk, before, "undo re-installs the old file");
+        assert_eq!(ed.pending_scene.as_deref(), Some(before), "and stages it");
+
+        // Redo re-installs the recording.
+        ed.redo(&mut console, &mut map, &mut maps);
+        let on_disk = String::from_utf8(console.read_file(SCENE_PATH).unwrap()).unwrap();
+        assert_eq!(on_disk, after, "redo re-installs the recording");
+        assert_eq!(ed.pending_scene.as_ref(), Some(&after), "and stages it");
+    }
+
+    /// The name field validates on commit: a valid identifier is taken, a
+    /// collision is taken but flagged "replaces", and a bad name keeps the field
+    /// open with the old name intact.
+    #[test]
+    fn recorder_naming_validates() {
+        let mut ed = MapViewer::primary();
+        ed.scene_names = vec!["existing".into()];
+        let mut pr = PathRecorder::test(vec![], "town_path");
+        let mut enter = EggInput::new();
+        enter.press_key(ScanCode::Return);
+
+        // A valid new name is accepted and closes the field.
+        pr.naming = Some(TextField::new("fresh_path"));
+        ed.step_recorder_naming(&mut pr, &enter);
+        assert_eq!(pr.name, "fresh_path");
+        assert!(pr.naming.is_none());
+        assert!(pr.status.is_none(), "a fresh name is not a replace");
+
+        // A collision is accepted but flagged as a replace.
+        pr.naming = Some(TextField::new("existing"));
+        ed.step_recorder_naming(&mut pr, &enter);
+        assert_eq!(pr.name, "existing");
+        assert!(
+            pr.status.as_deref().unwrap().contains("replaces"),
+            "a duplicate name is flagged: {:?}",
+            pr.status
+        );
+
+        // A bad name (whitespace) is rejected — field stays open, name unchanged.
+        pr.naming = Some(TextField::new("two words"));
+        ed.step_recorder_naming(&mut pr, &enter);
+        assert!(pr.naming.is_some(), "an invalid name keeps the field open");
+        assert_eq!(pr.name, "existing", "the name is unchanged");
+    }
+
+    /// A clicked waypoint appends a `MoveToPoint`; several compose in click order,
+    /// emitting `walk X Y` motions.
+    #[test]
+    fn path_recorder_waypoints_emit_walk_motions() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        let mut pr = PathRecorder::test(vec![], "wp_path");
+        pr.place_waypoint(Vec2::new(30, 40));
+        pr.place_waypoint(Vec2::new(60, 20));
+        assert_eq!(
+            pr.puppet.pos,
+            Vec2::new(60, 20),
+            "the puppet follows the last"
+        );
+        ed.path_recorder = Some(pr);
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+
+        let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
+        let CutsceneContent::Move(chains) = &file.get_cutscene("wp_path").unwrap().content[0]
+        else {
+            panic!("move");
+        };
+        let motions: Vec<&Motion> = chains[0].instructions.iter().map(|i| &i.motion).collect();
+        assert_eq!(
+            motions,
+            vec![
+                &Motion::MoveToPoint(Vec2::new(30, 40)),
+                &Motion::MoveToPoint(Vec2::new(60, 20)),
+            ]
+        );
+    }
+
+    /// Walked runs and clicked waypoints interleave in author order: a buffered
+    /// walk, a waypoint, then another buffered walk emit Record, walk, Record.
+    #[test]
+    fn path_recorder_interleaves_walks_and_waypoints() {
+        use crate::platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        let mut pr = PathRecorder::test(vec![((1, 0), 3)], "mix_path");
+        pr.place_waypoint(Vec2::new(80, 10)); // folds the walk, then the waypoint
+        pr.runs = vec![((0, 1), 2)]; // a second walked segment, folded at commit
+        ed.path_recorder = Some(pr);
+        let mut console = TestConsole::new();
+        ed.commit_path_recorder(&mut console);
+
+        let file = scene::parse(&ed.pending_scene.unwrap()).unwrap();
+        let CutsceneContent::Move(chains) = &file.get_cutscene("mix_path").unwrap().content[0]
+        else {
+            panic!("move");
+        };
+        let kinds: Vec<_> = chains[0]
+            .instructions
+            .iter()
+            .map(|i| match &i.motion {
+                Motion::Record { .. } => "record",
+                Motion::MoveToPoint(_) => "walk",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["record", "walk", "record"]);
+    }
+
+    /// A canvas click through the modal step drops a waypoint at the clicked map
+    /// point (exercising the hit-test → `place_waypoint` wiring).
+    #[test]
+    fn path_recorder_canvas_click_drops_a_waypoint() {
+        use crate::platform::test_console::TestConsole;
+        let mut store = MapStore::default();
+        let mut map = MapInfo::default();
+        let mut ed = MapViewer::primary();
+        ed.dock.recompute((200.0, 150.0));
+        ed.path_recorder = Some(PathRecorder::test(vec![], "click_path"));
+        let mut console = TestConsole::new();
+
+        // Click in the middle of the screen — inside the map-canvas region.
+        let mut input = EggInput::new();
+        input.mouse.x = [100, 100];
+        input.mouse.y = [75, 75];
+        input.mouse.left = [true, false]; // a fresh press this frame
+        ed.step_path_recorder(&mut console, &input, &mut map, &mut store, (200.0, 150.0));
+
+        let pr = ed.path_recorder.as_ref().expect("still recording");
+        assert_eq!(pr.instructions.len(), 1, "one waypoint was placed");
+        assert_eq!(
+            pr.instructions[0].motion,
+            Motion::MoveToPoint(Vec2::new(100, 75))
+        );
+    }
+
+    /// Switching actor discards the in-progress path and re-seats the puppet on the
+    /// new actor's start position.
+    #[test]
+    fn path_recorder_select_actor_resets_the_path() {
+        let mut pr = PathRecorder::test(vec![((1, 0), 6)], "x");
+        pr.instructions
+            .push(Instruction::new(Motion::MoveToPoint(Vec2::new(1, 1)), 0));
+        pr.actors = vec![
+            ("player".to_string(), Vec2::new(0, 0)),
+            ("dog".to_string(), Vec2::new(90, 30)),
+        ];
+        pr.select_actor(1);
+        assert_eq!(pr.actor, 1);
+        assert_eq!(pr.actor_token(), "dog");
+        assert_eq!(
+            pr.puppet.pos,
+            Vec2::new(90, 30),
+            "puppet re-seated on the dog"
+        );
+        assert!(
+            pr.runs.is_empty() && pr.instructions.is_empty(),
+            "path cleared"
+        );
+        assert_eq!(pr.path, vec![Vec2::new(90, 30)]);
     }
 
     /// The modal step self-closes if the destination map vanishes mid-session, so
@@ -8527,7 +9048,7 @@ mod tests {
         // Undoing that collision edit must also re-derive (restore tile + flag).
         let mut map = map; // undo/redo take &mut MapInfo
         viewer.pending_reload = false;
-        viewer.undo(&mut map, &mut maps);
+        viewer.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(
             maps.get("m").unwrap().get(0, 0, 0),
             Some(9),
@@ -8574,7 +9095,7 @@ mod tests {
         assert_eq!((hb.x, hb.y, hb.w, hb.h), (40, 24, 8, 1));
 
         // Each edit is one undo step; undoing the last reverts just the height.
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(map.objects[0].hitbox.h, 16);
         assert_eq!(map.objects[0].hitbox.w, 8);
     }
@@ -8633,7 +9154,7 @@ mod tests {
         assert_eq!(frames(&map)[1].spr_id, 7);
 
         // Undo the second add (leaves `sprite_frame` stale at 1).
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(frames(&map).len(), 1, "second frame undone");
 
         // -frm heals the stale index to the last frame and removes it; the whole
@@ -8645,7 +9166,7 @@ mod tests {
         );
 
         // Undo the removal.
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(frames(&map).len(), 1, "removal undone");
         assert_eq!(frames(&map)[0].spr_id, 30);
     }
@@ -8695,11 +9216,11 @@ mod tests {
         assert_eq!(v.sprite_frame, 2, "selection follows the dropped frame");
 
         // Each reorder is a single undo step.
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(tiles(&map), vec![10, 30, 20], "drag move undone");
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(tiles(&map), vec![10, 20, 30], "button move undone");
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(tiles(&map), vec![10, 30, 20], "button move redone");
     }
 
@@ -8723,9 +9244,9 @@ mod tests {
         assert!(!map.objects[0].removable, "toggled off");
         // Each toggle is one undo step.
         v.cycle(&mut map, CycleField::Removable);
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert!(!map.objects[0].removable, "toggle undone");
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert!(map.objects[0].removable, "toggle redone");
     }
 
@@ -8883,7 +9404,7 @@ mod tests {
             assert_eq!(f.options.transparent, None);
         }
         // The clear is one undo step.
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(
             map.objects[0].sprite.as_ref().unwrap()[0]
                 .options
@@ -8969,10 +9490,10 @@ mod tests {
         });
         assert_eq!(maps.get("m").unwrap().layers.len(), n0 + 1);
 
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layers.len(), n0);
         assert!(v.pending_reload, "layer undo re-derives");
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layers.len(), n0 + 1);
 
         // Delete a tile layer holding content; undo brings it (and the tile) back.
@@ -8984,7 +9505,7 @@ mod tests {
             layer: Box::new(removed),
         });
         assert_eq!(maps.get("m").unwrap().layers.len(), n0); // back down one
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(
             maps.get("m").unwrap().get(1, 0, 0),
             Some(7),
@@ -9029,9 +9550,9 @@ mod tests {
         v.commit_edit(&mut map, &mut maps);
         v.stop_editing();
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("Layer 1"));
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
 
         // Plane cycle writes the `plane` property (no rename): BG -> Sprite ->
@@ -9045,9 +9566,9 @@ mod tests {
         v.cycle_layer_plane(&map, &mut maps, 1);
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Fg);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"), "no rename");
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Sprite);
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Fg);
 
         // An empty rename is ignored (a layer stays identifiable).
@@ -9098,9 +9619,9 @@ mod tests {
         assert!(v.pending_reload, "a reorder re-derives the display list");
         assert!(v.history.can_undo(), "the drag is one undo step");
 
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(order(&maps), ["collision", "Layer 1", "a", "b"], "undone");
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "redone");
 
         // Dragging the protected collision layer (store 0) is refused — no change.
@@ -9108,7 +9629,7 @@ mod tests {
         assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "collision stays put");
         // ...and it records nothing: the next undo reverts the earlier reorder
         // rather than a no-op the refused drag would have stacked on top.
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(
             order(&maps),
             ["collision", "Layer 1", "a", "b"],
@@ -9553,11 +10074,11 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, -2.0)));
         assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 5);
 
-        v.undo(&mut map, &mut maps); // rotation
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps); // rotation
         assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 0);
-        v.undo(&mut map, &mut maps); // y offset
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps); // y offset
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, 0.0)));
-        v.redo(&mut map, &mut maps);
+        v.redo(&mut NullConsole::new(), &mut map, &mut maps);
         assert_eq!(maps.get("m").unwrap().layer_offset(1), Some((3.0, -2.0)));
     }
 
@@ -9603,7 +10124,7 @@ mod tests {
 
         commit(&mut v, &mut map, &mut maps, EditField::LayerRotate, "5");
         assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 5);
-        v.undo(&mut map, &mut maps);
+        v.undo(&mut NullConsole::new(), &mut map, &mut maps);
         // Restores 20 mod 16 = 4 (the normalised prior), not clamp(20)=15.
         assert_eq!(maps.get("m").unwrap().layer_palette_rotate(1), 4);
 
