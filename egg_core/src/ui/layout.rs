@@ -372,7 +372,9 @@ impl<K: Copy + PartialEq> Node<'_, K> {
         self.deco.outline = Some(c);
         self
     }
-    /// Fill and outline in one call.
+    /// Fill and outline in one call. Sets the fill unconditionally — after a
+    /// conditional [`fill_if`](Self::fill_if) highlight, use plain
+    /// [`outline`](Self::outline) instead or the highlight is overwritten.
     pub fn outlined(self, fill: u8, outline: u8) -> Self {
         self.fill(fill).outline(outline)
     }

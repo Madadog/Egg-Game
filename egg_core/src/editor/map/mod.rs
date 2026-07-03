@@ -1510,8 +1510,8 @@ impl MapViewer {
                     .center()
                     .color(if open { 0 } else { 12 })
                     .size(7.0, 7.0)
-                    .fill_if(open, 11)
-                    .outlined(0, 12)
+                    .fill(if open { 11 } else { 0 })
+                    .outline(12)
                     .key(EditorKey::TogglePanel(kind))
                     .id(),
             );
@@ -2633,8 +2633,8 @@ impl MapViewer {
             .color(if on { 0 } else { 12 })
             .full_width(7.0)
             .grow(1.0)
-            .fill_if(on, 11)
-            .outlined(0, 12)
+            .fill(if on { 11 } else { 0 })
+            .outline(12)
             .key(key)
             .id()
     }

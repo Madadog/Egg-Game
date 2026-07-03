@@ -63,9 +63,12 @@ const C_BG: u8 = 0;
 const C_TEXT: u8 = 12;
 const C_DIM: u8 = 13;
 const C_HILITE: u8 = 11;
-/// Selection background — a dark blue (Sweetie-16 #8) that white body text still
-/// reads clearly over, kept distinct from the cyan caret/active-outline hilite.
-const C_SEL: u8 = 8;
+/// Selection background — the bright blue (Sweetie-16 #9). The darker blue #8
+/// was tried first and is near-indistinguishable from the #1a1c2c editor
+/// background; #9 reads unmistakably as a selection while white body text (and
+/// the syntax-role colours) stay legible over it, and it remains distinct from
+/// the cyan caret/active-outline hilite.
+const C_SEL: u8 = 9;
 
 // Syntax-highlight role colours (Sweetie-16 indices), resolved into `role_cols`
 // in draw and indexed by `HiRole as usize`.
