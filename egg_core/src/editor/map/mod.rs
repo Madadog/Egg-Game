@@ -348,9 +348,13 @@ impl<A: Clone> Default for History<A> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum EditorKey {
     Tool(EditorTool),
-    Title,
+    /// A Layers-panel plane filter toggle (bg / sprite / fg): hides that plane's
+    /// rows from the (map-ordered) list without moving the selection.
+    LayerFilter(Plane),
+    /// Select the layer at this **store** index (`source_layer`); the row is keyed
+    /// by the absolute layer index, not a per-plane display row.
     Layer(usize),
-    /// A layer row's visibility (eye) toggle.
+    /// A layer row's visibility (eye) toggle, keyed by store index.
     LayerVis(usize),
     /// Layers panel toolbar: add tile layer / duplicate / delete / move up /
     /// move down / rename / cycle draw plane (BG → Sprite → FG).
@@ -782,14 +786,80 @@ struct TextEdit {
     target: usize,
 }
 
+/// The Layers panel's per-plane row filters. The panel lists **every** layer in
+/// map order; the chips narrow it by plane. All three default on (the whole
+/// list shows). UI-only state — narrowing the view never changes which layer is
+/// selected or paints (a hidden selected layer still edits), so it isn't
+/// persisted. Replaces the old single-plane paging.
+///
+/// A chip click reads as "show me this plane" ([`click`](Self::click)), not
+/// "hide this plane": from the everything-shown default it *solos* the clicked
+/// plane, further clicks build the shown set up chip by chip, and emptying the
+/// set snaps back to all-on — the list can never go blank, which would read as
+/// the layers having been erased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerFilter {
+    pub bg: bool,
+    pub sprite: bool,
+    pub fg: bool,
+}
+impl Default for LayerFilter {
+    fn default() -> Self {
+        Self {
+            bg: true,
+            sprite: true,
+            fg: true,
+        }
+    }
+}
+impl LayerFilter {
+    /// Whether a layer on `plane` is listed (its filter toggle is on).
+    fn shows(&self, plane: Plane) -> bool {
+        match plane {
+            Plane::Bg => self.bg,
+            Plane::Sprite => self.sprite,
+            Plane::Fg => self.fg,
+        }
+    }
+    /// Flip `plane`'s toggle.
+    fn toggle(&mut self, plane: Plane) {
+        match plane {
+            Plane::Bg => self.bg = !self.bg,
+            Plane::Sprite => self.sprite = !self.sprite,
+            Plane::Fg => self.fg = !self.fg,
+        }
+    }
+    /// A chip click, with "show me this plane" semantics: from all-on the click
+    /// **solos** `plane`; on a narrowed set it toggles `plane` in or out; and a
+    /// click that would empty the set restores all-on instead (an all-off list
+    /// looks like the layers were erased).
+    fn click(&mut self, plane: Plane) {
+        if self.bg && self.sprite && self.fg {
+            *self = Self {
+                bg: false,
+                sprite: false,
+                fg: false,
+            };
+            self.toggle(plane);
+            return;
+        }
+        self.toggle(plane);
+        if !(self.bg || self.sprite || self.fg) {
+            *self = Self::default();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MapViewer {
     pub focused: bool,
-    /// Which draw plane the Layers panel currently shows and edits into
-    /// (BG / Sprite / FG). Cycled by the panel title and the plane button; a
-    /// layer's plane-cycle follows the layer to its new list. Defaults to
-    /// [`Plane::Bg`].
-    pub plane: Plane,
+    /// Which draw planes the Layers panel currently lists (bg / sprite / fg
+    /// toggles). Filtering hides rows only — it never moves the selection.
+    pub filter: LayerFilter,
+    /// The **store** index (into `TiledMap.layers`, i.e. a [`LayerInfo::source_layer`])
+    /// of the selected layer — an absolute, map-order index that is stable across
+    /// filtering and the same value on any plane. `0` (the collision layer) by
+    /// default; a stale index just leaves the selection empty (Paint no-ops).
     pub layer_index: usize,
     tool: EditorTool,
     /// The brush's top-left sheet tile. The brush spans `brush_w`×`brush_h` tiles
@@ -1028,7 +1098,7 @@ impl MapViewer {
                 if self.tool == EditorTool::Select {
                     self.build_select(&mut b, &mut rows);
                 } else {
-                    self.build_paint(&mut b, &mut rows);
+                    self.build_paint(&mut b, &mut rows, map);
                 }
             }
             PanelKind::Objects => {
@@ -1322,29 +1392,23 @@ impl MapViewer {
         None
     }
 
-    /// Drag-reorder the active layer list: slide the layer shown at display row
-    /// `from` to display row `to`, translating to the store's layer indices and
-    /// recording one [`EditAction::LayerMove`]. The collision layer is protected
-    /// inside [`TiledMap::reorder_layer`].
+    /// Drag-reorder a layer: slide the layer at store index `from` to store index
+    /// `to`, recording one [`EditAction::LayerMove`]. Rows are keyed by store
+    /// index (map order), so `from`/`to` are already `source_layer`s — no
+    /// per-plane translation. The collision layer is protected inside
+    /// [`TiledMap::reorder_layer`], which also clamps `to` (returned as `b`).
     fn reorder_layer_to(&mut self, map: &mut MapInfo, maps: &mut MapStore, from: usize, to: usize) {
-        let list = self.shown_layers(map);
-        let (Some(src_from), Some(src_to)) = (
-            list.get(from).map(|l| l.source_layer),
-            list.get(to).map(|l| l.source_layer),
-        ) else {
-            return;
-        };
         if let Some((a, b)) = maps
             .get_mut(&map.source)
-            .and_then(|tm| tm.reorder_layer(src_from, src_to))
+            .and_then(|tm| tm.reorder_layer(from, to))
         {
             self.record(EditAction::LayerMove {
                 source: map.source.clone(),
                 from: a,
                 to: b,
             });
-            // Follow the dropped layer (clamped; the re-derive settles the row).
-            self.layer_index = to.min(self.layer_list_len(map).saturating_sub(1));
+            // Follow the dropped layer to its new store slot (the applied `to`).
+            self.layer_index = b;
             self.pending_reload = true;
         }
     }
@@ -1934,24 +1998,28 @@ impl MapViewer {
         map: &MapInfo,
         maps: &MapStore,
     ) {
-        let layers = self.shown_layers(map);
-        let title = match self.plane {
-            Plane::Bg => "BG LAYERS:",
-            Plane::Sprite => "SPRITE LAYERS:",
-            Plane::Fg => "FG LAYERS:",
-        };
-        rows.push(
-            b.text(title)
-                .color(13)
-                .full_width(8.0)
-                .key(EditorKey::Title)
-                .id(),
+        rows.push(b.text("LAYERS:").color(13).full_width(8.0).id());
+        // Plane filters (bg / spr / fg): a chip click solos its plane, further
+        // clicks add planes back in (see [`LayerFilter::click`]). All on by
+        // default — a filter narrows the map-ordered list below, it never moves
+        // the selection. Replaces the old title-click plane paging.
+        let f_bg = Self::toggle_button(b, "bg", self.filter.bg, EditorKey::LayerFilter(Plane::Bg));
+        let f_spr = Self::toggle_button(
+            b,
+            "spr",
+            self.filter.sprite,
+            EditorKey::LayerFilter(Plane::Sprite),
         );
+        let f_fg = Self::toggle_button(b, "fg", self.filter.fg, EditorKey::LayerFilter(Plane::Fg));
+        rows.push(b.row(1.0, [f_bg, f_spr, f_fg]).id());
+
         // Toolbar (two rows): add / duplicate / delete; then move up / down /
-        // rename / cycle plane. The collision layer (bg #0) is protected from
-        // delete / move / rename / plane-cycle — its identity is "first tile
-        // layer" and a non-bg plane would move it out and break collision.
-        let collision = self.plane == Plane::Bg && self.layer_index == 0;
+        // rename / cycle plane. The collision layer (first tile layer) is
+        // protected from delete / move / rename / plane-cycle — a non-bg plane
+        // would move it out of the collision slot. Its protection keys off the
+        // store index, so hiding rows with a filter can't mis-target it.
+        let collision_src = self.collision_src(maps, &map.source);
+        let collision = collision_src.is_some() && Some(self.layer_index) == collision_src;
         let add = Self::action_button(b, "+L", 11, true, EditorKey::LayerAdd);
         let dup = Self::action_button(b, "dup", 12, !collision, EditorKey::LayerDup);
         let del = Self::action_button(b, "del", 8, !collision, EditorKey::LayerDel);
@@ -1960,42 +2028,49 @@ impl MapViewer {
         let dn = Self::action_button(b, "v", 12, !collision, EditorKey::LayerDown);
         let ren = Self::action_button(b, "ren", 12, !collision, EditorKey::LayerRename);
         // `pln` cycles the selected layer BG → Sprite → FG (writes the `plane`
-        // property, no rename); its label is the shown plane and it highlights
-        // (11) on the non-default planes.
+        // property, no rename); its label is the selected layer's current plane
+        // and it highlights (11) on the non-default planes.
+        let sel_plane = self.selected_plane(map);
         let plane = Self::action_button(
             b,
-            plane_short(self.plane),
-            if self.plane == Plane::Bg { 12 } else { 11 },
+            plane_short(sel_plane),
+            if sel_plane == Plane::Bg { 12 } else { 11 },
             !collision,
             EditorKey::LayerPlane,
         );
         rows.push(b.row(1.0, [up, dn, ren, plane]).id());
 
         // A layer drag in progress recolours the grabbed row (grey) and the row
-        // it would drop onto (green); see `reorder_drag`.
+        // it would drop onto (green); see `reorder_drag`. `from`/`at` are store
+        // indices (rows are keyed by `source_layer`), so they match `src` below.
         let drag = self.reorder_drag(ReorderList::Layers);
         let store = maps.get(&map.source);
-        for (i, layer) in layers.iter().enumerate() {
+        // Every layer in map order, one row each; filtered planes are skipped at
+        // render time only — selection, keys and protection all use the store
+        // index, so a hidden row never shifts what the visible ones mean.
+        for (plane, layer) in self.layers_in_order(map) {
+            let src = layer.source_layer;
+            if !self.filter.shows(plane) {
+                continue;
+            }
+            let is_collision = Some(src) == collision_src;
             // Eye toggles visibility; the name selects the layer (sticky, by
             // click). The colour flags the kind: red = the protected collision
-            // layer (bg #0), grey = an image layer (never a paint target), else
-            // a plain tile layer.
+            // layer, grey = an image layer (never a paint target), else a plain
+            // tile layer.
             let eye = b
                 .text(if layer.visible { "O" } else { "-" })
                 .small(true)
                 .center()
                 .color(if layer.visible { 11 } else { 13 })
                 .size(7.0, 7.0)
-                .key(EditorKey::LayerVis(i))
+                .key(EditorKey::LayerVis(src))
                 .id();
-            let is_collision = self.plane == Plane::Bg && i == 0;
             let renaming = matches!(
                 &self.editing,
-                Some(e) if e.field == EditField::LayerName && e.target == layer.source_layer
+                Some(e) if e.field == EditField::LayerName && e.target == src
             );
-            let src_name = store
-                .and_then(|tm| tm.layer_name(layer.source_layer))
-                .unwrap_or("");
+            let src_name = store.and_then(|tm| tm.layer_name(src)).unwrap_or("");
             let label = if renaming {
                 format!(
                     "{}_",
@@ -2004,7 +2079,7 @@ impl MapViewer {
             } else if is_collision {
                 "collision".to_string()
             } else if src_name.is_empty() {
-                format!("Layer {i}")
+                format!("Layer {src}")
             } else {
                 src_name.to_string()
             };
@@ -2022,12 +2097,25 @@ impl MapViewer {
                 .full_width(7.0)
                 .grow(1.0)
                 .fill_if(renaming, 14)
-                .fill_if(!renaming && i == self.layer_index, 15)
-                .fill_if(drag.is_some_and(|(from, _)| i == from), 13)
-                .fill_if(drag.is_some_and(|(from, at)| i == at && at != from), 11)
-                .key(EditorKey::Layer(i))
+                .fill_if(!renaming && src == self.layer_index, 15)
+                .fill_if(drag.is_some_and(|(from, _)| src == from), 13)
+                .fill_if(drag.is_some_and(|(from, at)| src == at && at != from), 11)
+                .key(EditorKey::Layer(src))
                 .id();
-            rows.push(b.row(1.0, [eye, name]).id());
+            // Compact plane tag (bg dim / spr green / fg white) so the map-ordered
+            // list reads each row's plane at a glance.
+            let tag = b
+                .text(plane_short(plane))
+                .small(true)
+                .center()
+                .color(match plane {
+                    Plane::Bg => 13,
+                    Plane::Sprite => 11,
+                    Plane::Fg => 12,
+                })
+                .size(15.0, 7.0)
+                .id();
+            rows.push(b.row(1.0, [eye, name, tag]).id());
         }
 
         // The selected tile layer's pixel offset + palette rotation (tile layers
@@ -2048,8 +2136,8 @@ impl MapViewer {
     /// viewport. The palette mirrors the sheet's 32-wide layout and is drawn/hit
     /// manually (see [`draw_palette`](Self::draw_palette) / the `PaletteView`
     /// handling), so it just reserves a box here.
-    fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
-        let target = plane_short(self.plane).to_uppercase();
+    fn build_paint(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>, map: &MapInfo) {
+        let target = plane_short(self.selected_plane(map)).to_uppercase();
         let (bw, bh) = self.brush_size();
         let info = if bw > 1 || bh > 1 {
             format!(
@@ -2607,42 +2695,102 @@ impl MapViewer {
 
     // --- Helpers --------------------------------------------------------------
 
-    /// The layer list the Layers panel currently shows and edits, per
-    /// [`self.plane`](Self::plane).
-    fn shown_layers<'a>(&self, map: &'a MapInfo) -> &'a [LayerInfo] {
-        match self.plane {
-            Plane::Bg => &map.layers,
-            Plane::Sprite => &map.sprite_layers,
-            Plane::Fg => &map.fg_layers,
-        }
-    }
-    /// Mutable counterpart to [`shown_layers`](Self::shown_layers).
-    fn shown_layers_mut<'a>(&self, map: &'a mut MapInfo) -> &'a mut Vec<LayerInfo> {
-        match self.plane {
-            Plane::Bg => &mut map.layers,
-            Plane::Sprite => &mut map.sprite_layers,
-            Plane::Fg => &mut map.fg_layers,
-        }
+    /// Every layer in map (store) order, each tagged with the draw [`Plane`] it
+    /// currently belongs to (by which derived list holds it — the collision layer
+    /// and plain/`bg` layers are [`Plane::Bg`], sprite/fg layers their own plane).
+    /// This is the authoring view the Layers panel lists: one row per tile/image
+    /// layer, sorted by `source_layer` so file order shows regardless of plane.
+    /// Object layers carry no [`LayerInfo`], so they're absent (leaving gaps in
+    /// the store-index space, which is fine — nothing iterates it densely).
+    fn layers_in_order<'a>(&self, map: &'a MapInfo) -> Vec<(Plane, &'a LayerInfo)> {
+        let mut all: Vec<(Plane, &LayerInfo)> = map
+            .layers
+            .iter()
+            .map(|l| (Plane::Bg, l))
+            .chain(map.sprite_layers.iter().map(|l| (Plane::Sprite, l)))
+            .chain(map.fg_layers.iter().map(|l| (Plane::Fg, l)))
+            .collect();
+        all.sort_by_key(|(_, l)| l.source_layer);
+        all
     }
 
-    /// Toggle the visibility of the currently selected layer.
+    /// The selected layer — the [`LayerInfo`] whose `source_layer` matches
+    /// [`layer_index`](Self::layer_index) — searched across all three plane lists
+    /// (`source_layer` is unique, so at most one matches). `None` if the index is
+    /// stale (e.g. after a delete) — Paint then no-ops.
+    fn selected_layer<'a>(&self, map: &'a MapInfo) -> Option<&'a LayerInfo> {
+        map.layers
+            .iter()
+            .chain(map.sprite_layers.iter())
+            .chain(map.fg_layers.iter())
+            .find(|l| l.source_layer == self.layer_index)
+    }
+
+    /// The draw plane of the selected layer (defaulting to [`Plane::Bg`] when the
+    /// selection is empty) — for the Paint readout and sprite-reload check.
+    fn selected_plane(&self, map: &MapInfo) -> Plane {
+        self.layers_in_order(map)
+            .into_iter()
+            .find(|(_, l)| l.source_layer == self.layer_index)
+            .map(|(plane, _)| plane)
+            .unwrap_or(Plane::Bg)
+    }
+
+    /// Whether store layer `src` is a [`Plane::Sprite`] layer — its tile edits
+    /// must re-derive the flood-fill components (cached at load, not read live).
+    fn is_sprite_layer(map: &MapInfo, src: usize) -> bool {
+        map.sprite_layers.iter().any(|l| l.source_layer == src)
+    }
+
+    /// The store index of `source`'s collision (first tile) layer, the one the
+    /// editor protects from delete / move / rename / plane-cycle. `None` for a
+    /// pure-painted map (no tile layer).
+    fn collision_src(&self, maps: &MapStore, source: &str) -> Option<usize> {
+        maps.get(source).and_then(|tm| tm.collision_layer())
+    }
+
+    /// Move the selection to the previous / next **visible** (filtered) row in
+    /// map order — the controller's up/down. If the current selection is hidden
+    /// (or stale), it snaps to the first visible row.
+    fn move_selection(&mut self, map: &MapInfo, forward: bool) {
+        let rows: Vec<usize> = self
+            .layers_in_order(map)
+            .into_iter()
+            .filter(|(plane, _)| self.filter.shows(*plane))
+            .map(|(_, l)| l.source_layer)
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let here = rows.iter().position(|&s| s == self.layer_index);
+        let next = match (here, forward) {
+            (Some(i), true) => (i + 1).min(rows.len() - 1),
+            (Some(i), false) => i.saturating_sub(1),
+            (None, _) => 0,
+        };
+        self.layer_index = rows[next];
+    }
+
+    /// Toggle the visibility of the currently selected layer (found by store
+    /// index across all plane lists).
     fn toggle_layer(&self, map: &mut MapInfo) {
         let index = self.layer_index;
-        if let Some(layer) = self.shown_layers_mut(map).get_mut(index) {
+        if let Some(layer) = map
+            .layers
+            .iter_mut()
+            .chain(map.sprite_layers.iter_mut())
+            .chain(map.fg_layers.iter_mut())
+            .find(|l| l.source_layer == index)
+        {
             layer.visible = !layer.visible;
         }
     }
 
-    fn layer_list_len(&self, map: &MapInfo) -> usize {
-        self.shown_layers(map).len()
-    }
-
-    /// The `TiledMap` layer index of the currently-selected display layer (the
-    /// shown-plane list at `layer_index`).
+    /// The store index of the currently-selected layer, if it still exists.
+    /// Because [`layer_index`](Self::layer_index) *is* the store index, this just
+    /// validates the selection against the current layer set.
     fn selected_source_layer(&self, map: &MapInfo) -> Option<usize> {
-        self.shown_layers(map)
-            .get(self.layer_index)
-            .map(|l| l.source_layer)
+        self.selected_layer(map).map(|l| l.source_layer)
     }
 
     /// Open the rename text field on the layer at store `index`, seeded with its
@@ -2692,8 +2840,9 @@ impl MapViewer {
 
     /// Cycle the tile layer at store `index` through the BG → Sprite → FG draw
     /// planes, writing its `plane` custom property (no rename), recorded as one
-    /// undoable step. The view follows the layer to whichever list it now belongs
-    /// to, so it doesn't vanish (the re-derive next frame settles its row).
+    /// undoable step. Cycling doesn't reorder the store, so the layer keeps its
+    /// `source_layer` — the selection stays on it and the panel view doesn't move
+    /// (the re-derive next frame just re-tags its row's plane).
     fn cycle_layer_plane(&mut self, map: &MapInfo, maps: &mut MapStore, index: usize) {
         let Some(tm) = maps.get_mut(&map.source) else {
             return;
@@ -2706,8 +2855,7 @@ impl MapViewer {
         let before = tm.layer_plane(index);
         let after = before.cycle();
         tm.set_layer_plane(index, after);
-        self.plane = after;
-        self.layer_index = 0;
+        self.layer_index = index;
         self.record(EditAction::LayerPlane {
             source: map.source.clone(),
             index,
@@ -2717,9 +2865,9 @@ impl MapViewer {
         self.pending_reload = true;
     }
 
-    /// The layer the paint tool writes into (selected in the Layers tool).
+    /// The layer the paint tool writes into (the selected layer, by store index).
     fn active_layer<'a>(&self, map: &'a MapInfo) -> Option<&'a LayerInfo> {
-        self.shown_layers(map).get(self.layer_index)
+        self.selected_layer(map)
     }
 
     /// Real `map.objects` index of the active tab's object whose hitbox contains
@@ -3122,22 +3270,25 @@ impl MapViewer {
             self.step_mouse_input(system, input, map, maps, camera_pos, screen);
         }
 
-        // Controller fallback for the Layers tool (matches the old viewer).
+        // Controller fallback for the Layers tool: up/down walk the visible rows
+        // in map order, A toggles visibility, B cycles the selected layer's plane
+        // (the `pln` button — collision layer refused inside `cycle_layer_plane`).
         if self.tool == EditorTool::Layers {
             let pad = input.controller();
             if just_pressed(pad.up) {
-                self.layer_index = self.layer_index.saturating_sub(1);
+                self.move_selection(map, false);
             }
             if just_pressed(pad.down) {
-                let len = self.layer_list_len(map);
-                self.layer_index = (self.layer_index + 1).min(len.saturating_sub(1));
+                self.move_selection(map, true);
             }
             if just_pressed(pad.a) {
                 self.toggle_layer(map);
             }
-            if just_pressed(pad.b) {
-                self.plane = self.plane.cycle();
-                self.layer_index = 0;
+            if just_pressed(pad.b)
+                && let Some(src) = self.selected_source_layer(map)
+                && self.collision_src(maps, &map.source) != Some(src)
+            {
+                self.cycle_layer_plane(map, maps, src);
             }
         }
 
@@ -4142,22 +4293,25 @@ impl MapViewer {
                     self.switch_tool(tool);
                 }
             }
-            EditorKey::Title => {
+            // Narrow the (map-ordered) list to a plane — solo on the first
+            // click, build-up on later ones (see [`LayerFilter::click`]). The
+            // selection is untouched, so a click here never changes what paints.
+            EditorKey::LayerFilter(plane) => {
                 if click {
-                    self.plane = self.plane.cycle();
-                    self.layer_index = 0;
+                    self.filter.click(plane);
                 }
             }
-            // Sticky select: a click sets the active layer (and stays — no
-            // hover-select, and the canvas tool isn't changed; see `panel_tool`).
-            // The press also arms a drag-reorder (except on the protected
-            // collision layer, which can't move); a release in place is just the
-            // select, a drag onto another row reorders (see `step_reorder_drag`).
+            // Sticky select: a click sets the active layer by store index (and
+            // stays — no hover-select, and the canvas tool isn't changed; see
+            // `panel_tool`). The press also arms a drag-reorder (except on the
+            // protected collision layer, which can't move); a release in place is
+            // just the select, a drag onto another row reorders (see
+            // `step_reorder_drag`).
             EditorKey::Layer(i) => {
                 if click {
                     self.layer_index = i;
-                    // The protected collision layer (bg #0) can't be dragged.
-                    if self.plane != Plane::Bg || i != 0 {
+                    // The protected collision layer can't be dragged.
+                    if Some(i) != self.collision_src(maps, &map.source) {
                         self.canvas_drag = CanvasDrag::Reorder {
                             list: ReorderList::Layers,
                             from: i,
@@ -4183,6 +4337,9 @@ impl MapViewer {
                         index,
                         layer,
                     });
+                    // Select the new layer so an add → `pln` (make it sprite/fg)
+                    // flow needs no hunting — its store index is where it landed.
+                    self.layer_index = index;
                     self.pending_reload = true;
                 }
             }
@@ -4198,6 +4355,8 @@ impl MapViewer {
                         index: src,
                         layer: Box::new(layer),
                     });
+                    // Layers above `src` slide down one; step onto the layer just
+                    // before the hole (the re-derive settles a stale index).
                     self.layer_index = self.layer_index.saturating_sub(1);
                     self.pending_reload = true;
                 }
@@ -4214,7 +4373,8 @@ impl MapViewer {
                         a,
                         b,
                     });
-                    self.layer_index = self.layer_index.saturating_sub(1);
+                    // Follow the moved layer to its new store slot.
+                    self.layer_index = b;
                     self.pending_reload = true;
                 }
             }
@@ -4230,16 +4390,15 @@ impl MapViewer {
                         a,
                         b,
                     });
-                    // Follow the moved layer, clamped to the (unchanged-length) list.
-                    self.layer_index =
-                        (self.layer_index + 1).min(self.layer_list_len(map).saturating_sub(1));
+                    // Follow the moved layer to its new store slot.
+                    self.layer_index = b;
                     self.pending_reload = true;
                 }
             }
             EditorKey::LayerDup => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
-                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                    && self.collision_src(maps, &map.source) != Some(src)
                     && let Some(tm) = maps.get_mut(&map.source)
                 {
                     let index = src + 1;
@@ -4251,13 +4410,15 @@ impl MapViewer {
                         index,
                         layer,
                     });
+                    // Select the duplicate (it landed at `index`).
+                    self.layer_index = index;
                     self.pending_reload = true;
                 }
             }
             EditorKey::LayerRename => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
-                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                    && self.collision_src(maps, &map.source) != Some(src)
                 {
                     self.begin_layer_rename(maps, &map.source, src);
                 }
@@ -4265,7 +4426,7 @@ impl MapViewer {
             EditorKey::LayerPlane => {
                 if click
                     && let Some(src) = self.selected_source_layer(map)
-                    && map.layers.first().map(|l| l.source_layer) != Some(src)
+                    && self.collision_src(maps, &map.source) != Some(src)
                 {
                     self.cycle_layer_plane(map, maps, src);
                 }
@@ -4783,7 +4944,7 @@ impl MapViewer {
         // paint likewise needs a re-derive: its flood-fill components (shape +
         // baselines) are cached at load, not read live like bg/fg tiles.
         let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
-        let needs_reload = is_collision || self.plane == Plane::Sprite;
+        let needs_reload = is_collision || Self::is_sprite_layer(map, layer);
         let (tx, ty) = world_tile(mouse, camera_pos);
 
         // Middle-click eyedropper: lift the existing tile into a 1×1 brush.
@@ -4984,7 +5145,7 @@ impl MapViewer {
             .filter(|l| l.kind == LayerKind::Tiles)
             .map(|l| (map.source.clone(), l.source_layer))?;
         let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
-        let needs_reload = is_collision || self.plane == Plane::Sprite;
+        let needs_reload = is_collision || Self::is_sprite_layer(map, layer);
         Some((source, layer, needs_reload))
     }
 
@@ -8782,7 +8943,9 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Bg);
         v.cycle_layer_plane(&map, &mut maps, 1);
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Sprite);
-        assert_eq!(v.plane, Plane::Sprite, "view follows the layer");
+        // Cycling doesn't reorder the store, so the selection stays on the layer
+        // (its store index is unchanged) — the panel view no longer jumps planes.
+        assert_eq!(v.layer_index, 1, "selection stays on the cycled layer");
         v.cycle_layer_plane(&map, &mut maps, 1);
         assert_eq!(maps.get("m").unwrap().layer_plane(1), Plane::Fg);
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"), "no rename");
@@ -8801,9 +8964,10 @@ mod tests {
         assert_eq!(maps.get("m").unwrap().layer_name(1), Some("water"));
     }
 
-    /// Drag-reordering a layer: a display-row move translates to the store's layer
-    /// indices, records one undoable `LayerMove`, protects the collision layer, and
-    /// round-trips through undo / redo.
+    /// Drag-reordering a layer: rows are keyed by store index, so the move goes
+    /// straight to the store's layer indices, records one undoable `LayerMove`,
+    /// follows the dropped layer, protects the collision layer, and round-trips
+    /// through undo / redo.
     #[test]
     fn layer_drag_reorder_translates_and_undoes() {
         use crate::data::tiled::TiledMap;
@@ -8812,8 +8976,7 @@ mod tests {
         tm.add_tile_layer("a");
         tm.add_tile_layer("b");
         maps.insert("m", tm);
-        // bg display rows mirror the store's tile layers: 0=collision, 1="Layer 1",
-        // 2="a", 3="b" (source_layer == display index here).
+        // Store (map) order: 0=collision, 1="Layer 1", 2="a", 3="b".
         let mut map = MapInfo {
             source: "m".to_string(),
             layers: (0..4)
@@ -8832,9 +8995,10 @@ mod tests {
         };
         assert_eq!(order(&maps), ["collision", "Layer 1", "a", "b"]);
 
-        // Drag display row 3 ("b") up to row 1: the layers between slide down.
+        // Drag store layer 3 ("b") up to index 1: the layers between slide down.
         v.reorder_layer_to(&mut map, &mut maps, 3, 1);
         assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"]);
+        assert_eq!(v.layer_index, 1, "selection follows the dropped layer");
         assert!(v.pending_reload, "a reorder re-derives the display list");
         assert!(v.history.can_undo(), "the drag is one undo step");
 
@@ -8843,7 +9007,7 @@ mod tests {
         v.redo(&mut map, &mut maps);
         assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "redone");
 
-        // Dragging the protected collision layer (row 0) is refused — no change.
+        // Dragging the protected collision layer (store 0) is refused — no change.
         v.reorder_layer_to(&mut map, &mut maps, 0, 2);
         assert_eq!(order(&maps), ["collision", "b", "Layer 1", "a"], "collision stays put");
         // ...and it records nothing: the next undo reverts the earlier reorder
@@ -8854,6 +9018,271 @@ mod tests {
             ["collision", "Layer 1", "a", "b"],
             "undo skips the refused move"
         );
+    }
+
+    /// Regression for the "only one sprite layer" bug: with the map-ordered,
+    /// store-indexed model, several [`Plane::Sprite`] layers are each individually
+    /// selectable and editable. The old single-plane view bucketed layers by plane
+    /// and indexed the filtered bucket, so a second sprite layer was unreachable
+    /// (the "+L" add landed in the hidden bg bucket).
+    #[test]
+    fn multiple_sprite_layers_select_and_edit() {
+        use crate::data::tiled::TiledMap;
+        let mut maps = MapStore::default();
+        let mut tm = TiledMap::blank_modern(4, 4);
+        let s1 = tm.add_tile_layer("s1");
+        let s2 = tm.add_tile_layer("s2");
+        tm.set_layer_plane(s1, Plane::Sprite);
+        tm.set_layer_plane(s2, Plane::Sprite);
+        maps.insert("m", tm);
+        // Two sprite layers derived into `sprite_layers` (as `modern_map_info`
+        // would), the collision layer alone in `layers`.
+        let map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![LayerInfo {
+                source_layer: 0,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            sprite_layers: vec![
+                LayerInfo {
+                    source_layer: s1,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+                LayerInfo {
+                    source_layer: s2,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+            ],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+
+        // Every layer lists in map order, each tagged with its plane.
+        assert_eq!(
+            v.layers_in_order(&map)
+                .iter()
+                .map(|(p, l)| (*p, l.source_layer))
+                .collect::<Vec<_>>(),
+            [(Plane::Bg, 0), (Plane::Sprite, s1), (Plane::Sprite, s2)],
+        );
+
+        // Selecting either sprite layer resolves to its own store layer — the
+        // paint target, sprite-reload flag and plane readout all follow it.
+        v.layer_index = s1;
+        assert_eq!(v.selected_source_layer(&map), Some(s1));
+        assert_eq!(v.active_layer(&map).map(|l| l.source_layer), Some(s1));
+        assert_eq!(v.selected_plane(&map), Plane::Sprite);
+        assert!(MapViewer::is_sprite_layer(&map, s1));
+
+        v.layer_index = s2;
+        assert_eq!(v.active_layer(&map).map(|l| l.source_layer), Some(s2));
+        assert!(MapViewer::is_sprite_layer(&map, s2));
+
+        // An edit routed through the selection lands on `s2`, leaving `s1` empty:
+        // the two sprite layers are distinct paint targets.
+        let target = v.active_layer(&map).unwrap().source_layer;
+        maps.get_mut("m").unwrap().set(target, 0, 0, 7);
+        assert_eq!(maps.get("m").unwrap().get(s2, 0, 0), Some(7));
+        assert_eq!(maps.get("m").unwrap().get(s1, 0, 0), Some(0), "s1 untouched");
+    }
+
+    /// A plane filter hides its rows without disturbing the selection (a hidden
+    /// layer still paints), and collision protection keys off the store index —
+    /// so hiding rows can never mis-target it.
+    #[test]
+    fn layer_filters_hide_rows_but_keep_selection_and_protection() {
+        use crate::data::tiled::TiledMap;
+        let mut maps = MapStore::default();
+        let mut tm = TiledMap::blank_modern(4, 4);
+        tm.add_tile_layer("a");
+        tm.add_tile_layer("b");
+        maps.insert("m", tm);
+        // Store: collision(0), "Layer 1"(1), a(2), b(3). Route them across planes
+        // in the MapInfo so each filter has a row to hide.
+        let map_of = || MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo {
+                    source_layer: 0,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+                LayerInfo {
+                    source_layer: 1,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+            ],
+            sprite_layers: vec![LayerInfo {
+                source_layer: 2,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            fg_layers: vec![LayerInfo {
+                source_layer: 3,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            ..MapInfo::default()
+        };
+        let mut map = map_of();
+        let mut v = MapViewer::default();
+        assert!(
+            v.filter.bg && v.filter.sprite && v.filter.fg,
+            "all planes show by default"
+        );
+
+        // Select the sprite layer, then hide the sprite plane: the selection and
+        // paint target hold even though the row is gone.
+        v.layer_index = 2;
+        v.filter.toggle(Plane::Sprite);
+        assert!(!v.filter.shows(Plane::Sprite));
+        assert_eq!(
+            v.selected_source_layer(&map),
+            Some(2),
+            "hidden layer stays selected"
+        );
+        assert_eq!(
+            v.active_layer(&map).map(|l| l.source_layer),
+            Some(2),
+            "and still paints"
+        );
+
+        // Hiding the bg plane can't unprotect the collision layer (store index 0).
+        v.filter.toggle(Plane::Bg);
+        assert_eq!(v.collision_src(&maps, "m"), Some(0));
+        v.layer_index = 0;
+        v.reorder_layer_to(&mut map, &mut maps, 0, 2);
+        assert_eq!(
+            maps.get("m").unwrap().layer_name(0),
+            Some("collision"),
+            "collision stays first"
+        );
+        assert!(!v.history.can_undo(), "the refused move recorded nothing");
+    }
+
+    /// A chip click means "show me this plane": from all-on it solos, later
+    /// clicks build the set back up, and emptying the set snaps to all-on — the
+    /// panel can never show a blank list ("my layers got erased").
+    #[test]
+    fn filter_chip_click_solos_then_builds_up() {
+        let mut f = LayerFilter::default();
+
+        // All on → clicking spr solos the sprite plane.
+        f.click(Plane::Sprite);
+        assert!(f.sprite && !f.bg && !f.fg, "first click solos");
+
+        // A second plane clicks in alongside it.
+        f.click(Plane::Fg);
+        assert!(f.sprite && f.fg && !f.bg, "later clicks add planes");
+
+        // Clicking shown planes off, down to none, restores all-on.
+        f.click(Plane::Fg);
+        assert!(f.sprite && !f.fg && !f.bg);
+        f.click(Plane::Sprite);
+        assert!(
+            f.bg && f.sprite && f.fg,
+            "emptying the set snaps back to all-on"
+        );
+    }
+
+    /// Controller up/down walk only the **visible** rows in map order: a hidden
+    /// plane is skipped, and a selection on a now-hidden row snaps to a visible one.
+    #[test]
+    fn move_selection_walks_visible_rows() {
+        let map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo {
+                    source_layer: 0,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+                LayerInfo {
+                    source_layer: 1,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+            ],
+            sprite_layers: vec![LayerInfo {
+                source_layer: 2,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            fg_layers: vec![LayerInfo {
+                source_layer: 3,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+
+        // All planes on: walk 0 → 1 → 2 → 3, clamping at the ends.
+        v.layer_index = 0;
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 1);
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 2);
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 3);
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 3, "clamps at the last visible row");
+
+        // Hide the sprite plane: stepping down from row 1 skips store index 2.
+        v.filter.toggle(Plane::Sprite);
+        v.layer_index = 1;
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 3, "sprite row skipped");
+        v.move_selection(&map, false);
+        assert_eq!(v.layer_index, 1, "and back");
+
+        // A selection stranded on the hidden row snaps to the first visible one.
+        v.layer_index = 2;
+        v.move_selection(&map, true);
+        assert_eq!(v.layer_index, 0, "hidden selection snaps to first visible");
+    }
+
+    /// The Layers panel builds one row per layer in map order (with per-row plane
+    /// tags / collision styling — no panic), and a filter drops exactly that
+    /// plane's rows with nothing else shifting.
+    #[test]
+    fn layers_panel_lists_all_planes_and_filters_rows() {
+        use crate::data::tiled::TiledMap;
+        let mut maps = MapStore::default();
+        let mut tm = TiledMap::blank_modern(4, 4);
+        tm.add_tile_layer("spr1");
+        tm.add_tile_layer("fg1");
+        tm.set_layer_plane(2, Plane::Sprite);
+        tm.set_layer_plane(3, Plane::Fg);
+        maps.insert("m", tm);
+        let map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo {
+                    source_layer: 0,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+                LayerInfo {
+                    source_layer: 1,
+                    ..LayerInfo::DEFAULT_LAYER
+                },
+            ],
+            sprite_layers: vec![LayerInfo {
+                source_layer: 2,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            fg_layers: vec![LayerInfo {
+                source_layer: 3,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            ..MapInfo::default()
+        };
+        let mut v = MapViewer::default();
+        v.layer_index = 0; // hold the selection constant across both builds
+
+        let count = |v: &MapViewer| {
+            let mut b = UiBuilder::new();
+            let mut rows: Vec<NodeId> = Vec::new();
+            v.build_layers(&mut b, &mut rows, &map, &maps);
+            rows.len()
+        };
+        let all = count(&v);
+        v.filter.toggle(Plane::Sprite);
+        let hidden = count(&v);
+        assert_eq!(hidden, all - 1, "hiding the sprite plane drops its one row");
     }
 
     /// The warp-target picker steps through `[same-map] + existing maps` and
