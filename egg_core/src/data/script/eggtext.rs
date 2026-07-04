@@ -563,6 +563,16 @@ fn parse_message(
                 .push(ContentDef::SetFlag(name.to_string(), value));
             continue;
         }
+        // `#shake FRAMES [AMP]` can take two arguments, so like `#set` it is
+        // parsed as a whole line rather than through the single-arg
+        // `directive_segments` splitter (which would silently drop the AMP).
+        if let Some(rest) = logical.strip_prefix("#shake")
+            && (rest.is_empty() || rest.starts_with([' ', '\t']))
+        {
+            let (frames, amplitude) = parse_shake(rest, line_no)?;
+            def.content.push(ContentDef::Shake(frames, amplitude));
+            continue;
+        }
         if logical.starts_with('#') {
             for (name, arg) in directive_segments(logical) {
                 match name {
@@ -858,6 +868,34 @@ fn parse_u8(arg: Option<&str>, line_no: usize) -> Result<u8, ParseError> {
         .ok_or_else(|| ParseError::new(line_no, "expected a number 0-255"))
 }
 
+/// The arguments of `#shake FRAMES [AMP]`: a frame count, and an optional pixel
+/// amplitude defaulting to the cutscene `shake` verb's
+/// [`DEFAULT_SHAKE_AMPLITUDE`](crate::data::scene::DEFAULT_SHAKE_AMPLITUDE) —
+/// the two spell the same effect, so they share the default.
+fn parse_shake(rest: &str, line_no: usize) -> Result<(u32, i16), ParseError> {
+    let mut tokens = rest.split_whitespace();
+    let frames: u32 = tokens
+        .next()
+        .and_then(|t| t.parse().ok())
+        .ok_or_else(|| ParseError::new(line_no, "`#shake` needs a frame count"))?;
+    if frames == 0 {
+        return Err(ParseError::new(line_no, "`#shake 0` — needs ≥1 frame"));
+    }
+    let amplitude: i16 = match tokens.next() {
+        Some(t) => t
+            .parse()
+            .map_err(|_| ParseError::new(line_no, "`#shake` amplitude must be a pixel count"))?,
+        None => crate::data::scene::DEFAULT_SHAKE_AMPLITUDE,
+    };
+    if tokens.next().is_some() {
+        return Err(ParseError::new(
+            line_no,
+            "`#shake` takes `FRAMES [AMP]` — too many arguments",
+        ));
+    }
+    Ok((frames, amplitude))
+}
+
 /// Resolve backslash escapes; an unknown escape keeps its backslash.
 pub(crate) fn unescape(s: &str) -> String {
     if !s.contains('\\') {
@@ -983,6 +1021,30 @@ mod tests {
                 ContentDef::Text("Found it...!\n".into())
             ],
         );
+    }
+
+    /// `#shake FRAMES [AMP]` fires in content order like `#sound`, defaults its
+    /// amplitude to the cutscene verb's, and rejects misauthored forms with a
+    /// line-pointed error.
+    #[test]
+    fn shake_parses_with_optional_amplitude() {
+        let messages = convo("#dialogue d\n    #shake 30\n    Whoa!");
+        assert_eq!(
+            messages[0].content,
+            vec![
+                ContentDef::Shake(30, crate::data::scene::DEFAULT_SHAKE_AMPLITUDE),
+                ContentDef::Text("Whoa!".into())
+            ],
+        );
+        let messages = convo("#dialogue d\n    Rumble...\n    #shake 45 6");
+        assert_eq!(messages[0].content[1], ContentDef::Shake(45, 6));
+
+        // Misauthored forms point at their line.
+        assert_eq!(parse("#dialogue d\n    #shake").unwrap_err().line, 2);
+        assert_eq!(parse("#dialogue d\n    #shake 0").unwrap_err().line, 2);
+        assert_eq!(parse("#dialogue d\n    #shake many").unwrap_err().line, 2);
+        assert_eq!(parse("#dialogue d\n    #shake 30 x").unwrap_err().line, 2);
+        assert_eq!(parse("#dialogue d\n    #shake 30 2 9").unwrap_err().line, 2);
     }
 
     #[test]

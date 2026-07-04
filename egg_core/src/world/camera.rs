@@ -71,6 +71,55 @@ impl Camera {
     }
 }
 
+/// Progress of a screen shake: `left` of `total` frames remain, at up to
+/// ±`amplitude` px. The offset pattern is a fixed 4-phase cycle keyed on
+/// `left` — fully deterministic, so a scrubber re-sim reproduces it. Shared by
+/// the cutscene `shake` verb and the dialogue `#shake` directive: the owner
+/// holds an `Option<Shake>`, arms it with [`begin`](Self::begin), advances it
+/// once per frame with [`tick`](Self::tick), and adds [`offset`](Self::offset)
+/// to whatever focus it centres the camera on (bounds still clamp, so a shake
+/// at a map edge is absorbed rather than showing past the map).
+#[derive(Debug, Clone)]
+pub struct Shake {
+    total: u32,
+    left: u32,
+    amplitude: i16,
+}
+impl Shake {
+    /// A shake running `frames` frames at up to ±`amplitude` px — or `None`
+    /// for zero frames, so a data-authored `0` is simply spent already.
+    pub fn begin(frames: u32, amplitude: i16) -> Option<Self> {
+        (frames > 0).then_some(Self {
+            total: frames,
+            left: frames,
+            amplitude,
+        })
+    }
+    /// This frame's focus offset: a right/up/left/down cycle whose amplitude
+    /// tapers linearly to nothing as `left` runs out (ceiling division, so the
+    /// tail stays at ±1 rather than flatlining early on small amplitudes).
+    pub fn offset(&self) -> Vec2 {
+        let (amp, left, total) = (self.amplitude as i64, self.left as i64, self.total as i64);
+        let a = ((amp * left + total - 1) / total) as i16;
+        match self.left % 4 {
+            0 => Vec2::new(a, 0),
+            1 => Vec2::new(0, -a),
+            2 => Vec2::new(-a, 0),
+            _ => Vec2::new(0, a),
+        }
+    }
+    /// Advance `slot` by one frame; a spent shake drops to `None`. Call exactly
+    /// once per frame on each live slot.
+    pub fn tick(slot: &mut Option<Shake>) {
+        if let Some(shake) = slot {
+            shake.left -= 1;
+            if shake.left == 0 {
+                *slot = None;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CameraBounds {
     x_bounds: CameraRange,

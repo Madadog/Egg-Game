@@ -62,6 +62,12 @@ pub struct Dialogue {
     pub flip_portrait: bool,
     /// The open choice menu, if the box is currently awaiting a selection.
     pub choice: Option<ChoiceState>,
+    /// A `#shake FRAMES [AMP]` playback just passed, waiting for the world's
+    /// camera driver to pick it up (`(frames, amplitude)`). The widget can't
+    /// reach the camera itself, so it banks the request here; the walkaround
+    /// takes it when it centres the camera. Overwritten (not stacked) if
+    /// another fires first; ignored by camera-less hosts of the box.
+    pub pending_shake: Option<(u32, i16)>,
 }
 impl Dialogue {
     pub const fn default() -> Self {
@@ -76,6 +82,7 @@ impl Dialogue {
             dark_theme: false,
             flip_portrait: false,
             choice: None,
+            pending_shake: None,
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -207,6 +214,15 @@ impl Dialogue {
             // Fire the named flag in place — same timing as a Sound item.
             TextContent::SetFlag(name, value) => {
                 save.set_flag(&name, value);
+                true
+            }
+            // Bank the shake for the camera driver — but, being time-flavoured
+            // like a `Delay`, it is dropped on a manual fast-forward: skipping
+            // a page shouldn't jolt the screen.
+            TextContent::Shake { frames, amplitude } => {
+                if !manual_skip {
+                    self.pending_shake = Some((frames, amplitude));
+                }
                 true
             }
             // Open the menu and stop: playback blocks here until the driver calls
@@ -697,6 +713,37 @@ pub fn fit_default_paragraph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::NullConsole;
+
+    /// A `#shake` item banks its request for the camera driver as it is played
+    /// past — but a manual fast-forward drops it (time-flavoured, like a
+    /// `Delay`): skipping a page shouldn't jolt the screen.
+    #[test]
+    fn shake_banks_unless_manually_skipped() {
+        let mut dialogue = Dialogue::default();
+        let mut save = SaveData::default();
+        let font = crate::render::Font::blank();
+        let shake = TextContent::Shake {
+            frames: 30,
+            amplitude: 4,
+        };
+        assert!(shake.is_skip(), "fires in place like a sound");
+
+        let consumed = dialogue.consume_text_content(
+            &mut NullConsole::new(),
+            &font,
+            &mut save,
+            shake.clone(),
+            false,
+        );
+        assert!(consumed);
+        assert_eq!(dialogue.pending_shake, Some((30, 4)));
+
+        // Manual skip: the request is dropped, not banked.
+        dialogue.pending_shake = None;
+        dialogue.consume_text_content(&mut NullConsole::new(), &font, &mut save, shake, true);
+        assert_eq!(dialogue.pending_shake, None);
+    }
 
     /// A dialogue whose live line is `text`, bypassing the wrap/fit path
     /// (which needs a console to measure glyphs).

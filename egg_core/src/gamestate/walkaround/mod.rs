@@ -11,7 +11,7 @@ use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pres
 use crate::render::{DrawParams, PrintOptions, print_to_with_font};
 use crate::ui::dialogue::Dialogue;
 use crate::world::animation::Animation;
-use crate::world::camera::Camera;
+use crate::world::camera::{Camera, Shake};
 use crate::world::interact::{InteractFn, Interaction};
 use crate::world::map::{Axis, MapInfo, MapObject, ObjectEffect, Trigger, map_by_name};
 use crate::world::particles::{Particle, ParticleDraw, ParticleList};
@@ -73,6 +73,12 @@ pub struct WalkaroundState {
     pub current_map: MapInfo,
     pub map_viewer: MapViewer,
     pub dialogue: Dialogue,
+    /// A dialogue-`#shake` in flight: armed from
+    /// [`Dialogue::pending_shake`], advanced and applied in
+    /// [`center_with_shake`](Self::center_with_shake). Distinct from a
+    /// cutscene's own `shake`-verb state, which lives on the scene (and pauses
+    /// with a parent scene); the two compose additively if both run.
+    shake: Option<Shake>,
     /// The player's bag and its on-screen view. Lives here (rather than on
     /// [`EggState`](crate::EggState)) because the inventory is part of the
     /// walkaround: the world opens it, the inventory mode dispatches into it, and
@@ -179,6 +185,7 @@ impl WalkaroundState {
             current_map: MapInfo::default(),
             map_viewer: MapViewer::primary(),
             dialogue: Dialogue::default(),
+            shake: None,
             inventory_ui: InventoryUi::new(),
             particles: ParticleList::new(),
             cutscene: Vec::new(),
@@ -425,6 +432,23 @@ impl WalkaroundState {
     pub fn center_camera_on(&mut self, p: Vec2, w: i32, h: i32) {
         self.camera.center_on(p.x + 4, p.y - 2, w as i16, h as i16);
     }
+    /// Centre the camera on `(x, y)` — the per-frame choke point all three
+    /// camera drivers route through (the cutscene focus, the warp-dialogue
+    /// hold, and the normal player follow). A dialogue `#shake` banked on the
+    /// box is armed here, and the running shake's offset rides on top of
+    /// whatever focus was asked for. The shake also advances one frame per
+    /// call — ticking here rather than in `step` keeps live play and the
+    /// scrubber's re-sim (which drives `play_cutscene` directly, skipping
+    /// `step`) on the same clock. Bounds still clamp, absorbing the jiggle at
+    /// map edges.
+    fn center_with_shake(&mut self, x: i16, y: i16, w: i16, h: i16) {
+        if let Some((frames, amplitude)) = self.dialogue.pending_shake.take() {
+            self.shake = Shake::begin(frames, amplitude);
+        }
+        let offset = self.shake.as_ref().map_or(Vec2::new(0, 0), Shake::offset);
+        self.camera.center_on(x + offset.x, y + offset.y, w, h);
+        Shake::tick(&mut self.shake);
+    }
     pub fn cam_state(&mut self) -> &mut crate::world::camera::CameraBounds {
         &mut self.camera.bounds
     }
@@ -591,7 +615,7 @@ impl WalkaroundState {
             .cutscene
             .last()
             .map_or(Vec2::new(0, 0), |cs| cs.shake_offset());
-        self.camera.center_on(
+        self.center_with_shake(
             focus.x + shake.x,
             focus.y + shake.y,
             ctx.system.width() as i16,
@@ -1364,7 +1388,7 @@ impl WalkaroundState {
             if box_closed && let Some(warp) = self.pending_warp.take() {
                 self.apply_warp(ctx, warp);
             }
-            self.camera.center_on(
+            self.center_with_shake(
                 self.player_ref().pos.x + 4,
                 self.player_ref().pos.y - 2,
                 ctx.system.width() as i16,
@@ -1482,7 +1506,7 @@ impl WalkaroundState {
             }
         }
 
-        self.camera.center_on(
+        self.center_with_shake(
             self.player_ref().pos.x + 4,
             self.player_ref().pos.y - 2,
             ctx.system.width() as i16,

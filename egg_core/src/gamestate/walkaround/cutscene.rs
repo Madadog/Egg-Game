@@ -31,6 +31,7 @@ use crate::data::sound::music::MusicTrack;
 use crate::data::sound::{self};
 use crate::geometry::Vec2;
 use crate::platform::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed, pressed};
+use crate::world::camera::Shake;
 use crate::world::player::{EntityId, MoveMode};
 
 use super::{EntityPath, WalkaroundState};
@@ -96,32 +97,6 @@ impl Glide {
         let s = (t * t * (3 * 1024 - 2 * t)) >> 20; // 0..=1024
         let ease = |a: i16, b: i16| (a as i64 + ((b as i64 - a as i64) * s) / 1024) as i16;
         Vec2::new(ease(self.from.x, to.x), ease(self.from.y, to.y))
-    }
-}
-
-/// Progress of a `shake`: `left` of `total` frames remain, at up to ±`amplitude`
-/// px. The offset pattern is a fixed 4-phase cycle keyed on `left` — fully
-/// deterministic, so a scrubber re-sim reproduces it.
-#[derive(Clone, Debug)]
-struct Shake {
-    total: u32,
-    left: u32,
-    amplitude: i16,
-}
-
-impl Shake {
-    /// This frame's focus offset: a right/up/left/down cycle whose amplitude
-    /// tapers linearly to nothing as `left` runs out (ceiling division, so the
-    /// tail stays at ±1 rather than flatlining early on small amplitudes).
-    fn offset(&self) -> Vec2 {
-        let (amp, left, total) = (self.amplitude as i64, self.left as i64, self.total as i64);
-        let a = ((amp * left + total - 1) / total) as i16;
-        match self.left % 4 {
-            0 => Vec2::new(a, 0),
-            1 => Vec2::new(0, -a),
-            2 => Vec2::new(-a, 0),
-            _ => Vec2::new(0, a),
-        }
     }
 }
 
@@ -295,12 +270,7 @@ impl Cutscene {
                 self.glide = None;
             }
         }
-        if let Some(shake) = &mut self.shake {
-            shake.left -= 1;
-            if shake.left == 0 {
-                self.shake = None;
-            }
-        }
+        Shake::tick(&mut self.shake);
         loop {
             if matches!(self.state, StepState::Pending) {
                 let Some(content) = self.content.get(self.step) else {
@@ -376,11 +346,7 @@ impl Cutscene {
                         self.state = StepState::Done;
                     }
                     CutsceneContent::Shake { frames, amplitude } => {
-                        self.shake = (*frames > 0).then_some(Shake {
-                            total: *frames,
-                            left: *frames,
-                            amplitude: *amplitude,
-                        });
+                        self.shake = Shake::begin(*frames, *amplitude);
                         self.state = StepState::Done;
                     }
                     CutsceneContent::Load(name) => {
@@ -1769,6 +1735,43 @@ mod tests {
             displaced += (h.walk.camera.pos != rest) as u32;
         }
         assert!(displaced > 0, "the shake visibly moved the camera");
+        for _ in 0..2 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+            assert_eq!(h.walk.camera.pos, rest, "spent shake leaves no offset");
+        }
+    }
+
+    /// A dialogue `#shake` banked on the box (`pending_shake`) arms the
+    /// walkaround-level shake at the centring choke point: the camera jiggles
+    /// around whatever focus is being centred — here a cutscene's fixed point,
+    /// proving the dialogue shake composes with the scene's own camera state —
+    /// then restores exact centring when spent.
+    #[test]
+    fn dialogue_shake_jiggles_through_the_centring() {
+        let mut h = arm(
+            "#cutscene t\n    camera 150 90\n    wait 30",
+            Vec2::new(0, 0),
+        );
+        let rest = center_ref(Vec2::new(150, 90), &h.system);
+        // Settle on the cutscene's fixed focus first (instant cut).
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(h.walk.camera.pos, rest);
+
+        // The box banks a shake mid-conversation; the next centrings pick it up.
+        h.walk.dialogue.pending_shake = Some((6, 3));
+        let mut displaced = 0;
+        for _ in 0..6 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+            displaced += (h.walk.camera.pos != rest) as u32;
+            assert!(h.walk.dialogue.pending_shake.is_none(), "banked shake taken");
+        }
+        assert!(displaced > 0, "the dialogue shake visibly moved the camera");
         for _ in 0..2 {
             h.frame(|ctx, w| {
                 w.play_cutscene(ctx);

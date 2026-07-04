@@ -146,6 +146,10 @@ pub enum ContentDef {
     /// Set (or clear) a named save flag when playback reaches this point — the
     /// `#set NAME BOOL` directive. JSON: `{"set_flag": ["name", true]}`.
     SetFlag(String, bool),
+    /// Shake the screen for N frames at ±AMP px — the `#shake FRAMES [AMP]`
+    /// directive (the parser fills the default amplitude when omitted). JSON:
+    /// `{"shake": [30, 2]}`.
+    Shake(u32, i16),
     /// An interactive menu — the `#choice` block. JSON:
     /// `{"choice": [{"text": "Yes", "sets": [["flag", true]]}, ...]}`.
     Choice(Vec<ChoiceOptionDef>),
@@ -183,6 +187,7 @@ impl ContentDef {
             ContentDef::Pause => TextContent::Pause,
             ContentDef::Flip(b) => TextContent::Flip(b),
             ContentDef::SetFlag(name, value) => TextContent::SetFlag(name, value),
+            ContentDef::Shake(frames, amplitude) => TextContent::Shake { frames, amplitude },
             ContentDef::Choice(options) => TextContent::Choice(
                 options
                     .into_iter()

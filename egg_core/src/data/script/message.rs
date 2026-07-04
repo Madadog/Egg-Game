@@ -48,6 +48,14 @@ pub enum TextContent {
     /// (it is a `is_skip` item, consumed in place), so the flag flips at the
     /// observable moment the dialogue plays past it. See [`crate::data::script::eggtext`].
     SetFlag(String, bool),
+    /// Shake the screen for `frames` frames at up to ±`amplitude` px when
+    /// playback reaches this point — the `#shake FRAMES [AMP]` directive.
+    /// Fires like a [`Sound`](Self::Sound): the widget banks it as
+    /// `pending_shake` and the world's camera driver picks it up (see
+    /// [`Dialogue`](crate::ui::dialogue::Dialogue) and
+    /// [`Shake`](crate::world::camera::Shake)). Time-flavoured like
+    /// [`Delay`](Self::Delay), so a manual fast-forward drops it.
+    Shake { frames: u32, amplitude: i16 },
     /// An interactive branch point — the `#choice` block. Presents `options` in
     /// the dialogue box and blocks playback (neither [`is_auto`](Self::is_auto)
     /// nor [`is_skip`](Self::is_skip)) until the player picks one; the picked
@@ -64,7 +72,7 @@ impl TextContent {
     }
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
-        matches!(self, Sound(_) | Portrait(_) | Flip(_) | SetFlag(..))
+        matches!(self, Sound(_) | Portrait(_) | Flip(_) | SetFlag(..) | Shake { .. })
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).
     pub fn text(s: impl Into<String>) -> Self {
