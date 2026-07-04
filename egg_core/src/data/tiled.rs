@@ -415,8 +415,12 @@ pub struct TiledObject {
     /// id"); the writer then assigns a fresh one on the next save.
     #[serde(default)]
     pub id: usize,
-    pub x: usize,
-    pub y: usize,
+    /// Pixel position. Signed: an object may legitimately sit outside the map
+    /// bounds (Tiled allows it, and the editor writes whatever the runtime
+    /// [`Hitbox`] holds — an `usize` here would reject on re-load a map the
+    /// editor itself just saved).
+    pub x: i32,
+    pub y: i32,
     pub width: usize,
     pub height: usize,
     /// Tiled object "Type"/class. Used to mark warps (`type == "warp"`).
@@ -2002,6 +2006,38 @@ mod tests {
         // source of truth; toggle_dog's hitbox is checked here as a stand-in).
         assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (8, 8));
         assert_eq!((objects2[1].hitbox.x, objects2[1].hitbox.y), (16, 24));
+    }
+
+    /// An object dragged past the map's top/left edge has negative pixel
+    /// coordinates — legal in Tiled, representable in the runtime `Hitbox`
+    /// (i16), and written verbatim by the editor's save. The parser must accept
+    /// it back, or the editor bricks the map it just saved (this bit a real
+    /// map: an interactable parked at y −80 made every reload of the file fail).
+    #[test]
+    fn tmj_objects_accept_negative_coordinates() {
+        let json = r#"{
+            "width": 4, "height": 4,
+            "tilesets": [{"firstgid": 1, "source": "tiles.tsj"}],
+            "layers": [{
+                "type": "objectgroup", "name": "Object Layer 1",
+                "objects": [
+                    {
+                        "x": 44, "y": -80, "width": 16, "height": 16, "type": "",
+                        "properties": [{"name": "description", "type": "string", "value": "new_key"}]
+                    }
+                ]
+            }]
+        }"#;
+        let map = from_json(json.as_bytes()).unwrap();
+        let objects = map.parse_objects();
+        assert_eq!(objects.len(), 1);
+        assert_eq!((objects[0].hitbox.x, objects[0].hitbox.y), (44, -80));
+
+        // And it round-trips: save → reload lands on the same off-map spot.
+        let out = map.to_tmj(&objects);
+        let reloaded = from_json(out.as_bytes()).unwrap();
+        let objects2 = reloaded.parse_objects();
+        assert_eq!((objects2[0].hitbox.x, objects2[0].hitbox.y), (44, -80));
     }
 
     /// A `give_item` func round-trips its `item` string property (the granted

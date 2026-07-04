@@ -48,13 +48,17 @@ impl MapViewer {
         }
     }
 
-    /// Flag a collider re-derive if `layer` is the collision (first tile) layer.
-    /// The collision layer's tile art is what `Collider::from_sprite` derives
-    /// from, so any change to it — a forward edit *or* an undo/redo — must
-    /// re-derive, or in-game collision goes stale (see the host's `pending_reload`
-    /// drain). Forward tile edits flag it inline; this keeps undo/redo in step.
-    pub(super) fn flag_collision_reload(&mut self, map: &MapInfo, layer: usize) {
-        if map.layers.first().map(|l| l.source_layer) == Some(layer) {
+    /// Flag a re-derive if tile edits on `layer` feed derived runtime state:
+    /// the collision (first tile) layer's art is what `Collider::from_sprite`
+    /// derives from, and a sprite-plane layer's flood-fill components (shape +
+    /// baselines) are cached at load, not read live like bg/fg tiles. Forward
+    /// tile edits flag it inline (see `handle_paint` / `selection_layer`); this
+    /// keeps undo/redo in step — without it an undone sprite-plane stroke
+    /// restores the tile data but the stale components keep drawing until the
+    /// next forward edit on that layer rebuilds them.
+    pub(super) fn flag_derived_reload(&mut self, map: &MapInfo, layer: usize) {
+        let is_collision = map.layers.first().map(|l| l.source_layer) == Some(layer);
+        if is_collision || Self::is_sprite_layer(map, layer) {
             self.pending_reload = true;
         }
     }
@@ -80,7 +84,7 @@ impl MapViewer {
                         tiles.set(*layer, x as usize, y as usize, old);
                     }
                 }
-                self.flag_collision_reload(map, *layer);
+                self.flag_derived_reload(map, *layer);
             }
             // Undo an add by removing the (last) object it appended.
             EditAction::Add { index, .. } => {
@@ -187,7 +191,7 @@ impl MapViewer {
                         tiles.set(*layer, x as usize, y as usize, new);
                     }
                 }
-                self.flag_collision_reload(map, *layer);
+                self.flag_derived_reload(map, *layer);
             }
             EditAction::Add { index, after } => {
                 insert_object(map, *index, after.clone());
@@ -273,6 +277,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::NullConsole;
 
     /// Pushing a new action clears any redo future: a fresh edit invalidates the
     /// redone branch, the standard linear-history model.
@@ -452,5 +457,69 @@ mod tests {
         let extra = MapObject::dialogue(Hitbox::new(0, 0, 8, 8), "c");
         insert_object(&mut map, 99, extra);
         assert_eq!(map.objects.len(), 3);
+    }
+
+    /// Undoing (or redoing) a tile stroke on a sprite-plane layer must flag a
+    /// re-derive: its flood-fill components are cached at load, so without the
+    /// flag the restored tiles keep drawing the stale shapes until the next
+    /// forward edit on that layer rebuilds them. Live-read layers stay unflagged.
+    #[test]
+    fn sprite_plane_tile_undo_redo_rederives() {
+        let mut maps = MapStore::default();
+        maps.insert("m", crate::data::tiled::TiledMap::blank_modern(4, 4));
+        let mut map = MapInfo {
+            source: "m".to_string(),
+            layers: vec![
+                LayerInfo {
+                    source_layer: 0,
+                    ..LayerInfo::DEFAULT_LAYER
+                }, // collision
+                LayerInfo {
+                    source_layer: 1,
+                    ..LayerInfo::DEFAULT_LAYER
+                }, // drawable, sprite plane (below)
+            ],
+            sprite_layers: vec![LayerInfo {
+                source_layer: 1,
+                ..LayerInfo::DEFAULT_LAYER
+            }],
+            ..MapInfo::default()
+        };
+        let mut viewer = MapViewer::default();
+
+        // A recorded stroke on the sprite layer: cell (0,0) painted 0 → 7.
+        maps.get_mut("m").unwrap().set(1, 0, 0, 7);
+        viewer.record(EditAction::Tiles {
+            source: "m".to_string(),
+            layer: 1,
+            cells: vec![(0, 0, 0, 7)],
+        });
+
+        viewer.pending_reload = false;
+        viewer.undo(&mut NullConsole::new(), &mut map, &mut maps);
+        assert_eq!(
+            maps.get("m").unwrap().get(1, 0, 0),
+            Some(0),
+            "undo restores the tile"
+        );
+        assert!(
+            viewer.pending_reload,
+            "sprite-plane undo re-derives the flood-fill components"
+        );
+
+        viewer.pending_reload = false;
+        viewer.redo(&mut NullConsole::new(), &mut map, &mut maps);
+        assert_eq!(
+            maps.get("m").unwrap().get(1, 0, 0),
+            Some(7),
+            "redo reapplies the tile"
+        );
+        assert!(viewer.pending_reload, "sprite-plane redo re-derives too");
+
+        // A plain bg/fg layer is read live each frame — editing it derives
+        // nothing, so undo/redo there must not schedule a reload.
+        viewer.pending_reload = false;
+        viewer.flag_derived_reload(&map, 2);
+        assert!(!viewer.pending_reload, "live-read layers don't flag");
     }
 }
