@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 
 use crate::data::script::message::Message;
 use crate::data::{
+    eggdata,
     save::SaveData,
     script::Script,
     sound::{self, SfxData},
@@ -49,6 +50,7 @@ use crate::world::player::Shell;
 // `super::text`. The multi-panel `DockManager` itself stays map-specific.
 pub(crate) mod dock;
 use dock::{DockLayout, DockManager, DragState, PanelKind, Placement, Side};
+use walk_editor::WalkEditor;
 
 use super::text::{TextAnchor, TextOpenReq};
 use crate::ui::text_field::{TextEvent, TextField, TextOp};
@@ -412,6 +414,11 @@ enum EditorKey {
     OpenWarpDest,
     /// Open the fullscreen warp-destination placement overlay (the "place" button).
     WarpPreviewOpen,
+    /// A Presets-panel row: open the walk-sprite editor on that preset.
+    PresetRow(usize),
+    /// The walk-sprite editor's Save / Cancel buttons (hit only in that modal).
+    WalkEdOk,
+    WalkEdCancel,
     /// Confirm the fullscreen placement — commit the working landing point.
     WarpPreviewOk,
     /// Cancel the fullscreen placement — leave the warp untouched.
@@ -1122,6 +1129,19 @@ pub struct MapViewer {
     pub flag_names: Vec<String>,
     /// An open scene-picker session (fully modal): choose a scene to scrub.
     scene_picker: Option<ScenePicker>,
+    /// The creature presets the engine pushes in each focused frame (it owns the
+    /// registry, the editor doesn't), name-sorted — the Presets panel's listing
+    /// and the walk-sprite editor's source of truth. Same refresh cadence as
+    /// [`scene_names`](Self::scene_names).
+    pub preset_defs: Vec<(String, eggdata::PresetDef)>,
+    /// An open walk-sprite authoring session (fully modal): edit a preset's
+    /// nine-cell walk grid and save it back into `data.toml`. `None` when not
+    /// editing. See [`open_walk_editor`](Self::open_walk_editor).
+    walk_editor: Option<WalkEditor>,
+    /// Set after a walk-editor save wrote `data.toml`: the host re-installs the
+    /// live item/preset registries (`EggState::reload_data`), so a spawned
+    /// creature picks up the edit. Mirrors [`pending_reload`](Self::pending_reload).
+    pub pending_data_reload: bool,
     /// Set after a layer add/delete/move (which edits the stored `TiledMap`);
     /// the host re-derives `current_map`'s layer lists from the store, preserving
     /// the in-memory objects, camera and player.
@@ -1187,6 +1207,7 @@ mod panels;
 mod scroll;
 mod step;
 mod tools;
+mod walk_editor;
 
 /// Floor-divide a world pixel coordinate to its tile index. Defined over `i32`
 /// (callers promote from `i16` first) so the conversion keeps overflow headroom.

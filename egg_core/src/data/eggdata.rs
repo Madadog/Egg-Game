@@ -173,6 +173,105 @@ impl Presets {
     pub fn spawn(&self, id: &PresetId) -> Option<Shell> {
         self.get(id).map(|def| def.build_shell(id))
     }
+    /// Every preset as `(name, def)`, name-sorted — the walk-sprite editor's
+    /// listing + edit snapshot (pushed into the editor each frame, the way the
+    /// cutscene names are).
+    pub fn named_defs(&self) -> Vec<(String, PresetDef)> {
+        let mut v: Vec<(String, PresetDef)> = self
+            .defs
+            .iter()
+            .map(|(id, def)| (id.as_str().to_string(), def.clone()))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+}
+
+/// The compile-time-embedded shipped `data.toml` source — the same bytes
+/// [`Presets::builtin`] parses. The walk-sprite editor splices into this when
+/// the host store has no runtime copy yet, so its first save still writes a
+/// complete file rather than a fragment.
+pub fn shipped_source() -> &'static str {
+    include_str!("../../../assets/data/data.toml")
+}
+
+/// Emit one preset as TOML — the `[presets.<name>]` header plus all its
+/// sub-tables — for the walk-sprite editor to splice into `data.toml` on save
+/// (see [`splice_preset`]).
+pub fn emit_preset(name: &str, def: &PresetDef) -> Result<String, toml::ser::Error> {
+    #[derive(Serialize)]
+    struct One<'a> {
+        presets: std::collections::BTreeMap<&'a str, &'a PresetDef>,
+    }
+    let one = One {
+        presets: [(name, def)].into_iter().collect(),
+    };
+    toml::to_string_pretty(&one)
+}
+
+/// Replace `name`'s `[presets.<name>]` span in the raw `data.toml` text with
+/// `emitted` (from [`emit_preset`]), leaving every other byte — crucially the
+/// file's comments, which a whole-file re-serialise would destroy — untouched.
+/// The span runs from the preset's first header line to the last line before
+/// the next section that isn't the preset's own, minus any trailing blank or
+/// comment lines (those are the *next* section's banner, not this preset's).
+/// A name the file doesn't define appends at the end instead. Assumes the bare
+/// `presets.<ident>` header spelling the file (and the GUI) uses.
+pub fn splice_preset(src: &str, name: &str, emitted: &str) -> String {
+    let owned = |line: &str| {
+        let t = line.trim_start();
+        let Some(h) = t.strip_prefix("[[").or_else(|| t.strip_prefix('[')) else {
+            return false;
+        };
+        let Some(rest) = h.strip_prefix("presets.") else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(name) else {
+            return false;
+        };
+        rest.starts_with(']') || rest.starts_with('.')
+    };
+    let is_header = |line: &str| line.trim_start().starts_with('[');
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+
+    let Some(start) = lines.iter().position(|l| owned(l)) else {
+        // Unknown preset: append, separated by one blank line.
+        let mut out = src.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(emitted);
+        return out;
+    };
+    // The first section header after `start` that isn't ours ends the span...
+    let mut stop = lines.len();
+    for (i, line) in lines.iter().enumerate().skip(start + 1) {
+        if is_header(line) && !owned(line) {
+            stop = i;
+            break;
+        }
+    }
+    // ...minus the trailing blank/comment run (the next section's banner).
+    while stop > start + 1 {
+        let t = lines[stop - 1].trim();
+        if t.is_empty() || t.starts_with('#') {
+            stop -= 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut out = String::with_capacity(src.len() + emitted.len());
+    lines[..start].iter().for_each(|l| out.push_str(l));
+    out.push_str(emitted);
+    if !emitted.ends_with('\n') {
+        out.push('\n');
+    }
+    lines[stop..].iter().for_each(|l| out.push_str(l));
+    out
 }
 
 /// One creature archetype: its collision box, wander behaviour, the extra
@@ -418,5 +517,84 @@ sprite = 514
         let west = frame(&dog, (-1, 0), 0);
         assert_eq!(west.flip, Flip::None, "dog west unflipped");
         assert_eq!(west.x_offset, 0, "dog west has no offset");
+    }
+
+    /// `splice_preset` swaps exactly one preset's span: the file's comments and
+    /// the neighbouring presets' text survive byte-for-byte, the spliced file
+    /// still parses, and the named preset now equals the edited def. This is the
+    /// walk-sprite editor's save path — a whole-file re-serialise would destroy
+    /// every comment in `data.toml`.
+    #[test]
+    fn splice_preset_replaces_one_span_and_keeps_comments() {
+        let file = parse(include_str!("../../../assets/data/data.toml")).unwrap();
+        let src = include_str!("../../../assets/data/data.toml");
+
+        // Edit bro: retile its idle cell to a recognisable sprite id.
+        let mut def = file.presets["bro"].clone();
+        def.walk.cell_mut(4).frames_mut()[0].id = 777;
+        let emitted = emit_preset("bro", &def).unwrap();
+        let out = splice_preset(src, "bro", &emitted);
+
+        // Still parses; bro took the edit; every other preset is untouched.
+        let reparsed = parse(&out).unwrap();
+        assert_eq!(reparsed.presets["bro"], def, "bro took the edit");
+        for (name, other) in &file.presets {
+            if name != "bro" {
+                assert_eq!(&reparsed.presets[name], other, "{name} untouched");
+            }
+        }
+        // The banner comments survive — the whole point of splicing over
+        // re-serialising. (Sampled: the section banners around the presets.)
+        for banner in [
+            "# --- sound effects ---",
+            "# --- dialogue portraits ---",
+            "# --- items ---",
+        ] {
+            assert_eq!(
+                out.matches(banner).count(),
+                src.matches(banner).count(),
+                "{banner} survives the splice"
+            );
+        }
+        // Splicing is idempotent modulo parse: emit + splice again → same parse.
+        let again = splice_preset(&out, "bro", &emit_preset("bro", &reparsed.presets["bro"]).unwrap());
+        assert_eq!(parse(&again).unwrap().presets["bro"], def);
+
+        // An unknown name appends rather than corrupting anything.
+        let appended = splice_preset(src, "brand_new", &emit_preset("brand_new", &def).unwrap());
+        let reparsed = parse(&appended).unwrap();
+        assert_eq!(reparsed.presets["brand_new"], def);
+        assert_eq!(reparsed.presets["bro"], file.presets["bro"]);
+    }
+
+    /// The splice span ends before the next section's banner comment: replacing
+    /// the last preset must not eat the comment block that introduces whatever
+    /// section follows it.
+    #[test]
+    fn splice_preset_leaves_the_next_sections_banner() {
+        let src = "# top comment
+[presets.a]
+hitbox = [0, 0, 8, 8]
+
+[presets.a.walk]
+facing = \"per_axis\"
+
+# --- next section banner ---
+# more banner
+[items.thing]
+sprite = 1
+";
+        // A minimal def to splice in (walk grids are verbose; reuse a real one).
+        let file = parse(include_str!("../../../assets/data/data.toml")).unwrap();
+        let def = file.presets["critter"].clone();
+        let out = splice_preset(src, "a", &emit_preset("a", &def).unwrap());
+        assert!(out.starts_with("# top comment\n"), "leading comment kept");
+        assert!(
+            out.contains("# --- next section banner ---\n# more banner\n[items.thing]"),
+            "the following section's banner block survives: {out}"
+        );
+        let reparsed = parse(&out).unwrap();
+        assert_eq!(reparsed.presets["a"], def);
+        assert_eq!(reparsed.items["thing"].sprite, 1);
     }
 }

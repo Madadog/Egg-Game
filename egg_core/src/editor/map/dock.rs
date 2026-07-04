@@ -54,16 +54,19 @@ pub enum PanelKind {
     Map,
     /// Preview + author the dialogue an object's interaction triggers.
     Dialogue,
+    /// The creature presets: list them, open the walk-sprite editor on one.
+    Presets,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 6] = [
+    pub const ALL: [PanelKind; 7] = [
         Self::Layers,
         Self::Paint,
         Self::Objects,
         Self::Maps,
         Self::Map,
         Self::Dialogue,
+        Self::Presets,
     ];
 
     pub fn title(self) -> &'static str {
@@ -76,6 +79,9 @@ impl PanelKind {
             // the "Maps" browser's "M".
             Self::Map => "Setup",
             Self::Dialogue => "Dialog",
+            // "Critters" (not "Presets") so its global-bar letter doesn't
+            // collide with "Paint"'s.
+            Self::Presets => "Critters",
         }
     }
 }

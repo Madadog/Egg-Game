@@ -13,6 +13,7 @@ impl MapViewer {
             || self.warp_preview.is_some()
             || self.path_recorder.is_some()
             || self.scene_picker.is_some()
+            || self.walk_editor.is_some()
     }
 
     /// The field currently focused for text entry, if any.
@@ -148,6 +149,12 @@ impl MapViewer {
         if self.scene_picker.is_some() {
             self.dock.recompute(screen);
             self.step_scene_picker(input);
+            return;
+        }
+        // The walk-sprite editor is fully modal (like the rest).
+        if self.walk_editor.is_some() {
+            self.dock.recompute(screen);
+            self.step_walk_editor(system, input);
             return;
         }
         // `R` opens the path recorder — but not while a text field or the maps
@@ -892,12 +899,20 @@ impl MapViewer {
                     self.open_warp_preview(map, maps);
                 }
             }
+            // A Presets-panel row opens the walk-sprite editor on that preset.
+            EditorKey::PresetRow(row) => {
+                if click {
+                    self.open_walk_editor(row);
+                }
+            }
             // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
             // (it's modal), so they never arrive through the normal panel dispatch.
             // The recorder's own controls (save/cancel/name/actor/canvas) are the
             // same — hit-tested inside `step_path_recorder`, never here.
             EditorKey::WarpPreviewOk
             | EditorKey::WarpPreviewCancel
+            | EditorKey::WalkEdOk
+            | EditorKey::WalkEdCancel
             | EditorKey::PathRecOk
             | EditorKey::PathRecCancel
             | EditorKey::PathRecName

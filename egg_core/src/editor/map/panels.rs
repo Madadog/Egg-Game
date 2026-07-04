@@ -55,6 +55,40 @@ impl MapViewer {
     /// laid out at the origin and sized to fill its placed `rect`. The dock
     /// translates it to `rect`'s screen position when hit-testing
     /// ([`Ui::hit_at`]) and drawing ([`Ui::draw_at`]).
+    /// The Presets panel: every creature preset by name; clicking one opens
+    /// the fullscreen walk-sprite editor on it. The list is the engine-pushed
+    /// [`preset_defs`](Self::preset_defs) snapshot (the editor can't see the
+    /// live registry itself).
+    fn build_presets(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        if self.preset_defs.is_empty() {
+            rows.push(
+                b.text("(no presets pushed)")
+                    .small(true)
+                    .color(13)
+                    .full_width(7.0)
+                    .id(),
+            );
+            return;
+        }
+        rows.push(
+            b.text("click to edit walk sprites")
+                .small(true)
+                .color(13)
+                .full_width(7.0)
+                .id(),
+        );
+        for (i, (name, _)) in self.preset_defs.iter().enumerate() {
+            rows.push(
+                b.text(name)
+                    .small(true)
+                    .color(12)
+                    .full_width(7.0)
+                    .key(EditorKey::PresetRow(i))
+                    .id(),
+            );
+        }
+    }
+
     pub(super) fn build_panel(
         &self,
         idx: usize,
@@ -98,6 +132,7 @@ impl MapViewer {
             PanelKind::Maps => self.build_maps(&mut b, &mut rows, rect, maps),
             PanelKind::Map => self.build_setup(&mut b, &mut rows, map, maps),
             PanelKind::Dialogue => self.build_dialogue(&mut b, &mut rows),
+            PanelKind::Presets => self.build_presets(&mut b, &mut rows),
         }
 
         let size = (rect.w as f32, rect.h as f32);
@@ -483,9 +518,9 @@ impl MapViewer {
                     EditorTool::Interactables
                 },
             ),
-            // Map settings, the Maps browser and the Dialog editor don't own the
-            // canvas tool.
-            PanelKind::Maps | PanelKind::Map | PanelKind::Dialogue => None,
+            // Map settings, the Maps browser, the Dialog editor and the Critters
+            // list don't own the canvas tool.
+            PanelKind::Maps | PanelKind::Map | PanelKind::Dialogue | PanelKind::Presets => None,
         }
     }
 

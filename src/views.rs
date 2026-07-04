@@ -528,6 +528,9 @@ pub fn update_views(
         if views.views[i].mode == ViewMode::Walkaround && views.views[i].editor.focused {
             let g = &mut *game;
             let view = &mut views.views[i];
+            // Refresh the engine-owned snapshots this view's editor panels list
+            // (the primary editor gets these pushed in the walkaround step).
+            view.editor.preset_defs = g.state.presets.named_defs();
             let cam = view.free_cam;
             let screen = (view.output.width() as f32, view.output.height() as f32);
             let sheet = (
@@ -580,6 +583,13 @@ pub fn update_views(
             // shared save here (the toggle affects every window at once).
             if let Some(key) = view.editor.pending_taken_toggle.take() {
                 g.state.save.toggle_taken(&key);
+            }
+            // A walk-sprite save from this view rewrote `data.toml`: re-install
+            // the shared live registries (mirrors the primary drain in
+            // `EggState::run`).
+            if view.editor.pending_data_reload {
+                view.editor.pending_data_reload = false;
+                g.state.reload_data(&mut g.system);
             }
             // A layer or Setup edit from this view: re-derive the shared map's
             // layer lists and scalar metadata (bg colour, camera framing) using

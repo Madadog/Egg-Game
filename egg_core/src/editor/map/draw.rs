@@ -165,6 +165,11 @@ impl MapViewer {
             self.draw_scene_picker_fullscreen(draw_state, font);
             return;
         }
+        // The walk-sprite editor draws over everything.
+        if self.walk_editor.is_some() {
+            self.draw_walk_editor_fullscreen(draw_state, font);
+            return;
+        }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
         self.draw_grid(draw_state, input, font, map, maps, camera_pos);
         self.draw_canvas_overlay(draw_state, input, map, camera_pos);

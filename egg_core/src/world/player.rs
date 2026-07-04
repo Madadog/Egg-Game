@@ -125,6 +125,18 @@ impl SpriteAnimation {
     pub fn with_loopmode(self, loopmode: LoopMode) -> Self {
         Self { loopmode, ..self }
     }
+    /// The frame list, mutably — the walk-sprite editor edits frames in place
+    /// (the invariant that an animation is non-empty is the editor's to keep;
+    /// the runtime tolerates empty via `loop_index`'s zero guard).
+    pub fn frames_mut(&mut self) -> &mut Vec<SpriteOptions> {
+        &mut self.frames
+    }
+    pub fn loopmode(&self) -> &LoopMode {
+        &self.loopmode
+    }
+    pub fn set_loopmode(&mut self, loopmode: LoopMode) {
+        self.loopmode = loopmode;
+    }
     pub fn frames(&self) -> &[SpriteOptions] {
         &self.frames
     }
@@ -167,6 +179,22 @@ pub struct WalkSprites {
     facing: FacingPolicy,
 }
 impl WalkSprites {
+    /// The nine heading cells, in grid (row-major sign) order — see the type
+    /// docs for the layout. Read by the walk-sprite editor's grid view.
+    pub fn cells(&self) -> &[SpriteAnimation; 9] {
+        &self.grid
+    }
+    /// One heading cell, mutably (the walk-sprite editor's edit target).
+    /// Panics past 8 — cell indices come from the fixed 3×3 grid.
+    pub fn cell_mut(&mut self, i: usize) -> &mut SpriteAnimation {
+        &mut self.grid[i]
+    }
+    pub fn facing(&self) -> FacingPolicy {
+        self.facing
+    }
+    pub fn set_facing(&mut self, facing: FacingPolicy) {
+        self.facing = facing;
+    }
     pub fn dir_to_sprite(&self, dir: (i8, i8)) -> &SpriteAnimation {
         // `signum`, not an exact match, so a heading of any magnitude (e.g.
         // noclip's scaled deltas) still buckets into one of the nine cells.

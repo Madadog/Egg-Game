@@ -339,6 +339,13 @@ impl EggState {
                 ScrubRequest::Recorded(name, def) => self.open_scrubber_def(name, def),
             }
         }
+        // A walk-sprite editor save rewrote `data.toml`: re-install the live
+        // item/preset registries from the store so the next spawn uses the edit
+        // (works on web too, where no mtime watcher will notice the write).
+        if self.walkaround.map_viewer.pending_data_reload {
+            self.walkaround.map_viewer.pending_data_reload = false;
+            self.reload_data(system);
+        }
         transition
     }
 

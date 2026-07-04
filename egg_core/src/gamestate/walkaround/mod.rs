@@ -1091,6 +1091,7 @@ impl WalkaroundState {
             // list them (it doesn't otherwise see the registry). Refreshed each
             // focused frame, so a just-recorded scene shows up.
             self.map_viewer.scene_names = ctx.scenes.names();
+            self.map_viewer.preset_defs = ctx.presets.named_defs();
             // And the live actors, so the recorder can pick which one it records
             // (computed first — the getter borrows `self`, the field is on `self`).
             let recorder_actors = self.recorder_actors();
