@@ -46,8 +46,16 @@
 #   octave = 5           playback octave (default 5; the piano is one lower)
 #
 # --- dialogue portraits ---
-# `[portraits.<name>]`, keyed by the script name a message names. Fields:
-#   spr_ids = [tl, tr, bl, br]   the four 8x8 sprite cells, row-major
+# `[portraits.<name>]`, keyed by the script name a message names. A portrait is
+# a metasprite (any number of 8x8 cells on a grid) plus a pixel offset; two
+# spellings:
+#   spr_ids = [ids...]           explicit cells, row-major, `w` columns wide
+#   w       = 2                  grid columns (default 2; h = len / w)
+# or the sprite-style block shorthand (cells read sheet-adjacent from spr_id):
+#   spr_id  = 700                top-left sheet id
+#   w       = 3                  block width  (default 2)
+#   h       = 4                  block height (default 2)
+# Both take:
 #   offset  = [x, y]             pixel nudge applied on top of the draw position
 
 [items.chegg]

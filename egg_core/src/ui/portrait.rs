@@ -8,21 +8,33 @@ use crate::geometry::Vec2;
 use crate::render::SpriteOptions;
 
 /// Draw `portrait` onto `layer` at `offset` (its authored offset is added on
-/// top): the outline pass first, then the palette-rotated fill.
+/// top): the outline pass over every cell first — so the outline hugs the
+/// assembled silhouette rather than boxing each cell — then the palette-rotated
+/// fill.
 pub fn draw_offset(portrait: &Portrait, draw_state: &mut DrawState, layer: LayerId, offset: Vec2) {
     let pmap = palette_map_rotate(1);
-    let xy = |i: i32| -> (i32, i32) {
-        (
-            i32::from(portrait.offset.0) + i32::from(offset.x) + (i % 2) * 8,
-            i32::from(portrait.offset.1) + i32::from(offset.y) + (i / 2) * 8,
-        )
-    };
-    for (id, i) in portrait.spr_ids.iter().zip(0..) {
-        let (x, y) = xy(i);
-        draw_state.spr_outline(layer, *id, x, y, SpriteOptions::transparent_zero(), 1);
+    let origin = Vec2::new(
+        offset.x + i16::from(portrait.offset.0),
+        offset.y + i16::from(portrait.offset.1),
+    );
+    for (pos, id) in portrait.sprite.iter_at(origin) {
+        draw_state.spr_outline(
+            layer,
+            id,
+            pos.x.into(),
+            pos.y.into(),
+            SpriteOptions::transparent_zero(),
+            1,
+        );
     }
-    for (id, i) in portrait.spr_ids.iter().zip(0..) {
-        let (x, y) = xy(i);
-        draw_state.spr(layer, &pmap, *id, x, y, SpriteOptions::transparent_zero());
+    for (pos, id) in portrait.sprite.iter_at(origin) {
+        draw_state.spr(
+            layer,
+            &pmap,
+            id,
+            pos.x.into(),
+            pos.y.into(),
+            SpriteOptions::transparent_zero(),
+        );
     }
 }

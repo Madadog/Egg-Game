@@ -1,4 +1,5 @@
 pub mod eggdata;
+pub mod metasprite;
 pub mod portraits;
 pub mod save;
 pub mod scene;

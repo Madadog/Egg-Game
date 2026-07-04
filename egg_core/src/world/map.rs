@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::data::metasprite::{MetaCell, MetaSprite};
 use crate::data::save::SaveData;
 use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
@@ -276,17 +277,17 @@ fn layer_sprite_components(map: &TiledMap, layer: &LayerInfo) -> Vec<SpriteCompo
             // Depth-first flood over the 4-connected blob at this seed.
             visited[start_y * w + start_x] = true;
             let mut stack = vec![(start_x, start_y)];
-            let mut cells = Vec::new();
+            let mut world_cells: Vec<(Vec2, i32)> = Vec::new();
             let mut lowest_row = start_y;
             while let Some((x, y)) = stack.pop() {
                 let id = tile_at(x, y).unwrap_or(0);
-                cells.push(SpriteCell {
-                    world: Vec2::new(
+                world_cells.push((
+                    Vec2::new(
                         layer.offset.x.saturating_add((x as i16).saturating_mul(8)),
                         layer.offset.y.saturating_add((y as i16).saturating_mul(8)),
                     ),
-                    index: id as i32,
-                });
+                    id as i32,
+                ));
                 lowest_row = lowest_row.max(y);
                 let mut push = |nx: usize, ny: usize, stack: &mut Vec<(usize, usize)>| {
                     let idx = ny * w + nx;
@@ -310,9 +311,25 @@ fn layer_sprite_components(map: &TiledMap, layer: &LayerInfo) -> Vec<SpriteCompo
             }
             // Baseline: the bottom edge of the lowest occupied row, map-absolute.
             let baseline = i32::from(layer.offset.y) + (lowest_row as i32 + 1) * 8;
+            // The metasprite origin is the blob's bounding-box top-left, so the
+            // component reads as "this sprite, placed here in the world".
+            let origin = Vec2::new(
+                world_cells.iter().map(|(p, _)| p.x).min().unwrap_or(0),
+                world_cells.iter().map(|(p, _)| p.y).min().unwrap_or(0),
+            );
+            let sprite = MetaSprite {
+                cells: world_cells
+                    .into_iter()
+                    .map(|(world, spr_id)| MetaCell {
+                        offset: world - origin,
+                        spr_id,
+                    })
+                    .collect(),
+            };
             components.push(SpriteComponent {
                 source_layer: layer.source_layer,
-                cells,
+                origin,
+                sprite,
                 baseline,
                 transparent: layer.transparent,
                 palette_rotate: layer.palette_rotate,
@@ -510,18 +527,6 @@ impl Plane {
     }
 }
 
-/// One cell of a [`SpriteComponent`]: a single 8×8 tile placed in the world.
-/// Resolved at load through the exact math [`LayerInfo::draw_indexed`] uses, so
-/// drawing it as a 1×1 sprite is bit-identical to the layer drawing it as a tile.
-#[derive(Clone, Debug)]
-pub struct SpriteCell {
-    /// World-pixel top-left of this cell (the layer's pixel offset + grid × 8),
-    /// pre-camera. Subtract the camera at draw time.
-    pub world: Vec2,
-    /// The sheet-local tile id drawn here — used directly as a sprite index.
-    pub index: i32,
-}
-
 /// A 4-connected blob of non-empty cells on a [`Plane::Sprite`] layer, drawn as
 /// one y-sorted unit. Every cell shares the component's [`baseline`](Self::baseline)
 /// as its sort key, so the whole prop sorts against entities by its lowest edge —
@@ -537,8 +542,16 @@ pub struct SpriteComponent {
     /// the eye toggle flips `visible` without a reload, so visibility can't be
     /// baked into the derive.
     pub source_layer: usize,
-    /// This component's cells (world position + tile id), in flood-fill order.
-    pub cells: Vec<SpriteCell>,
+    /// Map-absolute pixel position of the blob's bounding-box top-left — where
+    /// [`sprite`](Self::sprite) is placed in the world (pre-camera; subtract
+    /// the camera at draw time).
+    pub origin: Vec2,
+    /// The blob as a [`MetaSprite`]: one cell per occupied tile (pixel offset
+    /// from [`origin`](Self::origin), sheet-local tile id as the sprite id), in
+    /// flood-fill order. Each cell is resolved at load through the exact math
+    /// [`LayerInfo::draw_indexed`] uses, so drawing it as a 1×1 sprite is
+    /// bit-identical to the layer drawing it as a tile.
+    pub sprite: MetaSprite,
     /// The bottom pixel edge of the component's lowest row, in **map-absolute**
     /// pixels (layer offset included). The y-sort key is `baseline − camera.y`,
     /// so it lands in the same camera-relative space as [`DrawParams::bottom`](crate::render::DrawParams::bottom).
@@ -562,11 +575,11 @@ impl SpriteComponent {
     pub fn cell_params(&self, cam_x: i32, cam_y: i32) -> impl Iterator<Item = DrawParams> + '_ {
         let transparent = self.transparent;
         let palette_rotate = self.palette_rotate;
-        self.cells.iter().map(move |cell| {
+        self.sprite.iter_at(self.origin).map(move |(pos, spr_id)| {
             DrawParams::new(
-                cell.index,
-                i32::from(cell.world.x) - cam_x,
-                i32::from(cell.world.y) - cam_y,
+                spr_id,
+                i32::from(pos.x) - cam_x,
+                i32::from(pos.y) - cam_y,
                 SpriteOptions {
                     transparent,
                     ..SpriteOptions::default()
@@ -1546,25 +1559,36 @@ mod tests {
             5,
         );
         assert_eq!(info.sprite_components.len(), 2, "two disjoint blobs");
-        let mut counts: Vec<usize> = info.sprite_components.iter().map(|c| c.cells.len()).collect();
+        let mut counts: Vec<usize> = info
+            .sprite_components
+            .iter()
+            .map(|c| c.sprite.cells.len())
+            .collect();
         counts.sort();
         assert_eq!(counts, vec![2, 3]);
         let l_blob = info
             .sprite_components
             .iter()
-            .find(|c| c.cells.len() == 3)
+            .find(|c| c.sprite.cells.len() == 3)
             .unwrap();
         let column = info
             .sprite_components
             .iter()
-            .find(|c| c.cells.len() == 2)
+            .find(|c| c.sprite.cells.len() == 2)
             .unwrap();
         // Baseline = offsety(5) + (lowest_row + 1) * 8.
         assert_eq!(l_blob.baseline, 5 + (2 + 1) * 8);
         assert_eq!(column.baseline, 5 + (4 + 1) * 8);
         // Cell world positions include the layer offset: the column's top cell is
-        // grid (3,3) → (24, 5 + 24).
-        assert!(column.cells.iter().any(|c| c.world == Vec2::new(24, 29)));
+        // grid (3,3) → (24, 5 + 24). (`iter_at(origin)` is the world-space view;
+        // the origin itself is the blob's bounding-box top-left.)
+        assert_eq!(column.origin, Vec2::new(24, 29));
+        assert!(
+            column
+                .sprite
+                .iter_at(column.origin)
+                .any(|(pos, _)| pos == Vec2::new(24, 29))
+        );
         // Draw metadata rides onto the component from the layer.
         assert_eq!(l_blob.transparent, Some(0));
     }
@@ -1591,7 +1615,7 @@ mod tests {
             5,
         );
         assert_eq!(info.sprite_components.len(), 1, "touching cells merge");
-        assert_eq!(info.sprite_components[0].cells.len(), 5);
+        assert_eq!(info.sprite_components[0].sprite.cells.len(), 5);
         assert_eq!(info.sprite_components[0].baseline, (4 + 1) * 8);
     }
 
@@ -1668,7 +1692,7 @@ mod tests {
         let info = map_by_name(&console.indexed_sprites, "m", &store).unwrap();
         assert_eq!(info.sprite_layers.len(), 1, "sprite plane survives save/load");
         assert_eq!(info.sprite_components.len(), 1);
-        assert_eq!(info.sprite_components[0].cells.len(), 1);
+        assert_eq!(info.sprite_components[0].sprite.cells.len(), 1);
     }
 
     /// The y-sort tie rule: replaying `draw_world`'s keyed list (components pushed
@@ -1679,7 +1703,8 @@ mod tests {
     fn sprite_component_sorts_against_entity_feet() {
         let component = SpriteComponent {
             source_layer: 0,
-            cells: Vec::new(),
+            origin: Vec2::new(0, 0),
+            sprite: MetaSprite::default(),
             baseline: 100,
             transparent: Some(0),
             palette_rotate: 0,
