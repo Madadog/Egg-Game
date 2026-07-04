@@ -16,7 +16,6 @@ use crate::data::save::SaveData;
 use crate::data::scene::CutsceneDef;
 use crate::debug::DebugInfo;
 use crate::draw_state::LayerId;
-use crate::editor::map::MapViewer;
 use crate::gamestate::walkaround::{CutsceneReplay, WalkaroundState};
 use crate::platform::{ConsoleApi, EggInput, MouseInput, NullConsole, ScanCode, just_pressed, pressed};
 use crate::render::{Canvas, PrintOptions, print_to_shadow_with_font};
@@ -114,7 +113,7 @@ impl EggState {
         // Snapshot the live world without the editor overlay or any live scene,
         // so the replay shows a clean world and starts from a known stack.
         let mut base_world = self.walkaround.clone();
-        base_world.map_viewer = MapViewer::default();
+        base_world.map_viewer = Default::default();
         base_world.cutscene.clear();
         let base_save = self.save.clone();
         let mut console = NullConsole::new();
@@ -224,10 +223,9 @@ impl EggState {
             scrubber.replay.seek(scrubber.frame, &mut ctx)
         };
 
-        // Render the ghost fullscreen through the REAL console (sprite assets),
-        // with a default unfocused editor (so no editor chrome draws), then the
-        // scrubber's banner + timeline over the top.
-        let overlay = MapViewer::default();
+        // Render the ghost fullscreen through the REAL console (sprite assets) —
+        // world only, no editor overlay — then the scrubber's banner + timeline
+        // over the top.
         {
             let mut ctx = Ctx {
                 draw: &mut self.draw_state,
@@ -242,7 +240,7 @@ impl EggState {
                 presets: &self.presets,
                 font: &self.font,
             };
-            current.draw_world(&mut ctx, current.camera.pos, &overlay, &DebugInfo::default());
+            current.draw_world(&mut ctx, current.camera.pos, &DebugInfo::default());
             let banner = format!(
                 "SCRUBBER  {}   drag timeline / [<- ->] step   [X] close",
                 scrubber.name

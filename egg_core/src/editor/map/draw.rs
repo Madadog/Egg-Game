@@ -3,26 +3,7 @@
 
 use super::*;
 
-impl MapViewer {
-    pub fn draw_map_viewer(
-        &self,
-        draw_state: &mut DrawState,
-        input: &EggInput,
-        font: &Font,
-        maps: &MapStore,
-        walkaround: &WalkaroundState,
-    ) {
-        self.draw_at(
-            draw_state,
-            input,
-            font,
-            &walkaround.current_map,
-            maps,
-            walkaround.camera.pos,
-        );
-    }
-
-    /// Draw the dock resize bars (the inner-edge splitter band per occupied dock
+impl MapViewer {    /// Draw the dock resize bars (the inner-edge splitter band per occupied dock
     /// side). Drawn between the docked panels and the floats so a floating window
     /// sits on top of any bar it overlaps.
     pub(super) fn draw_splitters(&self, draw_state: &mut DrawState) {
@@ -135,7 +116,8 @@ impl MapViewer {
     }
 
     /// Draw the editor overlay + panels for `map` from an explicit `camera_pos`.
-    /// Generalises [`draw_map_viewer`](Self::draw_map_viewer) so an extra view
+    /// The editor overlay draw entry point — callers (the walkaround's draw,
+    /// an extra view) pass their own map + camera, so an extra view
     /// can run its own editor against its own free camera, rather than the live
     /// walkaround camera. No-op while unfocused.
     pub fn draw_at(

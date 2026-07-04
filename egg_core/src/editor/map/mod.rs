@@ -24,9 +24,10 @@ use crate::data::{
     tiled::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
 };
 use crate::draw_state::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate};
-use crate::gamestate::walkaround::WalkaroundState;
 use crate::geometry::{Hitbox, Vec2};
-use crate::data::scene::{self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion};
+use crate::data::scene::{
+    self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion, ScrubRequest,
+};
 use crate::platform::{
     ConsoleApi, EggInput, MouseInput, ScanCode, dpad_delta, just_pressed, pressed,
 };
@@ -548,19 +549,6 @@ struct WarpPreview {
 /// Where to write the cutscene registry (mirrors the private `EGGSCENE_PATH` the
 /// text editor uses).
 const SCENE_PATH: &str = "data/main.eggscene";
-
-/// A request from the editor to open the cutscene scrubber, parked on
-/// [`MapViewer::pending_scrub`] and drained by the engine in `step_mode` (which
-/// owns the cutscene registry). Defined here because the editor is what *sets*
-/// it.
-#[derive(Debug, Clone)]
-pub enum ScrubRequest {
-    /// Replay a scene looked up by name in the registry (the picker's choice).
-    ByName(String),
-    /// Replay a freshly recorded definition directly, no registry lookup — so
-    /// play-right-after-recording doesn't race the on-disk save's live-reload.
-    Recorded(String, CutsceneDef),
-}
 
 /// An open scene-picker session (fully modal): a list of cutscene names; pick
 /// one with ↑/↓ + Enter to replay it in the scrubber. Populated from the

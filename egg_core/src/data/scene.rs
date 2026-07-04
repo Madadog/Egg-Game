@@ -176,6 +176,21 @@ pub enum CutsceneContent {
 /// The serializer omits the amplitude at this value, keeping `shake N` canonical.
 pub const DEFAULT_SHAKE_AMPLITUDE: i16 = 2;
 
+/// A request to open the cutscene scrubber on a scene. The map editor *sets*
+/// one (parked on its `pending_scrub`), the engine — which owns the cutscene
+/// registry — drains and fulfils it. Scene-domain data rather than an editor
+/// type, so the engine's drain doesn't reach into the editor's module tree
+/// (a crate-extraction seam: the editor can one day move out of `egg_core`
+/// without taking this type with it).
+#[derive(Debug, Clone)]
+pub enum ScrubRequest {
+    /// Replay a scene looked up by name in the registry (the picker's choice).
+    ByName(String),
+    /// Replay a freshly recorded definition directly, no registry lookup — so
+    /// play-right-after-recording doesn't race the on-disk save's live-reload.
+    Recorded(String, CutsceneDef),
+}
+
 /// Where a `camera` step points the scene camera.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CameraTarget {

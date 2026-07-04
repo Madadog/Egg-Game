@@ -669,11 +669,16 @@ pub fn update_views(
                     presets: &g.state.presets,
                     font: &g.state.font,
                 };
-                g.state.walkaround.draw_world(
-                    &mut ctx,
+                g.state.walkaround.draw_world(&mut ctx, view.free_cam, &g.state.debug_info);
+                // This view's own editor overlay, after the world (draw_world
+                // itself is editor-free — the crate-extraction seam).
+                view.editor.draw_at(
+                    &mut view.draw_state,
+                    &view.input,
+                    &g.state.font,
+                    &g.state.walkaround.current_map,
+                    &g.state.maps,
                     view.free_cam,
-                    &view.editor,
-                    &g.state.debug_info,
                 );
             }
             ViewMode::Text => view.text_editor.draw(&mut view.draw_state, &g.state.font),

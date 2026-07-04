@@ -1521,7 +1521,18 @@ impl WalkaroundState {
         // canonical output surface. The world build leaves its result in
         // `ctx.draw`, so the final composite is a separate step that takes the
         // output (avoiding a borrow conflict with the console).
-        self.draw_world(ctx, self.camera.pos, &self.map_viewer, debug_info);
+        self.draw_world(ctx, self.camera.pos, debug_info);
+        // The editor overlay, hoisted out of `draw_world` so world rendering
+        // has no editor dependency (the scrubber ghost-draws a world with no
+        // editor at all; an extra view draws its own editor after its world).
+        self.map_viewer.draw_at(
+            ctx.draw,
+            ctx.input,
+            ctx.font,
+            &self.current_map,
+            ctx.maps,
+            self.camera.pos,
+        );
         WalkaroundState::composite_into(ctx.draw, ctx.system.output_image());
         // The bag overlay: drawn last, over the just-composited world, so it
         // reads as an inventory on top of the (frozen) world rather than its own
@@ -1534,12 +1545,16 @@ impl WalkaroundState {
     }
 
     /// Render the walkaround world from an arbitrary `camera_pos` into
-    /// `ctx.draw`, using `editor` for the map-editor overlay (so an extra view
-    /// can drive its own free camera + editor without touching the live
-    /// `self.camera`/`self.map_viewer`). Tile data comes from `ctx.maps`; the
+    /// `ctx.draw` (so an extra view can drive its own free camera without
+    /// touching the live `self.camera`). Tile data comes from `ctx.maps`; the
     /// shared console is read for assets only. The finished frame is left in
     /// `ctx.draw.rgba(BG)` — call [`composite_into`](Self::composite_into)
     /// to blit it onto a surface.
+    ///
+    /// Draws the *world only* — no map-editor overlay. Each caller paints its
+    /// own editor (or none: the scrubber's ghost frames) on top; keeping the
+    /// editor out of here is a crate-extraction seam, so world rendering never
+    /// depends on editor types.
     ///
     /// Engine-agnostic: it only touches `ctx.draw` (the layer canvases) and
     /// reads `ctx.system` for assets, with no knowledge of windows or the host.
@@ -1547,7 +1562,6 @@ impl WalkaroundState {
         &self,
         ctx: &mut Ctx<S>,
         camera_pos: Vec2,
-        editor: &MapViewer,
         debug_info: &DebugInfo,
     ) {
         use crate::draw_state::LayerId::*;
@@ -1690,14 +1704,6 @@ impl WalkaroundState {
                 opts,
             );
         }
-        editor.draw_at(
-            ctx.draw,
-            ctx.input,
-            ctx.font,
-            &self.current_map,
-            ctx.maps,
-            camera_pos,
-        );
     }
 
     /// Composite the finished walkaround frame (left in `draw_state.rgba(BG)` by

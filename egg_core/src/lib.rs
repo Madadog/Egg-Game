@@ -33,7 +33,7 @@ use crate::data::script::Script;
 use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
 use crate::draw_state::DrawState;
-use crate::editor::map::ScrubRequest;
+use crate::data::scene::ScrubRequest;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{CutsceneScrubber, GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::{ConsoleApi, EggInput};
