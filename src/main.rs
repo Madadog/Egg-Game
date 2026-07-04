@@ -13,6 +13,7 @@ use fantasy_console::{
 use script_asset::{SceneAsset, ScriptAsset, ScriptPlugin};
 use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
 
+mod base64;
 mod fantasy_console;
 #[cfg(not(target_arch = "wasm32"))]
 mod hot_reload;

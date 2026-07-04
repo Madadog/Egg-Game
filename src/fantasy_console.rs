@@ -226,27 +226,37 @@ impl ConsoleApi for FantasyConsole {
         }
     }
     /// Web build: every write lands in `localStorage`. The save (user data) keeps
-    /// its historical raw-path key (`"save.json"`) byte-for-byte; asset-namespace
-    /// writes (maps, manifest, eggtext, eggscene, editor layout, `data.toml`)
-    /// persist under a prefixed key ([`ASSET_OVERRIDE_PREFIX`]) so an in-game edit
-    /// survives a reload instead of silently vanishing. Binary art (PNGs) can't
-    /// ride in a JS string, so it's logged and dropped as before.
+    /// its historical raw-path key (`"save.json"`) byte-for-byte. Asset-namespace
+    /// writes persist as overrides that survive a reload: text (maps, manifest,
+    /// eggtext, eggscene, editor layout, `data.toml`) verbatim under
+    /// [`ASSET_OVERRIDE_PREFIX`], and binary (image-layer PNGs, or any future
+    /// binary asset) base64-encoded under [`ASSET_OVERRIDE_B64_PREFIX`] — a JS
+    /// string can't hold raw bytes, so binary rides the base64 leg (see
+    /// [`crate::base64`]). Writing one form clears the other key, so a path
+    /// that changes shape can't serve a stale override.
     #[cfg(target_arch = "wasm32")]
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
-        let key = if is_user_data(path) {
-            path.to_string()
-        } else if std::str::from_utf8(bytes).is_ok() {
-            format!("{ASSET_OVERRIDE_PREFIX}{path}")
-        } else {
-            info!(
-                "File write not persisted on web (binary {path}, {} bytes)",
-                bytes.len()
-            );
-            return;
-        };
         let Some(storage) = local_storage() else { return };
-        // Both branches above guarantee valid UTF-8, so the lossy cast is exact.
-        if let Err(e) = storage.set_item(&key, &String::from_utf8_lossy(bytes)) {
+        if is_user_data(path) {
+            if let Err(e) = storage.set_item(path, &String::from_utf8_lossy(bytes)) {
+                info!("Failed to persist {path} to localStorage (quota?): {e:?}");
+            }
+            return;
+        }
+        let (key, stale_key, value) = match std::str::from_utf8(bytes) {
+            Ok(text) => (
+                format!("{ASSET_OVERRIDE_PREFIX}{path}"),
+                format!("{ASSET_OVERRIDE_B64_PREFIX}{path}"),
+                text.to_string(),
+            ),
+            Err(_) => (
+                format!("{ASSET_OVERRIDE_B64_PREFIX}{path}"),
+                format!("{ASSET_OVERRIDE_PREFIX}{path}"),
+                crate::base64::encode(bytes),
+            ),
+        };
+        let _ = storage.remove_item(&stale_key);
+        if let Err(e) = storage.set_item(&key, &value) {
             // Most likely the storage quota. Log loudly and drop — a failed
             // authoring save must never take down the game.
             info!("Failed to persist {key} to localStorage (quota?): {e:?}");
@@ -377,6 +387,12 @@ fn local_storage() -> Option<web_sys::Storage> {
 #[cfg(target_arch = "wasm32")]
 const ASSET_OVERRIDE_PREFIX: &str = "egg-asset:";
 
+/// `localStorage` key prefix for **binary** asset overrides, stored base64
+/// (see [`crate::base64`]) because a JS string can't hold raw bytes. The
+/// text/binary split is per write — [`asset_override`] checks both.
+#[cfg(target_arch = "wasm32")]
+const ASSET_OVERRIDE_B64_PREFIX: &str = "egg-asset-b64:";
+
 /// The persisted authoring override for a bundled asset, if any.
 ///
 /// On **web** this is the `localStorage` entry an in-game editor wrote, so an
@@ -392,14 +408,26 @@ pub fn asset_override(_path: &str) -> Option<Vec<u8>> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn asset_override(path: &str) -> Option<Vec<u8>> {
-    let key = format!("{ASSET_OVERRIDE_PREFIX}{path}");
-    match local_storage()?.get_item(&key) {
-        Ok(value) => value.map(String::into_bytes),
+    let storage = local_storage()?;
+    let read = |key: &str| match storage.get_item(key) {
+        Ok(value) => value,
         Err(e) => {
             info!("Failed to read asset override {key} from localStorage: {e:?}");
             None
         }
+    };
+    if let Some(text) = read(&format!("{ASSET_OVERRIDE_PREFIX}{path}")) {
+        return Some(text.into_bytes());
     }
+    // The binary leg: decode the base64 entry a binary write left. A corrupt
+    // entry reads as "no override" (the bundled asset stands) rather than
+    // handing garbage bytes to a parser.
+    let encoded = read(&format!("{ASSET_OVERRIDE_B64_PREFIX}{path}"))?;
+    let decoded = crate::base64::decode(&encoded);
+    if decoded.is_none() {
+        info!("Ignoring corrupt binary override for {path} (bad base64)");
+    }
+    decoded
 }
 
 /// One-time boot log of the asset paths currently served from a persisted
@@ -413,7 +441,9 @@ fn log_asset_overrides() {
     let mut overridden = Vec::new();
     for i in 0..len {
         if let Ok(Some(key)) = storage.key(i)
-            && let Some(path) = key.strip_prefix(ASSET_OVERRIDE_PREFIX)
+            && let Some(path) = key
+                .strip_prefix(ASSET_OVERRIDE_PREFIX)
+                .or_else(|| key.strip_prefix(ASSET_OVERRIDE_B64_PREFIX))
         {
             overridden.push(path.to_string());
         }
