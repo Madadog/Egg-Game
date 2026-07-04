@@ -593,8 +593,10 @@ pub fn update_views(
             }
             // A layer or Setup edit from this view: re-derive the shared map's
             // layer lists and scalar metadata (bg colour, camera framing) using
-            // this view's sprite sheet, preserving objects/camera/player. The live
-            // background colour is pushed too so a swatch click shows immediately.
+            // this view's sprite sheet, preserving objects/camera/player. The
+            // world draws `current_map.bg_colour` directly (the walkaround field
+            // is a runtime *override*, deliberately left alone), so a swatch
+            // click still shows immediately.
             if view.editor.pending_reload {
                 view.editor.pending_reload = false;
                 let name = g.state.walkaround.current_map.source.clone();
@@ -604,7 +606,6 @@ pub fn update_views(
                     &g.state.maps,
                 );
                 if let Some(fresh) = fresh {
-                    g.state.walkaround.bg_colour = fresh.bg_colour;
                     g.state.walkaround.current_map.bg_colour = fresh.bg_colour;
                     g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
                     g.state.walkaround.current_map.layers = fresh.layers;

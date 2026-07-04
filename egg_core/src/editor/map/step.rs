@@ -1062,7 +1062,7 @@ impl MapViewer {
             EditorKey::BgColour(c) => {
                 if click {
                     if let Some(tm) = maps.get_mut(&map.source) {
-                        tm.set_bg_colour(c);
+                        tm.set_bg_colour(BgColour::Index(c));
                     }
                     self.status.edited();
                     self.pending_reload = true;

@@ -34,6 +34,53 @@ fn default_palette() -> Vec<[u8; 3]> {
     p
 }
 
+/// A colour as game data names one: either a palette index — resolved live
+/// against the default palette, so palette swaps (day/night) and fades
+/// re-colour it every frame — or a literal RGB triple, which is absolute and
+/// untouched by palette dynamics. Resolve with [`DrawState::resolve`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BgColour {
+    Index(u8),
+    Rgb([u8; 3]),
+}
+
+impl Default for BgColour {
+    /// Palette slot 0 — the console's historical "clear to black".
+    fn default() -> Self {
+        Self::Index(0)
+    }
+}
+
+impl BgColour {
+    /// Parse a hex colour string: `#rrggbb` or Tiled's `#aarrggbb` (alpha
+    /// ignored — a background has nothing to blend with), `#` optional,
+    /// case-insensitive. `None` on anything else.
+    pub fn parse_rgb(s: &str) -> Option<[u8; 3]> {
+        let hex = s.trim().strip_prefix('#').unwrap_or_else(|| s.trim());
+        // Length is in bytes; non-ASCII of the right byte count would panic the
+        // subslicing below (char boundaries), so bounce it here.
+        if !hex.is_ascii() {
+            return None;
+        }
+        let rgb = match hex.len() {
+            6 => hex,
+            8 => &hex[2..],
+            _ => return None,
+        };
+        let channel = |i: usize| u8::from_str_radix(&rgb[2 * i..2 * i + 2], 16).ok();
+        Some([channel(0)?, channel(1)?, channel(2)?])
+    }
+
+    /// The `#rrggbb` form of an [`Rgb`](Self::Rgb) colour; `None` for an index
+    /// (which has no fixed RGB — it follows the live palette).
+    pub fn hex(&self) -> Option<String> {
+        match self {
+            Self::Index(_) => None,
+            Self::Rgb([r, g, b]) => Some(format!("#{r:02x}{g:02x}{b:02x}")),
+        }
+    }
+}
+
 /// Named index of the layer you're drawing to. Can be cast to `usize`.
 #[repr(usize)]
 #[derive(Clone, Copy)]
@@ -85,6 +132,15 @@ impl DrawState {
             .copied()
             .map(Rgba::from_rgb)
             .unwrap_or(Rgba::TRANSPARENT)
+    }
+
+    /// Resolve a [`BgColour`] to an Rgba: an index through the default palette
+    /// (like [`colour`](Self::colour)), a literal RGB verbatim.
+    pub fn resolve(&self, colour: BgColour) -> Rgba {
+        match colour {
+            BgColour::Index(idx) => self.colour(idx),
+            BgColour::Rgb(rgb) => Rgba::from_rgb(rgb),
+        }
     }
 
     /// Clear an RGBA layer to the colour at `idx` in the default palette.
@@ -233,6 +289,39 @@ mod tests {
         s.indexed_sprites = IndexedImage::new(256, 128);
         s.indexed_sprites.data[0] = 1;
         s
+    }
+
+    /// `parse_rgb` accepts the forms map data carries — `#rrggbb`, Tiled's
+    /// `#aarrggbb` (alpha dropped), hash optional, any case — and refuses
+    /// everything else, so a corrupt property reads as "no colour", not garbage.
+    #[test]
+    fn bg_colour_hex_parses_both_widths_and_rejects_malformed() {
+        assert_eq!(BgColour::parse_rgb("#b13e53"), Some([177, 62, 83]));
+        assert_eq!(BgColour::parse_rgb("#FFB13E53"), Some([177, 62, 83]));
+        assert_eq!(BgColour::parse_rgb("b13e53"), Some([177, 62, 83]));
+        // "ｂ１" is 6 *bytes* of non-ASCII — must reject, not panic on a
+        // mid-codepoint slice.
+        for bad in ["", "#", "#12345", "#1234567", "#xxyyzz", "#b13e5g", "ｂ１"] {
+            assert_eq!(BgColour::parse_rgb(bad), None, "{bad:?} rejected");
+        }
+        // An Rgb colour round-trips through its own hex form; an index has none.
+        let c = BgColour::Rgb([177, 62, 83]);
+        assert_eq!(c.hex().as_deref(), Some("#b13e53"));
+        assert_eq!(BgColour::parse_rgb(&c.hex().unwrap()), Some([177, 62, 83]));
+        assert_eq!(BgColour::Index(3).hex(), None);
+    }
+
+    /// `resolve` sends an index through the live palette (so a palette swap
+    /// re-colours it) and passes a literal RGB through untouched.
+    #[test]
+    fn resolve_follows_palette_for_index_only() {
+        let mut s = fresh_state();
+        assert_eq!(s.resolve(BgColour::Index(1)), Rgba::new(255, 0, 0, 255));
+        assert_eq!(s.resolve(BgColour::Rgb([7, 8, 9])), Rgba::new(7, 8, 9, 255));
+        // Swap the palette: the index follows, the literal doesn't.
+        s.palettes[0][1] = [0, 255, 0];
+        assert_eq!(s.resolve(BgColour::Index(1)), Rgba::new(0, 255, 0, 255));
+        assert_eq!(s.resolve(BgColour::Rgb([7, 8, 9])), Rgba::new(7, 8, 9, 255));
     }
 
     #[test]

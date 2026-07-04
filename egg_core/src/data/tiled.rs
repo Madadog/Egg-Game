@@ -11,6 +11,7 @@
 
 use crate::world::animation::AnimFrame;
 use crate::data::sound::{self, SfxData};
+use crate::draw_state::BgColour;
 use crate::world::interact::{InteractFn, Interaction};
 use crate::world::map::{
     Axis, Gate, LayerInfo, MapObject, ObjectEffect, Plane, Trigger, Warp, WarpMode,
@@ -902,9 +903,17 @@ pub struct TiledMap {
     pub properties: Vec<Property>,
 }
 impl TiledMap {
-    /// This map's `bg_colour` property (palette index), if present.
-    pub fn bg_colour(&self) -> Option<u8> {
-        property_int(&self.properties, "bg_colour").and_then(|v| u8::try_from(v).ok())
+    /// This map's `bg_colour` property, if present. Dual-form: an int is a
+    /// palette index (follows palette swaps/fades), a `#rrggbb` / `#aarrggbb`
+    /// string is a literal colour (absolute). The JSON value's own type
+    /// discriminates, so both forms live in the one property.
+    pub fn bg_colour(&self) -> Option<BgColour> {
+        if let Some(v) = property_int(&self.properties, "bg_colour") {
+            return u8::try_from(v).ok().map(BgColour::Index);
+        }
+        property_str(&self.properties, "bg_colour")
+            .and_then(BgColour::parse_rgb)
+            .map(BgColour::Rgb)
     }
     /// This map's `camera_stick` property parsed as an `(x, y)` i16 pair (the
     /// pinned camera position), if present and well-formed (`"x,y"`).
@@ -1081,9 +1090,17 @@ impl TiledMap {
         self.properties.retain(|p| p.name != name);
     }
 
-    /// Set the map's background palette index (`bg_colour`).
-    pub fn set_bg_colour(&mut self, colour: u8) {
-        self.set_property("bg_colour", "int", Value::from(colour));
+    /// Set the map's background colour (`bg_colour`): an index writes the int
+    /// form, a literal RGB writes Tiled's `color` type as `#rrggbb`.
+    pub fn set_bg_colour(&mut self, colour: BgColour) {
+        match colour {
+            BgColour::Index(idx) => self.set_property("bg_colour", "int", Value::from(idx)),
+            BgColour::Rgb(_) => self.set_property(
+                "bg_colour",
+                "color",
+                Value::from(colour.hex().expect("Rgb always has a hex form")),
+            ),
+        }
     }
 
     /// Pin the camera at `(x, y)` (`camera_stick`), or clear it (`None`) so the
@@ -1498,6 +1515,7 @@ fn is_scalar(v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{GameManifest, TiledMap, TiledMapLayer, from_json, manifest_from_json};
+    use crate::draw_state::BgColour;
     use crate::world::interact::{InteractFn, Interaction};
     use crate::world::map::{Gate, MapObject, ObjectEffect, Trigger, WarpMode};
     use crate::render::image::RgbaImage;
@@ -2485,15 +2503,25 @@ mod tests {
     fn setup_properties_and_resize() {
         let mut m = TiledMap::blank_modern(4, 3);
 
-        m.set_bg_colour(7);
-        assert_eq!(m.bg_colour(), Some(7));
+        m.set_bg_colour(BgColour::Index(7));
+        assert_eq!(m.bg_colour(), Some(BgColour::Index(7)));
         m.set_camera_stick(Some((10, 20)));
         assert_eq!(m.camera_stick(), Some((10, 20)));
         m.set_camera_stick(None);
         assert_eq!(m.camera_stick(), None);
-        // Re-setting replaces in place (no duplicate property).
-        m.set_bg_colour(3);
-        assert_eq!(m.bg_colour(), Some(3));
+        // Re-setting replaces in place (no duplicate property) — including a
+        // form change: the literal-RGB write retypes the one property, and an
+        // index write takes it back.
+        m.set_bg_colour(BgColour::Index(3));
+        assert_eq!(m.bg_colour(), Some(BgColour::Index(3)));
+        m.set_bg_colour(BgColour::Rgb([177, 62, 83]));
+        assert_eq!(m.bg_colour(), Some(BgColour::Rgb([177, 62, 83])));
+        assert_eq!(
+            m.properties.iter().find(|p| p.name == "bg_colour").map(|p| p.r#type.as_str()),
+            Some("color")
+        );
+        m.set_bg_colour(BgColour::Index(3));
+        assert_eq!(m.bg_colour(), Some(BgColour::Index(3)));
         assert_eq!(
             m.properties
                 .iter()
@@ -2816,20 +2844,42 @@ mod tests {
             ]
         }"#;
         let map = from_json(json.as_bytes()).unwrap();
-        assert_eq!(map.bg_colour(), Some(3));
+        assert_eq!(map.bg_colour(), Some(BgColour::Index(3)));
         assert_eq!(map.camera_stick(), Some((-36, -64)));
         let out = map.to_tmj(&[]);
         let reloaded = from_json(out.as_bytes()).unwrap();
-        assert_eq!(reloaded.bg_colour(), Some(3));
+        assert_eq!(reloaded.bg_colour(), Some(BgColour::Index(3)));
         assert_eq!(reloaded.camera_stick(), Some((-36, -64)));
 
-        // Absent map properties read None and serialise nothing.
+        // The literal-RGB form: Tiled's own colour picker writes a
+        // `color`-typed `#aarrggbb` string — the alpha byte is ignored — and
+        // our `#rrggbb` write round-trips through the same accessor.
+        let rgb_json = r##"{
+            "width": 1, "height": 1, "tilesets": [], "layers": [],
+            "properties": [
+                { "name": "bg_colour", "type": "color", "value": "#ffb13e53" }
+            ]
+        }"##;
+        let rgb_map = from_json(rgb_json.as_bytes()).unwrap();
+        assert_eq!(rgb_map.bg_colour(), Some(BgColour::Rgb([177, 62, 83])));
+        let rgb_reloaded = from_json(rgb_map.to_tmj(&[]).as_bytes()).unwrap();
+        assert_eq!(rgb_reloaded.bg_colour(), Some(BgColour::Rgb([177, 62, 83])));
+
+        // Absent map properties read None and serialise nothing; a malformed
+        // colour string also reads None rather than a garbage colour.
         let plain =
             from_json(r#"{ "width": 1, "height": 1, "tilesets": [], "layers": [] }"#.as_bytes())
                 .unwrap();
         assert_eq!(plain.bg_colour(), None);
         assert_eq!(plain.camera_stick(), None);
         assert!(!plain.to_tmj(&[]).contains("properties"));
+        let bad = from_json(
+            r##"{ "width": 1, "height": 1, "tilesets": [], "layers": [],
+                 "properties": [{ "name": "bg_colour", "type": "color", "value": "#12345" }] }"##
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(bad.bg_colour(), None);
     }
 
     /// A rich object sprite (multi-frame, per-frame offset, palette rotation,

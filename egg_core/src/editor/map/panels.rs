@@ -385,7 +385,8 @@ impl MapViewer {
     }
 
     /// The Setup panel: map-level settings read from the store — camera pin,
-    /// background palette colour, and the map size with a resize button.
+    /// background colour (palette swatch or literal RGB), and the map size with
+    /// a resize button.
     pub(super) fn build_setup(
         &self,
         b: &mut UiBuilder<EditorKey>,
@@ -395,7 +396,7 @@ impl MapViewer {
     ) {
         let tm = maps.get(&map.source);
         let stick = tm.and_then(|t| t.camera_stick());
-        let bg = tm.and_then(|t| t.bg_colour()).unwrap_or(0);
+        let bg = tm.and_then(|t| t.bg_colour()).unwrap_or_default();
         let (w, h) = tm.map(|t| (t.width, t.height)).unwrap_or((0, 0));
 
         // Camera: auto-frame vs. a fixed pin at the current view centre.
@@ -409,20 +410,46 @@ impl MapViewer {
         let pin = Self::toggle_button(b, "pin", stick.is_some(), EditorKey::CamPin);
         rows.push(b.row(1.0, [auto, pin]).id());
 
-        // Background colour: 16 palette swatches, the current one ringed.
-        self.header_row(b, rows, format!("BG: {bg}"), 8.0);
+        // Background colour: 16 palette swatches, plus a 17th cell when the map
+        // holds a literal RGB instead. The current pick is ringed; the `rgb:`
+        // field below sets/edits the literal form (a swatch click goes back to
+        // indexed).
+        let bg_label = match bg {
+            BgColour::Index(idx) => idx.to_string(),
+            BgColour::Rgb(_) => bg.hex().unwrap_or_default(),
+        };
+        self.header_row(b, rows, format!("BG: {bg_label}"), 8.0);
         let mut swatches = Vec::new();
         for c in 0..16u8 {
             swatches.push(
                 b.boxed([])
                     .size(8.0, 8.0)
                     .fill(c)
-                    .outline(if c == bg { 11 } else { 0 })
+                    .outline(if bg == BgColour::Index(c) { 11 } else { 0 })
                     .key(EditorKey::BgColour(c))
                     .id(),
             );
         }
+        if let BgColour::Rgb(rgb) = bg {
+            // The active literal colour, ringed like a selected swatch; clicking
+            // it opens the hex field, same as clicking the field row.
+            swatches.push(
+                b.boxed([])
+                    .size(8.0, 8.0)
+                    .fill_rgb(rgb)
+                    .outline(11)
+                    .key(EditorKey::Field(EditField::BgRgb))
+                    .id(),
+            );
+        }
         rows.push(b.wrap_row(1.0, swatches).width(64.0).id());
+        self.field_row(
+            b,
+            rows,
+            EditField::BgRgb,
+            "rgb",
+            &bg.hex().unwrap_or_default(),
+        );
 
         // Size + resize.
         self.header_row(b, rows, format!("SIZE: {w}x{h}"), 8.0);

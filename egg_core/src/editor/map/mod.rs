@@ -23,7 +23,7 @@ use crate::data::{
     sound::{self, SfxData},
     tiled::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
 };
-use crate::draw_state::{DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate};
+use crate::draw_state::{BgColour, DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate};
 use crate::geometry::{Hitbox, Vec2};
 use crate::data::scene::{
     self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion, ScrubRequest,
@@ -98,6 +98,10 @@ enum EditField {
     CondIf,
     CondUnless,
     Sets,
+    /// The map's literal background colour as a `#rrggbb` hex triple (the
+    /// Setup panel's `rgb:` field). A parseable commit writes the RGB form of
+    /// `bg_colour`; the palette swatches write the indexed form back.
+    BgRgb,
     /// The `note` Func interaction's pitch (an `i32`).
     Pitch,
     /// The `add_creatures` Func interaction's spawn count (a `usize`).

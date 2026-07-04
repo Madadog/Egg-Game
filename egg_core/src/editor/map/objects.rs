@@ -249,6 +249,10 @@ impl MapViewer {
         let object = self.selected.and_then(|i| map.objects.get(i));
         let effect = object.map(|o| &o.effect);
         let value = match (effect, field) {
+            // Map-level, not object-level: the background's literal-RGB form.
+            // Seeds empty for an indexed background (there's no fixed hex to
+            // show — the index follows the live palette).
+            (_, EditField::BgRgb) => map.bg_colour.hex().unwrap_or_default(),
             (Some(ObjectEffect::Interact(Interaction::Dialogue(k))), EditField::Key) => k.clone(),
             (Some(ObjectEffect::Interact(Interaction::Cutscene(n))), EditField::Scene) => n.clone(),
             (Some(ObjectEffect::Warp(w)), EditField::ToMap) => w.map.clone().unwrap_or_default(),
@@ -435,6 +439,20 @@ impl MapViewer {
             EditField::LayerRotate => {
                 if let Ok(v) = buffer.parse::<u8>() {
                     self.commit_layer_prop(map, maps, LayerProp::Rotate, f64::from(v % 16));
+                }
+                return;
+            }
+            // The map's literal background colour. Only a parseable hex triple
+            // commits (leaving the palette); anything else — including an
+            // emptied field — is ignored, since indexed colours come back via
+            // the swatches, not this field.
+            EditField::BgRgb => {
+                if let Some(rgb) = BgColour::parse_rgb(&buffer) {
+                    if let Some(tm) = maps.get_mut(&map.source) {
+                        tm.set_bg_colour(BgColour::Rgb(rgb));
+                    }
+                    self.status.edited();
+                    self.pending_reload = true;
                 }
                 return;
             }
@@ -650,12 +668,13 @@ impl MapViewer {
                     });
                 }
             }
-            // Layer fields are handled by the early return above (they target the
-            // store, not an object).
+            // Layer and map-level fields are handled by the early return above
+            // (they target the store, not an object).
             EditField::LayerName
             | EditField::LayerOffX
             | EditField::LayerOffY
-            | EditField::LayerRotate => {}
+            | EditField::LayerRotate
+            | EditField::BgRgb => {}
         }
     }
 

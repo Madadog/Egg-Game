@@ -6,6 +6,7 @@ use crate::data::metasprite::{MetaCell, MetaSprite};
 use crate::data::save::SaveData;
 use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
+use crate::draw_state::BgColour;
 use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::render::{DrawParams, MapOptions, SpriteOptions};
 use crate::render::image::{IndexedImage, RgbaImage};
@@ -222,7 +223,7 @@ fn modern_map_info(indexed_sprites: &IndexedImage, name: &str, map: &TiledMap) -
         sprite_layers,
         sprite_components,
         objects,
-        bg_colour: map.bg_colour().unwrap_or(0),
+        bg_colour: map.bg_colour().unwrap_or_default(),
         camera_bounds: map.camera_stick().map(|(x, y)| CameraBounds::stick(x, y)),
         // The `music` property names a track by file stem; the host resolves it
         // against the music directory at play time (an unknown name no-ops there,
@@ -608,7 +609,7 @@ pub struct MapInfo {
     /// The map's triggerable objects (warps + interactions) in one ordered
     /// list — the walk loop scans them in vector order, so order is gameplay.
     pub objects: Vec<MapObject>,
-    pub bg_colour: u8,
+    pub bg_colour: BgColour,
     pub music_track: Option<MusicTrack>,
     /// Name of the [`MapStore`] map these layers draw from — the map's own name.
     /// Empty (the default) means no tile source — draw and collision guard on

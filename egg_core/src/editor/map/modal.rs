@@ -213,7 +213,7 @@ impl MapViewer {
         };
 
         // Live-world draw order at native scale, offset by the camera.
-        let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
+        let bg = draw_state.resolve(tiled.bg_colour().unwrap_or_default());
         draw_state.rgba(LayerId::BG).fill(bg);
         info.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
         // Static preview: sprite-plane layers draw flat (no live entities here).
@@ -738,7 +738,7 @@ impl MapViewer {
         let cam = pr.camera;
         let Some(tiled) = maps.get(&map.source) else { return };
 
-        let bg = draw_state.colour(tiled.bg_colour().unwrap_or(0));
+        let bg = draw_state.resolve(tiled.bg_colour().unwrap_or_default());
         draw_state.rgba(LayerId::BG).fill(bg);
         map.draw_bg_indexed(draw_state, LayerId::BG, tiled, cam, false);
         // Static preview: sprite-plane layers draw flat (no live entities here).

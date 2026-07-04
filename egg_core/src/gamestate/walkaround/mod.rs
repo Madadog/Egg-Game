@@ -5,6 +5,7 @@ use crate::data::save::SaveData;
 use crate::data::scene::CutsceneDef;
 use crate::data::sound;
 use crate::debug::DebugInfo;
+use crate::draw_state::BgColour;
 use crate::editor::map::MapViewer;
 use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
@@ -94,7 +95,11 @@ pub struct WalkaroundState {
     /// per-cutscene, so sibling scenes on the stack never mint the same id; it
     /// clones with the world, so the scrubber's re-sim stays deterministic.
     spawn_counter: u64,
-    pub bg_colour: u8,
+    /// Art/animation override for the background colour. `None` (the norm) uses
+    /// the map's own [`MapInfo::bg_colour`]; `Some` wins over it — the seam a
+    /// cutscene or effect drives to re-colour the backdrop at runtime. Cleared
+    /// on map load so a warp never carries a stale override.
+    pub bg_colour: Option<BgColour>,
     pub default_map_colliders: Vec<Collider>,
     /// Per-object "player was inside this hitbox last frame" latch, one slot per
     /// [`MapInfo::objects`] entry (rebuilt each frame). Drives the *edge-trigger*
@@ -190,7 +195,7 @@ impl WalkaroundState {
             particles: ParticleList::new(),
             cutscene: Vec::new(),
             spawn_counter: 0,
-            bg_colour: 0,
+            bg_colour: None,
             default_map_colliders: Vec::new(),
             inside_objects: Vec::new(),
             pending_warp: None,
@@ -321,8 +326,10 @@ impl WalkaroundState {
     }
 
     /// Frame the camera and background from `map_set`: the camera bounds (an
-    /// explicit `camera_stick`, else auto-sized from the first sizable layer) and
-    /// the background palette colour. A layer with no positive size (e.g. a
+    /// explicit `camera_stick`, else auto-sized from the first sizable layer),
+    /// and drop any runtime background override so the map's own colour shows
+    /// (a warp can't carry a stale override; a Setup-panel bg edit isn't masked
+    /// by one). A layer with no positive size (e.g. a
     /// collision mask whose pixels never loaded) is skipped so `from_map_size`'s
     /// positive-size assert can't trip; if nothing sizable remains the existing
     /// camera is kept rather than panicking. Shared by [`load_map`](Self::load_map)
@@ -343,7 +350,7 @@ impl WalkaroundState {
                 system.height() as i16,
             );
         }
-        self.bg_colour = map_set.bg_colour;
+        self.bg_colour = None;
     }
 
     /// Loads a map from given data
@@ -1569,7 +1576,9 @@ impl WalkaroundState {
         let cam_x = i32::from(camera_pos.x);
         let cam_y = i32::from(camera_pos.y);
 
-        let bg_colour = ctx.draw.colour(self.bg_colour);
+        let bg_colour = ctx
+            .draw
+            .resolve(self.bg_colour.unwrap_or(self.current_map.bg_colour));
         ctx.draw.rgba(BG).fill(bg_colour);
 
         // BG map layers
@@ -2665,6 +2674,63 @@ mod tests {
         with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
         assert!(!parts.save.flag(IS_NIGHT_FLAG), "Digit6 clears the is_night flag");
         assert_eq!(parts.draw.palettes[0][0], crate::platform::SWEETIE_16[0]);
+    }
+
+    /// The background fill resolves the map's own colour — an index through the
+    /// live palette, a literal RGB verbatim — and the walkaround `bg_colour`
+    /// override (the runtime art/animation seam) wins over the map while set,
+    /// dropping again on the next map load so a warp never carries it along.
+    #[test]
+    fn bg_colour_resolves_map_form_and_override() {
+        use crate::render::image::Rgba;
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+        walk.load_map(&mut console, map_with_objects(vec![]));
+
+        // Camera far into negative map space: the player lands off-canvas, so
+        // the corner pixel below reads the bare background fill.
+        let cam = Vec2::new(-1000, -1000);
+        fn bg_pixel(
+            console: &mut TestConsole,
+            parts: &mut CtxParts,
+            walk: &WalkaroundState,
+            cam: Vec2,
+        ) -> Rgba {
+            use crate::draw_state::LayerId::BG;
+            with_ctx(console, parts, |ctx| {
+                ctx.draw.rgba(BG).fill(Rgba::TRANSPARENT);
+                walk.draw_world(ctx, cam, &DebugInfo::default());
+                ctx.draw.rgba(BG).get_pixel(0, 0)
+            })
+        }
+
+        // Default: palette index 0, resolved through the live palette.
+        assert_eq!(
+            bg_pixel(&mut console, &mut parts, &walk, cam),
+            Rgba::from_rgb(crate::platform::SWEETIE_16[0]),
+            "an indexed background resolves through the palette"
+        );
+
+        // A literal map colour fills verbatim — no palette slot involved.
+        walk.current_map.bg_colour = BgColour::Rgb([1, 2, 3]);
+        assert_eq!(
+            bg_pixel(&mut console, &mut parts, &walk, cam),
+            Rgba::new(1, 2, 3, 255),
+            "a literal map background fills verbatim"
+        );
+
+        // The runtime override wins over the map's colour while set...
+        walk.bg_colour = Some(BgColour::Rgb([9, 8, 7]));
+        assert_eq!(
+            bg_pixel(&mut console, &mut parts, &walk, cam),
+            Rgba::new(9, 8, 7, 255),
+            "the walkaround override wins over the map"
+        );
+
+        // ...and the next map load drops it.
+        walk.load_map(&mut console, map_with_objects(vec![]));
+        assert_eq!(walk.bg_colour, None, "map load clears the override");
     }
 
     /// Arm `src`'s single cutscene on a fresh world at the origin, ready to

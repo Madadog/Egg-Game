@@ -270,7 +270,6 @@ fn reload_map(game: &mut EggGame, path: &str, name: &str) {
             &g.state.maps,
         );
         if let Some(fresh) = rebuilt {
-            g.state.walkaround.bg_colour = fresh.bg_colour;
             g.state.walkaround.current_map.bg_colour = fresh.bg_colour;
             g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
             g.state.walkaround.current_map.layers = fresh.layers;

@@ -25,7 +25,7 @@ use taffy::prelude::{
     LengthPercentage, Size, TaffyTree, auto, length,
 };
 
-use crate::draw_state::{DrawState, LayerId, PALETTE_MAP_IDENTITY};
+use crate::draw_state::{BgColour, DrawState, LayerId, PALETTE_MAP_IDENTITY};
 use crate::geometry::Vec2;
 use crate::render::{
     Canvas, Font, PrintOptions, SpriteOptions, print_to_centered_with_font, print_to_with_font,
@@ -60,25 +60,27 @@ pub enum Content {
     },
 }
 
-/// Optional box decoration drawn behind/around a node's [`Rect`]. Both fields
-/// are palette indices, resolved to colours at draw time — so the same tree can
-/// be built for hit-testing (no `DrawState` needed) and for drawing.
+/// Optional box decoration drawn behind/around a node's [`Rect`]. Colours are
+/// resolved at draw time — so the same tree can be built for hit-testing (no
+/// `DrawState` needed) and for drawing. The fill is a [`BgColour`], so it can
+/// name a palette index (the norm) or a literal RGB (e.g. the Setup panel's
+/// background-colour preview); the outline stays an index.
 #[derive(Default, Clone, Copy)]
 pub struct Decoration {
-    pub fill: Option<u8>,
+    pub fill: Option<BgColour>,
     pub outline: Option<u8>,
 }
 
 impl Decoration {
     pub fn fill(c: u8) -> Self {
         Self {
-            fill: Some(c),
+            fill: Some(BgColour::Index(c)),
             outline: None,
         }
     }
     pub fn outlined(fill: u8, outline: u8) -> Self {
         Self {
-            fill: Some(fill),
+            fill: Some(BgColour::Index(fill)),
             outline: Some(outline),
         }
     }
@@ -360,7 +362,13 @@ impl<K: Copy + PartialEq> Node<'_, K> {
 
     /// Fill the box with palette colour `c`.
     pub fn fill(mut self, c: u8) -> Self {
-        self.deco.fill = Some(c);
+        self.deco.fill = Some(BgColour::Index(c));
+        self
+    }
+    /// Fill with a literal RGB triple — bypasses the palette, for previewing a
+    /// colour the palette doesn't hold (e.g. a map's literal background).
+    pub fn fill_rgb(mut self, rgb: [u8; 3]) -> Self {
+        self.deco.fill = Some(BgColour::Rgb(rgb));
         self
     }
     /// Fill only when `cond` — the common "highlight the selected entry" case.
@@ -619,7 +627,7 @@ impl<K: Copy + PartialEq> Ui<K> {
             } else if let (Some(f), Some(cr)) =
                 (data.deco.fill, clip.and_then(|c| clamp_rect(rect, c)))
             {
-                let cf = draw_state.colour(f);
+                let cf = draw_state.resolve(f);
                 draw_state.rgba(layer).fill_rect(
                     cr.x as i32,
                     cr.y as i32,
@@ -731,12 +739,12 @@ fn draw_deco(draw_state: &mut DrawState, layer: LayerId, rect: Rect, deco: Decor
     let (x, y, w, h) = (rect.x as i32, rect.y as i32, rect.w as i32, rect.h as i32);
     match (deco.fill, deco.outline) {
         (Some(f), Some(o)) => {
-            let cf = draw_state.colour(f);
+            let cf = draw_state.resolve(f);
             let co = draw_state.colour(o);
             draw_state.rgba(layer).outlined_rect(x, y, w, h, cf, co);
         }
         (Some(f), None) => {
-            let cf = draw_state.colour(f);
+            let cf = draw_state.resolve(f);
             draw_state.rgba(layer).fill_rect(x, y, w, h, cf);
         }
         (None, Some(o)) => {
