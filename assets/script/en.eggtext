@@ -307,6 +307,27 @@ menu_music_test = "Music Test"
 #dialogue default
     You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.
 
+#dialogue debug_computer
+    It's a computer.\n
+    ... Wow, looks like it's got EGG GAME installed! #delay 60
+
+    
+#dialogue debug_mistake
+    What was the gamedev THINKING?
+
+#dialogue debug_portrait
+    The likeness isn't perfect.
+    
+#dialogue debug_portrait2
+    She's glamorous.
+    
+#dialogue debug_sign
+    The sign says "Welcome to EGG GAME!"
+    
+#dialogue debug_sign2
+    The sign says "Press [Z] to interact with signs!"\n
+    ... A timeless classic. #delay 60
+
 #dialogue dog_obtained
     Dog has joined the party!
 
