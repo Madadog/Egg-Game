@@ -100,7 +100,8 @@ enum HiRole {
 
 /// The eggscene verb keywords — the first word of an indented cutscene line.
 const EGGSCENE_VERBS: &[&str] = &[
-    "wait", "dialogue", "set", "sound", "music", "walk", "move", "face", "camera",
+    "wait", "dialogue", "set", "sound", "music", "walk", "move", "face", "camera", "shake",
+    "over",
 ];
 
 /// Small (condensed) text, so a cramped view framebuffer still fits a useful

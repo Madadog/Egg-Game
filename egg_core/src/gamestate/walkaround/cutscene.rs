@@ -67,6 +67,62 @@ pub struct Cutscene {
     /// the player (the default, and where the scene lands back when it ends). Read
     /// live each frame by [`camera_focus`](Self::camera_focus).
     camera: Option<CameraTarget>,
+    /// An in-flight `camera … over N` glide, easing the focus from where the
+    /// camera was toward the (live) target. Ticked once per frame in
+    /// [`step`](Self::step); `None` once it lands (or after a cut).
+    glide: Option<Glide>,
+    /// An in-flight `shake`, offsetting the focus in a fixed decaying pattern.
+    /// Ticked once per frame in [`step`](Self::step); transient — the camera is
+    /// back on its focus when it runs out.
+    shake: Option<Shake>,
+}
+
+/// Progress of a `camera … over N` glide: the focus eases from `from` (the
+/// actual on-screen focus when the step ran, so a mid-pan retarget has no snap)
+/// to the live target focus, smoothstepped over `total` frames. Integer fixed
+/// point throughout — the scrubber re-sims cutscenes, so this must be exact.
+#[derive(Clone, Debug)]
+struct Glide {
+    from: Vec2,
+    total: u32,
+    left: u32,
+}
+
+impl Glide {
+    /// The eased focus `total - left` frames in: `from` at the start, exactly
+    /// `to` at the end, smoothstep (t²(3−2t)) between, in 1/1024 fixed point.
+    fn at(&self, to: Vec2) -> Vec2 {
+        let t = ((self.total - self.left) as i64 * 1024) / self.total as i64;
+        let s = (t * t * (3 * 1024 - 2 * t)) >> 20; // 0..=1024
+        let ease = |a: i16, b: i16| (a as i64 + ((b as i64 - a as i64) * s) / 1024) as i16;
+        Vec2::new(ease(self.from.x, to.x), ease(self.from.y, to.y))
+    }
+}
+
+/// Progress of a `shake`: `left` of `total` frames remain, at up to ±`amplitude`
+/// px. The offset pattern is a fixed 4-phase cycle keyed on `left` — fully
+/// deterministic, so a scrubber re-sim reproduces it.
+#[derive(Clone, Debug)]
+struct Shake {
+    total: u32,
+    left: u32,
+    amplitude: i16,
+}
+
+impl Shake {
+    /// This frame's focus offset: a right/up/left/down cycle whose amplitude
+    /// tapers linearly to nothing as `left` runs out (ceiling division, so the
+    /// tail stays at ±1 rather than flatlining early on small amplitudes).
+    fn offset(&self) -> Vec2 {
+        let (amp, left, total) = (self.amplitude as i64, self.left as i64, self.total as i64);
+        let a = ((amp * left + total - 1) / total) as i16;
+        match self.left % 4 {
+            0 => Vec2::new(a, 0),
+            1 => Vec2::new(0, -a),
+            2 => Vec2::new(-a, 0),
+            _ => Vec2::new(0, a),
+        }
+    }
 }
 
 /// The live state of the content step a [`Cutscene`] is on.
@@ -173,6 +229,8 @@ impl Cutscene {
             interruptible: def.interruptible,
             aborted: false,
             camera: None,
+            glide: None,
+            shake: None,
         }
     }
 
@@ -195,14 +253,27 @@ impl Cutscene {
     /// top-of-stack scene each frame. An actor focus is read live (a followed
     /// actor that walks pulls the camera along); player/actor foci carry the same
     /// +4/-2 hitbox-centre offset the follow camera uses, while a fixed point is
-    /// centred exactly as authored.
+    /// centred exactly as authored. An in-flight glide eases toward that point.
     pub(super) fn camera_focus(&self, walkaround: &WalkaroundState) -> Option<Vec2> {
-        match self.camera.as_ref()? {
-            CameraTarget::Point(p) => Some(*p),
+        let to = match self.camera.as_ref()? {
+            CameraTarget::Point(p) => *p,
             CameraTarget::Actor(name) => walkaround
                 .resolve(&resolve_name(name, &self.table))
-                .map(|s| Vec2::new(s.pos.x + 4, s.pos.y - 2)),
-        }
+                .map(|s| Vec2::new(s.pos.x + 4, s.pos.y - 2))?,
+        };
+        Some(match &self.glide {
+            Some(glide) => glide.at(to),
+            None => to,
+        })
+    }
+
+    /// This frame's `shake` focus offset, or zero when no shake is running.
+    /// Applied by [`play_cutscene`](super::WalkaroundState::play_cutscene) on top
+    /// of whatever the focus is — a shake jiggles the player-follow default too.
+    pub(super) fn shake_offset(&self) -> Vec2 {
+        self.shake
+            .as_ref()
+            .map_or(Vec2::new(0, 0), |shake| shake.offset())
     }
 
     /// Drive one frame. Chains the instant steps (sound/flag/…) into the same
@@ -214,6 +285,22 @@ impl Cutscene {
         ctx: &mut Ctx<S>,
         walkaround: &mut WalkaroundState,
     ) -> Outcome {
+        // Advance the background camera effects exactly once per frame (this runs
+        // once per frame on the top-of-stack scene; a parent's effects pause while
+        // a sub-scene drives). A landed glide drops to `None`, pinning the focus
+        // on the target from then on (`Glide::at` is exact at t=1).
+        if let Some(glide) = &mut self.glide {
+            glide.left -= 1;
+            if glide.left == 0 {
+                self.glide = None;
+            }
+        }
+        if let Some(shake) = &mut self.shake {
+            shake.left -= 1;
+            if shake.left == 0 {
+                self.shake = None;
+            }
+        }
         loop {
             if matches!(self.state, StepState::Pending) {
                 let Some(content) = self.content.get(self.step) else {
@@ -267,10 +354,33 @@ impl Cutscene {
                         ctx.save.set_flag(name, *value);
                         self.state = StepState::Done;
                     }
-                    CutsceneContent::Camera(target) => {
+                    CutsceneContent::Camera(target, over) => {
                         // Retarget the scene camera; the per-frame centring in
-                        // `play_cutscene` reads it back via `camera_focus`.
+                        // `play_cutscene` reads it back via `camera_focus`. A
+                        // glide starts from the focus that's actually on screen
+                        // (the camera's clamped position, uncentred), so a cut,
+                        // an earlier glide, or the player-follow default all
+                        // hand over without a snap. The instant retarget below
+                        // doesn't move the camera this frame: at t=0 the glide
+                        // holds `from` exactly.
+                        self.glide = over.filter(|frames| *frames > 0).map(|total| Glide {
+                            from: walkaround.camera.pos
+                                + Vec2::new(
+                                    ctx.system.width() as i16 / 2,
+                                    ctx.system.height() as i16 / 2,
+                                ),
+                            total,
+                            left: total,
+                        });
                         self.camera = Some(target.clone());
+                        self.state = StepState::Done;
+                    }
+                    CutsceneContent::Shake { frames, amplitude } => {
+                        self.shake = (*frames > 0).then_some(Shake {
+                            total: *frames,
+                            left: *frames,
+                            amplitude: *amplitude,
+                        });
                         self.state = StepState::Done;
                     }
                     CutsceneContent::Load(name) => {
@@ -516,7 +626,13 @@ impl Cutscene {
                 // matches full playback — though when a whole scene is skipped it
                 // finishes and pops immediately, so `play_cutscene` re-derives the
                 // camera from what's left on the stack (the parent, or the player).
-                CutsceneContent::Camera(target) => self.camera = Some(target.clone()),
+                // A glide fast-forwards to landed (its end state), a shake to
+                // spent — both transients gone, exactly as full playback ends.
+                CutsceneContent::Camera(target, _) => {
+                    self.camera = Some(target.clone());
+                    self.glide = None;
+                }
+                CutsceneContent::Shake { .. } => self.shake = None,
                 // A wait has no lasting effect, so fast-forwarding past it is a no-op.
                 CutsceneContent::Wait(_) => {}
             }
@@ -1535,5 +1651,129 @@ mod tests {
             center_ref(Vec2::new(4, -2), &h.system),
             "camera followed the moving actor, not the player",
         );
+    }
+
+    /// `camera X Y over N` glides instead of cutting: the retarget frame holds
+    /// the old framing (no snap), the pan advances monotonically toward the
+    /// target, and after N frames it sits exactly where the instant cut would.
+    #[test]
+    fn camera_glide_eases_to_the_point() {
+        let mut h = arm(
+            "#cutscene t\n    camera 150 90 over 20\n    wait 60",
+            Vec2::new(0, 0),
+        );
+        let start = h.walk.camera.pos;
+        let target = center_ref(Vec2::new(150, 90), &h.system);
+        assert!(
+            target.x > start.x && target.y > start.y,
+            "test geometry: the glide heads down-right",
+        );
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(h.walk.camera.pos, start, "no snap on the retarget frame");
+        let mut prev = start;
+        for _ in 0..10 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+            let pos = h.walk.camera.pos;
+            assert!(pos.x >= prev.x && pos.y >= prev.y, "the pan is monotonic");
+            prev = pos;
+        }
+        // Halfway in it's genuinely en route — strictly past the start, short of
+        // the target.
+        assert!(prev.x > start.x && prev.x < target.x, "mid-glide, en route");
+        for _ in 0..10 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+        }
+        assert_eq!(h.walk.camera.pos, target, "landed exactly on the target");
+        h.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+        assert_eq!(h.walk.camera.pos, target, "and stays there");
+    }
+
+    /// `camera ACTOR over N` lands on the actor's follow framing (+4/-2), same
+    /// as the instant form.
+    #[test]
+    fn camera_glide_lands_on_an_actor() {
+        let mut h = arm(
+            "#cutscene t\n    spawn a critter 100 80\n    camera a over 10\n    wait 30",
+            Vec2::new(0, 0),
+        );
+        for _ in 0..12 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+        }
+        assert_eq!(
+            h.walk.camera.pos,
+            center_ref(Vec2::new(104, 78), &h.system),
+            "glide landed on the actor's follow framing",
+        );
+    }
+
+    /// Skipping (B) mid-glide and mid-shake leaves the camera exactly where full
+    /// playback would — the transients fast-forward to spent, the scene pops, and
+    /// the camera is back on the player.
+    #[test]
+    fn camera_glide_and_shake_skip_match_full_playback() {
+        let src = "#cutscene t\n    camera 150 90 over 40\n    shake 20 3\n    wait 100";
+        let player = Vec2::new(30, 20);
+
+        let mut full = arm(src, player);
+        while full.frame(|ctx, w| w.play_cutscene(ctx)) {}
+        let full_end = full.walk.camera.pos;
+
+        // Two frames in — glide and shake both mid-flight — press B.
+        let mut skip = arm(src, player);
+        for _ in 0..2 {
+            skip.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+        }
+        skip.input.controllers[0].b = [true, false];
+        skip.frame(|ctx, w| {
+            w.play_cutscene(ctx);
+        });
+
+        assert!(skip.walk.cutscene.is_empty(), "B skipped the scene to the end");
+        assert_eq!(
+            skip.walk.camera.pos, full_end,
+            "skipped camera end-state matches full playback",
+        );
+        assert_eq!(
+            full_end,
+            center_ref(Vec2::new(34, 18), &skip.system),
+            "and both are back on the player",
+        );
+    }
+
+    /// `shake N AMP` displaces the camera off its focus while it runs and puts it
+    /// back exactly when the frames run out.
+    #[test]
+    fn shake_jiggles_then_restores() {
+        let mut h = arm(
+            "#cutscene t\n    camera 150 90\n    shake 8 3\n    wait 30",
+            Vec2::new(0, 0),
+        );
+        let rest = center_ref(Vec2::new(150, 90), &h.system);
+        let mut displaced = 0;
+        for _ in 0..8 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+            displaced += (h.walk.camera.pos != rest) as u32;
+        }
+        assert!(displaced > 0, "the shake visibly moved the camera");
+        for _ in 0..2 {
+            h.frame(|ctx, w| {
+                w.play_cutscene(ctx);
+            });
+            assert_eq!(h.walk.camera.pos, rest, "spent shake leaves no offset");
+        }
     }
 }

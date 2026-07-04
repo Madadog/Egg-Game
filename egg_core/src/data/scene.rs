@@ -70,6 +70,8 @@
 //! | `load NAME`              | push a sub-cutscene (popped on its finish) |
 //! | `wait N`                 | hold for N frames |
 //! | `camera ACTOR` / `camera X Y` | point the scene camera at an actor / a fixed map point |
+//! | `camera … over N`        | same, but glide there over N frames (non-blocking — pair with `wait`) |
+//! | `shake N [AMP]`          | shake the camera for N frames, ±AMP px (default 2; non-blocking) |
 //! | `sound NAME` / `music [NAME]` / `set FLAG BOOL` | effects (carried over) |
 //!
 //! ## Chains & motions
@@ -161,8 +163,18 @@ pub enum CutsceneContent {
     SetFlag(String, bool),
     /// Retarget the scene camera (`camera ACTOR` / `camera X Y`); it follows the
     /// target until retargeted again, resetting to the player when the scene ends.
-    Camera(CameraTarget),
+    /// `Some(n)` (`… over N`) glides there over `n` frames instead of cutting;
+    /// the glide runs in the background (pair with `wait` to let it play out).
+    Camera(CameraTarget, Option<u32>),
+    /// `shake N [AMP]` — shake the camera for `frames`, offsetting the focus by
+    /// up to ±`amplitude` px in a fixed pattern that tapers out. Non-blocking and
+    /// transient: the camera is back on its focus when the frames run out.
+    Shake { frames: u32, amplitude: i16 },
 }
+
+/// The `shake` amplitude used when the author gives only a duration, in pixels.
+/// The serializer omits the amplitude at this value, keeping `shake N` canonical.
+pub const DEFAULT_SHAKE_AMPLITUDE: i16 = 2;
 
 /// Where a `camera` step points the scene camera.
 #[derive(Clone, Debug, PartialEq)]
@@ -360,7 +372,8 @@ fn parse_cutscene(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
                 }
                 def.content.push(CutsceneContent::Move(chains));
             }
-            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" | "camera" => {
+            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" | "camera"
+            | "shake" => {
                 seen_content = true;
                 def.content.push(parse_content(verb, args, line_no)?);
                 i += 1;
@@ -449,31 +462,67 @@ fn parse_content(verb: &str, args: &str, line_no: usize) -> Result<CutsceneConte
                 target: target.to_string(),
             }
         }
-        "camera" => CutsceneContent::Camera(parse_camera(args, line_no)?),
+        "camera" => {
+            let (target, over) = parse_camera(args, line_no)?;
+            CutsceneContent::Camera(target, over)
+        }
+        "shake" => {
+            let mut parts = args.split_whitespace();
+            let frames = parse_u32(
+                parts.next().unwrap_or(""),
+                line_no,
+                "`shake` needs a frame count",
+            )?;
+            let amplitude = match parts.next() {
+                Some(amp) => amp
+                    .parse()
+                    .map_err(|_| ParseError::new(line_no, "`shake N AMP` needs integers"))?,
+                None => DEFAULT_SHAKE_AMPLITUDE,
+            };
+            if parts.next().is_some() {
+                return Err(ParseError::new(line_no, "`shake` takes `N [AMP]`"));
+            }
+            CutsceneContent::Shake { frames, amplitude }
+        }
         _ => unreachable!("parse_content only called for known content verbs"),
     })
 }
 
 /// Parse a `camera` argument: two integer tokens are a fixed `X Y` point, a
 /// single token is an actor name to follow (the same one-vs-two-token split
-/// `face NAME` / `face DX DY` uses).
-fn parse_camera(args: &str, line_no: usize) -> Result<CameraTarget, ParseError> {
-    let mut parts = args.split_whitespace();
-    let first = parts
-        .next()
-        .ok_or_else(|| ParseError::new(line_no, "`camera` needs `ACTOR` or `X Y`"))?;
-    match parts.next() {
-        Some(second) => {
-            if parts.next().is_some() {
-                return Err(ParseError::new(line_no, "`camera` takes `ACTOR` or `X Y`"));
-            }
-            let err = || ParseError::new(line_no, "`camera X Y` needs integers");
-            let x = first.parse().map_err(|_| err())?;
-            let y = second.parse().map_err(|_| err())?;
-            Ok(CameraTarget::Point(Vec2::new(x, y)))
+/// `face NAME` / `face DX DY` uses). A trailing `over N` makes it a glide of
+/// `N` frames instead of a cut.
+fn parse_camera(args: &str, line_no: usize) -> Result<(CameraTarget, Option<u32>), ParseError> {
+    let mut tokens: Vec<&str> = args.split_whitespace().collect();
+    let over = if tokens.len() >= 2 && tokens[tokens.len() - 2] == "over" {
+        let frames = parse_u32(
+            tokens[tokens.len() - 1],
+            line_no,
+            "`over` needs a frame count",
+        )?;
+        if frames == 0 {
+            return Err(ParseError::new(line_no, "`over 0` — glide needs ≥1 frame"));
         }
-        None => Ok(CameraTarget::Actor(first.to_string())),
-    }
+        tokens.truncate(tokens.len() - 2);
+        Some(frames)
+    } else if tokens.last() == Some(&"over") {
+        return Err(ParseError::new(line_no, "`over` needs a frame count"));
+    } else {
+        None
+    };
+    let target = match tokens[..] {
+        [] => return Err(ParseError::new(line_no, "`camera` needs `ACTOR` or `X Y`")),
+        [actor] => CameraTarget::Actor(actor.to_string()),
+        [x, y] => {
+            let err = || ParseError::new(line_no, "`camera X Y` needs integers");
+            CameraTarget::Point(Vec2::new(
+                x.parse().map_err(|_| err())?,
+                y.parse().map_err(|_| err())?,
+            ))
+        }
+        _ => return Err(ParseError::new(line_no, "`camera` takes `ACTOR` or `X Y`")),
+    };
+    Ok((target, over))
 }
 
 /// Parse one `actor: motion; motion; …` chain line.
@@ -736,9 +785,22 @@ fn emit_content(step: &CutsceneContent) -> String {
         CutsceneContent::Music(Some(track)) => format!("    music {track}\n"),
         CutsceneContent::Music(None) => "    music\n".to_string(),
         CutsceneContent::SetFlag(name, value) => format!("    set {name} {value}\n"),
-        CutsceneContent::Camera(CameraTarget::Actor(name)) => format!("    camera {name}\n"),
-        CutsceneContent::Camera(CameraTarget::Point(p)) => {
-            format!("    camera {} {}\n", p.x, p.y)
+        CutsceneContent::Camera(target, over) => {
+            let target = match target {
+                CameraTarget::Actor(name) => name.clone(),
+                CameraTarget::Point(p) => format!("{} {}", p.x, p.y),
+            };
+            match over {
+                Some(frames) => format!("    camera {target} over {frames}\n"),
+                None => format!("    camera {target}\n"),
+            }
+        }
+        CutsceneContent::Shake { frames, amplitude } => {
+            if *amplitude == DEFAULT_SHAKE_AMPLITUDE {
+                format!("    shake {frames}\n")
+            } else {
+                format!("    shake {frames} {amplitude}\n")
+            }
         }
     }
 }
@@ -948,31 +1010,66 @@ mod tests {
 
     /// `camera ACTOR` follows a named actor; `camera X Y` holds a fixed point.
     /// A single token is always an actor (even numeric); two tokens are a point.
+    /// A trailing `over N` turns either form into an N-frame glide.
     #[test]
     fn camera_targets_parse() {
         let def = one(
             "#cutscene c\n\
              \x20   camera dog\n\
              \x20   camera 120 64\n\
-             \x20   camera player",
+             \x20   camera player\n\
+             \x20   camera dog over 30\n\
+             \x20   camera 120 64 over 45",
         );
         assert_eq!(
             def.content,
             vec![
-                CutsceneContent::Camera(CameraTarget::Actor("dog".into())),
-                CutsceneContent::Camera(CameraTarget::Point(Vec2::new(120, 64))),
-                CutsceneContent::Camera(CameraTarget::Actor("player".into())),
+                CutsceneContent::Camera(CameraTarget::Actor("dog".into()), None),
+                CutsceneContent::Camera(CameraTarget::Point(Vec2::new(120, 64)), None),
+                CutsceneContent::Camera(CameraTarget::Actor("player".into()), None),
+                CutsceneContent::Camera(CameraTarget::Actor("dog".into()), Some(30)),
+                CutsceneContent::Camera(CameraTarget::Point(Vec2::new(120, 64)), Some(45)),
             ]
         );
     }
 
     /// A `camera` with no target, or a two-token point that isn't integers, or
-    /// three tokens, is a parse error pointed at its line.
+    /// three tokens, or a malformed `over` clause, is a parse error pointed at
+    /// its line.
     #[test]
     fn camera_errors_point_at_the_line() {
         assert_eq!(parse("#cutscene c\n    camera").unwrap_err().line, 2);
         assert_eq!(parse("#cutscene c\n    camera 1 x").unwrap_err().line, 2);
         assert_eq!(parse("#cutscene c\n    camera 1 2 3").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera dog over").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera dog over x").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera dog over 0").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera 1 2 3 over 9").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    camera over 9").unwrap_err().line, 2);
+    }
+
+    /// `shake N` uses the default ±2px amplitude; `shake N AMP` overrides it.
+    /// Missing/garbled/extra arguments are line-pointed parse errors.
+    #[test]
+    fn shake_parses_with_optional_amplitude() {
+        let def = one("#cutscene c\n    shake 30\n    shake 30 4");
+        assert_eq!(
+            def.content,
+            vec![
+                CutsceneContent::Shake {
+                    frames: 30,
+                    amplitude: DEFAULT_SHAKE_AMPLITUDE,
+                },
+                CutsceneContent::Shake {
+                    frames: 30,
+                    amplitude: 4,
+                },
+            ]
+        );
+        assert_eq!(parse("#cutscene c\n    shake").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    shake x").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    shake 30 x").unwrap_err().line, 2);
+        assert_eq!(parse("#cutscene c\n    shake 30 4 5").unwrap_err().line, 2);
     }
 
     #[test]
@@ -1031,6 +1128,10 @@ mod tests {
              \x20   camera fido\n\
              \x20   dialogue hello\n\
              \x20   camera 5 6\n\
+             \x20   camera fido over 30\n\
+             \x20   camera 5 6 over 45\n\
+             \x20   shake 20\n\
+             \x20   shake 20 4\n\
              \x20   wait 10\n\
              \x20   interact ellie fido\n\
              #cutscene b\n\
