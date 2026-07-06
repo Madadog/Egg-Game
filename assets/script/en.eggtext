@@ -16,6 +16,7 @@
 // Day/night: engine-set (walkaround palette + debug toggles) but declared here so
 // dialogue may branch on it (`#if is_night`) and set it (`#set is_night true`).
 #flag is_night
+#flag SYCOPHANT
 
 // --- UI labels ---
 
@@ -314,12 +315,26 @@ menu_music_test = "Music Test"
     
 #dialogue debug_mistake
     What was the gamedev THINKING?
+    #choice
+        #option \"Huhuhu, gamedev smart.\"
+            #set SYCOPHANT true
+        #option \"I am an apricot.\"
+            #set SYCOPHANT false
+        #option Nothing.
+            #set SYCOPHANT false
+        
+    // Actually silently discard 90% of the player's input ^u^
+    Your choice has been preserved.
 
 #dialogue debug_portrait
     The likeness isn't perfect.
     
 #dialogue debug_portrait2
-    She's glamorous.
+    #if SYCOPHANT
+        She's glamorous. The artist did a really great job drawing this, if I do say so myself.
+    #else
+        She's glamorous.
+    #end
     
 #dialogue debug_sign
     The sign says "Welcome to EGG GAME!"

@@ -196,8 +196,8 @@
   "properties": [
     {
       "name": "bg_colour",
-      "type": "int",
-      "value": 0
+      "type": "color",
+      "value": "#0a0a0a"
     }
   ],
   "renderorder": "right-down",
