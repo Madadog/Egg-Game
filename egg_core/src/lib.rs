@@ -19,10 +19,15 @@ pub mod debug;
 pub mod draw_state;
 pub mod editor;
 pub mod gamestate;
-pub mod geometry;
+/// The primitives crate ([`egg_render`]) re-exported under its historical
+/// in-crate paths, so `crate::geometry::…` / `crate::render::…` (and the
+/// host's `egg_core::geometry`/`egg_core::render`) keep resolving after the
+/// extraction. `geometry` is a submodule of that crate; `render` is the crate
+/// root itself.
+pub use egg_render as render;
+pub use egg_render::geometry;
 pub mod platform;
 pub mod rand;
-pub mod render;
 pub mod ui;
 pub mod world;
 

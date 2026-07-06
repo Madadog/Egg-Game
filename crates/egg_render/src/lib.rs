@@ -7,6 +7,7 @@
 
 pub mod canvas;
 pub mod font;
+pub mod geometry;
 pub mod image;
 pub mod options;
 pub mod sheet;
@@ -14,3 +15,9 @@ pub mod sheet;
 pub use canvas::*;
 pub use font::*;
 pub use options::*;
+
+/// A read-only grid of tile ids — what map drawing consumes. Implemented by
+/// the Tiled layer type upstream; render stays codec-blind.
+pub trait TileSource {
+    fn get(&self, x: usize, y: usize) -> Option<usize>;
+}

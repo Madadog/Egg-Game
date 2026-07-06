@@ -18,7 +18,7 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
-use crate::render::image::IndexedImage;
+use crate::image::IndexedImage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vec2 {
@@ -233,22 +233,6 @@ impl Hitbox {
             None
         }
     }
-    pub fn draw(
-        &self,
-        draw_state: &mut crate::draw_state::DrawState,
-        layer: crate::draw_state::LayerId,
-        colour: u8,
-    ) {
-        use crate::render::Canvas;
-        let c = draw_state.colour(colour);
-        draw_state.rgba_canvas[layer as usize].stroke_rect(
-            self.x.into(),
-            self.y.into(),
-            self.w.into(),
-            self.h.into(),
-            c,
-        );
-    }
 }
 
 /// An 8x8 custom bitmap collider
@@ -267,8 +251,8 @@ impl Collider {
     }
     /// Derive an 8×8 collider from a tile's art in the indexed sprite sheet:
     /// any pixel that isn't index 0 or 255 is solid. Reads the sheet directly
-    /// (it's [`crate::draw_state::DrawState::indexed_sprites`]) rather than going
-    /// through the console.
+    /// (it's the game's `DrawState::indexed_sprites`) rather than going through
+    /// the console.
     pub fn from_sprite(indexed_sprites: &IndexedImage, index: usize) -> Collider {
         let bitmap = &indexed_sprites.data;
         let sprite_offset = (index % 32) * 8 + (index / 32) * 2048;

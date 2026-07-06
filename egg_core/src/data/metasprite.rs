@@ -7,7 +7,7 @@
 //! [`SpriteComponent`](crate::world::map::SpriteComponent)) both hold one.
 //! Pure data — no drawing here; consumers walk [`iter_at`](MetaSprite::iter_at)
 //! and draw each cell through whatever pass they own (the portrait's
-//! outline+fill, the component's y-sorted [`DrawParams`](crate::render::DrawParams)).
+//! outline+fill, the component's y-sorted [`DrawParams`](crate::draw_state::DrawParams)).
 
 use serde::{Deserialize, Serialize};
 

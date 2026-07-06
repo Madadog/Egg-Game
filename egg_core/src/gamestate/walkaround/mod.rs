@@ -9,7 +9,8 @@ use crate::draw_state::BgColour;
 use crate::editor::map::MapViewer;
 use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
-use crate::render::{DrawParams, PrintOptions, print_to_with_font};
+use crate::draw_state::DrawParams;
+use crate::render::{PrintOptions, print_to_with_font};
 use crate::ui::dialogue::Dialogue;
 use crate::world::animation::Animation;
 use crate::world::camera::{Camera, Shake};
@@ -1674,19 +1675,23 @@ impl WalkaroundState {
         if debug_info.map_info {
             // Warp hitboxes in colour 12, interaction hitboxes in colour 14;
             // the player hitbox shares the warps' colour.
-            self.player_ref()
-                .hitbox()
-                .offset_xy(-camera_pos.x, -camera_pos.y)
-                .draw(ctx.draw, BG, 12);
+            ctx.draw.stroke_hitbox(
+                BG,
+                self.player_ref()
+                    .hitbox()
+                    .offset_xy(-camera_pos.x, -camera_pos.y),
+                12,
+            );
             for object in self.current_map.objects.iter() {
                 let colour = match object.effect {
                     ObjectEffect::Warp(_) => 12,
                     ObjectEffect::Interact(_) => 14,
                 };
-                object
-                    .hitbox
-                    .offset_xy(-camera_pos.x, -camera_pos.y)
-                    .draw(ctx.draw, BG, colour);
+                ctx.draw.stroke_hitbox(
+                    BG,
+                    object.hitbox.offset_xy(-camera_pos.x, -camera_pos.y),
+                    colour,
+                );
             }
         }
         if debug_info.player_info {

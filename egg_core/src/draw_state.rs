@@ -239,6 +239,83 @@ impl DrawState {
         let palette = self.palettes[0].as_slice();
         canvas.map_draw_indexed(map_layer, &self.indexed_sprites, palette, palette_map, opts);
     }
+
+    /// Stroke a 1-pixel debug outline of `hitbox` on the RGBA `layer`, in the
+    /// default palette's `colour`. The debug-overlay counterpart to the drawing
+    /// helpers — the walkaround map-info overlay and the map editor use it to
+    /// visualise warp/interaction/collision hitboxes.
+    pub fn stroke_hitbox(&mut self, layer: LayerId, hitbox: crate::geometry::Hitbox, colour: u8) {
+        use crate::render::Canvas;
+        let c = self.colour(colour);
+        self.rgba_canvas[layer as usize].stroke_rect(
+            hitbox.x.into(),
+            hitbox.y.into(),
+            hitbox.w.into(),
+            hitbox.h.into(),
+            c,
+        );
+    }
+}
+
+/// A single sprite frame described as a draw record: which sheet tile, where,
+/// and with what options/outline/palette rotation. A game-domain bundle (the
+/// animation and map code build these, then y-sort and draw them), so it lives
+/// with [`DrawState`] — the state it draws itself onto — rather than with the
+/// stateless render primitives.
+#[derive(Clone, Debug)]
+pub struct DrawParams {
+    pub index: i32,
+    pub x: i32,
+    pub y: i32,
+    pub options: SpriteOptions,
+    pub outline: Option<u8>,
+    pub palette_rotate: u8,
+}
+
+impl DrawParams {
+    pub fn new(
+        index: i32,
+        x: i32,
+        y: i32,
+        options: SpriteOptions,
+        outline: Option<u8>,
+        palette_rotate: u8,
+    ) -> Self {
+        Self {
+            index,
+            x,
+            y,
+            options,
+            outline,
+            palette_rotate,
+        }
+    }
+    pub fn draw_to(self, draw_state: &mut DrawState, layer: LayerId) {
+        let palette_map = palette_map_rotate(self.palette_rotate.into());
+        if let Some(outline) = self.outline {
+            draw_state.spr_with_outline(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                self.options,
+                outline,
+            );
+        } else {
+            draw_state.spr(
+                layer,
+                &palette_map,
+                self.index,
+                self.x,
+                self.y,
+                self.options,
+            );
+        }
+    }
+    pub fn bottom(&self) -> i32 {
+        self.y + self.options.h * 8
+    }
 }
 
 /// Identity palette map: index `i` maps to `i`.

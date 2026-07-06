@@ -175,6 +175,14 @@ pub struct TileLayer {
     #[serde(default)]
     pub properties: Vec<Property>,
 }
+/// The map-drawing view of a tile layer: render consumes only `get`, staying
+/// blind to the Tiled codec that owns this type. Delegates to the inherent
+/// [`TileLayer::get`].
+impl crate::render::TileSource for TileLayer {
+    fn get(&self, x: usize, y: usize) -> Option<usize> {
+        TileLayer::get(self, x, y)
+    }
+}
 impl TileLayer {
     pub fn get(&self, x: usize, y: usize) -> Option<usize> {
         if x >= self.width {

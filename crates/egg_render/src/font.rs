@@ -3,7 +3,7 @@
 
 use super::Canvas;
 use super::image::RgbaImage;
-use crate::render::PrintOptions;
+use crate::PrintOptions;
 
 /// An 8×8 bitmap font: an [`RgbaImage`] laid out as a 16×16 grid of glyphs
 /// (indexed by `char as u8`) plus the precomputed visual width of every
@@ -84,13 +84,10 @@ pub fn text_width(font: &Font, text: &str, opts: PrintOptions) -> i32 {
 }
 
 /// Render `text` onto `target` using the supplied `font`. The canonical text
-/// renderer: callers hold a `&Font` (game data, e.g. [`Ctx::font`] or
-/// [`EggState::font`]) and draw into any [`Canvas`], so the font and the target
+/// renderer: callers hold a `&Font` (game data, e.g. the game's `Ctx::font` or
+/// `EggState::font`) and draw into any [`Canvas`], so the font and the target
 /// surface can be split-borrowed at the same time. To measure text without
 /// drawing it, use [`text_width`].
-///
-/// [`Ctx::font`]: crate::Ctx::font
-/// [`EggState::font`]: crate::EggState::font
 pub fn print_to_with_font<C: Canvas>(
     font: &Font,
     target: &mut C,

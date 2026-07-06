@@ -32,7 +32,6 @@ bevy = { version = "0.18.1", default-features = false, features = [
 egg_core = { path = "egg_core" }
 serde = "1.0.173"
 serde_json = "1.0.103"
-itertools = "0.14.0"
 
 # Native: OS windowing backends and the multi-threaded task pool. (Web runs
 # single-threaded — wasm without shared-memory/atomics can't use the threaded
@@ -53,7 +52,7 @@ console_error_panic_hook = "0.1"
 
 [workspace]
 
-members = ["egg_core"]
+members = ["egg_core", "crates/egg_render"]
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

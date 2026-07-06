@@ -26,7 +26,7 @@ pub enum Rotate {
 
 impl Rotate {
     /// Whether this is the default (no rotation) — the serde
-    /// `skip_serializing_if` guard for [`SpriteOptions`](crate::render::SpriteOptions).
+    /// `skip_serializing_if` guard for [`SpriteOptions`](crate::SpriteOptions).
     pub const fn is_none(&self) -> bool {
         matches!(self, Rotate::None)
     }

@@ -235,10 +235,11 @@ impl MapViewer {
                 .draw_to(draw_state, LayerId::BG);
             }
             let marker = if matches!(object.effect, ObjectEffect::Warp(_)) { 12 } else { 14 };
-            object
-                .hitbox
-                .offset_xy(-cam.x, -cam.y)
-                .draw(draw_state, LayerId::BG, marker);
+            draw_state.stroke_hitbox(
+                LayerId::BG,
+                object.hitbox.offset_xy(-cam.x, -cam.y),
+                marker,
+            );
         }
 
         // The landing avatar via the live sprite path, then fg layers, then the
@@ -246,10 +247,11 @@ impl MapViewer {
         let player = Shell::default().with_pos(pv.point);
         player.draw_params(cam).draw_to(draw_state, LayerId::BG);
         info.draw_fg_indexed(draw_state, LayerId::BG, tiled, cam, false);
-        player
-            .hitbox()
-            .offset_xy(-cam.x, -cam.y)
-            .draw(draw_state, LayerId::BG, 11);
+        draw_state.stroke_hitbox(
+            LayerId::BG,
+            player.hitbox().offset_xy(-cam.x, -cam.y),
+            11,
+        );
 
         // Crosshair on the exact landing pixel.
         let mark = draw_state.colour(8);

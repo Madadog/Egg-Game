@@ -23,7 +23,9 @@ use crate::data::{
     sound::{self, SfxData},
     tiled::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
 };
-use crate::draw_state::{BgColour, DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate};
+use crate::draw_state::{
+    BgColour, DrawParams, DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate,
+};
 use crate::geometry::{Hitbox, Vec2};
 use crate::data::scene::{
     self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion, ScrubRequest,
@@ -33,8 +35,8 @@ use crate::platform::{
 };
 use crate::render::image::{Rgba, RgbaImage};
 use crate::render::{
-    Canvas, DrawParams, EdgePolicy, Flip, Font, MapOptions, PrintOptions, Rotate, SpriteOptions,
-    Transform, print_to_with_font,
+    Canvas, EdgePolicy, Flip, Font, MapOptions, PrintOptions, Rotate, SpriteOptions, Transform,
+    print_to_with_font,
 };
 use crate::ui::dialogue::Dialogue;
 use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};

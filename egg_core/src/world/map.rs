@@ -8,7 +8,8 @@ use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
 use crate::draw_state::BgColour;
 use crate::geometry::{Collider, Hitbox, Vec2};
-use crate::render::{DrawParams, MapOptions, SpriteOptions};
+use crate::draw_state::DrawParams;
+use crate::render::{MapOptions, SpriteOptions};
 use crate::render::image::{IndexedImage, RgbaImage};
 use crate::world::animation::AnimFrame;
 use crate::world::camera::CameraBounds;
@@ -555,7 +556,7 @@ pub struct SpriteComponent {
     pub sprite: MetaSprite,
     /// The bottom pixel edge of the component's lowest row, in **map-absolute**
     /// pixels (layer offset included). The y-sort key is `baseline − camera.y`,
-    /// so it lands in the same camera-relative space as [`DrawParams::bottom`](crate::render::DrawParams::bottom).
+    /// so it lands in the same camera-relative space as [`DrawParams::bottom`](crate::draw_state::DrawParams::bottom).
     pub baseline: i32,
     /// Colour key skipped when a cell draws (the layer's `transparent`).
     pub transparent: Option<u8>,
@@ -565,7 +566,7 @@ pub struct SpriteComponent {
 impl SpriteComponent {
     /// This component's y-sort key at camera y `cam_y`: its map-absolute
     /// `baseline` shifted into the camera-relative space
-    /// [`DrawParams::bottom`](crate::render::DrawParams::bottom) returns, so an
+    /// [`DrawParams::bottom`](crate::draw_state::DrawParams::bottom) returns, so an
     /// entity and a component sort by the same measure.
     pub fn sort_key(&self, cam_y: i32) -> i32 {
         self.baseline - cam_y

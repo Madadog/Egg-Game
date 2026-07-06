@@ -1,67 +1,7 @@
 //! Per-draw option structs handed to the drawing primitives: sprite/map/font
-//! settings, the [`Flip`] enum, and the [`DrawParams`] bundle a sprite frame is
-//! described with. Stateless data; the live palette/sheet state lives on
-//! [`DrawState`](crate::draw_state::DrawState).
-
-#[derive(Clone, Debug)]
-pub struct DrawParams {
-    pub index: i32,
-    pub x: i32,
-    pub y: i32,
-    pub options: SpriteOptions,
-    pub outline: Option<u8>,
-    pub palette_rotate: u8,
-}
-
-impl DrawParams {
-    pub fn new(
-        index: i32,
-        x: i32,
-        y: i32,
-        options: SpriteOptions,
-        outline: Option<u8>,
-        palette_rotate: u8,
-    ) -> Self {
-        Self {
-            index,
-            x,
-            y,
-            options,
-            outline,
-            palette_rotate,
-        }
-    }
-    pub fn draw_to(
-        self,
-        draw_state: &mut crate::draw_state::DrawState,
-        layer: crate::draw_state::LayerId,
-    ) {
-        let palette_map = crate::draw_state::palette_map_rotate(self.palette_rotate.into());
-        if let Some(outline) = self.outline {
-            draw_state.spr_with_outline(
-                layer,
-                &palette_map,
-                self.index,
-                self.x,
-                self.y,
-                self.options,
-                outline,
-            );
-        } else {
-            draw_state.spr(
-                layer,
-                &palette_map,
-                self.index,
-                self.x,
-                self.y,
-                self.options,
-            );
-        }
-    }
-    pub fn bottom(&self) -> i32 {
-        self.y + self.options.h * 8
-    }
-}
+//! settings and the [`Flip`] enum. Stateless data; the live palette/sheet state
+//! lives on the game's `DrawState`, which also owns the `DrawParams` sprite-frame
+//! bundle these options are embedded in.
 
 #[derive(Clone, Debug)]
 pub struct MapOptions {

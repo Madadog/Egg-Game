@@ -22,7 +22,8 @@ use crate::data::{sound, tiled::TiledMap};
 use crate::geometry::{Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper};
 use crate::rand::Lcg64Xsh32;
-use crate::render::{DrawParams, Flip, SpriteOptions};
+use crate::draw_state::DrawParams;
+use crate::render::{Flip, SpriteOptions};
 use crate::world::interact::Interaction;
 use crate::world::map::{Axis, LayerInfo, MapInfo};
 
