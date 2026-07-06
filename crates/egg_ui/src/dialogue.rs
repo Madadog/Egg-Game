@@ -16,18 +16,16 @@
 
 use std::fmt::Debug;
 
-use crate::{
-    data::save::SaveData,
-    draw_state::{DrawState, LayerId},
-    geometry::Vec2,
-    platform::{ConsoleApi, ConsoleHelper},
-};
+use egg_world::data::save::SaveData;
+use egg_world::draw_state::{DrawState, LayerId};
+use egg_render::geometry::Vec2;
+use egg_platform::{ConsoleApi, ConsoleHelper};
 
-use crate::render::{Font, PrintOptions, SpriteOptions, print_to_with_font};
+use egg_render::{Font, PrintOptions, SpriteOptions, print_to_with_font};
 
-use crate::data::portraits::Portrait;
-use crate::data::script::message::{ChoiceOption, Message, TextContent};
-use crate::data::sound;
+use egg_world::data::portraits::Portrait;
+use egg_world::data::script::message::{ChoiceOption, Message, TextContent};
+use egg_world::data::sound;
 
 /// The dialogue [`PrintOptions`]: defaults plus the caller's small-text setting
 /// (the save flag `small_text_on`, passed in now that it's game state).
@@ -378,8 +376,8 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use crate::draw_state::PALETTE_MAP_IDENTITY;
-        use crate::render::Canvas;
+        use egg_world::draw_state::PALETTE_MAP_IDENTITY;
+        use egg_render::Canvas;
         // Measure the render target, matching `draw_dialogue_box_with_offset` so
         // this variant's portrait stays aligned with the text box on any
         // framebuffer (not just the main window).
@@ -433,7 +431,7 @@ impl Dialogue {
         mut y: i32,
         mut height: i32,
     ) {
-        use crate::render::Canvas;
+        use egg_render::Canvas;
         // Measure against the surface being drawn into, not the host's main
         // window: an off-screen render target (an extra editor view) has its own
         // framebuffer size, so the box must re-centre against that to land at the
@@ -470,7 +468,7 @@ impl Dialogue {
                 outline_colour,
             );
             height += 4;
-            crate::ui::portrait::draw_offset(
+            crate::portrait::draw_offset(
                 portrait,
                 draw_state,
                 layer,
@@ -552,7 +550,7 @@ impl Dialogue {
         font: &Font,
         small_text: bool,
     ) {
-        use crate::render::Canvas;
+        use egg_render::Canvas;
         let Some(choice) = &self.choice else {
             return;
         };
@@ -619,7 +617,7 @@ impl Debug for Dialogue {
 }
 
 pub fn print_width(font: &Font, string: &str, fixed: bool, small_font: bool) -> i32 {
-    crate::render::text_width(
+    egg_render::text_width(
         font,
         string,
         PrintOptions {
@@ -713,7 +711,7 @@ pub fn fit_default_paragraph(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::NullConsole;
+    use egg_platform::NullConsole;
 
     /// A `#shake` item banks its request for the camera driver as it is played
     /// past — but a manual fast-forward drops it (time-flavoured, like a
@@ -722,7 +720,7 @@ mod tests {
     fn shake_banks_unless_manually_skipped() {
         let mut dialogue = Dialogue::default();
         let mut save = SaveData::default();
-        let font = crate::render::Font::blank();
+        let font = egg_render::Font::blank();
         let shake = TextContent::Shake {
             frames: 30,
             amplitude: 4,
@@ -800,8 +798,8 @@ mod tests {
 
     #[test]
     fn choice_menu_moves_wraps_confirms_and_sets_the_flag() {
-        use crate::data::script::message::ChoiceOption;
-        use crate::platform::NullConsole;
+        use egg_world::data::script::message::ChoiceOption;
+        use egg_platform::NullConsole;
 
         let mut console = NullConsole::new();
         let font = Font::blank();
@@ -852,7 +850,7 @@ mod tests {
 
     #[test]
     fn a_pending_choice_blocks_auto_advance() {
-        use crate::data::script::message::ChoiceOption;
+        use egg_world::data::script::message::ChoiceOption;
         // Even with auto-text queued after it, the box must not tick past an open
         // choice.
         let mut d = Dialogue {

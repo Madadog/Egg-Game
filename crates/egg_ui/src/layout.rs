@@ -16,7 +16,7 @@
 //! rebuild the same layout.
 //!
 //! Leaf sizes are supplied up front (measure text with
-//! [`text_width`](crate::render::text_width), sprites are `w*8*scale` px), so
+//! [`text_width`](egg_render::text_width), sprites are `w*8*scale` px), so
 //! Taffy's measure-closure is never needed.
 
 use taffy::geometry::Rect as TaffyRect;
@@ -25,9 +25,9 @@ use taffy::prelude::{
     LengthPercentage, Size, TaffyTree, auto, length,
 };
 
-use crate::draw_state::{BgColour, DrawState, LayerId, PALETTE_MAP_IDENTITY};
-use crate::geometry::Vec2;
-use crate::render::{
+use egg_world::draw_state::{BgColour, DrawState, LayerId, PALETTE_MAP_IDENTITY};
+use egg_render::geometry::Vec2;
+use egg_render::{
     Canvas, Font, PrintOptions, SpriteOptions, print_to_centered_with_font, print_to_with_font,
 };
 
@@ -94,7 +94,7 @@ struct NodeData<K> {
 
 /// An absolute, integer pixel rectangle in screen space — the live framebuffer
 /// the layout was computed against, not the fixed 240×136 base resolution. (Not
-/// [`crate::geometry::Hitbox`], whose `new` panics on zero-size boxes — layout
+/// [`egg_render::geometry::Hitbox`], whose `new` panics on zero-size boxes — layout
 /// containers are routinely empty.)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rect {
@@ -270,7 +270,7 @@ impl<K: Copy + PartialEq> UiBuilder<K> {
 
     /// Compute layout from `root` and resolve every node to an absolute [`Rect`].
     /// `avail` is the screen size (px) the root lays out within — pass the live
-    /// [`width`](crate::platform::ConsoleApi::width)/[`height`](crate::platform::ConsoleApi::height) so the
+    /// [`width`](egg_platform::ConsoleApi::width)/[`height`](egg_platform::ConsoleApi::height) so the
     /// UI fills the framebuffer at any resolution.
     pub fn finish(mut self, root: NodeId, avail: (f32, f32)) -> Ui<K> {
         self.tree

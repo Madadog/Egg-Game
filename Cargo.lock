@@ -2095,11 +2095,11 @@ version = "0.1.0"
 dependencies = [
  "egg_platform",
  "egg_render",
+ "egg_ui",
  "egg_world",
  "log",
  "serde",
  "serde_json",
- "taffy 0.10.1",
 ]
 
 [[package]]
@@ -2127,6 +2127,16 @@ name = "egg_render"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "egg_ui"
+version = "0.1.0"
+dependencies = [
+ "egg_platform",
+ "egg_render",
+ "egg_world",
+ "taffy 0.10.1",
 ]
 
 [[package]]

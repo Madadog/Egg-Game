@@ -3,9 +3,9 @@
 //! editor (which used to keep a bare `buffer: String` and hand-roll the per-frame
 //! key reads) so the editing logic is one reusable, testable widget-state type —
 //! shared by the map editor's single-line property fields and the multi-line
-//! [text editor](super::text).
+//! text editor.
 //!
-//! [`TextField::step`] reads the frame's [`EggInput`](crate::platform::EggInput)
+//! [`TextField::step`] reads the frame's [`EggInput`](egg_platform::EggInput)
 //! and decodes it into [`TextOp`]s; [`TextField::apply`] performs one op on the
 //! buffer. Tests drive `apply` directly to exercise push/backspace/motion without
 //! any input. The field tracks
@@ -14,22 +14,22 @@
 //! another character, so the same type backs both single-line fields (which never
 //! emit [`TextOp::Up`]/etc.) and the multi-line editor.
 
-use crate::platform::{EggInput, ScanCode};
+use egg_platform::{EggInput, ScanCode};
 
 /// Held-key repeat cadence for text entry, in fixed steps (the sim runs at
 /// 64 Hz): `REPEAT_DELAY` before the first repeat, then one every `REPEAT_RATE`.
 /// The single place to tune how Backspace / arrows / etc. auto-repeat across the
 /// text editor and the map editor's fields. (`EggInput::key_repeat` itself is
 /// cadence-agnostic — these are this use case's numbers.)
-pub(crate) const REPEAT_DELAY: u16 = 20;
-pub(crate) const REPEAT_RATE: u16 = 2;
+pub const REPEAT_DELAY: u16 = 20;
+pub const REPEAT_RATE: u16 = 2;
 
 /// A single character-level edit to a [`TextField`], the pure unit its input
 /// decodes into. Splitting the keyboard read (which needs an
-/// [`EggInput`](crate::platform::EggInput)) from the buffer mutation (which
+/// [`EggInput`](egg_platform::EggInput)) from the buffer mutation (which
 /// doesn't) is what lets the field's behaviour be unit-tested without any input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TextOp {
+pub enum TextOp {
     /// Insert a character at the cursor (a typed, non-control key; the multi-line
     /// editor also pushes a `'\n'` here for Return).
     Push(char),
@@ -60,7 +60,7 @@ pub(crate) enum TextOp {
 /// the other. The caller maps [`Commit`](Self::Commit)/[`Cancel`](Self::Cancel)
 /// onto its own "apply the buffer" / "abandon" handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TextEvent {
+pub enum TextEvent {
     /// The field absorbed input but is still being edited.
     Active,
     /// Return was pressed — commit the (trimmed-by-the-caller) buffer.
@@ -71,7 +71,7 @@ pub(crate) enum TextEvent {
 
 /// A line-editing buffer plus the per-frame keystroke handling that grows it.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct TextField {
+pub struct TextField {
     buffer: String,
     /// Caret position as a byte index into `buffer`, always on a char boundary.
     /// Inserts/deletes happen here, and the arrow keys move it.
@@ -87,7 +87,7 @@ pub(crate) struct TextField {
 impl TextField {
     /// A field primed with `initial` as its starting contents (e.g. the existing
     /// value of the property being edited), with the caret at the end.
-    pub(crate) fn new(initial: impl Into<String>) -> Self {
+    pub fn new(initial: impl Into<String>) -> Self {
         let buffer = initial.into();
         let cursor = buffer.len();
         Self {
@@ -98,18 +98,18 @@ impl TextField {
     }
 
     /// The current buffer contents (the committed/parsed value).
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.buffer
     }
 
     /// The cursor's byte index — for snapshotting (e.g. the editor's undo).
-    pub(crate) fn cursor(&self) -> usize {
+    pub fn cursor(&self) -> usize {
         self.cursor
     }
 
     /// Place the cursor at `byte`, snapped down to a char boundary and clamped to
     /// the buffer — restores a snapshotted position.
-    pub(crate) fn set_cursor(&mut self, byte: usize) {
+    pub fn set_cursor(&mut self, byte: usize) {
         self.cursor = self.snap(byte);
     }
 
@@ -127,13 +127,13 @@ impl TextField {
     /// The selected byte range as ordered `(start, end)`, or `None` when there is
     /// no selection — no anchor, or it coincides with the caret. The anchor is
     /// snapped defensively, so slicing the buffer at these bounds is always safe.
-    pub(crate) fn selection(&self) -> Option<(usize, usize)> {
+    pub fn selection(&self) -> Option<(usize, usize)> {
         let a = self.snap(self.anchor?);
         (a != self.cursor).then(|| (a.min(self.cursor), a.max(self.cursor)))
     }
 
     /// The currently selected text, or `""` when nothing is selected.
-    pub(crate) fn selected_text(&self) -> &str {
+    pub fn selected_text(&self) -> &str {
         match self.selection() {
             Some((s, e)) => &self.buffer[s..e],
             None => "",
@@ -141,13 +141,13 @@ impl TextField {
     }
 
     /// Drop any selection, leaving the caret where it is.
-    pub(crate) fn clear_selection(&mut self) {
+    pub fn clear_selection(&mut self) {
         self.anchor = None;
     }
 
     /// Select the byte range `[start, end)` (snapped + ordered), parking the caret
     /// at the high end — used by select-all and to highlight a find match.
-    pub(crate) fn select(&mut self, start: usize, end: usize) {
+    pub fn select(&mut self, start: usize, end: usize) {
         let lo = self.snap(start.min(end));
         let hi = self.snap(start.max(end));
         self.anchor = Some(lo);
@@ -156,7 +156,7 @@ impl TextField {
 
     /// Delete the selected span if there is one, parking the caret where the
     /// selection began and clearing the anchor; returns whether it deleted.
-    pub(crate) fn delete_selection(&mut self) -> bool {
+    pub fn delete_selection(&mut self) -> bool {
         let had = if let Some((s, e)) = self.selection() {
             self.buffer.replace_range(s..e, "");
             self.cursor = s;
@@ -171,7 +171,7 @@ impl TextField {
     /// Remove the bytes in `[start, end)` (snapped + ordered) and park the caret
     /// at the start. A raw primitive for the editor's line ops — it doesn't touch
     /// the selection anchor (the caller manages that).
-    pub(crate) fn delete_range(&mut self, start: usize, end: usize) {
+    pub fn delete_range(&mut self, start: usize, end: usize) {
         let lo = self.snap(start.min(end));
         let hi = self.snap(start.max(end));
         self.buffer.replace_range(lo..hi, "");
@@ -180,7 +180,7 @@ impl TextField {
 
     /// Insert `text` at the caret, advancing the caret past it. A raw primitive
     /// (paste / line ops); the caller deletes any selection first.
-    pub(crate) fn insert_str(&mut self, text: &str) {
+    pub fn insert_str(&mut self, text: &str) {
         self.buffer.insert_str(self.cursor, text);
         self.cursor += text.len();
     }
@@ -188,7 +188,7 @@ impl TextField {
     /// Move the caret with `op`, extending or collapsing the selection: when
     /// `extend` is set, anchor at the current caret if not already anchored (so
     /// the far end stays put) and then move; otherwise drop any selection first.
-    pub(crate) fn move_caret(&mut self, op: TextOp, extend: bool) -> TextEvent {
+    pub fn move_caret(&mut self, op: TextOp, extend: bool) -> TextEvent {
         if extend {
             self.anchor.get_or_insert(self.cursor);
         } else {
@@ -200,7 +200,7 @@ impl TextField {
     /// Apply an editing `op` after first deleting any active selection, so typing
     /// or a delete key replaces the selection. A lone delete op is satisfied by
     /// that deletion alone (it doesn't then also remove a neighbouring char/word).
-    pub(crate) fn edit(&mut self, op: TextOp) -> TextEvent {
+    pub fn edit(&mut self, op: TextOp) -> TextEvent {
         let deleted = self.delete_selection();
         let is_delete = matches!(
             op,
@@ -217,13 +217,13 @@ impl TextField {
     }
 
     /// Select the whole buffer (Ctrl+A); the caret parks at the end.
-    pub(crate) fn select_all(&mut self) {
+    pub fn select_all(&mut self) {
         self.select(0, self.buffer.len());
     }
 
     /// The byte span `[start, end)` of the line the caret is on, excluding the
     /// trailing newline — for the editor's current-line copy and line ops.
-    pub(crate) fn current_line_span(&self) -> (usize, usize) {
+    pub fn current_line_span(&self) -> (usize, usize) {
         (
             self.line_start_at(self.cursor),
             self.line_end_at(self.cursor),
@@ -233,14 +233,14 @@ impl TextField {
     /// Anchor a selection at the current caret — a mouse press that may become a
     /// drag. With anchor == caret the selection is empty, so a bare click selects
     /// nothing; a following drag moves the caret and grows it.
-    pub(crate) fn anchor_here(&mut self) {
+    pub fn anchor_here(&mut self) {
         self.anchor = Some(self.cursor);
     }
 
     /// Move the caret to byte `target` (snapped), extending the selection when
     /// `extend` is set and collapsing it otherwise — the byte-addressed sibling of
     /// [`move_caret`](Self::move_caret), for the editor's smart-Home.
-    pub(crate) fn move_to_byte(&mut self, target: usize, extend: bool) {
+    pub fn move_to_byte(&mut self, target: usize, extend: bool) {
         if extend {
             self.anchor.get_or_insert(self.cursor);
         } else {
@@ -251,7 +251,7 @@ impl TextField {
 
     /// The buffer with a caret marker inserted at the cursor — what a focused
     /// single-line field renders, so the arrow keys' position is visible.
-    pub(crate) fn display(&self) -> String {
+    pub fn display(&self) -> String {
         let mut s = self.buffer.clone();
         s.insert(self.cursor, '_');
         s
@@ -259,7 +259,7 @@ impl TextField {
 
     /// The cursor's `(line, column)`, both 0-based, column counted in chars —
     /// what the multi-line editor renders the caret at.
-    pub(crate) fn line_col(&self) -> (usize, usize) {
+    pub fn line_col(&self) -> (usize, usize) {
         let line = self.buffer[..self.cursor].matches('\n').count();
         let ls = self.line_start_at(self.cursor);
         let col = self.buffer[ls..self.cursor].chars().count();
@@ -268,7 +268,7 @@ impl TextField {
 
     /// Move the cursor to `(line, col)` (0-based), clamped to the text and to the
     /// target line's length — the multi-line editor's click-to-place-caret.
-    pub(crate) fn move_to_line_col(&mut self, line: usize, col: usize) {
+    pub fn move_to_line_col(&mut self, line: usize, col: usize) {
         let mut start = 0;
         for _ in 0..line {
             match self.buffer[start..].find('\n') {
@@ -354,7 +354,7 @@ impl TextField {
     /// Apply one editing op, returning how the field resolved. Edits mutate the
     /// buffer/cursor and stay [`Active`](TextEvent::Active); commit/cancel leave
     /// the buffer untouched and report the terminal event for the caller.
-    pub(crate) fn apply(&mut self, op: TextOp) -> TextEvent {
+    pub fn apply(&mut self, op: TextOp) -> TextEvent {
         match op {
             TextOp::Push(c) => {
                 self.buffer.insert(self.cursor, c);
@@ -399,7 +399,7 @@ impl TextField {
     /// the map dialogs, and the multi-line editor (which adds Up/Down/Home/End and
     /// its own typed-char / newline handling on top), so they all get the same
     /// caret behaviour.
-    pub(crate) fn edit_keys(&mut self, input: &EggInput) {
+    pub fn edit_keys(&mut self, input: &EggInput) {
         let ctrl = input.key(ScanCode::Ctrl);
         let shift = input.key(ScanCode::Shift);
         // These auto-repeat while held (Backspace/Delete to delete a run, arrows to
@@ -441,7 +441,7 @@ impl TextField {
     /// Ctrl+arrow / Ctrl+Backspace) edit via [`edit_keys`](Self::edit_keys);
     /// Escape cancels and Return commits. Escape takes priority over Return when
     /// (improbably) both fire in one frame.
-    pub(crate) fn step(&mut self, input: &EggInput) -> TextEvent {
+    pub fn step(&mut self, input: &EggInput) -> TextEvent {
         for c in input.key_chars() {
             if !c.is_control() {
                 self.edit(TextOp::Push(*c));

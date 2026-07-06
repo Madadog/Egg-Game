@@ -1,11 +1,11 @@
 //! Drawing for dialogue [`Portrait`]s. The portrait itself is pure data
-//! ([`crate::data::portraits`]); this is the `ui`-side renderer that paints it
-//! through [`DrawState`], keeping `data/` free of any dependency on drawing.
+//! ([`egg_world::data::portraits`]); this is the `ui`-side renderer that paints
+//! it through [`DrawState`], keeping `data/` free of any dependency on drawing.
 
-use crate::data::portraits::Portrait;
-use crate::draw_state::{DrawState, LayerId, palette_map_rotate};
-use crate::geometry::Vec2;
-use crate::render::SpriteOptions;
+use egg_world::data::portraits::Portrait;
+use egg_world::draw_state::{DrawState, LayerId, palette_map_rotate};
+use egg_render::geometry::Vec2;
+use egg_render::SpriteOptions;
 
 /// Draw `portrait` onto `layer` at `offset` (its authored offset is added on
 /// top): the outline pass over every cell first — so the outline hugs the

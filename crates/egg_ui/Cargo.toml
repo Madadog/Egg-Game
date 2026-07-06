@@ -1,0 +1,10 @@
+[package]
+name = "egg_ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egg_render = { path = "../egg_render" }
+egg_platform = { path = "../egg_platform" }
+egg_world = { path = "../egg_world" }
+taffy = "0.10"

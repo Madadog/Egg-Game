@@ -37,7 +37,14 @@ pub use egg_platform as platform;
 /// extraction. Parsing stays fenced in [`data`]; `draw_state` lives down there
 /// because `ui` + `editor` both consume it while `render` stays primitives-only.
 pub use egg_world::{data, draw_state, rand, world};
-pub mod ui;
+/// The retained-layout UI crate ([`egg_ui`]) re-exported under its historical
+/// in-crate module path, so `crate::ui::…` (and the host's `egg_core::ui::…`)
+/// keep resolving after the extraction. The toolkit — the Taffy-backed
+/// [`layout`](egg_ui::layout), the shared [`text_field`](egg_ui::text_field),
+/// and the [`dialogue`](egg_ui::dialogue) box + its [`portrait`](egg_ui::portrait)
+/// renderer — sits above `render`/`platform` and reads the game's `draw_state` +
+/// text data; the `GameMode` screens and editor that drive it stay up here.
+pub use egg_ui as ui;
 
 use crate::data::eggdata::{GameItems, Presets};
 use crate::data::save::{SAVE_PATH, SaveData};
