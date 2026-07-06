@@ -4,10 +4,10 @@
 //! splicing the re-emitted preset back into `data.toml` — comments and every
 //! other section untouched (see [`eggdata::splice_preset`]) — then flags
 //! [`MapViewer::pending_data_reload`] so the host re-installs the live
-//! [`Presets`](crate::data::eggdata::Presets) registry.
+//! [`Presets`](egg_world::data::eggdata::Presets) registry.
 
-use crate::data::eggdata::{self, PresetDef};
-use crate::world::player::{FacingPolicy, LoopMode};
+use egg_world::data::eggdata::{self, PresetDef};
+use egg_world::world::player::{FacingPolicy, LoopMode};
 
 use super::*;
 
@@ -586,7 +586,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::test_console::TestConsole;
+    use egg_platform::test_console::TestConsole;
 
     /// A viewer with the shipped presets as its snapshot (as the engine would
     /// push), plus a console whose store holds the shipped `data.toml`.

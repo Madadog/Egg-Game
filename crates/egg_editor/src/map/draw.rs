@@ -794,7 +794,7 @@ mod tests {
     /// coverage for `build_panel`/`draw_at` across the dock features.
     #[test]
     fn draw_across_dock_features_does_not_panic() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut draw = DrawState::default();
@@ -832,11 +832,11 @@ mod tests {
     fn thumbnail_renders_within_the_cell() {
         // A real sheet so the modern-map collider derivation has art to read.
         let draw = DrawState {
-            indexed_sprites: crate::render::image::IndexedImage::new(256, 256),
+            indexed_sprites: egg_render::image::IndexedImage::new(256, 256),
             ..Default::default()
         };
         let mut maps = MapStore::default();
-        maps.insert("m", crate::data::tiled::TiledMap::blank_modern(10, 8));
+        maps.insert("m", egg_world::data::tiled::TiledMap::blank_modern(10, 8));
 
         let thumb = render_map_thumbnail("m", &maps, &draw, 40, 22).expect("thumbnail");
         assert!(thumb.width() <= 40 && thumb.height() <= 22);

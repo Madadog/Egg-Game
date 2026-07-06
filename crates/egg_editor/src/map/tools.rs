@@ -589,7 +589,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::null_console::NullConsole;
+    use egg_platform::null_console::NullConsole;
 
     /// The Select tool's clipboard ops: copy lifts the marquee's tiles, paste
     /// stamps them at a new origin as one undo step, cut clears the source while
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn select_copy_cut_paste_and_delete() {
         let mut maps = MapStore::default();
-        maps.insert("m", crate::data::tiled::TiledMap::blank_modern(6, 4));
+        maps.insert("m", egg_world::data::tiled::TiledMap::blank_modern(6, 4));
         // A 2×2 block of tile 5 at the origin on the drawable layer (source 1).
         for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
             maps.get_mut("m").unwrap().set(1, x, y, 5);

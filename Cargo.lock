@@ -2093,6 +2093,19 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 name = "egg_core"
 version = "0.1.0"
 dependencies = [
+ "egg_editor",
+ "egg_platform",
+ "egg_render",
+ "egg_ui",
+ "egg_world",
+ "log",
+ "serde_json",
+]
+
+[[package]]
+name = "egg_editor"
+version = "0.1.0"
+dependencies = [
  "egg_platform",
  "egg_render",
  "egg_ui",

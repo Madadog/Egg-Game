@@ -560,13 +560,13 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::null_console::NullConsole;
+    use egg_platform::null_console::NullConsole;
 
     /// Create → duplicate → rename → delete a map, checking the store and the
     /// written manifest stay consistent at each step (native file path).
     #[test]
     fn map_crud_round_trip() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut maps = MapStore::default();
@@ -613,7 +613,7 @@ mod tests {
     /// its tile content on undo.
     #[test]
     fn layer_ops_are_undoable() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(4, 4));
         let n0 = maps.get("m").unwrap().layers.len(); // collision + Layer 1 + objects
@@ -674,7 +674,7 @@ mod tests {
     /// undoable.
     #[test]
     fn layer_rename_and_plane_cycle() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(4, 4));
         let mut map = MapInfo {
@@ -740,7 +740,7 @@ mod tests {
     /// through undo / redo.
     #[test]
     fn layer_drag_reorder_translates_and_undoes() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         let mut tm = TiledMap::blank_modern(4, 4);
         tm.add_tile_layer("a");
@@ -797,7 +797,7 @@ mod tests {
     /// (the "+L" add landed in the hidden bg bucket).
     #[test]
     fn multiple_sprite_layers_select_and_edit() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         let mut tm = TiledMap::blank_modern(4, 4);
         let s1 = tm.add_tile_layer("s1");
@@ -861,7 +861,7 @@ mod tests {
     /// so hiding rows can never mis-target it.
     #[test]
     fn layer_filters_hide_rows_but_keep_selection_and_protection() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         let mut tm = TiledMap::blank_modern(4, 4);
         tm.add_tile_layer("a");
@@ -1010,7 +1010,7 @@ mod tests {
     /// plane's rows with nothing else shifting.
     #[test]
     fn layers_panel_lists_all_planes_and_filters_rows() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         let mut tm = TiledMap::blank_modern(4, 4);
         tm.add_tile_layer("spr1");
@@ -1059,7 +1059,7 @@ mod tests {
     /// undoable, one step each.
     #[test]
     fn layer_offset_and_rotate_edit_and_undo() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(4, 4));
         let mut map = MapInfo {
@@ -1111,7 +1111,7 @@ mod tests {
     /// hand-authored value > 15), and a non-finite offset is rejected.
     #[test]
     fn layer_prop_edits_normalise_and_reject_bad_input() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(4, 4));
         maps.get_mut("m").unwrap().set_layer_palette_rotate(1, 20); // out of range, as if hand-authored
@@ -1163,7 +1163,7 @@ mod tests {
     /// host's music-dir listing) and wraps.
     #[test]
     fn music_picker_cycles_tracks() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("m", TiledMap::blank_modern(2, 2));
         let map = MapInfo {
@@ -1191,7 +1191,7 @@ mod tests {
     /// leaves the layer clean (no property), so the fallback still applies.
     #[test]
     fn layer_plane_property_and_name_fallback() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut tm = TiledMap::blank_modern(2, 2);
         // "Layer 1" — no `fg` prefix, so the name fallback is Bg.
         assert_eq!(tm.layer_plane(1), Plane::Bg);
@@ -1213,7 +1213,7 @@ mod tests {
     #[test]
     fn new_map_name_validation() {
         let mut maps = MapStore::default();
-        maps.insert("town", crate::data::tiled::TiledMap::blank_modern(4, 4));
+        maps.insert("town", egg_world::data::tiled::TiledMap::blank_modern(4, 4));
         assert!(valid_map_name("forest", &maps));
         assert!(!valid_map_name("town", &maps)); // already exists
         assert!(!valid_map_name("a/b", &maps)); // path separator
@@ -1235,11 +1235,11 @@ mod tests {
     /// aren't serialised, so the sync carries them over by path).
     #[test]
     fn save_syncs_the_store() {
-        use crate::data::tiled::{
+        use egg_world::data::tiled::{
             ImageLayer, ObjectLayer, TileLayer, TiledMap, TiledMapLayer, Tileset,
         };
-        use crate::render::image::RgbaImage;
-        use crate::platform::test_console::TestConsole;
+        use egg_render::image::RgbaImage;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut store = MapStore::default();

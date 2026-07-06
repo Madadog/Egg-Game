@@ -978,7 +978,7 @@ impl MapViewer {
         }
     }
 
-    /// The selected object's flag [`Gate`](crate::world::map::Gate): the `if` /
+    /// The selected object's flag [`Gate`](egg_world::world::map::Gate): the `if` /
     /// `unless` conditions and the `sets` one-shot latch. Each is a free-text
     /// story-flag name (empty ⇒ that condition is unset). A name not in the loaded
     /// `#flag` vocabulary ([`flag_names`](MapViewer::flag_names)) is marked with a
@@ -1332,7 +1332,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::script::eggtext;
+    use egg_world::data::script::eggtext;
 
     fn vocab(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -1344,7 +1344,7 @@ mod tests {
     /// "edit in text editor" link, not the panel, edits the dialogue.)
     #[test]
     fn dialogue_panel_follows_selection_and_draws() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut draw = DrawState::default();

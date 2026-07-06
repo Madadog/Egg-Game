@@ -1,7 +1,7 @@
 //! Dockable-panel geometry for the map editor.
 //!
 //! The editor UI is *immediate mode* (rebuilt twice a frame, retaining nothing —
-//! see [`crate::ui`]). So the one thing that must survive between frames — where
+//! see [`egg_ui`]). So the one thing that must survive between frames — where
 //! each panel lives — is kept here as plain value state on [`DockManager`], owned
 //! by the [`MapViewer`](super::MapViewer). Each frame `step` calls
 //! [`DockManager::recompute`] *once* to tile the panels into absolute [`Rect`]s
@@ -11,7 +11,7 @@
 //! A panel is either **docked** to a screen edge (tiling a strip off that edge,
 //! the remaining centre becoming the world view) or **floating** at an absolute
 //! rect (drawn over the world, z-ordered). Panels lay out at the origin and are
-//! *placed* by translating their resolved rects ([`Ui::draw_at`](crate::ui::layout::Ui::draw_at)),
+//! *placed* by translating their resolved rects ([`Ui::draw_at`](egg_ui::layout::Ui::draw_at)),
 //! which sidesteps the resolver's `Position::Absolute` double-offset.
 #![allow(dead_code)] // fields/variants fill in across the editor's build phases.
 
@@ -19,8 +19,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::Vec2;
-use crate::ui::layout::Rect;
+use egg_render::geometry::Vec2;
+use egg_ui::layout::Rect;
 
 /// Default width of a left/right dock (and height of a top/bottom dock), px. The
 /// classic editor column was 84px wide, so that is the docked default.

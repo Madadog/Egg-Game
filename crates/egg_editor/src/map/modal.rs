@@ -901,7 +901,7 @@ mod tests {
     /// stages the source for the host's live-reload.
     #[test]
     fn path_recorder_commit_emits_and_merges_a_record_cutscene() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(
             vec![((1, 0), 5), ((0, 1), 3)],
@@ -937,7 +937,7 @@ mod tests {
     /// file survive untouched (a parse-then-re-emit would silently eat them).
     #[test]
     fn path_recorder_save_preserves_comments_and_other_scenes() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
@@ -959,7 +959,7 @@ mod tests {
     /// leaving the other scenes alone.
     #[test]
     fn path_recorder_save_replaces_an_existing_same_name_block() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
@@ -985,7 +985,7 @@ mod tests {
     /// logic from host input — injects the controller directly.)
     #[test]
     fn path_recorder_drive_moves_the_puppet_when_a_direction_is_held() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut store = MapStore::default();
         let mut map = MapInfo::default();
         let mut ed = MapViewer::primary();
@@ -1023,7 +1023,7 @@ mod tests {
     /// A recording with no real movement (all idle) saves nothing.
     #[test]
     fn path_recorder_ignores_an_empty_recording() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(vec![((0, 0), 30)], "town_path"));
         let mut console = TestConsole::new();
@@ -1035,7 +1035,7 @@ mod tests {
     /// wipe of hand-authored cutscenes); the recording is kept to retry.
     #[test]
     fn path_recorder_does_not_clobber_an_unparseable_scene_file() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
         let mut console = TestConsole::new();
@@ -1051,7 +1051,7 @@ mod tests {
     /// (intentional timing) is preserved.
     #[test]
     fn path_recorder_trims_outer_idle_keeps_inner() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(
             vec![
@@ -1079,7 +1079,7 @@ mod tests {
     /// init and its chain names the creature's id (as a hand-authored scene does).
     #[test]
     fn path_recorder_records_a_chosen_map_creature() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         let mut pr = PathRecorder::test(vec![((1, 0), 4)], "dog_path");
         pr.actors = vec![
@@ -1107,7 +1107,7 @@ mod tests {
     /// The player needs no init binding — `player` resolves without one.
     #[test]
     fn path_recorder_player_actor_emits_no_init() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 4)], "p_path"));
         let mut console = TestConsole::new();
@@ -1123,7 +1123,7 @@ mod tests {
     /// was before, redo puts the recording back (both write disk + stage a reload).
     #[test]
     fn path_recorder_commit_is_undoable() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         let mut map = MapInfo::default();
         let mut maps = MapStore::default();
@@ -1188,7 +1188,7 @@ mod tests {
     /// emitting `walk X Y` motions.
     #[test]
     fn path_recorder_waypoints_emit_walk_motions() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         let mut pr = PathRecorder::test(vec![], "wp_path");
         pr.place_waypoint(Vec2::new(30, 40));
@@ -1221,7 +1221,7 @@ mod tests {
     /// walk, a waypoint, then another buffered walk emit Record, walk, Record.
     #[test]
     fn path_recorder_interleaves_walks_and_waypoints() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut ed = MapViewer::primary();
         let mut pr = PathRecorder::test(vec![((1, 0), 3)], "mix_path");
         pr.place_waypoint(Vec2::new(80, 10)); // folds the walk, then the waypoint
@@ -1251,7 +1251,7 @@ mod tests {
     /// point (exercising the hit-test → `place_waypoint` wiring).
     #[test]
     fn path_recorder_canvas_click_drops_a_waypoint() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut store = MapStore::default();
         let mut map = MapInfo::default();
         let mut ed = MapViewer::primary();

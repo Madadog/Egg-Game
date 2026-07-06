@@ -751,7 +751,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::null_console::NullConsole;
+    use egg_platform::null_console::NullConsole;
 
     /// Editing an object's hitbox x/y/w/h commits to the box and is undoable;
     /// w/h keep a 1px floor.
@@ -980,8 +980,8 @@ mod tests {
     /// id-less object can't be recorded, so it parks nothing.
     #[test]
     fn taken_toggle_parks_selected_pickup_key() {
-        let mut console = crate::platform::test_console::TestConsole::new();
-        let mut input = crate::platform::EggInput::new();
+        let mut console = egg_platform::test_console::TestConsole::new();
+        let mut input = egg_platform::EggInput::new();
         input.mouse.left = [true, false]; // a just-pressed click edge
         let mut maps = MapStore::default();
         let mut map = MapInfo {
@@ -1153,7 +1153,7 @@ mod tests {
     /// wraps, recording each step for undo.
     #[test]
     fn warp_target_cycles_through_maps() {
-        use crate::data::tiled::TiledMap;
+        use egg_world::data::tiled::TiledMap;
         let mut maps = MapStore::default();
         maps.insert("a", TiledMap::blank_modern(4, 4));
         maps.insert("b", TiledMap::blank_modern(4, 4));

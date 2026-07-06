@@ -277,7 +277,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::NullConsole;
+    use egg_platform::NullConsole;
 
     /// Pushing a new action clears any redo future: a fresh edit invalidates the
     /// redone branch, the standard linear-history model.
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn sprite_plane_tile_undo_redo_rederives() {
         let mut maps = MapStore::default();
-        maps.insert("m", crate::data::tiled::TiledMap::blank_modern(4, 4));
+        maps.insert("m", egg_world::data::tiled::TiledMap::blank_modern(4, 4));
         let mut map = MapInfo {
             source: "m".to_string(),
             layers: vec![

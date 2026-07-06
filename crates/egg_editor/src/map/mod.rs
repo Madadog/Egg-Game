@@ -15,38 +15,38 @@
 
 use std::collections::BTreeSet;
 
-use crate::data::script::message::Message;
-use crate::data::{
+use egg_world::data::script::message::Message;
+use egg_world::data::{
     eggdata,
     save::SaveData,
     script::Script,
     sound::{self, SfxData},
     tiled::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
 };
-use crate::draw_state::{
+use egg_world::draw_state::{
     BgColour, DrawParams, DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate,
 };
-use crate::geometry::{Hitbox, Vec2};
-use crate::data::scene::{
+use egg_render::geometry::{Hitbox, Vec2};
+use egg_world::data::scene::{
     self, Chain, CutsceneContent, CutsceneDef, Instruction, Motion, ScrubRequest,
 };
-use crate::platform::{
+use egg_platform::{
     ConsoleApi, EggInput, MouseInput, ScanCode, dpad_delta, just_pressed, pressed,
 };
-use crate::render::image::{Rgba, RgbaImage};
-use crate::render::{
+use egg_render::image::{Rgba, RgbaImage};
+use egg_render::{
     Canvas, EdgePolicy, Flip, Font, MapOptions, PrintOptions, Rotate, SpriteOptions, Transform,
     print_to_with_font,
 };
-use crate::ui::dialogue::Dialogue;
-use crate::ui::layout::{NodeId, Rect, Ui, UiBuilder};
-use crate::world::animation::AnimFrame;
-use crate::world::interact::{InteractFn, Interaction};
-use crate::world::map::{
+use egg_ui::dialogue::Dialogue;
+use egg_ui::layout::{NodeId, Rect, Ui, UiBuilder};
+use egg_world::world::animation::AnimFrame;
+use egg_world::world::interact::{InteractFn, Interaction};
+use egg_world::world::map::{
     Axis, LayerInfo, LayerKind, MapInfo, MapObject, MapStore, ObjectEffect, Plane, Trigger, Warp,
     WarpMode, map_by_name,
 };
-use crate::world::player::Shell;
+use egg_world::world::player::Shell;
 
 // `pub(crate)` so the text editor can reuse the shared dock primitives (`Side`
 // and the resize-size constants) for its own outline dock — see
@@ -56,7 +56,7 @@ use dock::{DockLayout, DockManager, DragState, PanelKind, Placement, Side};
 use walk_editor::WalkEditor;
 
 use super::text::{TextAnchor, TextOpenReq};
-use crate::ui::text_field::{TextEvent, TextField, TextOp};
+use egg_ui::text_field::{TextEvent, TextField, TextOp};
 
 /// Where the editor persists its dock arrangement (native only; on web the
 /// asset writes are silent no-ops, so the layout is session-only there).
@@ -85,14 +85,14 @@ pub enum EditorTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditField {
     Key,
-    /// A cutscene interaction's registry name (see [`crate::data::scene`]).
+    /// A cutscene interaction's registry name (see [`egg_world::data::scene`]).
     Scene,
     ToMap,
     ToX,
     ToY,
     /// A warp's pre-warp narration dialogue key (empty buffer ⇒ no narration).
     Narration,
-    /// The object's flag [`Gate`](crate::world::map::Gate) fields — a story-flag
+    /// The object's flag [`Gate`](egg_world::world::map::Gate) fields — a story-flag
     /// name each (an empty buffer clears that condition to `None`). Common to
     /// every object kind. `CondIf` = fires only while set; `CondUnless` = fires
     /// only while clear; `Sets` = the flag set when the object fires (the one-shot
@@ -118,7 +118,7 @@ enum EditField {
     HitW,
     HitH,
     /// The selected animation frame's editable fields — the object's
-    /// [`sprite`](crate::world::map::MapObject::sprite) frame indexed by
+    /// [`sprite`](egg_world::world::map::MapObject::sprite) frame indexed by
     /// [`MapViewer::sprite_frame`]. Tile id / duration, the draw offset from the
     /// hitbox (`pos`), the multi-tile span and pixel scale, the palette rotation,
     /// and the transparent / outline palette indices (an empty buffer clears the
@@ -163,7 +163,7 @@ enum CycleField {
     Sound,
     Trigger,
     /// Whether the selected interaction object is a consume-on-interact pickup
-    /// ([`MapObject::removable`](crate::world::map::MapObject::removable)) — toggled
+    /// ([`MapObject::removable`](egg_world::world::map::MapObject::removable)) — toggled
     /// no/yes. Interacts tab only (warps are never "taken").
     Removable,
     /// The selected sprite frame's mirror ([`Flip`]) and 90° rotation
@@ -1849,7 +1849,7 @@ fn cycle_sound(sound: &Option<SfxData>) -> Option<SfxData> {
 /// entry by path before the swap; a parse failure leaves the store untouched
 /// (the written file is still good — it round-trips by construction).
 fn sync_store(maps: &mut MapStore, name: &str, json: &str) {
-    use crate::data::tiled::{TiledMapLayer, from_json};
+    use egg_world::data::tiled::{TiledMapLayer, from_json};
     match from_json(json.as_bytes()) {
         Ok(mut fresh) => {
             if let Some(old) = maps.get(name) {

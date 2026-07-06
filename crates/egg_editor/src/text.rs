@@ -13,7 +13,7 @@
 //! An **outline** of the file's column-0 tags (`#dialogue`/`#list`/`#flag`, or
 //! `#cutscene`, plus eggtext labels) is shown in a sidebar; clicking one jumps the
 //! caret to that block. The caret/word-motion comes from the shared
-//! [`TextField`](crate::ui::text_field::TextField); this module adds the multi-line
+//! [`TextField`](egg_ui::text_field::TextField); this module adds the multi-line
 //! navigation, file I/O, outline and rendering on top.
 
 use std::collections::HashSet;
@@ -22,22 +22,22 @@ use std::collections::HashSet;
 // the `Side` enum and the resize-size constants. (The multi-panel `DockManager`
 // is map-editor-specific, so the outline runs a focused single-panel dock.)
 use super::map::dock::{DEFAULT_DOCK, MIN_DOCK, MIN_WORLD, Side};
-use crate::ui::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
-use crate::data::portraits::Portrait;
-use crate::data::save::SaveData;
-use crate::data::scene;
-use crate::data::script::Script;
-use crate::data::script::eggtext;
-use crate::data::script::message::{Message, TextContent};
-use crate::data::sound::music::MusicTrack;
-use crate::draw_state::{DrawState, LayerId};
-use crate::platform::{ConsoleApi, EggInput, ScanCode, SfxOptions, just_pressed, pressed};
-use crate::render::image::{Rgba, RgbaImage};
-use crate::render::{
+use egg_ui::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
+use egg_world::data::portraits::Portrait;
+use egg_world::data::save::SaveData;
+use egg_world::data::scene;
+use egg_world::data::script::Script;
+use egg_world::data::script::eggtext;
+use egg_world::data::script::message::{Message, TextContent};
+use egg_world::data::sound::music::MusicTrack;
+use egg_world::draw_state::{DrawState, LayerId};
+use egg_platform::{ConsoleApi, EggInput, ScanCode, SfxOptions, just_pressed, pressed};
+use egg_render::image::{Rgba, RgbaImage};
+use egg_render::{
     Canvas, EdgePolicy, Font, PrintOptions, Transform, print_to_centered_with_font,
     print_to_with_font, text_width,
 };
-use crate::ui::dialogue::Dialogue;
+use egg_ui::dialogue::Dialogue;
 
 /// The English dialogue/text source and the cutscene source — the editor's two
 /// known files (matching the startup asset loads). No host directory enumeration
@@ -291,7 +291,7 @@ pub struct TextOpenReq {
 }
 
 /// Which one-line prompt is open over the editor — the shared
-/// [`TextField`](crate::ui::text_field::TextField) input is read the same way for
+/// [`TextField`](egg_ui::text_field::TextField) input is read the same way for
 /// both; only what Enter does differs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PromptKind {
@@ -2815,7 +2815,7 @@ title = Hello
     /// the hot paths the outline unit tests don't reach.)
     #[test]
     fn step_and_draw_dont_panic() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut draw = DrawState::default();
@@ -2902,7 +2902,7 @@ title = Hello
     /// copied verbatim, paste drops it at the caret (replacing any selection).
     #[test]
     fn clipboard_copy_paste_selection() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
 
         let mut ed = editor_with("script/en.eggtext", "alpha beta gamma");
@@ -2926,7 +2926,7 @@ title = Hello
     /// preceding one on the last line, so no blank line is left behind.
     #[test]
     fn clipboard_current_line_copy_and_cut() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
 
         let mut ed = editor_with("script/en.eggtext", "one\ntwo\nthree");
@@ -3295,7 +3295,7 @@ title = Hello
     /// body edges fall out of `regions` accordingly.
     #[test]
     fn regions_dock_left_right_hidden() {
-        use crate::editor::map::dock::Side;
+        use crate::map::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "a\nb\nc");
         ed.preview_dock.side = None; // isolate the outline
         ed.outline_dock.size = 60;
@@ -3327,7 +3327,7 @@ title = Hello
     /// begins, which sits just above the status bar.
     #[test]
     fn regions_bottom_dock_shrinks_body() {
-        use crate::editor::map::dock::Side;
+        use crate::map::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "a");
         ed.outline_dock.side = None;
         ed.preview_dock.side = Some(Side::Bottom);
@@ -3354,7 +3354,7 @@ title = Hello
     /// Ctrl+Shift+O cycles the outline Left → Right → Hidden → Left.
     #[test]
     fn cycle_outline_dock_steps() {
-        use crate::editor::map::dock::Side;
+        use crate::map::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "");
         ed.preview_dock.side = None; // so the outline cycle doesn't skip-collide
         assert_eq!(ed.outline_dock.side, Some(Side::Left));
@@ -3385,7 +3385,7 @@ title = Hello
     /// and steps forward / back (clamped).
     #[test]
     fn preview_loads_and_steps_pages() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
         let src = "#dialogue talk\n  First page.\n\n  Second page.\n\n  Third page.";
         let mut ed = editor_with("script/en.eggtext", src);
@@ -3411,7 +3411,7 @@ title = Hello
 
     #[test]
     fn caret_dialogue_page_maps_turns() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
         let src = "#dialogue talk\n  One.\n\n  Two.\n\n  Three.";
         let mut ed = editor_with("script/en.eggtext", src);
@@ -3437,7 +3437,7 @@ title = Hello
     /// caret's turn. Only a genuine caret move resumes following.
     #[test]
     fn manual_paging_survives_caret_follow() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
         let src = "#dialogue talk\n  One.\n\n  Two.\n\n  Three.";
         let mut ed = editor_with("script/en.eggtext", src);
@@ -3462,7 +3462,7 @@ title = Hello
     /// clauses as one turn (the built-up text), not a stack of partial messages.
     #[test]
     fn delay_reveals_collapse_into_one_turn() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
         // One message (no blank line): "Hi", then two appended clauses; then a
         // second, separate message.
@@ -3524,7 +3524,7 @@ title = Hello
     /// just within it.
     #[test]
     fn open_anchor_scrolls_into_view_next_step() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
         let mut console = TestConsole::new();
         console
             .files
@@ -3540,7 +3540,7 @@ title = Hello
     /// spot it vacated (so the body becomes a dockable side panel).
     #[test]
     fn cycle_main_swaps_body_into_panel() {
-        use crate::editor::map::dock::Side;
+        use crate::map::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "a\nb");
         assert_eq!(ed.main_panel, TextPanel::Body);
         let body0 = ed.regions(&Font::blank(), 240, 136).body;
@@ -3572,7 +3572,7 @@ title = Hello
     /// Cycling a panel skips a side the other panel already occupies.
     #[test]
     fn cycle_dock_skips_occupied_side() {
-        use crate::editor::map::dock::Side;
+        use crate::map::dock::Side;
         let mut ed = editor_with("script/en.eggtext", "");
         ed.outline_dock.side = Some(Side::Left);
         ed.preview_dock.side = Some(Side::Bottom);

@@ -1232,7 +1232,7 @@ mod tests {
     /// list. Same-map steps keep everything.
     #[test]
     fn map_change_resets_per_map_editor_state() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut store = MapStore::default();
@@ -1310,7 +1310,7 @@ mod tests {
     /// it; a view editor (non-persistent) is gated off.
     #[test]
     fn layout_persists_round_trip() {
-        use crate::platform::test_console::TestConsole;
+        use egg_platform::test_console::TestConsole;
 
         let mut console = TestConsole::new();
         let mut a = MapViewer::primary();
