@@ -26,7 +26,12 @@ pub mod gamestate;
 /// root itself.
 pub use egg_render as render;
 pub use egg_render::geometry;
-pub mod platform;
+/// The console-abstraction crate ([`egg_platform`]) re-exported under its
+/// historical in-crate path, so `crate::platform::…` (and the host's
+/// `egg_core::platform::…`) keep resolving after the extraction. The host-facing
+/// sound value types it now owns are re-exported by [`data::sound`] under their
+/// old paths too.
+pub use egg_platform as platform;
 pub mod rand;
 pub mod ui;
 pub mod world;

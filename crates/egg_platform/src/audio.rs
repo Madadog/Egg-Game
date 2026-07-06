@@ -1,5 +1,5 @@
 //! Host audio options. The note/octave a sound effect plays at — paired with a
-//! sound id by [`SfxData`](crate::data::sound::SfxData) and handed to the host
+//! sound id by [`SfxData`](crate::sound::SfxData) and handed to the host
 //! through [`ConsoleApi::sfx`](super::ConsoleApi::sfx).
 
 #[derive(Debug, Clone)]

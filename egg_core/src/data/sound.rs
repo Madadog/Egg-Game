@@ -45,30 +45,12 @@ impl SfxDef {
     }
 }
 
-/// A resolved sound effect: the file-stem id the host plays and the note/octave
-/// it plays at. Built from an [`SfxDef`] via the [`Sounds`] store.
-#[derive(Debug, Clone)]
-pub struct SfxData {
-    pub id: String,
-    pub options: SfxOptions,
-}
-impl SfxData {
-    pub fn new(id: impl Into<String>, options: SfxOptions) -> Self {
-        Self {
-            id: id.into(),
-            options,
-        }
-    }
-    pub fn with_note(self, note: i32) -> Self {
-        Self {
-            options: SfxOptions {
-                note,
-                ..self.options
-            },
-            ..self
-        }
-    }
-}
+/// The resolved sound-effect value ([`SfxData`]) now lives at the platform layer
+/// — the [`ConsoleApi`](crate::platform::ConsoleApi) signatures name it — and is
+/// re-exported here so `crate::data::sound::SfxData` (and the host's
+/// `egg_core::data::sound::SfxData`) keeps resolving. [`SfxDef`] above is the
+/// authored form; [`Sounds`] builds these from the registry.
+pub use crate::platform::sound::SfxData;
 
 /// The runtime sound registry: every [`SfxDef`] keyed by its canonical name.
 /// Built from data.toml `[sfx.*]` — mirrors [`eggdata::Presets`], but cached
@@ -197,33 +179,11 @@ pub fn footstep_plain() -> SfxData {
 }
 
 pub mod music {
-    /// A music track, identified by name — its file stem under `assets/music/`,
-    /// which the host loads as `music/<id>.ogg`. The set of real tracks is
-    /// discovered from that directory at runtime (see
-    /// [`ConsoleApi::music_tracks`](crate::platform::ConsoleApi::music_tracks)); a
-    /// map (via its `music` property) or the title sequence refers to one by name.
-    #[derive(Debug, Clone)]
-    pub struct MusicTrack {
-        pub id: String,
-        pub speed: f32,
-    }
-    impl MusicTrack {
-        /// A track named by its file stem — from a map's `music` property, a
-        /// filename in the music directory, or an engine-fixed reference like the
-        /// title theme. The only way to construct a track: there is no hardcoded
-        /// track set anymore.
-        pub fn named(name: impl Into<String>) -> Self {
-            Self {
-                id: name.into(),
-                speed: 1.0,
-            }
-        }
-
-        /// The same track at a given playback-rate multiplier (1.0 = normal).
-        pub fn with_speed(self, speed: f32) -> Self {
-            Self { speed, ..self }
-        }
-    }
+    /// The [`MusicTrack`] value now lives at the platform layer (the
+    /// [`ConsoleApi`](crate::platform::ConsoleApi) signatures name it),
+    /// re-exported here so `crate::data::sound::music::MusicTrack` (and the
+    /// host's `egg_core::data::sound::music::MusicTrack`) keeps resolving.
+    pub use crate::platform::sound::music::MusicTrack;
 }
 
 #[cfg(test)]

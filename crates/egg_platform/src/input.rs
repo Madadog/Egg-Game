@@ -1,5 +1,5 @@
-use crate::geometry::Vec2;
-use crate::platform::{SCANCODE_COUNT, ScanCode};
+use crate::{SCANCODE_COUNT, ScanCode};
+use egg_render::geometry::Vec2;
 
 /// Mouse state holding `[current, previous]` for every field, so movement and
 /// button edges are always well-defined. Index `0` is the current frame, index
@@ -117,7 +117,7 @@ pub fn dpad_delta(pad: &Controller, edge: impl Fn([bool; 2]) -> bool) -> (i16, i
 
 /// A whole frame's accumulated input: the four gamepads, the keyboard edge
 /// state, and the characters typed. The host fills one of these per window each
-/// frame and threads it into the engine as data (via [`Ctx::input`](crate::Ctx::input)),
+/// frame and threads it into the engine as data (via `Ctx::input`),
 /// so the host — not the console — decides which window's input a step sees.
 #[derive(Clone, Debug)]
 pub struct EggInput {

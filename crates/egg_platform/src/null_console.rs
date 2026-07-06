@@ -6,17 +6,17 @@
 //! future headless stepping (tests, replay).
 //!
 //! Input is not a console concern — a whole frame's input is threaded in as data
-//! (see [`EggInput`](crate::platform::EggInput) and [`Ctx::input`](crate::Ctx::input)),
+//! (see [`EggInput`](crate::EggInput) and `Ctx::input`),
 //! so this console carries no input state at all; a headless caller supplies its
 //! own [`EggInput`] (the scrubber keeps a neutral held-`A` one, see
-//! [`CutsceneScrubber`](crate::gamestate::CutsceneScrubber)). Text rendering no
+//! `CutsceneScrubber`). Text rendering no
 //! longer goes through the console (the font is `EggState` data, threaded via
-//! [`Ctx::font`](crate::Ctx::font)), so it carries no font either — that
+//! `Ctx::font`), so it carries no font either — that
 //! decoupling is what makes it inert.
 
 use super::{ConsoleApi, SfxOptions};
-use crate::data::sound::music::MusicTrack;
-use crate::render::image::RgbaImage;
+use crate::sound::music::MusicTrack;
+use egg_render::image::RgbaImage;
 
 /// An inert, muted, fileless console for headless stepping.
 #[derive(Debug)]

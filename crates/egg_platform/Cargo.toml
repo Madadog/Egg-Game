@@ -1,0 +1,12 @@
+[package]
+name = "egg_platform"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# Exposes the in-memory `test_console::TestConsole` fixture to dependents' test
+# suites (egg_core enables it via a dev-dependency). Off in production builds.
+test-util = []
+
+[dependencies]
+egg_render = { path = "../egg_render" }

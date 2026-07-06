@@ -1,7 +1,12 @@
-use crate::{
-    data::sound::{SfxData, music::MusicTrack},
-    render::image::RgbaImage,
-};
+//! The console abstraction: the [`ConsoleApi`] trait — the host IO/asset/audio
+//! surface `egg_core` steps the game through — plus the input value ([`input`]),
+//! screen consts ([`consts`]), scancodes ([`scancode`]), host audio options
+//! ([`audio`]), the inert headless [`NullConsole`], and the host-facing sound
+//! value types the trait names ([`sound`]). Depends only on [`egg_render`] for
+//! the pixel surface (`RgbaImage`) and `Vec2`.
+
+use crate::sound::{SfxData, music::MusicTrack};
+use egg_render::image::RgbaImage;
 
 pub use audio::*;
 pub use consts::*;
@@ -14,11 +19,12 @@ pub mod consts;
 pub mod input;
 pub mod null_console;
 pub mod scancode;
+pub mod sound;
 
 /// IO + asset surface used by `egg_core`. Drawing is no longer done through
 /// this trait — see `DrawState`, the `Canvas` trait, and `print_to_with_font`.
 /// Input is no longer pulled through it either: a whole frame's input is threaded
-/// in as data (see [`EggInput`] and [`Ctx::input`](crate::Ctx::input)). What
+/// in as data (see [`EggInput`] and `Ctx::input`). What
 /// stays here is host effects/services — quit, clipboard, audio, asset access,
 /// and the final `output_image()` surface that consoles composite into.
 /// Persistent progress is no longer a hardware concern: `SaveData` is game state
@@ -84,7 +90,11 @@ pub trait ConsoleHelper: ConsoleApi {
     }
 }
 
-#[cfg(test)]
+// Gated behind `test-util` (rather than `#[cfg(test)]`) so `egg_core`'s test
+// suite can reach it across the crate boundary — a dependency's `#[cfg(test)]`
+// items aren't compiled when the dependent is tested. `egg_core` turns the
+// feature on via a dev-dependency; production builds exclude it.
+#[cfg(any(test, feature = "test-util"))]
 pub mod test_console {
     //! A minimal in-memory [`ConsoleApi`] for unit tests. Every method returns
     //! an inert default (no input, no audio), which is all the engine's
@@ -94,19 +104,19 @@ pub mod test_console {
 
     use std::collections::HashMap;
 
-    use crate::data::sound::music::MusicTrack;
-    use crate::platform::SfxOptions;
-    use crate::render::image::{IndexedImage, RgbaImage};
+    use crate::SfxOptions;
+    use crate::sound::music::MusicTrack;
+    use egg_render::image::{IndexedImage, RgbaImage};
 
     use super::ConsoleApi;
 
     /// Inert console used by tests. Holds just enough state to satisfy the
     /// trait (the output surface) plus an `indexed_sprites` sheet some tests hand
-    /// to sheet-reading helpers like [`crate::world::map::map_by_name`] — those read
+    /// to sheet-reading helpers like `map_by_name` — those read
     /// the sheet directly now (it lives on `DrawState`), not through the console.
     /// Input is no longer a console service: a test that drives input builds an
-    /// [`EggInput`](crate::platform::EggInput) and threads it through the `Ctx`.
-    /// Text rendering reads a [`Font`](crate::render::Font), which is game data
+    /// [`EggInput`](crate::EggInput) and threads it through the `Ctx`.
+    /// Text rendering reads a [`Font`](egg_render::Font), which is game data
     /// now (not a console service), so a test that draws text builds one locally.
     pub struct TestConsole {
         /// In-memory stand-in for the host's string-named file store, so tests

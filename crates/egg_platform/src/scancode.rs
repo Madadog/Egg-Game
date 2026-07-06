@@ -4,8 +4,8 @@
 /// Use these instead of bare numbers when calling [`EggInput::key`] /
 /// [`EggInput::keyp`] so the meaning of each key press stays obvious.
 ///
-/// [`EggInput::key`]: crate::platform::EggInput::key
-/// [`EggInput::keyp`]: crate::platform::EggInput::keyp
+/// [`EggInput::key`]: crate::EggInput::key
+/// [`EggInput::keyp`]: crate::EggInput::keyp
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ScanCode {
