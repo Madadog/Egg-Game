@@ -1,5 +1,5 @@
-use crate::geometry::Vec2;
-use crate::render::SpriteOptions;
+use egg_render::geometry::Vec2;
+use egg_render::SpriteOptions;
 
 #[derive(Clone, Debug)]
 pub enum ParticleDraw {
@@ -17,7 +17,7 @@ impl ParticleDraw {
         y: i32,
     ) {
         use crate::draw_state::PALETTE_MAP_IDENTITY;
-        use crate::render::Canvas;
+        use egg_render::Canvas;
         let bg = layer as usize;
         match *self {
             ParticleDraw::Rect(w, h, colour) => {

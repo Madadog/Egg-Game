@@ -3,7 +3,7 @@
 //! and creature presets are (see [`crate::data::eggdata`]): the file is the
 //! single source, embedded at build time as the built-in default and looked up
 //! by the script name a message names. This module is pure data — the drawing
-//! lives in [`crate::ui::portrait`], so nothing here reaches up into `DrawState`.
+//! lives in `ui::portrait`, so nothing here reaches up into `DrawState`.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -15,7 +15,7 @@ use crate::data::metasprite::MetaSprite;
 
 /// One dialogue portrait: the [`MetaSprite`] it is drawn from (any size — a
 /// dense row-major grid of 8×8 cells) and the pixel offset the box nudges it
-/// by. Pure data — see [`crate::ui::portrait::draw_offset`] for the draw.
+/// by. Pure data — see `ui::portrait::draw_offset` for the draw.
 ///
 /// TOML spellings (see the `data.toml` header): explicit cells
 /// (`spr_ids = [...]` row-major, `w` columns wide — default 2), or the
@@ -140,7 +140,7 @@ impl Portraits {
 fn builtin() -> &'static Portraits {
     static BUILTIN: OnceLock<Portraits> = OnceLock::new();
     BUILTIN.get_or_init(|| {
-        let file = eggdata::parse(include_str!("../../../assets/data/data.toml"))
+        let file = eggdata::parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses");
         Portraits::from_data(&file)
     })
@@ -212,7 +212,7 @@ mod tests {
         let wide = &file.portraits["wide"];
         assert_eq!(
             wide.sprite.cells[4].offset,
-            crate::geometry::Vec2::new(8, 8)
+            egg_render::geometry::Vec2::new(8, 8)
         );
         assert_eq!(wide.sprite.cells[4].spr_id, 20);
 

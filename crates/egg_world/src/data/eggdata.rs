@@ -7,7 +7,7 @@
 //! ## Why this shape
 //! A preset's `walk` **is** the runtime [`WalkSprites`](crate::world::player::WalkSprites):
 //! a preset deserialises straight into it — the flattened 9-cell grid of per-frame
-//! [`SpriteOptions`](crate::render::SpriteOptions) plus its facing policy, in full.
+//! [`SpriteOptions`](egg_render::SpriteOptions) plus its facing policy, in full.
 //! There is no shorthand "pattern" layer between the file and the runtime; what
 //! ships is exactly what the game reads. The grid is verbose (defaulted frame
 //! fields are elided, but nine cells is nine cells), which is the deliberate
@@ -17,7 +17,7 @@
 //! ## Status
 //! Both [`items`](DataFile::items) and [`presets`](DataFile::presets) are the live
 //! source ([`GameItems::from_data`] / [`Presets::from_data`], installed at boot by
-//! [`EggState::load_data`](crate::EggState::load_data)). The embedded shipped file
+//! `EggState::load_data`). The embedded shipped file
 //! is the built-in default ([`Presets::builtin`]).
 
 use std::collections::BTreeMap;
@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::data::portraits::Portrait;
 use crate::data::sound::SfxDef;
-use crate::geometry::Hitbox;
+use egg_render::geometry::Hitbox;
 use crate::world::player::{
     CreatureState, MoveMode, PresetId, Shell, ShellSprites, SpriteAnimation, Timer, WalkSprites,
 };
@@ -39,8 +39,8 @@ pub const DATA_PATH: &str = "data/data.toml";
 /// The fixed, gameplay-relevant data for one item — currently just which sprite
 /// draws it. Its display name and description are NOT here: those are text, so
 /// they live in the script (the `item_<key>` list, read via
-/// [`Ctx::item_name`](crate::Ctx::item_name) /
-/// [`Ctx::item_desc`](crate::Ctx::item_desc)).
+/// `Ctx::item_name` /
+/// `Ctx::item_desc`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDef {
     pub sprite: i32,
@@ -48,11 +48,11 @@ pub struct ItemDef {
 
 /// The registry of every item the game knows about, keyed by the persistent
 /// string id a save stores (and an [`InteractFn`](crate::world::interact::InteractFn)
-/// names). Loaded game data, threaded through [`Ctx::items`](crate::Ctx::items)
+/// names). Loaded game data, threaded through `Ctx::items`
 /// like `maps`/`script`/`scenes`.
 ///
 /// The shipped item set is loaded from `assets/data/data.toml` at boot (see
-/// [`from_data`](Self::from_data) and [`EggState::load_data`](crate::EggState::load_data)),
+/// [`from_data`](Self::from_data) and `EggState::load_data`),
 /// the way maps/script/scenes moved out to their own files. [`Default`] is the
 /// built-in fallback for a missing/garbage file (and for headless/test use).
 #[derive(Debug, Clone)]
@@ -102,7 +102,7 @@ pub struct DataFile {
     pub items: BTreeMap<String, ItemDef>,
     /// Creature presets, keyed by the [`PresetId`](crate::world::player::PresetId)
     /// name a save stores (`"ellie"`, `"critter"`, …). The live runtime source:
-    /// [`EggState::load_data`](crate::EggState::load_data) derives the runtime
+    /// `EggState::load_data` derives the runtime
     /// [`Presets`] store from these.
     #[serde(default)]
     pub presets: BTreeMap<String, PresetDef>,
@@ -134,7 +134,7 @@ pub fn to_toml(data: &DataFile) -> Result<String, toml::ser::Error> {
 /// The runtime creature registry: every [`PresetDef`] keyed by its
 /// [`PresetId`]. Built from the embedded `data.toml` ([`builtin`](Self::builtin))
 /// and re-derived from the runtime file at boot ([`from_data`](Self::from_data)),
-/// then threaded through gameplay as [`Ctx::presets`](crate::Ctx::presets) the
+/// then threaded through gameplay as `Ctx::presets` the
 /// way `items`/`maps`/`script` are. The lookup is the `presets[id]` the spawn
 /// sites want; an absent id is a clean `None`, not a panic.
 #[derive(Debug, Clone)]
@@ -147,7 +147,7 @@ impl Presets {
     /// is the single source of the creature definitions. Panics only if the
     /// *shipped* file is malformed — a build-time-checked invariant.
     pub fn builtin() -> Self {
-        let file = parse(include_str!("../../../assets/data/data.toml"))
+        let file = parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses");
         Self::from_data(&file)
     }
@@ -192,7 +192,7 @@ impl Presets {
 /// the host store has no runtime copy yet, so its first save still writes a
 /// complete file rather than a fragment.
 pub fn shipped_source() -> &'static str {
-    include_str!("../../../assets/data/data.toml")
+    include_str!("../../../../assets/data/data.toml")
 }
 
 /// Emit one preset as TOML — the `[presets.<name>]` header plus all its
@@ -334,8 +334,8 @@ pub struct SpriteSet {
     /// where it's drawn (the pet pose), so a strip whose sheet cells face the
     /// "wrong" way — e.g. the dog's `others` vs the player's — corrects itself in
     /// data without inverting the other.
-    #[serde(default, skip_serializing_if = "crate::render::Flip::is_none")]
-    pub flip: crate::render::Flip,
+    #[serde(default, skip_serializing_if = "egg_render::Flip::is_none")]
+    pub flip: egg_render::Flip,
 }
 impl SpriteSet {
     fn build(&self) -> SpriteAnimation {
@@ -380,7 +380,7 @@ impl PresetMove {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::Flip;
+    use egg_render::Flip;
     use crate::world::player::{MoveMode, PresetId, Shell};
 
     /// `Presets::builtin` embeds the shipped data and spawns each built-in with
@@ -426,7 +426,7 @@ mod tests {
     /// the file is authored in and the engine loads through.
     #[test]
     fn toml_round_trips_data_file() {
-        let data = parse(include_str!("../../../assets/data/data.toml"))
+        let data = parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses");
         let toml = to_toml(&data).expect("serialise");
         let parsed = parse(&toml).expect("parse");
@@ -468,7 +468,7 @@ sprite = 514
         assert_eq!(presets.defs.len(), 5, "five built-in presets");
 
         // The shipped items.
-        let items = parse(include_str!("../../../assets/data/data.toml"))
+        let items = parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses")
             .items;
         assert_eq!(items.len(), 3);
@@ -526,8 +526,8 @@ sprite = 514
     /// every comment in `data.toml`.
     #[test]
     fn splice_preset_replaces_one_span_and_keeps_comments() {
-        let file = parse(include_str!("../../../assets/data/data.toml")).unwrap();
-        let src = include_str!("../../../assets/data/data.toml");
+        let file = parse(include_str!("../../../../assets/data/data.toml")).unwrap();
+        let src = include_str!("../../../../assets/data/data.toml");
 
         // Edit bro: retile its idle cell to a recognisable sprite id.
         let mut def = file.presets["bro"].clone();
@@ -585,7 +585,7 @@ facing = \"per_axis\"
 sprite = 1
 ";
         // A minimal def to splice in (walk grids are verbose; reuse a real one).
-        let file = parse(include_str!("../../../assets/data/data.toml")).unwrap();
+        let file = parse(include_str!("../../../../assets/data/data.toml")).unwrap();
         let def = file.presets["critter"].clone();
         let out = splice_preset(src, "a", &emit_preset("a", &def).unwrap());
         assert!(out.starts_with("# top comment\n"), "leading comment kept");

@@ -24,7 +24,7 @@
 //! the active language.
 //!
 //! The parsed result is a [`SceneFile`]: a registry of named [`CutsceneDef`]s,
-//! held by the host (see [`crate::EggState`]) and looked up when a
+//! held by the host (see `EggState`) and looked up when a
 //! `cutscene`-typed map object fires.
 //!
 //! # The format
@@ -84,7 +84,7 @@
 
 use std::collections::HashMap;
 
-use crate::geometry::Vec2;
+use egg_render::geometry::Vec2;
 use crate::world::player::PresetId;
 
 pub use super::script::eggtext::ParseError;
@@ -93,7 +93,7 @@ use super::script::eggtext::{collect_block, is_comment, split_first_word};
 /// A parsed cutscene: an optional initial map load, an `init` list that binds
 /// actor names, then sequential `content` steps. The language- and host-
 /// independent *definition*; the runtime
-/// [`Cutscene`](crate::gamestate::walkaround::cutscene::Cutscene) is built from
+/// `Cutscene` is built from
 /// it at launch.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CutsceneDef {
@@ -1159,7 +1159,7 @@ mod tests {
     /// The strongest guarantee: the shipped `.eggscene` round-trips.
     #[test]
     fn emit_round_trips_every_shipped_cutscene() {
-        let file = parse(include_str!("../../../assets/data/main.eggscene")).expect("parse main");
+        let file = parse(include_str!("../../../../assets/data/main.eggscene")).expect("parse main");
         assert!(!file.cutscenes.is_empty(), "expected shipped cutscenes");
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
         assert_eq!(file, reparsed);

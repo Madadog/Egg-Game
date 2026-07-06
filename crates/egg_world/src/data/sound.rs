@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 use crate::data::eggdata;
-use crate::platform::SfxOptions;
+use egg_platform::SfxOptions;
 
 /// One sound effect's data (a `[sfx.<name>]` entry): the `.ogg` file stem the
 /// host loads and the note/octave it plays at. The authored form of an
@@ -46,11 +46,11 @@ impl SfxDef {
 }
 
 /// The resolved sound-effect value ([`SfxData`]) now lives at the platform layer
-/// — the [`ConsoleApi`](crate::platform::ConsoleApi) signatures name it — and is
+/// — the [`ConsoleApi`](egg_platform::ConsoleApi) signatures name it — and is
 /// re-exported here so `crate::data::sound::SfxData` (and the host's
 /// `egg_core::data::sound::SfxData`) keeps resolving. [`SfxDef`] above is the
 /// authored form; [`Sounds`] builds these from the registry.
-pub use crate::platform::sound::SfxData;
+pub use egg_platform::sound::SfxData;
 
 /// The runtime sound registry: every [`SfxDef`] keyed by its canonical name.
 /// Built from data.toml `[sfx.*]` — mirrors [`eggdata::Presets`], but cached
@@ -87,7 +87,7 @@ impl Sounds {
 fn builtin() -> &'static Sounds {
     static BUILTIN: OnceLock<Sounds> = OnceLock::new();
     BUILTIN.get_or_init(|| {
-        let file = eggdata::parse(include_str!("../../../assets/data/data.toml"))
+        let file = eggdata::parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses");
         Sounds::from_data(&file)
     })
@@ -180,10 +180,10 @@ pub fn footstep_plain() -> SfxData {
 
 pub mod music {
     /// The [`MusicTrack`] value now lives at the platform layer (the
-    /// [`ConsoleApi`](crate::platform::ConsoleApi) signatures name it),
+    /// [`ConsoleApi`](egg_platform::ConsoleApi) signatures name it),
     /// re-exported here so `crate::data::sound::music::MusicTrack` (and the
     /// host's `egg_core::data::sound::music::MusicTrack`) keeps resolving.
-    pub use crate::platform::sound::music::MusicTrack;
+    pub use egg_platform::sound::music::MusicTrack;
 }
 
 #[cfg(test)]

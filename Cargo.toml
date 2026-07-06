@@ -52,7 +52,7 @@ console_error_panic_hook = "0.1"
 
 [workspace]
 
-members = ["egg_core", "crates/egg_render", "crates/egg_platform"]
+members = ["egg_core", "crates/egg_render", "crates/egg_platform", "crates/egg_world"]
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

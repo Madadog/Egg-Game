@@ -19,11 +19,11 @@ use std::mem;
 use serde::{Deserialize, Serialize};
 
 use crate::data::{sound, tiled::TiledMap};
-use crate::geometry::{Hitbox, Vec2};
-use crate::platform::{ConsoleApi, ConsoleHelper};
+use egg_render::geometry::{Hitbox, Vec2};
+use egg_platform::{ConsoleApi, ConsoleHelper};
 use crate::rand::Lcg64Xsh32;
 use crate::draw_state::DrawParams;
-use crate::render::{Flip, SpriteOptions};
+use egg_render::{Flip, SpriteOptions};
 use crate::world::interact::Interaction;
 use crate::world::map::{Axis, LayerInfo, MapInfo};
 
@@ -260,7 +260,7 @@ pub enum MoveMode {
 /// How a cutscene (and, later, the editor) addresses a live entity: by stable
 /// string id — an authored map creature — or by a well-known role: the player,
 /// or one of its companions by slot. Resolved against the entity tree by
-/// [`WalkaroundState::resolve`](crate::gamestate::walkaround::WalkaroundState::resolve).
+/// `WalkaroundState::resolve`.
 /// Replaces the old positional `cutscene_token`/`entities[0]` addressing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntityId {

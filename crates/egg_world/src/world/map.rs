@@ -7,10 +7,10 @@ use crate::data::save::SaveData;
 use crate::data::sound::{SfxData, music::MusicTrack};
 use crate::data::tiled::{ImageLayer, TiledMap, TiledMapLayer};
 use crate::draw_state::BgColour;
-use crate::geometry::{Collider, Hitbox, Vec2};
+use egg_render::geometry::{Collider, Hitbox, Vec2};
 use crate::draw_state::DrawParams;
-use crate::render::{MapOptions, SpriteOptions};
-use crate::render::image::{IndexedImage, RgbaImage};
+use egg_render::{MapOptions, SpriteOptions};
+use egg_render::image::{IndexedImage, RgbaImage};
 use crate::world::animation::AnimFrame;
 use crate::world::camera::CameraBounds;
 use crate::world::interact::{InteractFn, Interaction};
@@ -782,7 +782,7 @@ impl LayerInfo {
         debug: bool,
     ) {
         use crate::draw_state::palette_map_rotate;
-        use crate::render::Canvas;
+        use egg_render::Canvas;
         if !self.visible {
             return;
         }
@@ -828,7 +828,7 @@ impl LayerInfo {
         map: &TiledMap,
         offset: Vec2,
     ) {
-        use crate::render::{Canvas, EdgePolicy, Transform};
+        use egg_render::{Canvas, EdgePolicy, Transform};
         let Some(TiledMapLayer::ImageLayer(image)) = map.layers.get(self.source_layer) else {
             return;
         };
@@ -1079,7 +1079,7 @@ pub struct MapObject {
     /// Whether interacting with this object *consumes* it: a pickup that vanishes
     /// once taken and stays gone. On interaction the engine records it (by
     /// [`id`](Self::id)) in the save's `taken` set (see
-    /// [`take_object`](crate::gamestate::walkaround::WalkaroundState)). The object
+    /// `take_object`). The object
     /// then stays in the map *data* — so the editor can still show and edit it —
     /// but the walk loop skips it at use-time: its interaction won't fire and its
     /// sprite won't draw while its `<map>#<id>` key is in `taken`.
@@ -1349,7 +1349,7 @@ fn collider_at(layer: &LayerInfo, map_point: Vec2, px: usize, py: usize) -> bool
 mod tests {
     use super::*;
     use crate::data::tiled::{ObjectLayer, TileLayer};
-    use crate::platform::test_console::TestConsole;
+    use egg_platform::test_console::TestConsole;
 
     /// [`Gate::allows`] reads the same save flags dialogue does: an empty gate
     /// always allows; `if` requires its flag set; `unless` requires its flag
@@ -1906,7 +1906,7 @@ mod tests {
     // --- Image layers ---------------------------------------------------------
 
     use crate::data::tiled::ImageLayer;
-    use crate::render::image::{Rgba, RgbaImage};
+    use egg_render::image::{Rgba, RgbaImage};
 
     /// An [`ImageLayer`] with `pixels` already attached, at the given offset and
     /// optionally flagged as a collision mask (by name) — the fixture the
@@ -2186,7 +2186,7 @@ mod tests {
     fn real_bedroom1_builds_map_info_with_image_layer() {
         let console = TestConsole::new();
         let mut store = MapStore::default();
-        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/bedroom1.tmj").unwrap();
         store.insert("bedroom1", crate::data::tiled::from_json(&bytes).unwrap());
         let bedroom = map_by_name(&console.indexed_sprites, "bedroom1", &store).unwrap();
         assert!(
@@ -2208,7 +2208,7 @@ mod tests {
     #[test]
     fn image_only_map_is_modern() {
         let mut store = MapStore::default();
-        let bytes = std::fs::read("../assets/maps/house_stairwell.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/house_stairwell.tmj").unwrap();
         store.insert("painted_only", crate::data::tiled::from_json(&bytes).unwrap());
         assert!(
             store.is_modern("painted_only"),

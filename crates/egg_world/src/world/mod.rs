@@ -2,7 +2,7 @@
 //! shell behaviour ([`player`]), the scripting verbs an interaction runs
 //! ([`interact`]), the [`camera`], and the [`animation`]/[`particles`] systems
 //! that drive on-screen motion. Sits above the data formats and the UI toolkit;
-//! the `GameMode` screens in [`gamestate`](crate::gamestate) step and draw it.
+//! the `GameMode` screens in `gamestate` step and draw it.
 
 pub mod animation;
 pub mod camera;

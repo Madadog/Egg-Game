@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::Vec2;
+use egg_render::geometry::Vec2;
 
 /// Sprite-sheet row stride: how far apart two vertically-adjacent sheet cells'
 /// ids sit. The shipped sheet is 256 px wide → 32 8×8 columns. Only the

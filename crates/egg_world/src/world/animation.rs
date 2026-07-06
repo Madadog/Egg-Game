@@ -16,8 +16,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::Vec2;
-use crate::render::SpriteOptions;
+use egg_render::geometry::Vec2;
+use egg_render::SpriteOptions;
 
 /// One frame of an object's animated sprite. Serde-serialisable so an object's
 /// full sprite (multi-frame, per-frame offsets/durations, palette rotation,

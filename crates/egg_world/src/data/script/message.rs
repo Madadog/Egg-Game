@@ -18,7 +18,7 @@
 //! under one speaker) and the [`TextContent`] items it is built from. This is
 //! script data — the registry built by [`crate::data::script`] stores dialogue
 //! as `Vec<Message>` — so it lives beside the script, not with the [`Dialogue`]
-//! box widget (in [`crate::ui::dialogue`]) that plays it.
+//! box widget (in `ui::dialogue`) that plays it.
 
 use crate::data::{portraits::Portrait, sound::SfxData};
 
@@ -52,7 +52,7 @@ pub enum TextContent {
     /// playback reaches this point — the `#shake FRAMES [AMP]` directive.
     /// Fires like a [`Sound`](Self::Sound): the widget banks it as
     /// `pending_shake` and the world's camera driver picks it up (see
-    /// [`Dialogue`](crate::ui::dialogue::Dialogue) and
+    /// `Dialogue` and
     /// [`Shake`](crate::world::camera::Shake)). Time-flavoured like
     /// [`Delay`](Self::Delay), so a manual fast-forward drops it.
     Shake { frames: u32, amplitude: i16 },
@@ -105,7 +105,7 @@ impl TextContent {
 /// controls whether the player must press to continue to the *next* message,
 /// or whether it auto-advances. Dialogue is stored as `Vec<Message>` in the
 /// registry built by [`crate::data::script`] and queued via
-/// [`Dialogue::set_messages`](crate::ui::dialogue::Dialogue::set_messages).
+/// `Dialogue::set_messages`.
 #[derive(Debug, Clone)]
 pub struct Message {
     pub content: Vec<TextContent>,

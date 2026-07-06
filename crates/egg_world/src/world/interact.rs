@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::geometry::{Hitbox, Vec2};
+use egg_render::geometry::{Hitbox, Vec2};
 
 /// The effect payload of an interaction [`MapObject`](crate::world::map::MapObject):
 /// what running it does. Resolved against the dialogue registry / dispatched
@@ -33,7 +33,7 @@ pub enum Interaction {
 /// A small 'scripting' verb for the walkaround section: the one-off behaviours a
 /// map object can run when triggered (toggling a companion, sounding a piano
 /// key, spawning creatures…), dispatched by
-/// [`execute_interact_fn`](crate::gamestate::walkaround::WalkaroundState::execute_interact_fn).
+/// `execute_interact_fn`.
 ///
 /// The cases that a map authors declaratively are *named* — a `.tmj` object
 /// with a `func` property round-trips through [`from_name`](Self::from_name) /
@@ -63,7 +63,7 @@ pub enum InteractFn {
     /// Grant an item into the live inventory. `func = "give_item"`, `item`
     /// string property (the item's registry key, e.g. `"chegg"`). A full
     /// inventory drops the grant rather than panicking (see
-    /// [`execute_interact_fn`](crate::gamestate::walkaround::WalkaroundState::execute_interact_fn)).
+    /// `execute_interact_fn`).
     GiveItem(String),
     /// Pet the dog. Companion-internal (see the type doc): no `func` name.
     /// `Vec2`: dog position. `bool`: facing, `false` = left, `true` = right.

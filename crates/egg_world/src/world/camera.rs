@@ -1,12 +1,12 @@
-use crate::geometry::Vec2;
+use egg_render::geometry::Vec2;
 use CameraRange::*;
 
 // Base resolution, used only by the `const fn` constructors (`default`/`bounded`)
 // that build the placeholder camera before a map loads. Live cameras receive the
 // runtime viewport size (which can grow in "mirror window" mode) via `center_on`
 // and `from_map_size`, so a bigger framebuffer reveals more of the map.
-const WIDTH: i16 = crate::platform::WIDTH as i16;
-const HEIGHT: i16 = crate::platform::HEIGHT as i16;
+const WIDTH: i16 = egg_platform::WIDTH as i16;
+const HEIGHT: i16 = egg_platform::HEIGHT as i16;
 
 #[derive(Debug, Clone)]
 pub struct Camera {

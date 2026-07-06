@@ -1,7 +1,7 @@
 use crate::data::tiled::TileLayer;
-use crate::platform::{HEIGHT, SWEETIE_16, WIDTH};
-use crate::render::image::{IndexedImage, Rgba, RgbaImage};
-use crate::render::{MapOptions, SpriteOptions};
+use egg_platform::{HEIGHT, SWEETIE_16, WIDTH};
+use egg_render::image::{IndexedImage, Rgba, RgbaImage};
+use egg_render::{MapOptions, SpriteOptions};
 
 pub struct DrawState {
     pub rgba_canvas: Vec<RgbaImage>,
@@ -106,7 +106,7 @@ impl DrawState {
     /// layers share one size; see [`resize`](Self::resize)). This is the surface
     /// draw calls actually land on, so screen-relative positioning (e.g. the
     /// dialogue box) should measure against it rather than the host's main-window
-    /// [`ConsoleApi::width`](crate::platform::ConsoleApi::width), which differs for
+    /// [`ConsoleApi::width`](egg_platform::ConsoleApi::width), which differs for
     /// off-screen render targets such as the extra editor views.
     pub fn size(&self) -> (i32, i32) {
         let bg = &self.rgba_canvas[LayerId::BG as usize];
@@ -244,8 +244,8 @@ impl DrawState {
     /// default palette's `colour`. The debug-overlay counterpart to the drawing
     /// helpers — the walkaround map-info overlay and the map editor use it to
     /// visualise warp/interaction/collision hitboxes.
-    pub fn stroke_hitbox(&mut self, layer: LayerId, hitbox: crate::geometry::Hitbox, colour: u8) {
-        use crate::render::Canvas;
+    pub fn stroke_hitbox(&mut self, layer: LayerId, hitbox: egg_render::geometry::Hitbox, colour: u8) {
+        use egg_render::Canvas;
         let c = self.colour(colour);
         self.rgba_canvas[layer as usize].stroke_rect(
             hitbox.x.into(),
@@ -357,7 +357,7 @@ pub fn fade_colour_into(target: &mut [u8; 3], from: [u8; 3], to: [u8; 3], amount
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::Flip;
+    use egg_render::Flip;
 
     fn fresh_state() -> DrawState {
         let mut s = DrawState::default();

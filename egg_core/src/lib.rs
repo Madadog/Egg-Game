@@ -14,9 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
-pub mod data;
 pub mod debug;
-pub mod draw_state;
 pub mod editor;
 pub mod gamestate;
 /// The primitives crate ([`egg_render`]) re-exported under its historical
@@ -32,9 +30,14 @@ pub use egg_render::geometry;
 /// sound value types it now owns are re-exported by [`data::sound`] under their
 /// old paths too.
 pub use egg_platform as platform;
-pub mod rand;
+/// The game-domain crate ([`egg_world`]) re-exported under its historical
+/// in-crate module paths, so `crate::data::…`, `crate::world::…`,
+/// `crate::draw_state::…` and `crate::rand::…` (and the host's
+/// `egg_core::data`/`world`/`draw_state`/`rand`) keep resolving after the
+/// extraction. Parsing stays fenced in [`data`]; `draw_state` lives down there
+/// because `ui` + `editor` both consume it while `render` stays primitives-only.
+pub use egg_world::{data, draw_state, rand, world};
 pub mod ui;
-pub mod world;
 
 use crate::data::eggdata::{GameItems, Presets};
 use crate::data::save::{SAVE_PATH, SaveData};

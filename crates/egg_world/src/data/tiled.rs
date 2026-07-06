@@ -16,11 +16,11 @@ use crate::world::interact::{InteractFn, Interaction};
 use crate::world::map::{
     Axis, Gate, LayerInfo, MapObject, ObjectEffect, Plane, Trigger, Warp, WarpMode,
 };
-use crate::geometry::{Hitbox, Vec2};
-use crate::render::SpriteOptions;
-use crate::render::Rotate;
-use crate::render::image::RgbaImage;
-use crate::render::Flip;
+use egg_render::geometry::{Hitbox, Vec2};
+use egg_render::SpriteOptions;
+use egg_render::Rotate;
+use egg_render::image::RgbaImage;
+use egg_render::Flip;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -178,7 +178,7 @@ pub struct TileLayer {
 /// The map-drawing view of a tile layer: render consumes only `get`, staying
 /// blind to the Tiled codec that owns this type. Delegates to the inherent
 /// [`TileLayer::get`].
-impl crate::render::TileSource for TileLayer {
+impl egg_render::TileSource for TileLayer {
     fn get(&self, x: usize, y: usize) -> Option<usize> {
         TileLayer::get(self, x, y)
     }
@@ -295,7 +295,7 @@ pub struct ObjectLayer {
 ///   the same conventions — file layer order for stacking, the `fg` name prefix
 ///   to sit above sprites, `visible: false` to never draw;
 /// - a **collision** image layer is data, never drawn, its alpha sliced into the
-///   per-tile bitmap [`Collider`](crate::geometry::Collider)s the walk loop
+///   per-tile bitmap [`Collider`](egg_render::geometry::Collider)s the walk loop
 ///   already consults (solid where alpha ≥
 ///   [`PAINTED_SOLID_ALPHA`](crate::world::map::PAINTED_SOLID_ALPHA)).
 ///
@@ -1526,7 +1526,7 @@ mod tests {
     use crate::draw_state::BgColour;
     use crate::world::interact::{InteractFn, Interaction};
     use crate::world::map::{Gate, MapObject, ObjectEffect, Trigger, WarpMode};
-    use crate::render::image::RgbaImage;
+    use egg_render::image::RgbaImage;
 
     /// The single image layer of a parsed map (panics if it has none) — the
     /// fixture the image-layer tests pull `name`/`image`/`offsets` from.
@@ -1554,7 +1554,7 @@ mod tests {
     /// deliberately excludes the backup map.
     #[test]
     fn real_manifest_parses() {
-        let bytes = std::fs::read("../assets/game.manifest").unwrap();
+        let bytes = std::fs::read("../../assets/game.manifest").unwrap();
         let manifest = manifest_from_json(&bytes).unwrap();
         assert!(manifest.maps.contains(&"office".to_string()));
         assert!(manifest.maps.contains(&"house_stairwell".to_string()));
@@ -1590,7 +1590,7 @@ mod tests {
     }
     #[test]
     fn test_map_deserialization() {
-        let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
+        let json = std::fs::read_to_string("../../assets/maps/office.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
         assert_eq!(map.width, 28);
         assert_eq!(map.height, 16);
@@ -1598,7 +1598,7 @@ mod tests {
 
     #[test]
     fn parses_office_interactables() {
-        let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
+        let json = std::fs::read_to_string("../../assets/maps/office.tmj").unwrap();
         let map: TiledMap = serde_json::from_str(&json).unwrap();
         let objects = map.parse_objects();
         // office.tmj is a real, play-tested map (its objects get edited), so this
@@ -1655,7 +1655,7 @@ mod tests {
 
     #[test]
     fn tmj_round_trips_office_objects() {
-        let json = std::fs::read_to_string("../assets/maps/office.tmj").unwrap();
+        let json = std::fs::read_to_string("../../assets/maps/office.tmj").unwrap();
         let map = from_json(json.as_bytes()).unwrap();
         let objects = map.parse_objects();
         // Re-serialise (the map's tile layers hold the live flattened data),
@@ -1843,7 +1843,7 @@ mod tests {
     /// Data-loss guard for the collect-then-save path: a removable pickup the
     /// player has collected stays in the live map object list (it's skipped at
     /// use-time, not removed — see
-    /// [`WalkaroundState::take_object`](crate::gamestate::walkaround::WalkaroundState)),
+    /// `WalkaroundState::take_object`),
     /// so serialising the map from the editor still writes it out. Here the whole
     /// object list (pickup id 5 + sign id 2) is handed to `to_tmj`, standing in
     /// for the editor saving a map whose id-5 pickup is already taken; both
@@ -2592,7 +2592,7 @@ mod tests {
     /// layer, with a modern `warp`-typed object out to house_stairwell.
     #[test]
     fn parses_bedroom1_image_layer() {
-        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/bedroom1.tmj").unwrap();
         let map = from_json(&bytes).unwrap();
         // 4 tile layers, 1 image layer, 1 object layer = 6 layers.
         assert_eq!(map.layers.len(), 6);
@@ -2629,7 +2629,7 @@ mod tests {
     /// offset, appended after the exported collision/art/object layers.
     #[test]
     fn parses_house_stairwell_image_layer() {
-        let bytes = std::fs::read("../assets/maps/house_stairwell.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/house_stairwell.tmj").unwrap();
         let map = from_json(&bytes).unwrap();
         let image = only_image_layer(&map);
         assert_eq!(image.name, "Image Layer 1");
@@ -2645,7 +2645,7 @@ mod tests {
     /// (a tile + object + image layer mix) so layer *order* round-trips too.
     #[test]
     fn tmj_round_trips_image_layer() {
-        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/bedroom1.tmj").unwrap();
         let map = from_json(&bytes).unwrap();
         let out = map.to_tmj(&map.parse_objects());
         let reloaded = from_json(out.as_bytes()).unwrap();
@@ -2783,7 +2783,7 @@ mod tests {
     /// bedroom1 bed layer sits at offset (−3, 3)). Checked on the real bedroom1.
     #[test]
     fn tmj_round_trips_tile_layer_offset() {
-        let bytes = std::fs::read("../assets/maps/bedroom1.tmj").unwrap();
+        let bytes = std::fs::read("../../assets/maps/bedroom1.tmj").unwrap();
         let map = from_json(&bytes).unwrap();
         let bed = map
             .layers
@@ -2898,8 +2898,8 @@ mod tests {
     fn tmj_round_trips_anim_sprite() {
         use crate::world::animation::AnimFrame;
         use crate::world::map::{MapObject, ObjectEffect};
-        use crate::geometry::{Hitbox, Vec2};
-        use crate::render::SpriteOptions;
+        use egg_render::geometry::{Hitbox, Vec2};
+        use egg_render::SpriteOptions;
 
         let frames = vec![
             AnimFrame::new(

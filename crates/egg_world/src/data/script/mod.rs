@@ -19,8 +19,8 @@
 //! it — via the [`eggtext`](crate::data::script::eggtext) DSL, or straight from JSON —
 //! into a [`ScriptFile`] and installs it into the [`Script`] registry it owns
 //! (via [`Script::set_base`] / [`Script::set_language`]); gameplay code
-//! reads it back through the shared context ([`Ctx::label`](crate::Ctx::label),
-//! [`Ctx::list`](crate::Ctx::list), [`Ctx::get_dialogue`](crate::Ctx::get_dialogue)).
+//! reads it back through the shared context (`Ctx::label`,
+//! `Ctx::list`, `Ctx::get_dialogue`).
 //!
 //! A *base* language is always kept as a fallback. A *language* can be swapped
 //! in at runtime; any key it doesn't define falls back to the base, so partial
@@ -80,7 +80,7 @@ pub enum DialogueDef {
 /// One piece of a dialogue body: an unconditional run of messages, or a
 /// flag-gated `#if`. A conditional includes its whole `then` branch when the
 /// named flag is set, otherwise its `else` branch (empty if absent); the choice
-/// is made at [`Ctx::get_dialogue`](crate::Ctx::get_dialogue) time against the
+/// is made at `Ctx::get_dialogue` time against the
 /// live save. JSON: a plain [`Entry`], or `{ "if": "flag", "then": <entry>,
 /// "else": <entry> }` (the `else` key optional).
 #[derive(Debug, Clone, PartialEq, Deserialize)]

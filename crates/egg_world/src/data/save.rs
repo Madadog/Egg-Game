@@ -13,8 +13,8 @@ pub const SAVE_PATH: &str = "save.json";
 /// story flag like any other, so dialogue (`#set is_night true` / `#if is_night`),
 /// object gates (`if`/`unless is_night`) and cutscene `set` steps can all read and
 /// write the world's day/night state with no dedicated machinery — the walkaround
-/// paints [`NIGHT_16`](crate::platform::NIGHT_16) when it is set and
-/// [`SWEETIE_16`](crate::platform::SWEETIE_16) otherwise. Named here (not spelled
+/// paints [`NIGHT_16`](egg_platform::NIGHT_16) when it is set and
+/// [`SWEETIE_16`](egg_platform::SWEETIE_16) otherwise. Named here (not spelled
 /// as a bare literal at each site) because the engine reads it from several files.
 pub const IS_NIGHT_FLAG: &str = "is_night";
 
@@ -63,15 +63,15 @@ pub struct SaveData {
 
     /// Inventory slots, each holding an item key (`None` = empty slot). The
     /// default seeds the three starting items (ff/lm/chegg), matching the live
-    /// [`Inventory::new`](crate::gamestate::walkaround::inventory::Inventory::new); a key the
+    /// `Inventory::new`; a key the
     /// item registry no longer knows is dropped on load (garbage tolerance, see
-    /// [`Inventory::load_from_save`](crate::gamestate::walkaround::inventory::Inventory::load_from_save)).
+    /// `Inventory::load_from_save`).
     #[serde(default = "default_inventory")]
     pub inventory: [Option<String>; 8],
 
     /// Name of the map the player saved on. `None` in saves written before
     /// maps were named — loading then falls back to the bedroom (see
-    /// [`WalkaroundState::load_pmem`](crate::gamestate::walkaround::WalkaroundState::load_pmem)).
+    /// `WalkaroundState::load_pmem`).
     /// Old saves carrying the long-removed numeric `current_map` field still
     /// load: that key is simply ignored (no `deny_unknown_fields`).
     #[serde(default)]
@@ -101,7 +101,7 @@ pub struct SaveData {
     pub player: Option<Shell>,
 
     /// Non-player entities (creatures) parked by map name — the persisted form of
-    /// the runtime [`WalkaroundState::map_entities`](crate::gamestate::walkaround::WalkaroundState),
+    /// the runtime `WalkaroundState::map_entities`,
     /// folded together with the current map's live `entities[1..]` at save time so
     /// creatures resume on the map that spawned them. Each [`Shell`] round-trips
     /// every field but its (derived) `sprites`, which are rebuilt from the
@@ -113,7 +113,7 @@ pub struct SaveData {
 
 /// The starting inventory a fresh save (and a save written before items were
 /// keyed) carries: the three default items, matching
-/// [`Inventory::new`](crate::gamestate::walkaround::inventory::Inventory::new). Used as both
+/// `Inventory::new`. Used as both
 /// the [`SaveData::default`] inventory and the `serde` default for the field, so
 /// an old save lacking the key reads back the original starting items (the old
 /// `[1,2,3,4,5,6,7,8]` resolved to exactly these, ids 4–8 being unknown).
@@ -213,9 +213,9 @@ impl SaveData {
 
     /// The [`taken`](Self::taken) key a removable object is recorded under: its
     /// map name and stable [`id`](crate::world::map::MapObject::id), joined so the same
-    /// local id on two different maps never collides. `pub(crate)` so the map
-    /// editor can name the same key when un-taking / re-taking for testing.
-    pub(crate) fn taken_key(map: &str, id: usize) -> String {
+    /// local id on two different maps never collides. `pub` so the map editor
+    /// (up in `egg_core`) can name the same key when un-taking / re-taking.
+    pub fn taken_key(map: &str, id: usize) -> String {
         format!("{map}#{id}")
     }
 
@@ -246,7 +246,7 @@ mod tests {
     use super::*;
     use crate::data::eggdata::Presets;
     use crate::world::player::PresetId;
-    use crate::geometry::Vec2;
+    use egg_render::geometry::Vec2;
 
     /// A pre-name save carries the long-removed numeric `current_map` field and
     /// no `current_map_name` key at all; it must still deserialise (the unknown

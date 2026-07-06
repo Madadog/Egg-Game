@@ -1,0 +1,18 @@
+[package]
+name = "egg_world"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egg_render = { path = "../egg_render" }
+egg_platform = { path = "../egg_platform" }
+log = "0.4.17"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.103"
+toml = "1"
+
+[dev-dependencies]
+# Pull in egg_platform's `test-util` feature so the world/ suite can reach the
+# shared `test_console::TestConsole` fixture across the crate boundary (a
+# dependency's `#[cfg(test)]` items aren't visible when the dependent is tested).
+egg_platform = { path = "../egg_platform", features = ["test-util"] }
