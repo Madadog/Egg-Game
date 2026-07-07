@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use egg_core::EggState;
 
 use egg_core::data::tiled::TiledMap;
-use egg_core::editor::text::TextEditor;
+use egg_editor::map::MapViewer;
+use egg_editor::text::TextEditor;
 use egg_core::platform::ConsoleApi;
 use egg_core::platform::{EggInput, HEIGHT, ScanCode, WIDTH};
 use fantasy_console::{
@@ -44,13 +45,165 @@ pub struct EggGame {
     /// The primary window's text editor for the script files (used while
     /// [`text_mode`](Self::text_mode)).
     pub text_editor: TextEditor,
+    /// The PRIMARY window's map editor (toggled with `L`). The sim freezes while
+    /// it's focused — [`EggGame::run`] steps this editor after the world and
+    /// drains its `pending_*` requests, exactly as each extra F8 view drives its
+    /// own [`MapViewer`] in [`views`]. Owned here (rather than on
+    /// `WalkaroundState`) so `egg_core` no longer depends on the editor crate;
+    /// [`MapViewer::primary`] persists this one's dock layout to disk.
+    pub map_viewer: MapViewer,
 }
 impl EggGame {
+    /// Drive one simulation frame, then — while the primary map editor is focused —
+    /// step and draw it over the world. This is the single funnel every
+    /// `step_state` branch calls to advance the sim; the pause path returns before
+    /// it, which correctly leaves the editor un-stepped (frozen) exactly as the
+    /// world is.
+    ///
+    /// The primary [`MapViewer`] lives here on `EggGame` (not `WalkaroundState`),
+    /// so its step + `pending_*` drains happen in the host — the same shape each
+    /// extra F8 view runs in [`views::update_views`]. `EggState::run` still freezes
+    /// the world sim on the editor's focus (threaded in as `editor_open`).
     pub fn run(&mut self) {
         // Disjoint field borrows: the sim reads its input as data while it still
-        // holds `&mut system` for host effects.
+        // holds `&mut system` for host effects. The editor's focus freezes the
+        // world sim (the map editor takes over input while it's open).
         let g = &mut *self;
-        g.state.run(&mut g.system, &g.input);
+        g.state.run(&mut g.system, &g.input, g.map_viewer.focused);
+
+        // The primary map editor is stepped + drawn over the world only in
+        // walkaround, with no scrubber and not in text mode. (The pause path never
+        // reaches here, so a paused editor stays frozen, as before.)
+        if g.map_viewer.focused
+            && matches!(g.state.gamestate, egg_core::gamestate::GameMode::Walkaround)
+            && g.state.scrubber.is_none()
+            && !g.text_mode
+        {
+            // A running cutscene preempts the editor *step* (it kept winning the
+            // frame inside `WalkaroundState::step`, which early-returned before the
+            // editor block); the overlay is still drawn below, cutscene or not.
+            if g.state.walkaround.cutscene.is_empty() {
+                // Hand the editor the engine-owned snapshots its panels list — the
+                // scene picker's cutscene names, the preset palette, and the live
+                // actors the recorder picks from (it can't see the registries or
+                // the entity tree itself). Refreshed each focused frame, so a
+                // just-recorded scene shows up.
+                g.map_viewer.scene_names = g.state.scenes.names();
+                g.map_viewer.preset_defs = g.state.presets.named_defs();
+                g.map_viewer.recorder_actors = g.state.walkaround.recorder_actors();
+                let sheet = (
+                    g.state.draw_state.indexed_sprites.width() as usize / 8,
+                    g.state.draw_state.indexed_sprites.height() as usize / 8,
+                );
+                g.map_viewer.step_map_viewer(
+                    &mut g.system,
+                    &g.input,
+                    &mut g.state.walkaround.current_map,
+                    &mut g.state.maps,
+                    g.state.walkaround.camera.pos,
+                    sheet,
+                    &g.state.script,
+                    &g.state.save,
+                );
+                // The browser can't resolve a map itself (it lacks the sprite
+                // sheet), so it parks the request; load it through the tested path.
+                if let Some((name, focus)) = g.map_viewer.pending_open.take() {
+                    {
+                        let mut ctx = egg_core::Ctx {
+                            draw: &mut g.state.draw_state,
+                            system: &mut g.system,
+                            input: &g.input,
+                            maps: &mut g.state.maps,
+                            rng: &mut g.state.rng,
+                            script: &g.state.script,
+                            scenes: &g.state.scenes,
+                            save: &mut g.state.save,
+                            items: &g.state.items,
+                            presets: &g.state.presets,
+                            font: &g.state.font,
+                        };
+                        g.state.walkaround.load_map_by_name(&mut ctx, &name);
+                    }
+                    // A warp "open" carries its landing point: frame it as gameplay
+                    // would when the player arrives there.
+                    if let Some(p) = focus {
+                        g.state
+                            .walkaround
+                            .center_camera_on(p, g.system.width(), g.system.height());
+                    }
+                }
+                // The editor never gets `&mut` engine state, so its un-take /
+                // re-take test toggle parks the object's `<map>#<id>` key here; flip
+                // it in `save.taken` now.
+                if let Some(key) = g.map_viewer.pending_taken_toggle.take() {
+                    g.state.save.toggle_taken(&key);
+                }
+                // A layer or Setup edit changed the stored map: re-derive the
+                // runtime layer lists and the scalar metadata (bg colour, camera
+                // framing), so a colour / camera / resize edit applies live. Objects
+                // and the player stay as they are. (The PRIMARY drain calls
+                // `apply_map_framing`; the views' drain deliberately does not.)
+                if g.map_viewer.pending_reload {
+                    g.map_viewer.pending_reload = false;
+                    if let Some(fresh) = egg_core::world::map::map_by_name(
+                        &g.state.draw_state.indexed_sprites,
+                        &g.state.walkaround.current_map.source,
+                        &g.state.maps,
+                    ) {
+                        g.state.walkaround.apply_map_framing(&mut g.system, &fresh);
+                        g.state.walkaround.current_map.bg_colour = fresh.bg_colour;
+                        g.state.walkaround.current_map.camera_bounds = fresh.camera_bounds;
+                        g.state.walkaround.current_map.layers = fresh.layers;
+                        g.state.walkaround.current_map.fg_layers = fresh.fg_layers;
+                        // Sprite-plane layers + their derived components re-derive
+                        // too, so an editor paint/plane-cycle recomputes the
+                        // y-sorting blobs live (a stale `sprite_components` would
+                        // draw the old shape).
+                        g.state.walkaround.current_map.sprite_layers = fresh.sprite_layers;
+                        g.state.walkaround.current_map.sprite_components = fresh.sprite_components;
+                    }
+                }
+                // The editor can request a scrubber (the `P` shortcut, or save-and-
+                // play in the recorder); open it here, where the full state is in
+                // reach. A recorded def opens directly — no registry round-trip.
+                if let Some(req) = g.map_viewer.pending_scrub.take() {
+                    match req {
+                        egg_core::data::scene::ScrubRequest::ByName(name) => {
+                            g.state.open_scrubber(&name)
+                        }
+                        egg_core::data::scene::ScrubRequest::Recorded(name, def) => {
+                            g.state.open_scrubber_def(name, def)
+                        }
+                    }
+                }
+                // A walk-sprite editor save rewrote `data.toml`: re-install the live
+                // item/preset registries from the store so the next spawn uses the
+                // edit (works on web too, where no mtime watcher notices the write).
+                if g.map_viewer.pending_data_reload {
+                    g.map_viewer.pending_data_reload = false;
+                    g.state.reload_data(&mut g.system);
+                }
+            }
+
+            // Draw the editor overlay over the world the sim already composited
+            // into the output — unconditionally within the gate, since `draw_at`
+            // ran every walkaround frame before the inversion (cutscene or not).
+            // This re-composites the world+editor a second time on editor-open
+            // frames: an accepted cost of hoisting the overlay out of the engine's
+            // `draw`.
+            g.map_viewer.draw_at(
+                &mut g.state.draw_state,
+                &g.input,
+                &g.state.font,
+                &g.state.walkaround.current_map,
+                &g.state.maps,
+                g.state.walkaround.camera.pos,
+            );
+            egg_core::gamestate::walkaround::WalkaroundState::composite_into(
+                &mut g.state.draw_state,
+                g.system.output_image(),
+            );
+        }
     }
 }
 impl Default for EggGame {
@@ -67,6 +220,7 @@ impl Default for EggGame {
             scale_mode: ScaleMode::Linear,
             text_mode: false,
             text_editor: TextEditor::default(),
+            map_viewer: MapViewer::primary(),
         }
     }
 }

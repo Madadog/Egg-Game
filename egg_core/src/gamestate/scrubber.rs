@@ -110,10 +110,11 @@ impl EggState {
     /// live world + save, arms the scene, replays it once to build the snapshot
     /// ladder + beat offsets, parks at frame 0.
     pub fn open_scrubber_def(&mut self, name: String, def: CutsceneDef) {
-        // Snapshot the live world without the editor overlay or any live scene,
-        // so the replay shows a clean world and starts from a known stack.
+        // Snapshot the live world without any live scene, so the replay shows a
+        // clean world and starts from a known stack. The editor overlay is no
+        // longer part of `WalkaroundState` (the host owns the primary `MapViewer`
+        // now), so a re-sim world carries none — nothing to reset here.
         let mut base_world = self.walkaround.clone();
-        base_world.map_viewer = Default::default();
         base_world.cutscene.clear();
         let base_save = self.save.clone();
         let mut console = NullConsole::new();

@@ -141,7 +141,7 @@ pub fn primary_hotkeys(
     // primary window's threaded input.
     if routing.primary_editor_open {
         if keys.just_pressed(KeyCode::KeyL) {
-            game.state.walkaround.map_viewer.focused = false;
+            game.map_viewer.focused = false;
         }
         return;
     }
@@ -194,8 +194,8 @@ pub fn primary_hotkeys(
         info!("END CURRENT MAP");
         info!("------------------------");
     } else if keys.just_pressed(KeyCode::KeyL) {
-        game.state.walkaround.map_viewer.focused = !game.state.walkaround.map_viewer.focused;
-        game.state.walkaround.map_viewer.layer_index = 0;
+        game.map_viewer.focused = !game.map_viewer.focused;
+        game.map_viewer.layer_index = 0;
     }
     if keys.just_pressed(KeyCode::Semicolon) && !game.state.walkaround.current_map.layers.is_empty()
     {

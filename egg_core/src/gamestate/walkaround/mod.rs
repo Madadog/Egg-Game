@@ -6,7 +6,6 @@ use crate::data::scene::CutsceneDef;
 use crate::data::sound;
 use crate::debug::DebugInfo;
 use crate::draw_state::BgColour;
-use crate::editor::map::MapViewer;
 use crate::geometry::{Collider, Hitbox, Vec2};
 use crate::platform::{ConsoleApi, ConsoleHelper, ScanCode, dpad_delta, just_pressed, pressed};
 use crate::draw_state::DrawParams;
@@ -73,7 +72,6 @@ pub struct WalkaroundState {
     pub map_animations: Vec<Animation>,
     pub camera: Camera,
     pub current_map: MapInfo,
-    pub map_viewer: MapViewer,
     pub dialogue: Dialogue,
     /// A dialogue-`#shake` in flight: armed from
     /// [`Dialogue::pending_shake`], advanced and applied in
@@ -189,7 +187,6 @@ impl WalkaroundState {
             map_animations: Vec::new(),
             camera: Camera::default(),
             current_map: MapInfo::default(),
-            map_viewer: MapViewer::primary(),
             dialogue: Dialogue::default(),
             shake: None,
             inventory_ui: InventoryUi::new(),
@@ -336,7 +333,7 @@ impl WalkaroundState {
     /// camera is kept rather than panicking. Shared by [`load_map`](Self::load_map)
     /// and the in-editor re-derive so a Setup-panel edit (camera / bg / resize)
     /// applies live, not only after a full reload.
-    fn apply_map_framing(&mut self, system: &mut impl ConsoleApi, map_set: &MapInfo) {
+    pub fn apply_map_framing(&mut self, system: &mut impl ConsoleApi, map_set: &MapInfo) {
         if let Some(bounds) = &map_set.camera_bounds {
             self.camera.bounds = bounds.clone();
         } else if let Some(map1) = map_set
@@ -1065,12 +1062,15 @@ impl WalkaroundState {
         });
     }
 
-    pub fn step<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>) -> Option<GameMode> {
+    pub fn step<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, editor_open: bool) -> Option<GameMode> {
         // While the primary map editor is open, mirror live frame edits into the
         // cached animations before advancing them, so the in-world sprite updates
         // too. (An extra view's editor is synced by the host — see
-        // `sync_map_animations` — since its edits never pass through here.)
-        if self.map_viewer.focused {
+        // `sync_map_animations` — since its edits never pass through here.) The
+        // primary `MapViewer` now lives on the host (`EggGame`); it hands us its
+        // focus as `editor_open` so this sync still runs before the animations
+        // advance, and the host steps the editor itself after this returns.
+        if editor_open {
             self.sync_map_animations();
         }
         self.map_animations
@@ -1090,69 +1090,11 @@ impl WalkaroundState {
 
         // When the map editor is open it takes over all input and freezes the
         // sim, so painting/typing can't move the player or trip warps/reloads.
-        if self.map_viewer.focused {
-            let sheet = (
-                ctx.draw.indexed_sprites.width() as usize / 8,
-                ctx.draw.indexed_sprites.height() as usize / 8,
-            );
-            // Hand the editor the current cutscene names so its scene picker can
-            // list them (it doesn't otherwise see the registry). Refreshed each
-            // focused frame, so a just-recorded scene shows up.
-            self.map_viewer.scene_names = ctx.scenes.names();
-            self.map_viewer.preset_defs = ctx.presets.named_defs();
-            // And the live actors, so the recorder can pick which one it records
-            // (computed first — the getter borrows `self`, the field is on `self`).
-            let recorder_actors = self.recorder_actors();
-            self.map_viewer.recorder_actors = recorder_actors;
-            self.map_viewer.step_map_viewer(
-                ctx.system,
-                ctx.input,
-                &mut self.current_map,
-                ctx.maps,
-                self.camera.pos,
-                sheet,
-                ctx.script,
-                ctx.save,
-            );
-            // The browser can't resolve a map itself (it lacks the sprite sheet),
-            // so it parks the request here and we load it through the tested path.
-            if let Some((name, focus)) = self.map_viewer.pending_open.take() {
-                self.load_map_by_name(ctx, &name);
-                // A warp "open" carries its landing point: frame it as gameplay
-                // would when the player arrives there.
-                if let Some(p) = focus {
-                    self.center_camera_on(p, ctx.system.width(), ctx.system.height());
-                }
-            }
-            // The editor can't touch the save (it never gets `&mut` engine state),
-            // so its un-take / re-take test toggle parks the object's `<map>#<id>`
-            // key here; flip it in `save.taken` now (we hold `ctx.save`).
-            if let Some(key) = self.map_viewer.pending_taken_toggle.take() {
-                ctx.save.toggle_taken(&key);
-            }
-            // A layer or Setup edit changed the stored map: re-derive the runtime
-            // layer lists and the scalar metadata (bg colour, camera framing), so
-            // a colour / camera / resize edit applies live. Objects and the player
-            // stay as they are.
-            if self.map_viewer.pending_reload {
-                self.map_viewer.pending_reload = false;
-                if let Some(fresh) = map_by_name(
-                    &ctx.draw.indexed_sprites,
-                    &self.current_map.source,
-                    ctx.maps,
-                ) {
-                    self.apply_map_framing(ctx.system, &fresh);
-                    self.current_map.bg_colour = fresh.bg_colour;
-                    self.current_map.camera_bounds = fresh.camera_bounds;
-                    self.current_map.layers = fresh.layers;
-                    self.current_map.fg_layers = fresh.fg_layers;
-                    // Sprite-plane layers + their derived components re-derive too,
-                    // so an editor paint/plane-cycle recomputes the y-sorting blobs
-                    // live (a stale `sprite_components` would draw the old shape).
-                    self.current_map.sprite_layers = fresh.sprite_layers;
-                    self.current_map.sprite_components = fresh.sprite_components;
-                }
-            }
+        // Kept after `play_cutscene` so a running cutscene still wins the frame
+        // over the editor. The editor step itself and every `pending_*` drain now
+        // live on the host (which owns the primary `MapViewer`); here we only
+        // freeze the world on the host-supplied `editor_open`.
+        if editor_open {
             return None;
         }
 
@@ -1524,23 +1466,18 @@ impl WalkaroundState {
         None
     }
     pub fn draw<S: ConsoleApi>(&self, ctx: &mut Ctx<S>, debug_info: &DebugInfo) {
-        // Draw the live world from the player-following camera, with this
-        // walkaround's own map editor overlay, then composite into the console's
-        // canonical output surface. The world build leaves its result in
-        // `ctx.draw`, so the final composite is a separate step that takes the
-        // output (avoiding a borrow conflict with the console).
+        // Draw the live world from the player-following camera, then composite
+        // into the console's canonical output surface. The world build leaves its
+        // result in `ctx.draw`, so the final composite is a separate step that
+        // takes the output (avoiding a borrow conflict with the console).
+        //
+        // The primary map-editor overlay is NOT painted here: the host owns the
+        // primary `MapViewer` and draws it after this returns (over the same
+        // output), exactly as each extra F8 view paints its own editor after its
+        // world. Keeping the editor out of here leaves world rendering with no
+        // editor dependency (the scrubber ghost-draws a world with no editor at
+        // all).
         self.draw_world(ctx, self.camera.pos, debug_info);
-        // The editor overlay, hoisted out of `draw_world` so world rendering
-        // has no editor dependency (the scrubber ghost-draws a world with no
-        // editor at all; an extra view draws its own editor after its world).
-        self.map_viewer.draw_at(
-            ctx.draw,
-            ctx.input,
-            ctx.font,
-            &self.current_map,
-            ctx.maps,
-            self.camera.pos,
-        );
         WalkaroundState::composite_into(ctx.draw, ctx.system.output_image());
         // The bag overlay: drawn last, over the just-composited world, so it
         // reads as an inventory on top of the (frozen) world rather than its own
@@ -2034,16 +1971,16 @@ mod tests {
         // A rising A-edge fires the pickup: one creature spawns and the pickup is
         // recorded taken. The object stays in the map (still one object).
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert!(parts.save.is_taken("town", 5), "pickup recorded taken");
         assert_eq!(walk.current_map.objects.len(), 1, "object kept in the map");
         assert_eq!(walk.entities.len(), 2, "the pickup fired once");
 
         // Press A again while taken: the pickup is skipped, so no creature spawns.
         release_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(
             walk.entities.len(),
             2,
@@ -2055,9 +1992,9 @@ mod tests {
         parts.save.toggle_taken(&SaveData::taken_key("town", 5));
         assert!(!parts.save.is_taken("town", 5), "un-taken");
         release_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(
             walk.entities.len(),
             3,
@@ -2103,15 +2040,15 @@ mod tests {
         // Flag clear: the gate blocks the interaction — a press spawns nothing.
         assert_eq!(walk.entities.len(), 1, "just the player at start");
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.entities.len(), 1, "gate blocks while has_key is clear");
 
         // Set the flag: the gate now allows it, and a fresh press fires it once.
         parts.save.set_flag("has_key", true);
         release_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.entities.len(), 2, "gate allows once has_key is set");
     }
 
@@ -2152,15 +2089,15 @@ mod tests {
 
         // First press: fires once, spawns a creature, and latches `done`.
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.entities.len(), 2, "one-shot fires the first time");
         assert!(parts.save.flag("done"), "firing latched its `sets` flag");
 
         // Press again: its own `unless done` gate now blocks it (fired once).
         release_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.entities.len(), 2, "the latch blocks a second firing");
 
         // The flag persists across a JSON save round-trip.
@@ -2176,9 +2113,9 @@ mod tests {
         reloaded.player().dir = (0, 1);
         reloaded.inventory_ui.state = InventoryUiState::Close;
         release_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx, false));
         press_a(&mut parts);
-        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| reloaded.step(ctx, false));
         assert_eq!(
             reloaded.entities.len(),
             1,
@@ -2225,7 +2162,7 @@ mod tests {
 
         // First step after load: the enter scan launches the scene and latches
         // `seen` (before the player gets control).
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.cutscene.len(), 1, "map-enter hook launched the cutscene");
         assert!(parts.save.flag("seen"), "enter hook latched its one-shot flag");
 
@@ -2233,7 +2170,7 @@ mod tests {
         // the gate is now closed, so nothing relaunches — the beat played once.
         walk.cutscene.clear();
         walk.load_map(&mut console, map());
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(walk.cutscene.len(), 0, "gated enter hook does not replay");
     }
 
@@ -2484,7 +2421,7 @@ mod tests {
         assert!(!walk.inventory_ui.is_open(), "bag starts closed");
 
         press_b(&mut parts);
-        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
 
         assert_eq!(trans, None, "opening the bag is not a mode transition");
         assert!(walk.inventory_ui.is_open(), "the bag overlay is now open");
@@ -2516,7 +2453,7 @@ mod tests {
 
         let player_before = walk.player_ref().pos;
         let creature_before = walk.entities[1].pos;
-        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
 
         assert_eq!(trans, None, "browsing the open bag drives no transition");
         assert_eq!(
@@ -2546,7 +2483,7 @@ mod tests {
         parts.input.controllers[0].right = [true, true];
 
         let before = walk.player_ref().pos;
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
 
         assert!(
             walk.player_ref().pos.x > before.x,
@@ -2628,7 +2565,7 @@ mod tests {
         walk.load_map(&mut console, map_with_objects(vec![]));
 
         // Day by default: the first step paints (and settles on) SWEETIE.
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(
             parts.draw.palettes[0][0],
             crate::platform::SWEETIE_16[0],
@@ -2637,7 +2574,7 @@ mod tests {
 
         // Setting the flag repaints night on the next step.
         parts.save.set_flag(IS_NIGHT_FLAG, true);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(
             parts.draw.palettes[0][0],
             crate::platform::NIGHT_16[0],
@@ -2646,7 +2583,7 @@ mod tests {
 
         // Clearing it repaints day again.
         parts.save.set_flag(IS_NIGHT_FLAG, false);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert_eq!(
             parts.draw.palettes[0][0],
             crate::platform::SWEETIE_16[0],
@@ -2668,7 +2605,7 @@ mod tests {
         // Digit7: night. The flag is set and the palette is night. (A fresh
         // `EggInput` has no prior-frame keys, so this one press reads as an edge.)
         parts.input.press_key(ScanCode::Digit7);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert!(parts.save.flag(IS_NIGHT_FLAG), "Digit7 sets the is_night flag");
         assert_eq!(parts.draw.palettes[0][0], crate::platform::NIGHT_16[0]);
 
@@ -2676,7 +2613,7 @@ mod tests {
         // between frames), so only Digit6 reads as pressed this step.
         parts.input = crate::platform::EggInput::new();
         parts.input.press_key(ScanCode::Digit6);
-        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx));
+        with_ctx(&mut console, &mut parts, |ctx| walk.step(ctx, false));
         assert!(!parts.save.flag(IS_NIGHT_FLAG), "Digit6 clears the is_night flag");
         assert_eq!(parts.draw.palettes[0][0], crate::platform::SWEETIE_16[0]);
     }

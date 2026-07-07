@@ -29,8 +29,8 @@ use bevy::window::{WindowClosed, WindowRef};
 
 use egg_core::draw_state::DrawState;
 use egg_core::platform::EggInput;
-use egg_core::editor::map::MapViewer;
-use egg_core::editor::text::{TextEditor, TextOpenReq};
+use egg_editor::map::MapViewer;
+use egg_editor::text::{TextEditor, TextOpenReq};
 use egg_core::geometry::Vec2 as EggVec2;
 
 use crate::EggGame;
@@ -331,7 +331,7 @@ impl InputRouting {
     pub fn compute(focused_entity: Option<Entity>, game: &EggGame, views: &ViewWindows) -> Self {
         let view_entities: Vec<Entity> = views.views.iter().map(|v| v.window).collect();
         let focus = resolve_focus(focused_entity, &view_entities);
-        let map_viewer = &game.state.walkaround.map_viewer;
+        let map_viewer = &game.map_viewer;
         Self {
             focus,
             drives_player: drives_player(focus),
@@ -410,9 +410,7 @@ pub fn poll_text_open(mut views: ResMut<ViewWindows>, mut game: ResMut<EggGame>)
         return;
     }
     // Primary panel's link → the primary window's text editor.
-    if let Some(TextOpenReq { path, anchor }) =
-        game.state.walkaround.map_viewer.pending_text_open.take()
-    {
+    if let Some(TextOpenReq { path, anchor }) = game.map_viewer.pending_text_open.take() {
         game.text_mode = true;
         let g = &mut *game;
         g.text_editor.open(&mut g.system, &path, anchor);
@@ -432,7 +430,7 @@ pub fn poll_text_open(mut views: ResMut<ViewWindows>, mut game: ResMut<EggGame>)
     // The map editor's path recorder writes `main.eggscene` itself, then asks the
     // host to live-reload it (the editor never gets `&mut EggState`). Same shape as
     // the text editor's `pending_scene` drain.
-    if let Some(src) = game.state.walkaround.map_viewer.pending_scene.take() {
+    if let Some(src) = game.map_viewer.pending_scene.take() {
         match egg_core::data::scene::parse(&src) {
             Ok(file) => game.state.set_scenes(file),
             Err(e) => warn!("path recorder: invalid eggscene on save: {e}"),
@@ -529,7 +527,8 @@ pub fn update_views(
             let g = &mut *game;
             let view = &mut views.views[i];
             // Refresh the engine-owned snapshots this view's editor panels list
-            // (the primary editor gets these pushed in the walkaround step).
+            // (the primary editor gets these pushed in `EggGame::run`, which owns
+            // and steps the primary `MapViewer`).
             view.editor.preset_defs = g.state.presets.named_defs();
             let cam = view.free_cam;
             let screen = (view.output.width() as f32, view.output.height() as f32);

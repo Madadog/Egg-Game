@@ -12,7 +12,6 @@ egg_render = { path = "../crates/egg_render" }
 egg_platform = { path = "../crates/egg_platform" }
 egg_world = { path = "../crates/egg_world" }
 egg_ui = { path = "../crates/egg_ui" }
-egg_editor = { path = "../crates/egg_editor" }
 
 [dev-dependencies]
 # Pull in egg_platform's `test-util` feature so the crate's test suite can reach

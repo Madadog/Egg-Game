@@ -30,6 +30,10 @@ bevy = { version = "0.18.1", default-features = false, features = [
     "bevy_gilrs",        # gamepad support (pulls in the `gamepad` feature)
 ] }
 egg_core = { path = "egg_core" }
+# The in-game dev tooling (map + text editors). The host owns the primary
+# window's `MapViewer` (and each F8 view owns its own), so it depends on the
+# editor crate directly — `egg_core` no longer re-exports it.
+egg_editor = { path = "crates/egg_editor" }
 serde = "1.0.173"
 serde_json = "1.0.103"
 

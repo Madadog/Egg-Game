@@ -42,18 +42,13 @@ pub use egg_world::{data, draw_state, rand, world};
 /// [`layout`](egg_ui::layout), the shared [`text_field`](egg_ui::text_field),
 /// and the [`dialogue`](egg_ui::dialogue) box + its [`portrait`](egg_ui::portrait)
 /// renderer — sits above `render`/`platform` and reads the game's `draw_state` +
-/// text data; the `GameMode` screens that drive it stay up here and the
-/// [`editor`] that also drives it sits alongside it.
+/// text data; the `GameMode` screens that drive it stay up here and the in-game
+/// map/text editor crate that also drives it sits alongside it.
 pub use egg_ui as ui;
-/// The in-game dev-tooling crate ([`egg_editor`]) re-exported under its
-/// historical in-crate module path, so `crate::editor::…` (and the host's
-/// `egg_core::editor::…`) keep resolving after the extraction. Top of the stack —
-/// the [`map`](egg_editor::map) editor (the `MapViewer` + its dock UI) and the
-/// raw [`text`](egg_editor::text) editor for the `.eggtext`/`.eggscene` script
-/// files — it reads every lower crate but nothing in the engine depends on it;
-/// `WalkaroundState` still owns the `MapViewer` it drives (ownership inversion
-/// deferred until the server/client design).
-pub use egg_editor as editor;
+// The in-game dev-tooling (map/text editor) crate is deliberately NOT
+// re-exported and NOT a dependency of this crate: the ownership inversion moved
+// the primary `MapViewer` up to the host, so nothing in the engine references
+// the editor crate. The host depends on it directly (repo-root `Cargo.toml`).
 
 use crate::data::eggdata::{GameItems, Presets};
 use crate::data::save::{SAVE_PATH, SaveData};
@@ -62,7 +57,6 @@ use crate::data::script::Script;
 use crate::data::script::message::Message;
 use crate::debug::DebugInfo;
 use crate::draw_state::DrawState;
-use crate::data::scene::ScrubRequest;
 use crate::gamestate::walkaround::WalkaroundState;
 use crate::gamestate::{CutsceneScrubber, GameMode, Instructions, IntroAnimation, MenuState, SpriteTest};
 use crate::platform::{ConsoleApi, EggInput};
@@ -72,6 +66,8 @@ use crate::render::{
     print_to_with_font, text_width,
 };
 use crate::world::map::MapStore;
+// The `data::scene::ScrubRequest` import went with the `pending_scrub` drain,
+// which now lives on the host (it owns the primary `MapViewer`).
 
 /// The shared world every game state steps and draws against — the layer
 /// canvases, the console, the loaded maps, and the loaded text — passed as one
@@ -278,7 +274,7 @@ pub struct EggState {
     pub scrubber: Option<CutsceneScrubber>,
 }
 impl EggState {
-    pub fn run(&mut self, system: &mut impl platform::ConsoleApi, input: &EggInput) {
+    pub fn run(&mut self, system: &mut impl platform::ConsoleApi, input: &EggInput, editor_open: bool) {
         // Pull the persisted save in before any state reads it, and flush it out
         // after every state has had a chance to mutate it — so the same frame
         // that changes progress also writes it, and exit-time saving needs no
@@ -296,7 +292,7 @@ impl EggState {
                 .load_inventory(&self.save.inventory, &self.items);
         }
         self.time += 1;
-        if let Some(mode) = self.step_mode(system, input) {
+        if let Some(mode) = self.step_mode(system, input, editor_open) {
             self.enter(mode);
         }
         // Serialise the live inventory into the save before it is flushed, so an
@@ -314,6 +310,7 @@ impl EggState {
         &mut self,
         system: &mut impl platform::ConsoleApi,
         input: &EggInput,
+        editor_open: bool,
     ) -> Option<GameMode> {
         // The cutscene scrubber is a fullscreen modal over everything: drive +
         // draw it and skip the normal sim while a session is open.
@@ -338,7 +335,7 @@ impl EggState {
             match self.gamestate {
                 GameMode::Instructions => self.instructions.step(&mut ctx, &mut self.walkaround),
                 GameMode::Walkaround => {
-                    let next = self.walkaround.step(&mut ctx);
+                    let next = self.walkaround.step(&mut ctx, editor_open);
                     self.walkaround.draw(&mut ctx, &self.debug_info);
                     next
                 }
@@ -359,22 +356,9 @@ impl EggState {
                 GameMode::SpriteTest => self.sprite_test.step(&mut ctx),
             }
         };
-        // The map editor can request a scrubber (the `P` shortcut, or save-and-
-        // play in the recorder); open it here, where the full Ctx + registry are
-        // in reach. A recorded def opens directly — no registry round-trip.
-        if let Some(req) = self.walkaround.map_viewer.pending_scrub.take() {
-            match req {
-                ScrubRequest::ByName(name) => self.open_scrubber(&name),
-                ScrubRequest::Recorded(name, def) => self.open_scrubber_def(name, def),
-            }
-        }
-        // A walk-sprite editor save rewrote `data.toml`: re-install the live
-        // item/preset registries from the store so the next spawn uses the edit
-        // (works on web too, where no mtime watcher will notice the write).
-        if self.walkaround.map_viewer.pending_data_reload {
-            self.walkaround.map_viewer.pending_data_reload = false;
-            self.reload_data(system);
-        }
+        // The primary editor's `pending_scrub` / `pending_data_reload` requests
+        // are now drained by the host, which owns the primary `MapViewer` (see
+        // `EggGame::run`). This dispatch just returns the mode transition.
         transition
     }
 
