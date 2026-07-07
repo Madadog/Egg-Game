@@ -169,7 +169,7 @@ impl MapViewer {
         }
         // `P` opens the scene picker — pick any saved cutscene to replay in the
         // scrubber (same guards as `R`). The engine, which owns the registry,
-        // pushes the names in via `scene_names`.
+        // pushes the scenes in via `scene_defs`.
         if self.editing.is_none()
             && !self.maps_dialog.is_active()
             && input.keyp(ScanCode::P)
@@ -909,7 +909,7 @@ impl MapViewer {
             // park the request for the host to open (the panel counterpart to the
             // `P` picker's Enter, which parks the same request).
             EditorKey::SceneRow(i) => {
-                if click && let Some(name) = self.scene_names.get(i) {
+                if click && let Some((name, _)) = self.scene_defs.get(i) {
                     self.pending_scrub = Some(ScrubRequest::ByName(name.clone()));
                 }
             }
@@ -918,6 +918,13 @@ impl MapViewer {
             EditorKey::RecordPath => {
                 if click {
                     self.open_path_recorder(map, maps, camera_pos);
+                }
+            }
+            // The Scenes panel's show/hide-paths toggle flips the overlay that
+            // draws every saved cutscene's movement paths over the world.
+            EditorKey::TogglePaths => {
+                if click {
+                    self.show_paths = !self.show_paths;
                 }
             }
             // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
@@ -1359,10 +1366,11 @@ mod tests {
         assert!(MapViewer::primary().persist);
     }
 
-    /// The Scenes panel dispatches its two actions through `handle_panel`: a
+    /// The Scenes panel dispatches its actions through `handle_panel`: a
     /// saved-cutscene row parks a `ByName` scrub request (the `P` picker's
-    /// counterpart), and the "record new path" row opens the live path recorder
-    /// (the `R` shortcut's counterpart).
+    /// counterpart), the "record new path" row opens the live path recorder
+    /// (the `R` shortcut's counterpart), and the show/hide-paths toggle flips the
+    /// overlay flag.
     #[test]
     fn scenes_panel_scrubs_a_row_and_records_a_path() {
         use egg_platform::test_console::TestConsole;
@@ -1375,7 +1383,10 @@ mod tests {
 
         let mut v = MapViewer::default();
         v.dock.recompute((200.0, 150.0));
-        v.scene_names = vec!["backyard_path".into(), "pet_dog".into()];
+        v.scene_defs = vec![
+            ("backyard_path".into(), CutsceneDef::default()),
+            ("pet_dog".into(), CutsceneDef::default()),
+        ];
 
         // A saved-cutscene row parks that scene's replay request for the host.
         v.handle_panel(
@@ -1394,6 +1405,19 @@ mod tests {
             }
             other => panic!("expected a ByName scrub, got {other:?}"),
         }
+
+        // The show/hide-paths toggle flips the overlay flag.
+        assert!(!v.show_paths, "paths overlay starts off");
+        v.handle_panel(
+            &mut console,
+            &input,
+            &mut map,
+            &mut maps,
+            usize::MAX,
+            EditorKey::TogglePaths,
+            Vec2::new(0, 0),
+        );
+        assert!(v.show_paths, "the toggle turns the paths overlay on");
 
         // The "record new path" action opens the modal path recorder.
         assert!(v.path_recorder.is_none(), "not recording yet");

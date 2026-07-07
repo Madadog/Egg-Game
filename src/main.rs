@@ -88,7 +88,7 @@ impl EggGame {
                 // actors the recorder picks from (it can't see the registries or
                 // the entity tree itself). Refreshed each focused frame, so a
                 // just-recorded scene shows up.
-                g.map_viewer.scene_names = g.state.scenes.names();
+                g.map_viewer.scene_defs = g.state.scenes.named_defs();
                 g.map_viewer.preset_defs = g.state.presets.named_defs();
                 g.map_viewer.recorder_actors = g.state.walkaround.recorder_actors();
                 let sheet = (

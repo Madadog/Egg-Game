@@ -89,12 +89,27 @@ impl MapViewer {
         }
     }
 
-    /// The Scenes panel: the saved cutscenes. A "record new path" action row opens
-    /// the live path recorder (the `R` shortcut's panel counterpart); each saved
-    /// cutscene below replays in the scrubber on click (the `P` picker's
-    /// counterpart). The list is the engine-pushed [`scene_names`](Self::scene_names)
-    /// snapshot (the editor can't see the registry itself).
+    /// The Scenes panel: the saved cutscenes. A show/hide-paths toggle at the top
+    /// overlays every scene's movement paths on the world; a "record new path"
+    /// action row opens the live path recorder (the `R` shortcut's panel
+    /// counterpart); each saved cutscene below replays in the scrubber on click
+    /// (the `P` picker's counterpart). The list is the engine-pushed
+    /// [`scene_defs`](Self::scene_defs) snapshot (the editor can't see the registry
+    /// itself).
     fn build_scenes(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        // Show/hide-paths toggle — highlighted when on, matching the tool/filter
+        // toggle idiom. Above the record action so it reads as a view control.
+        let paths_label = if self.show_paths {
+            "paths: on"
+        } else {
+            "paths: off"
+        };
+        rows.push(Self::toggle_button(
+            b,
+            paths_label,
+            self.show_paths,
+            EditorKey::TogglePaths,
+        ));
         rows.push(
             b.text("+ record new path")
                 .small(true)
@@ -103,7 +118,7 @@ impl MapViewer {
                 .key(EditorKey::RecordPath)
                 .id(),
         );
-        if self.scene_names.is_empty() {
+        if self.scene_defs.is_empty() {
             rows.push(
                 b.text("(no saved cutscenes)")
                     .small(true)
@@ -120,7 +135,7 @@ impl MapViewer {
                 .full_width(7.0)
                 .id(),
         );
-        for (i, name) in self.scene_names.iter().enumerate() {
+        for (i, (name, _)) in self.scene_defs.iter().enumerate() {
             rows.push(
                 b.text(name)
                     .small(true)

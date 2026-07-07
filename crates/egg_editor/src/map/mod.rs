@@ -36,7 +36,7 @@ use egg_platform::{
 use egg_render::image::{Rgba, RgbaImage};
 use egg_render::{
     Canvas, EdgePolicy, Flip, Font, MapOptions, PrintOptions, Rotate, SpriteOptions, Transform,
-    print_to_with_font,
+    print_to_shadow_with_font, print_to_with_font,
 };
 use egg_ui::dialogue::Dialogue;
 use egg_ui::layout::{NodeId, Rect, Ui, UiBuilder};
@@ -424,12 +424,16 @@ enum EditorKey {
     /// A Presets-panel row: open the walk-sprite editor on that preset.
     PresetRow(usize),
     /// A Scenes-panel row: replay saved cutscene `n` (index into
-    /// [`scene_names`](MapViewer::scene_names)) in the scrubber — the panel
+    /// [`scene_defs`](MapViewer::scene_defs)) in the scrubber — the panel
     /// counterpart to the `P` scene picker's Enter.
     SceneRow(usize),
     /// The Scenes panel's "record new path" action: open the live path recorder
     /// (the panel counterpart to the `R` shortcut).
     RecordPath,
+    /// The Scenes panel's show/hide-paths toggle: flip
+    /// [`show_paths`](MapViewer::show_paths), the overlay that draws every saved
+    /// cutscene's movement paths over the world.
+    TogglePaths,
     /// The walk-sprite editor's Save / Cancel buttons (hit only in that modal).
     WalkEdOk,
     WalkEdCancel,
@@ -568,7 +572,7 @@ const SCENE_PATH: &str = "data/main.eggscene";
 
 /// An open scene-picker session (fully modal): a list of cutscene names; pick
 /// one with ↑/↓ + Enter to replay it in the scrubber. Populated from the
-/// editor's [`scene_names`](MapViewer::scene_names) snapshot when opened.
+/// editor's [`scene_defs`](MapViewer::scene_defs) snapshot (names only) when opened.
 #[derive(Debug, Clone, Default)]
 struct ScenePicker {
     /// Names to choose from (a snapshot taken at open).
@@ -1115,14 +1119,16 @@ pub struct MapViewer {
     /// in the recorder). The engine drains it in `step_mode` — where the cutscene
     /// registry lives — and opens the scrubber. `None` when nothing's requested.
     pub pending_scrub: Option<ScrubRequest>,
-    /// Cutscene names the engine pushes in each focused frame (it owns the
-    /// registry, the editor doesn't) so the scene picker can list them.
-    pub scene_names: Vec<String>,
+    /// Every saved cutscene as `(name, def)`, pushed in by the engine each focused
+    /// frame (it owns the registry, the editor doesn't). The Scenes panel and the
+    /// `P` scene picker list them by name; the paths overlay ([`scene_paths`]) reads
+    /// each `def` to draw its movement paths over the world.
+    pub scene_defs: Vec<(String, CutsceneDef)>,
     /// The live actors the engine pushes in each focused frame — `(token, map
     /// position)` for the player, its companions, and every named creature on the
     /// current map — so the path recorder can pick which one it records (it can't
     /// see the walkaround's entities itself). Same refresh cadence as
-    /// [`scene_names`](Self::scene_names). Pushed by the primary window and every
+    /// [`scene_defs`](Self::scene_defs). Pushed by the primary window and every
     /// extra view; if a frame ever leaves it empty the recorder falls back to the
     /// player alone.
     pub recorder_actors: Vec<(String, Vec2)>,
@@ -1130,14 +1136,14 @@ pub struct MapViewer {
     /// (it owns the loaded script, the editor doesn't), so an object's gate
     /// fields (`if` / `unless` / `sets`) can flag an undeclared name — a typo that
     /// would otherwise make the object silently never fire. Same refresh cadence
-    /// as [`scene_names`](Self::scene_names).
+    /// as [`scene_defs`](Self::scene_defs).
     pub flag_names: Vec<String>,
     /// An open scene-picker session (fully modal): choose a scene to scrub.
     scene_picker: Option<ScenePicker>,
     /// The creature presets the engine pushes in each focused frame (it owns the
     /// registry, the editor doesn't), name-sorted — the Presets panel's listing
     /// and the walk-sprite editor's source of truth. Same refresh cadence as
-    /// [`scene_names`](Self::scene_names).
+    /// [`scene_defs`](Self::scene_defs).
     pub preset_defs: Vec<(String, eggdata::PresetDef)>,
     /// An open walk-sprite authoring session (fully modal): edit a preset's
     /// nine-cell walk grid and save it back into `data.toml`. `None` when not
@@ -1160,6 +1166,10 @@ pub struct MapViewer {
     /// Whether the tile grid + cursor tile-coordinate readout overlay is shown
     /// over the world (toggled with `G`).
     show_grid: bool,
+    /// Whether every saved cutscene's movement paths are drawn over the world
+    /// (toggled from the Scenes panel). Session-only, like [`show_grid`](Self::show_grid);
+    /// the overlay reads [`scene_defs`](Self::scene_defs) via [`scene_paths`].
+    show_paths: bool,
     /// The dialogue key the Dialog panel currently previews — the selected
     /// object's dialogue key (or a warp's narration key) followed live, or a key
     /// picked from the browser. `None` until a key is in view. Editing happens in
@@ -1351,6 +1361,135 @@ fn autocomplete_matches(vocab: &[String], prefix: &str) -> Vec<String> {
         .take(AUTOCOMPLETE_MAX)
         .cloned()
         .collect()
+}
+
+/// A cutscene actor's absolute spawn position from the `init` binds, or `None`
+/// when it isn't bound to a fixed point (a `player`/`companion` alias, a `find`,
+/// or not bound at all) — the seed [`scene_paths`] anchors that actor's path to.
+fn actor_spawn_pos(def: &CutsceneDef, actor: &str) -> Option<Vec2> {
+    def.init.iter().find_map(|entity| match entity {
+        scene::GetEntity::Spawn { name, pos, .. } | scene::GetEntity::GetOrSpawn { name, pos, .. }
+            if name == actor =>
+        {
+            Some(*pos)
+        }
+        _ => None,
+    })
+}
+
+/// Best-effort static movement paths for a cutscene's actors, as polylines in
+/// absolute map pixels — the Scenes-panel paths overlay's geometry.
+///
+/// Each actor's last-known absolute position is seeded by a `spawn` / `bind`
+/// init ([`actor_spawn_pos`]); the `content` is then walked in order, following
+/// only the motions with static geometry:
+/// * `walk` / `noclip` ([`Motion::MoveToPoint`] / [`Motion::MoveToPointNoclip`])
+///   append their target, starting the polyline from the last-known point;
+/// * `teleport` ([`Motion::Teleport`]) ends the current polyline and starts a
+///   fresh one at the jump point — a discontinuity, not a walk;
+/// * `record` ([`Motion::Record`]) integrates run-by-run from the last-known
+///   point (`pos += heading × frames`, one point per run — the same arithmetic
+///   as the cutscene skip-snap), and is skipped entirely with no known position;
+/// * `to` / `beside` ([`Motion::MoveToEntity`] / [`Motion::MoveBesideHorizontal`])
+///   are entity-relative, so the actor's position becomes unknown: the polyline
+///   ends and nothing anchors again until the next absolute motion;
+/// * `face` motions and non-`move` content don't move the actor.
+///
+/// Single-point polylines (a spawn with no motion) are kept — the overlay draws
+/// them as a marker dot. Collision isn't re-walked (a `walk` blocked in-game
+/// still draws its straight-line intent), hence "best-effort". Actors are walked
+/// in a stable order (init binds first, then content-first appearance) so the
+/// output — and the overlay's per-scene label anchor — is deterministic.
+fn scene_paths(def: &CutsceneDef) -> Vec<Vec<Vec2>> {
+    // The actors to trace, in a stable order.
+    let mut actors: Vec<&str> = Vec::new();
+    for entity in &def.init {
+        let name = match entity {
+            scene::GetEntity::Spawn { name, .. }
+            | scene::GetEntity::GetOrSpawn { name, .. }
+            | scene::GetEntity::GetOrIgnore { name }
+            | scene::GetEntity::Alias { name, .. } => name.as_str(),
+        };
+        if !actors.contains(&name) {
+            actors.push(name);
+        }
+    }
+    for step in &def.content {
+        if let CutsceneContent::Move(chains) = step {
+            for chain in chains {
+                let name = chain.actor.as_str();
+                if !actors.contains(&name) {
+                    actors.push(name);
+                }
+            }
+        }
+    }
+
+    // Close an open polyline into the output, keeping single-point dots.
+    let flush = |open: &mut Vec<Vec2>, paths: &mut Vec<Vec<Vec2>>| {
+        if !open.is_empty() {
+            paths.push(std::mem::take(open));
+        }
+    };
+
+    let mut paths: Vec<Vec<Vec2>> = Vec::new();
+    for actor in actors {
+        // This actor's last-known absolute position and the polyline it's extending.
+        let mut pos: Option<Vec2> = actor_spawn_pos(def, actor);
+        let mut open: Vec<Vec2> = pos.map(|p| vec![p]).unwrap_or_default();
+        for step in &def.content {
+            let CutsceneContent::Move(chains) = step else {
+                continue;
+            };
+            for chain in chains {
+                if chain.actor != actor {
+                    continue;
+                }
+                for ins in &chain.instructions {
+                    match &ins.motion {
+                        Motion::MoveToPoint(p) | Motion::MoveToPointNoclip(p) => {
+                            if open.is_empty() && let Some(start) = pos {
+                                open.push(start);
+                            }
+                            open.push(*p);
+                            pos = Some(*p);
+                        }
+                        Motion::Teleport(p) => {
+                            flush(&mut open, &mut paths);
+                            open.push(*p);
+                            pos = Some(*p);
+                        }
+                        Motion::Record { runs, .. } => {
+                            let Some(mut cur) = pos else {
+                                continue;
+                            };
+                            if open.is_empty() {
+                                open.push(cur);
+                            }
+                            // Integrate each run as the skip-snap does: heading held
+                            // for `frames` at 1 px/frame.
+                            for ((dx, dy), frames) in runs {
+                                cur = Vec2::new(
+                                    cur.x + *dx as i16 * *frames as i16,
+                                    cur.y + *dy as i16 * *frames as i16,
+                                );
+                                open.push(cur);
+                            }
+                            pos = Some(cur);
+                        }
+                        Motion::MoveToEntity(_) | Motion::MoveBesideHorizontal { .. } => {
+                            // Entity-relative: the absolute position is now unknown.
+                            flush(&mut open, &mut paths);
+                            pos = None;
+                        }
+                        Motion::FaceEntity(_) | Motion::FaceDir(_, _) => {}
+                    }
+                }
+            }
+        }
+        flush(&mut open, &mut paths);
+    }
+    paths
 }
 
 /// Splice one emitted `#cutscene NAME …` block into raw `.eggscene` source,
@@ -1901,5 +2040,89 @@ fn dialogue_key(object: &MapObject) -> &str {
     match &object.effect {
         ObjectEffect::Interact(Interaction::Dialogue(k)) => k.as_str(),
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod scene_paths_tests {
+    use super::*;
+
+    /// The single cutscene `src` defines.
+    fn def(src: &str) -> CutsceneDef {
+        scene::parse(src)
+            .expect("parse")
+            .cutscenes
+            .into_values()
+            .next()
+            .expect("one cutscene")
+    }
+
+    /// A spawn then two `walk`s trace one polyline: the spawn point followed by
+    /// each waypoint, in order.
+    #[test]
+    fn spawn_then_walks_is_one_polyline() {
+        let paths = scene_paths(&def(
+            "#cutscene c\n    spawn a dog 0 0\n    move\n        a: walk 10 0; walk 10 10",
+        ));
+        assert_eq!(
+            paths,
+            vec![vec![Vec2::new(0, 0), Vec2::new(10, 0), Vec2::new(10, 10)]]
+        );
+    }
+
+    /// A `record` integrates run-by-run from the spawn (`pos += heading × frames`),
+    /// one appended point per run — the same arithmetic as the skip-snap.
+    #[test]
+    fn record_runs_integrate_from_the_spawn() {
+        let paths = scene_paths(&def(
+            "#cutscene c\n    spawn a dog 0 0\n    move\n        a: record 1 0 10 0 1 5",
+        ));
+        // (0,0) +(1,0)×10 -> (10,0) +(0,1)×5 -> (10,5).
+        assert_eq!(
+            paths,
+            vec![vec![Vec2::new(0, 0), Vec2::new(10, 0), Vec2::new(10, 5)]]
+        );
+    }
+
+    /// A `teleport` ends the current polyline and starts a fresh one at the jump
+    /// point — a discontinuity, not a walked segment.
+    #[test]
+    fn teleport_splits_into_two_polylines() {
+        let paths = scene_paths(&def(
+            "#cutscene c\n    spawn a dog 0 0\n    move\n        a: walk 10 0; teleport 50 50; walk 60 50",
+        ));
+        assert_eq!(
+            paths,
+            vec![
+                vec![Vec2::new(0, 0), Vec2::new(10, 0)],
+                vec![Vec2::new(50, 50), Vec2::new(60, 50)],
+            ]
+        );
+    }
+
+    /// A `to NAME` (entity-relative) un-anchors the actor: the polyline ends and a
+    /// following `record` contributes nothing until the next absolute motion.
+    #[test]
+    fn move_to_entity_unanchors_the_actor() {
+        let paths = scene_paths(&def(
+            "#cutscene c\n    spawn a dog 0 0\n    move\n        a: walk 10 0; to b; record 1 0 10",
+        ));
+        assert_eq!(paths, vec![vec![Vec2::new(0, 0), Vec2::new(10, 0)]]);
+    }
+
+    /// A chain with no spawn anchor and only a `record` produces no polyline (its
+    /// position is never known, so the run has nothing to integrate from).
+    #[test]
+    fn record_without_an_anchor_yields_nothing() {
+        let paths = scene_paths(&def("#cutscene c\n    move\n        a: record 1 0 10"));
+        assert!(paths.is_empty(), "no anchor ⇒ no path: {paths:?}");
+    }
+
+    /// A bare spawn with no motion keeps a single-point polyline — a marker dot at
+    /// the spawn.
+    #[test]
+    fn bare_spawn_is_a_single_point_polyline() {
+        let paths = scene_paths(&def("#cutscene c\n    spawn a dog 0 0"));
+        assert_eq!(paths, vec![vec![Vec2::new(0, 0)]]);
     }
 }

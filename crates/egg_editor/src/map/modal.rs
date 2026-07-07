@@ -273,7 +273,7 @@ impl MapViewer {
     /// hint, so the modal can't trap you with nothing to pick.
     pub(super) fn open_scene_picker(&mut self) {
         self.scene_picker = Some(ScenePicker {
-            names: self.scene_names.clone(),
+            names: self.scene_defs.iter().map(|(name, _)| name.clone()).collect(),
             selected: 0,
         });
     }
@@ -532,7 +532,7 @@ impl MapViewer {
             TextEvent::Commit => {
                 let candidate = field.text().trim().to_string();
                 if scene::is_identifier_name(&candidate) {
-                    let replaces = self.scene_names.iter().any(|n| n == &candidate);
+                    let replaces = self.scene_defs.iter().any(|(n, _)| n == &candidate);
                     pr.name = candidate;
                     pr.status = replaces.then(|| format!("replaces existing '{}'", pr.name));
                 } else {
@@ -1005,13 +1005,16 @@ mod tests {
         );
     }
 
-    /// `P` opens the scene picker over the engine-pushed name list, highlighting
-    /// the top. The names come from `scene_names`, which the engine refreshes
-    /// each focused frame from the cutscene registry.
+    /// `P` opens the scene picker over the engine-pushed scene list, highlighting
+    /// the top. The scenes come from `scene_defs`, which the engine refreshes each
+    /// focused frame from the cutscene registry; the picker keeps just the names.
     #[test]
     fn scene_picker_opens_over_the_pushed_names() {
         let mut ed = MapViewer::primary();
-        ed.scene_names = vec!["backyard_path".into(), "pet_dog".into()];
+        ed.scene_defs = vec![
+            ("backyard_path".into(), CutsceneDef::default()),
+            ("pet_dog".into(), CutsceneDef::default()),
+        ];
         ed.open_scene_picker();
         let p = ed.scene_picker.as_ref().expect("picker opened");
         assert_eq!(
@@ -1156,7 +1159,7 @@ mod tests {
     #[test]
     fn recorder_naming_validates() {
         let mut ed = MapViewer::primary();
-        ed.scene_names = vec!["existing".into()];
+        ed.scene_defs = vec![("existing".into(), CutsceneDef::default())];
         let mut pr = PathRecorder::test(vec![], "town_path");
         let mut enter = EggInput::new();
         enter.press_key(ScanCode::Return);

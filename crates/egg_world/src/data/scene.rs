@@ -285,6 +285,21 @@ impl SceneFile {
         names.sort();
         names
     }
+
+    /// Every cutscene as `(name, def)`, name-sorted — pushed into the map editor
+    /// each focused frame so its Scenes panel can both list the scenes *and* draw
+    /// their movement paths (which need the whole [`CutsceneDef`], not just the
+    /// name). Mirrors `Presets::named_defs`; the registry is an unordered map, so
+    /// a stable order needs sorting.
+    pub fn named_defs(&self) -> Vec<(String, CutsceneDef)> {
+        let mut defs: Vec<(String, CutsceneDef)> = self
+            .cutscenes
+            .iter()
+            .map(|(name, def)| (name.clone(), def.clone()))
+            .collect();
+        defs.sort_by(|a, b| a.0.cmp(&b.0));
+        defs
+    }
 }
 
 /// Leading-whitespace width of a raw line (its indentation).
@@ -1190,6 +1205,27 @@ mod tests {
             let file = parse(&src).expect("re-parses");
             assert!(file.get_cutscene(name).is_some(), "name survives: {src}");
         }
+    }
+
+    /// `named_defs` returns every cutscene as `(name, def)` in name-sorted order
+    /// (the registry map is unordered), so the editor's Scenes panel + paths
+    /// overlay list scenes stably.
+    #[test]
+    fn named_defs_are_name_sorted() {
+        let file = parse(
+            "#cutscene zebra\n    wait 1\n\
+             #cutscene apple\n    wait 2\n\
+             #cutscene mango\n    wait 3",
+        )
+        .expect("parse");
+        let defs = file.named_defs();
+        let names: Vec<&str> = defs.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["apple", "mango", "zebra"], "sorted by name");
+        assert_eq!(
+            defs[0].1,
+            *file.get_cutscene("apple").unwrap(),
+            "each name is paired with its own def"
+        );
     }
 
     #[test]

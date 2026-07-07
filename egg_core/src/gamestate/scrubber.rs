@@ -67,6 +67,13 @@ pub struct CutsceneScrubber {
     /// Whether a timeline drag is in progress: set when the mouse presses on the
     /// track, cleared on release, so the playhead follows the cursor between.
     scrubbing: bool,
+    /// The playhead's re-simmed world, refreshed by [`drive_scrubber`](EggState::drive_scrubber)
+    /// each host frame (and seeded at the armed frame 0 on open). The primary
+    /// window draws it from the ghost's own camera; the extra F8 views read it via
+    /// [`world`](Self::world) to draw the same ghost from their own free cameras.
+    /// It carries its own `current_map` — a scene's `init_map` may differ from the
+    /// live map — which is why each view draws through this world's own `draw_world`.
+    current: WalkaroundState,
 }
 
 /// The frame a cursor at screen-`x` selects on `track`, mapping the track's left
@@ -153,6 +160,10 @@ impl EggState {
             replay.total,
             replay.beats.len()
         );
+        // Seed the cached ghost at frame 0: `base_world` is still the armed
+        // frame-0 world (`replay_cutscene` re-sims a clone, leaving it untouched),
+        // so it *is* the ladder's first rung — moving it in matches `seek(0)`
+        // without a redundant re-sim. `drive_scrubber` refreshes it each frame.
         self.scrubber = Some(CutsceneScrubber {
             name,
             replay,
@@ -161,6 +172,7 @@ impl EggState {
             sim_input,
             frame: 0,
             scrubbing: false,
+            current: base_world,
         });
     }
 
@@ -203,26 +215,10 @@ impl EggState {
             scrubber.frame = (scrubber.frame + 1).min(scrubber.replay.total);
         }
 
-        // Re-sim to the playhead from the nearest ladder rung on the headless
-        // console + a fresh save clone (so a replayed `set_flag` can't touch real
-        // progress), stepped against the scrubber's neutral held-`A` input.
-        let current = {
-            let mut scratch = scrubber.base_save.clone();
-            let mut ctx = Ctx {
-                draw: &mut self.draw_state,
-                system: &mut scrubber.console,
-                input: &scrubber.sim_input,
-                maps: &mut self.maps,
-                rng: &mut self.rng,
-                script: &self.script,
-                scenes: &self.scenes,
-                save: &mut scratch,
-                items: &self.items,
-                presets: &self.presets,
-                font: &self.font,
-            };
-            scrubber.replay.seek(scrubber.frame, &mut ctx)
-        };
+        // Re-sim to the playhead from the nearest ladder rung and cache it on the
+        // session, so the extra views can draw the same ghost from their own
+        // cameras without re-simming themselves.
+        self.seek_scrubber_current(&mut scrubber);
 
         // Render the ghost fullscreen through the REAL console (sprite assets) —
         // world only, no editor overlay — then the scrubber's banner + timeline
@@ -241,7 +237,9 @@ impl EggState {
                 presets: &self.presets,
                 font: &self.font,
             };
-            current.draw_world(&mut ctx, current.camera.pos, &DebugInfo::default());
+            scrubber
+                .current
+                .draw_world(&mut ctx, scrubber.current.camera.pos, &DebugInfo::default());
             let banner = format!(
                 "SCRUBBER  {}   drag timeline / [<- ->] step   [X] close",
                 scrubber.name
@@ -264,9 +262,42 @@ impl EggState {
 
         self.scrubber = Some(scrubber);
     }
+
+    /// Re-sim the scrubber's ghost to its playhead and cache it on the session
+    /// ([`CutsceneScrubber::current`]), without drawing. The seek runs on the
+    /// scrubber's own headless [`NullConsole`], so this needs no external console —
+    /// [`drive_scrubber`](Self::drive_scrubber) calls it before the draw, and the
+    /// tests exercise it to observe `current` at a frame with no draw pass. Takes
+    /// the session by `&mut` so its fields (`console`/`sim_input`/`replay`) borrow
+    /// disjointly from `self`'s (`draw`/`maps`/`rng`/…).
+    fn seek_scrubber_current(&mut self, scrubber: &mut CutsceneScrubber) {
+        let mut scratch = scrubber.base_save.clone();
+        let mut ctx = Ctx {
+            draw: &mut self.draw_state,
+            system: &mut scrubber.console,
+            input: &scrubber.sim_input,
+            maps: &mut self.maps,
+            rng: &mut self.rng,
+            script: &self.script,
+            scenes: &self.scenes,
+            save: &mut scratch,
+            items: &self.items,
+            presets: &self.presets,
+            font: &self.font,
+        };
+        scrubber.current = scrubber.replay.seek(scrubber.frame, &mut ctx);
+    }
 }
 
 impl CutsceneScrubber {
+    /// The playhead's re-simmed ghost world (refreshed each host frame by
+    /// [`drive_scrubber`](EggState::drive_scrubber)). The extra F8 views read it to
+    /// draw the ghost from their own free cameras; it carries its own `current_map`,
+    /// so a scene that loads a different map still renders correctly in a view.
+    pub fn world(&self) -> &WalkaroundState {
+        &self.current
+    }
+
     /// Apply one frame of timeline pointer input: a press on the track (`on_track`
     /// from the layout hit test) grabs the playhead; while the button stays held
     /// the playhead follows the cursor's x along `track`; release lets go. Split
@@ -394,6 +425,58 @@ mod tests {
         assert!(
             state.scenes.get_cutscene("backyard_path").is_none(),
             "never went through the registry",
+        );
+    }
+
+    /// On open the cached ghost ([`CutsceneScrubber::world`]) is the frame-0
+    /// snapshot: the scene has no `map`, so the ghost plays in place — same map
+    /// source and same player position as the live world it snapshotted.
+    #[test]
+    fn scrubber_world_is_the_frame_zero_ghost_on_open() {
+        let mut state = EggState::default();
+        state.walkaround.player().pos = crate::geometry::Vec2::new(0, 0);
+        state.scenes =
+            scene::parse("#cutscene t\n    move\n        player: walk 30 0 in 10").unwrap();
+        let live_map = state.walkaround.current_map.source.clone();
+        let live_pos = state.walkaround.player_ref().pos;
+
+        state.open_scrubber("t");
+
+        let s = state.scrubber.as_ref().expect("session opened");
+        assert_eq!(
+            s.world().current_map.source,
+            live_map,
+            "frame-0 ghost plays on the live map (the def has no init_map)"
+        );
+        assert_eq!(
+            s.world().player_ref().pos,
+            live_pos,
+            "frame-0 ghost is the snapshot, unmoved"
+        );
+    }
+
+    /// Driving the playhead to a later frame and re-simming through the seam
+    /// (`seek_scrubber_current`, no draw pass) updates the cached ghost — the
+    /// player has walked toward the move's target.
+    #[test]
+    fn seeking_a_later_frame_updates_the_cached_ghost() {
+        let mut state = EggState::default();
+        state.walkaround.player().pos = crate::geometry::Vec2::new(0, 0);
+        state.scenes =
+            scene::parse("#cutscene t\n    move\n        player: walk 30 0 in 10").unwrap();
+        state.open_scrubber("t");
+
+        let mut scrubber = state.scrubber.take().expect("session opened");
+        assert_eq!(scrubber.world().player_ref().pos.x, 0, "parked at frame 0");
+
+        // Seek to the end through the same seam `drive_scrubber` uses (minus draw).
+        scrubber.frame = scrubber.replay.total;
+        state.seek_scrubber_current(&mut scrubber);
+
+        assert_eq!(
+            scrubber.world().player_ref().pos.x,
+            30,
+            "seeking to the end re-simmed the ghost to the walk target"
         );
     }
 

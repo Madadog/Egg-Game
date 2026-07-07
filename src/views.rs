@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use bevy::window::{WindowClosed, WindowRef};
 
 use egg_core::draw_state::DrawState;
-use egg_core::platform::EggInput;
+use egg_core::platform::{EggInput, ScanCode};
 use egg_editor::map::MapViewer;
 use egg_editor::text::{TextEditor, TextOpenReq};
 use egg_core::geometry::Vec2 as EggVec2;
@@ -467,6 +467,20 @@ pub fn update_views(
     let focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
     let focus = InputRouting::compute(focused, &game, &views).focus;
 
+    // Close the scrubber from a view: Esc/X on a view's own input drops the
+    // global session. Only the focused view has populated input (unfocused views
+    // carry neutral input), so no focus check is needed. Scrub CONTROL (timeline
+    // drag, arrow stepping) deliberately stays primary-only — a view is a passive
+    // camera onto the ghost.
+    if game.state.scrubber.is_some()
+        && views.views.iter().any(|v| {
+            v.mode == ViewMode::Walkaround
+                && (v.input.keyp(ScanCode::Escape) || v.input.keyp(ScanCode::X))
+        })
+    {
+        game.state.scrubber = None;
+    }
+
     // Route the held arrow keys to the focused extra view's free camera (if
     // any). The player is handled in `step_state`, which reads the same `Focus`
     // to decide whether to drive the controller; the view's edge-triggered
@@ -522,8 +536,13 @@ pub fn update_views(
         // This view's cursor was already mapped into its own input in
         // `step_state`. Step this view's editor against its own map + free camera —
         // at this view's framebuffer size, so the panel layout and hit-testing
-        // match what `draw_at` renders below — reading the view's own input.
-        if views.views[i].mode == ViewMode::Walkaround && views.views[i].editor.focused {
+        // match what `draw_at` renders below — reading the view's own input. While
+        // the scrubber is open the view shows the ghost (below) and its editor is
+        // frozen — don't step or mutate shared state mid-scrub.
+        if game.state.scrubber.is_none()
+            && views.views[i].mode == ViewMode::Walkaround
+            && views.views[i].editor.focused
+        {
             let g = &mut *game;
             let view = &mut views.views[i];
             // Refresh the engine-owned snapshots this view's editor panels list —
@@ -532,7 +551,7 @@ pub fn update_views(
             // pushed in `EggGame::run`, which owns and steps the primary
             // `MapViewer`).
             view.editor.preset_defs = g.state.presets.named_defs();
-            view.editor.scene_names = g.state.scenes.names();
+            view.editor.scene_defs = g.state.scenes.named_defs();
             view.editor.recorder_actors = g.state.walkaround.recorder_actors();
             let cam = view.free_cam;
             let screen = (view.output.width() as f32, view.output.height() as f32);
@@ -687,17 +706,43 @@ pub fn update_views(
                     presets: &g.state.presets,
                     font: &g.state.font,
                 };
-                g.state.walkaround.draw_world(&mut ctx, view.free_cam, &g.state.debug_info);
-                // This view's own editor overlay, after the world (draw_world
-                // itself is editor-free — the crate-extraction seam).
-                view.editor.draw_at(
-                    &mut view.draw_state,
-                    &view.input,
-                    &g.state.font,
-                    &g.state.walkaround.current_map,
-                    &g.state.maps,
-                    view.free_cam,
-                );
+                if let Some(scrub) = g.state.scrubber.as_ref() {
+                    // Scrubber open: show the re-simmed ghost from THIS view's own
+                    // free camera (the ghost carries its own `current_map`, which
+                    // may differ from the live map, so draw through its own
+                    // `draw_world`). No editor overlay — the view is a passive
+                    // camera onto the scrub, mirroring the primary window. A small
+                    // top-left label names the scene (no key help — control is
+                    // primary-only).
+                    scrub
+                        .world()
+                        .draw_world(&mut ctx, view.free_cam, &g.state.debug_info);
+                    let label = format!("SCRUBBER  {}", scrub.name);
+                    let fg = ctx.draw.colour(11);
+                    let shadow = ctx.draw.colour(0);
+                    egg_core::render::print_to_shadow_with_font(
+                        ctx.font,
+                        ctx.draw.rgba(egg_core::draw_state::LayerId::BG),
+                        &label,
+                        2,
+                        2,
+                        fg,
+                        shadow,
+                        egg_core::render::PrintOptions::default(),
+                    );
+                } else {
+                    g.state.walkaround.draw_world(&mut ctx, view.free_cam, &g.state.debug_info);
+                    // This view's own editor overlay, after the world (draw_world
+                    // itself is editor-free — the crate-extraction seam).
+                    view.editor.draw_at(
+                        &mut view.draw_state,
+                        &view.input,
+                        &g.state.font,
+                        &g.state.walkaround.current_map,
+                        &g.state.maps,
+                        view.free_cam,
+                    );
+                }
             }
             ViewMode::Text => view.text_editor.draw(&mut view.draw_state, &g.state.font),
         }

@@ -3,6 +3,11 @@
 
 use super::*;
 
+/// Palette indices the paths overlay cycles one-per-scene (by scene index), from
+/// the brighter half of the palette so a path reads against typical map tiles.
+/// Distinct hues, kept clear of the grid's grey (13) where practical.
+const SCENE_PATH_COLOURS: [u8; 8] = [8, 11, 12, 14, 6, 9, 10, 15];
+
 impl MapViewer {    /// Draw the dock resize bars (the inner-edge splitter band per occupied dock
     /// side). Drawn between the docked panels and the floats so a floating window
     /// sits on top of any bar it overlaps.
@@ -115,6 +120,75 @@ impl MapViewer {    /// Draw the dock resize bars (the inner-edge splitter band 
         }
     }
 
+    /// When toggled on (from the Scenes panel), draw every saved cutscene's
+    /// movement paths over the world: each scene in a distinct colour cycled from
+    /// [`SCENE_PATH_COLOURS`], its polylines as connected line segments with a 2×2
+    /// dot at each waypoint, and the scene name shadow-printed at its first point.
+    /// The geometry is best-effort static ([`scene_paths`]); map pixels map to
+    /// screen as `p - camera` (the world fills the framebuffer, panels occlude it),
+    /// and segments whose bounding box is fully off-screen are culled. Drawn at the
+    /// grid's stage, before the panels, so a docked panel still draws over it.
+    pub(super) fn draw_scene_paths(
+        &self,
+        draw_state: &mut DrawState,
+        font: &Font,
+        camera_pos: Vec2,
+    ) {
+        if !self.show_paths || self.scene_defs.is_empty() {
+            return;
+        }
+        let (cx, cy) = (i32::from(camera_pos.x), i32::from(camera_pos.y));
+        let (sw, sh) = draw_state.size();
+        // Map pixel -> screen pixel (the world isn't panel-offset; panels occlude).
+        let to_screen = |p: Vec2| (i32::from(p.x) - cx, i32::from(p.y) - cy);
+        for (i, (name, def)) in self.scene_defs.iter().enumerate() {
+            // One colour per scene (consistent per index), cycling the brighter
+            // palette entries so paths read against typical maps.
+            let colour = draw_state.colour(SCENE_PATH_COLOURS[i % SCENE_PATH_COLOURS.len()]);
+            let shadow = draw_state.colour(0);
+            let polylines = scene_paths(def);
+            {
+                let layer = draw_state.rgba(LayerId::BG);
+                for line in &polylines {
+                    for pair in line.windows(2) {
+                        let (x0, y0) = to_screen(pair[0]);
+                        let (x1, y1) = to_screen(pair[1]);
+                        // Cull a segment whose bounding box is fully off-screen.
+                        if x0.max(x1) < 0
+                            || y0.max(y1) < 0
+                            || x0.min(x1) >= sw
+                            || y0.min(y1) >= sh
+                        {
+                            continue;
+                        }
+                        layer.line(x0, y0, x1, y1, colour);
+                    }
+                    for &p in line {
+                        let (x, y) = to_screen(p);
+                        layer.fill_rect(x - 1, y - 1, 2, 2, colour);
+                    }
+                }
+            }
+            // Name the scene at its first waypoint (small, shadowed for contrast).
+            if let Some(&first) = polylines.first().and_then(|line| line.first()) {
+                let (nx, ny) = to_screen(first);
+                print_to_shadow_with_font(
+                    font,
+                    draw_state.rgba(LayerId::BG),
+                    name,
+                    nx + 2,
+                    ny - 6,
+                    colour,
+                    shadow,
+                    PrintOptions {
+                        small_text: true,
+                        ..PrintOptions::default()
+                    },
+                );
+            }
+        }
+    }
+
     /// Draw the editor overlay + panels for `map` from an explicit `camera_pos`.
     /// The editor overlay draw entry point — callers (the walkaround's draw,
     /// an extra view) pass their own map + camera, so an extra view
@@ -154,6 +228,7 @@ impl MapViewer {    /// Draw the dock resize bars (the inner-edge splitter band 
         }
         self.draw_hidden_active_layer(draw_state, map, maps, camera_pos);
         self.draw_grid(draw_state, input, font, map, maps, camera_pos);
+        self.draw_scene_paths(draw_state, font, camera_pos);
         self.draw_canvas_overlay(draw_state, input, map, camera_pos);
         // Draw each panel back-to-front from the geometry `step` already solved
         // (not a fresh layout against the live canvas) — so a framebuffer resize
