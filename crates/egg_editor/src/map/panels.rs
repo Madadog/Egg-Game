@@ -89,6 +89,49 @@ impl MapViewer {
         }
     }
 
+    /// The Scenes panel: the saved cutscenes. A "record new path" action row opens
+    /// the live path recorder (the `R` shortcut's panel counterpart); each saved
+    /// cutscene below replays in the scrubber on click (the `P` picker's
+    /// counterpart). The list is the engine-pushed [`scene_names`](Self::scene_names)
+    /// snapshot (the editor can't see the registry itself).
+    fn build_scenes(&self, b: &mut UiBuilder<EditorKey>, rows: &mut Vec<NodeId>) {
+        rows.push(
+            b.text("+ record new path")
+                .small(true)
+                .color(12)
+                .full_width(7.0)
+                .key(EditorKey::RecordPath)
+                .id(),
+        );
+        if self.scene_names.is_empty() {
+            rows.push(
+                b.text("(no saved cutscenes)")
+                    .small(true)
+                    .color(13)
+                    .full_width(7.0)
+                    .id(),
+            );
+            return;
+        }
+        rows.push(
+            b.text("click to scrub")
+                .small(true)
+                .color(13)
+                .full_width(7.0)
+                .id(),
+        );
+        for (i, name) in self.scene_names.iter().enumerate() {
+            rows.push(
+                b.text(name)
+                    .small(true)
+                    .color(12)
+                    .full_width(7.0)
+                    .key(EditorKey::SceneRow(i))
+                    .id(),
+            );
+        }
+    }
+
     pub(super) fn build_panel(
         &self,
         idx: usize,
@@ -133,6 +176,7 @@ impl MapViewer {
             PanelKind::Map => self.build_setup(&mut b, &mut rows, map, maps),
             PanelKind::Dialogue => self.build_dialogue(&mut b, &mut rows),
             PanelKind::Presets => self.build_presets(&mut b, &mut rows),
+            PanelKind::Scenes => self.build_scenes(&mut b, &mut rows),
         }
 
         let size = (rect.w as f32, rect.h as f32);
@@ -196,18 +240,16 @@ impl MapViewer {
             .outlined(0, oc)
             .key(EditorKey::Save)
             .id();
-        // Panel show/hide toggles (L / P / O / M), highlighted when open — the
-        // one way to reopen a closed panel (e.g. the Maps browser).
+        // Panel show/hide toggles — a per-tab sprite icon, highlighted when open —
+        // the one way to reopen a closed panel (e.g. the Maps browser). Sprite
+        // colour 0 is transparent, so the open-state highlight fill shows through.
         let mut buttons = vec![undo, redo, save];
         for kind in PanelKind::ALL {
             let open = self.dock.panels.iter().any(|p| p.kind == kind && p.open);
-            let letter = &kind.title()[..1];
+            let (active, inactive) = kind.icon();
             buttons.push(
-                b.text(letter)
-                    .small(true)
-                    .center()
-                    .color(if open { 0 } else { 12 })
-                    .size(7.0, 7.0)
+                b.sprite(if open { active } else { inactive }, 1, 1)
+                    .size(8.0, 8.0)
                     .fill(if open { 11 } else { 0 })
                     .outline(12)
                     .key(EditorKey::TogglePanel(kind))
@@ -545,9 +587,13 @@ impl MapViewer {
                     EditorTool::Interactables
                 },
             ),
-            // Map settings, the Maps browser, the Dialog editor and the Critters
-            // list don't own the canvas tool.
-            PanelKind::Maps | PanelKind::Map | PanelKind::Dialogue | PanelKind::Presets => None,
+            // Map settings, the Maps browser, the Dialog editor, the Critters
+            // list and the Scenes list don't own the canvas tool.
+            PanelKind::Maps
+            | PanelKind::Map
+            | PanelKind::Dialogue
+            | PanelKind::Presets
+            | PanelKind::Scenes => None,
         }
     }
 
@@ -1385,6 +1431,26 @@ mod tests {
         assert_eq!(viewer.dialogue_preview.len(), 1, "one previewed message");
 
         viewer.draw_at(&mut draw, &EggInput::new(), &Font::blank(), &map, &store, Vec2::new(0, 0));
+    }
+
+    /// The global bar lays out a toggle for every panel kind, and the last one
+    /// (Scenes) is hittable — a regression guard that widening the bar for the
+    /// 8x8 sprite tabs keeps the final tab on-bar (not clipped past its width).
+    #[test]
+    fn global_bar_last_toggle_hits() {
+        let v = MapViewer::default();
+        let ui = v.build_global_bar();
+        let last = *PanelKind::ALL.last().unwrap();
+        assert_eq!(last, PanelKind::Scenes, "Scenes is the last tab");
+        let rect = ui
+            .rect_at(0, 0, EditorKey::TogglePanel(last))
+            .expect("the last toggle is laid out, not clipped off the bar");
+        let centre = Vec2::new(rect.x + rect.w / 2, rect.y + rect.h / 2);
+        assert_eq!(
+            ui.hit_at(0, 0, centre),
+            Some(EditorKey::TogglePanel(last)),
+            "the last tab (Scenes) resolves under a hit at its centre",
+        );
     }
 
     /// The key/flag autocomplete matcher: a prefix filter that preserves the

@@ -356,8 +356,9 @@ impl MapViewer {
     pub(super) fn open_path_recorder(&mut self, map: &MapInfo, maps: &MapStore, camera_pos: Vec2) {
         let (sw, sh) = self.dock.solved.screen;
         let view_centre = Vec2::new(camera_pos.x + sw / 2, camera_pos.y + sh / 2);
-        // The host pushes the live actors each focused frame; fall back to the
-        // player at the view centre (an extra view, which isn't fed the list).
+        // The host pushes the live actors each focused frame (the primary and
+        // every extra view); fall back to the player at the view centre if the
+        // list ever arrives empty (belt-and-braces).
         let actors = if self.recorder_actors.is_empty() {
             vec![("player".to_string(), view_centre)]
         } else {

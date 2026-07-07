@@ -56,10 +56,13 @@ pub enum PanelKind {
     Dialogue,
     /// The creature presets: list them, open the walk-sprite editor on one.
     Presets,
+    /// The saved cutscenes: replay one in the scrubber, or start a new path
+    /// recording — the panel counterpart to the R (record) / P (pick) shortcuts.
+    Scenes,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 7] = [
+    pub const ALL: [PanelKind; 8] = [
         Self::Layers,
         Self::Paint,
         Self::Objects,
@@ -67,21 +70,40 @@ impl PanelKind {
         Self::Map,
         Self::Dialogue,
         Self::Presets,
+        Self::Scenes,
     ];
 
+    /// The panel's title-bar caption. Global-bar tabs now show a sprite
+    /// ([`icon`](Self::icon)) rather than the title's first letter, so these are
+    /// free to read naturally.
     pub fn title(self) -> &'static str {
         match self {
             Self::Layers => "Layers",
             Self::Paint => "Paint",
             Self::Objects => "Objects",
             Self::Maps => "Maps",
-            // "Setup" (not "Map") so its global-bar letter doesn't collide with
-            // the "Maps" browser's "M".
+            // "Setup" reads better than a bare "Map" next to the "Maps" browser.
             Self::Map => "Setup",
             Self::Dialogue => "Dialog",
-            // "Critters" (not "Presets") so its global-bar letter doesn't
-            // collide with "Paint"'s.
+            // "Critters" is the in-editor name for the creature presets.
             Self::Presets => "Critters",
+            Self::Scenes => "Scenes",
+        }
+    }
+
+    /// Global-bar tab icons: `(active, inactive)` sprite ids on the main sheet,
+    /// drawn 8x8 in place of the old title letters. The pairs below are
+    /// placeholders — drop in the real per-tab icon sprite ids here.
+    pub fn icon(self) -> (i32, i32) {
+        match self {
+            Self::Layers => (2, 3),
+            Self::Paint => (2, 3),
+            Self::Objects => (2, 3),
+            Self::Maps => (2, 3),
+            Self::Map => (2, 3),
+            Self::Dialogue => (2, 3),
+            Self::Presets => (2, 3),
+            Self::Scenes => (2, 3),
         }
     }
 }
@@ -211,8 +233,10 @@ impl DockManager {
 
 impl Default for DockManager {
     /// The classic look approximated with independent panels: the three tool
-    /// panels stacked in one left column, Maps hidden until opened. (`Maps` is
-    /// listed so a layout file / a future panel menu can show it.)
+    /// panels stacked in one left column, the rest hidden until opened. Every
+    /// remaining [`PanelKind`] is added as a closed float by
+    /// [`ensure_all_kinds`](Self::ensure_all_kinds), so each kind's global-bar
+    /// toggle works — including in the extra views, which build off this default.
     fn default() -> Self {
         let dock_left = |kind, z| Panel {
             kind,
@@ -223,7 +247,7 @@ impl Default for DockManager {
             z,
             open: true,
         };
-        Self {
+        let mut dm = Self {
             panels: vec![
                 dock_left(PanelKind::Layers, 0),
                 dock_left(PanelKind::Paint, 1),
@@ -268,7 +292,11 @@ impl Default for DockManager {
             loaded: false,
             dirty: false,
             scrolls: HashMap::new(),
-        }
+        };
+        // Backfill any kind not placed above (Presets, Scenes, …) as a closed
+        // float, so every kind is reachable from the global bar in views too.
+        dm.ensure_all_kinds();
+        dm
     }
 }
 
@@ -657,6 +685,21 @@ mod tests {
         DockManager {
             panels,
             ..DockManager::default()
+        }
+    }
+
+    /// Every panel kind has a panel in the default layout — `ensure_all_kinds`
+    /// backfills any not placed explicitly (as a closed float), so each kind's
+    /// global-bar toggle works, including in the extra views that build off
+    /// `Default`.
+    #[test]
+    fn default_includes_every_panel_kind() {
+        let dm = DockManager::default();
+        for kind in PanelKind::ALL {
+            assert!(
+                dm.panels.iter().any(|p| p.kind == kind),
+                "default layout is missing a {kind:?} panel",
+            );
         }
     }
 

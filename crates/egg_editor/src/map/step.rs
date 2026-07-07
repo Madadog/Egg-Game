@@ -905,6 +905,21 @@ impl MapViewer {
                     self.open_walk_editor(row);
                 }
             }
+            // A Scenes-panel row replays that saved cutscene in the scrubber:
+            // park the request for the host to open (the panel counterpart to the
+            // `P` picker's Enter, which parks the same request).
+            EditorKey::SceneRow(i) => {
+                if click && let Some(name) = self.scene_names.get(i) {
+                    self.pending_scrub = Some(ScrubRequest::ByName(name.clone()));
+                }
+            }
+            // The Scenes panel's "record new path" action opens the live path
+            // recorder — the panel counterpart to the `R` shortcut.
+            EditorKey::RecordPath => {
+                if click {
+                    self.open_path_recorder(map, maps, camera_pos);
+                }
+            }
             // The overlay's confirm/cancel are hit-tested inside `step_warp_preview`
             // (it's modal), so they never arrive through the normal panel dispatch.
             // The recorder's own controls (save/cancel/name/actor/canvas) are the
@@ -1342,5 +1357,56 @@ mod tests {
         // View editors never persist.
         assert!(!MapViewer::default().persist);
         assert!(MapViewer::primary().persist);
+    }
+
+    /// The Scenes panel dispatches its two actions through `handle_panel`: a
+    /// saved-cutscene row parks a `ByName` scrub request (the `P` picker's
+    /// counterpart), and the "record new path" row opens the live path recorder
+    /// (the `R` shortcut's counterpart).
+    #[test]
+    fn scenes_panel_scrubs_a_row_and_records_a_path() {
+        use egg_platform::test_console::TestConsole;
+
+        let mut console = TestConsole::new();
+        let mut input = EggInput::new();
+        input.mouse.left = [true, false]; // a just-pressed click edge
+        let mut map = MapInfo::default();
+        let mut maps = MapStore::default();
+
+        let mut v = MapViewer::default();
+        v.dock.recompute((200.0, 150.0));
+        v.scene_names = vec!["backyard_path".into(), "pet_dog".into()];
+
+        // A saved-cutscene row parks that scene's replay request for the host.
+        v.handle_panel(
+            &mut console,
+            &input,
+            &mut map,
+            &mut maps,
+            usize::MAX,
+            EditorKey::SceneRow(1),
+            Vec2::new(0, 0),
+        );
+        // `ScrubRequest` isn't `PartialEq`, so match rather than `assert_eq`.
+        match &v.pending_scrub {
+            Some(ScrubRequest::ByName(name)) => {
+                assert_eq!(name, "pet_dog", "parks the clicked scene's name")
+            }
+            other => panic!("expected a ByName scrub, got {other:?}"),
+        }
+
+        // The "record new path" action opens the modal path recorder.
+        assert!(v.path_recorder.is_none(), "not recording yet");
+        v.handle_panel(
+            &mut console,
+            &input,
+            &mut map,
+            &mut maps,
+            usize::MAX,
+            EditorKey::RecordPath,
+            Vec2::new(0, 0),
+        );
+        assert!(v.path_recorder.is_some(), "record action opened the recorder");
+        assert!(v.is_typing(), "the modal recorder captures input");
     }
 }

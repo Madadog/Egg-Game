@@ -526,10 +526,14 @@ pub fn update_views(
         if views.views[i].mode == ViewMode::Walkaround && views.views[i].editor.focused {
             let g = &mut *game;
             let view = &mut views.views[i];
-            // Refresh the engine-owned snapshots this view's editor panels list
-            // (the primary editor gets these pushed in `EggGame::run`, which owns
-            // and steps the primary `MapViewer`).
+            // Refresh the engine-owned snapshots this view's editor panels list —
+            // the creature presets, the scene picker's cutscene names, and the live
+            // actors the path recorder picks from (the primary editor gets these
+            // pushed in `EggGame::run`, which owns and steps the primary
+            // `MapViewer`).
             view.editor.preset_defs = g.state.presets.named_defs();
+            view.editor.scene_names = g.state.scenes.names();
+            view.editor.recorder_actors = g.state.walkaround.recorder_actors();
             let cam = view.free_cam;
             let screen = (view.output.width() as f32, view.output.height() as f32);
             let sheet = (
@@ -614,6 +618,20 @@ pub fn update_views(
                     // strand the layer in a stale list (it would look deleted).
                     g.state.walkaround.current_map.sprite_layers = fresh.sprite_layers;
                     g.state.walkaround.current_map.sprite_components = fresh.sprite_components;
+                }
+            }
+            // A view's scene picker (or its recorder's save-and-play) can request
+            // a scrubber; open it here through the shared state. The scrubber is
+            // global — it opens in the primary window (there is only one), so a
+            // scrub kicked off from an F8 view plays back on the main screen.
+            if let Some(req) = view.editor.pending_scrub.take() {
+                match req {
+                    egg_core::data::scene::ScrubRequest::ByName(name) => {
+                        g.state.open_scrubber(&name)
+                    }
+                    egg_core::data::scene::ScrubRequest::Recorded(name, def) => {
+                        g.state.open_scrubber_def(name, def)
+                    }
                 }
             }
         }

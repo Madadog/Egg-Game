@@ -423,6 +423,13 @@ enum EditorKey {
     WarpPreviewOpen,
     /// A Presets-panel row: open the walk-sprite editor on that preset.
     PresetRow(usize),
+    /// A Scenes-panel row: replay saved cutscene `n` (index into
+    /// [`scene_names`](MapViewer::scene_names)) in the scrubber — the panel
+    /// counterpart to the `P` scene picker's Enter.
+    SceneRow(usize),
+    /// The Scenes panel's "record new path" action: open the live path recorder
+    /// (the panel counterpart to the `R` shortcut).
+    RecordPath,
     /// The walk-sprite editor's Save / Cancel buttons (hit only in that modal).
     WalkEdOk,
     WalkEdCancel,
@@ -515,9 +522,12 @@ const SHEET_COLS_DEFAULT: usize = 32;
 const SHEET_ROWS_DEFAULT: usize = 128;
 /// Grab width (px) of a palette scroll bar at the viewport's edge.
 const PALETTE_BAR_GRAB: i16 = 4;
-/// The global undo/redo/save + panel-toggle toolbar's size, px.
-const GLOBAL_BAR_W: f32 = 72.0;
-const GLOBAL_BAR_H: f32 = 11.0;
+/// The global undo/redo/save + panel-toggle toolbar's size, px. Width fits its
+/// row: undo 8 + redo 8 + save 13 + 8 icon tabs × 8 = 93, plus 10 × 1px gaps and
+/// 1px padding a side (2) = 105; height is the tallest child (an 8px icon) plus
+/// that 2px padding = 10.
+const GLOBAL_BAR_W: f32 = 105.0;
+const GLOBAL_BAR_H: f32 = 10.0;
 /// A Maps-browser cell's thumbnail box size, px (a name label sits below it).
 const THUMB_W: f32 = 40.0;
 const THUMB_H: f32 = 22.0;
@@ -1112,8 +1122,9 @@ pub struct MapViewer {
     /// position)` for the player, its companions, and every named creature on the
     /// current map — so the path recorder can pick which one it records (it can't
     /// see the walkaround's entities itself). Same refresh cadence as
-    /// [`scene_names`](Self::scene_names). Empty in an extra view, where the
-    /// recorder falls back to the player alone.
+    /// [`scene_names`](Self::scene_names). Pushed by the primary window and every
+    /// extra view; if a frame ever leaves it empty the recorder falls back to the
+    /// player alone.
     pub recorder_actors: Vec<(String, Vec2)>,
     /// The declared `#flag` vocabulary the engine pushes in each focused frame
     /// (it owns the loaded script, the editor doesn't), so an object's gate
