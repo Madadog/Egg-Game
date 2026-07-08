@@ -92,18 +92,17 @@ impl PanelKind {
     }
 
     /// Global-bar tab icons: `(active, inactive)` sprite ids on the main sheet,
-    /// drawn 8x8 in place of the old title letters. The pairs below are
-    /// placeholders — drop in the real per-tab icon sprite ids here.
+    /// drawn 8x8 in place of the old title letters.
     pub fn icon(self) -> (i32, i32) {
         match self {
-            Self::Layers => (2, 3),
-            Self::Paint => (2, 3),
-            Self::Objects => (2, 3),
-            Self::Maps => (2, 3),
-            Self::Map => (2, 3),
-            Self::Dialogue => (2, 3),
-            Self::Presets => (2, 3),
-            Self::Scenes => (2, 3),
+            Self::Layers => (1046, 1047),
+            Self::Paint => (1040, 1041),
+            Self::Objects => (1044, 1045),
+            Self::Maps => (1050, 1051),
+            Self::Map => (1048, 1049),
+            Self::Dialogue => (1052, 1053),
+            Self::Presets => (1054, 1055),
+            Self::Scenes => (1038, 1039),
         }
     }
 }
