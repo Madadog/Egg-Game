@@ -1,14 +1,15 @@
 //! Headless CLI harness: boot the game to a chosen state, drive it with scripted
 //! input, and write PNG screenshots — no window, no Bevy `App`, no real disk
 //! writes. The point is a scriptable, deterministic way for an agent (or a
-//! person) to *see* what a change does: `egg_game_bevy headless …` loads the
-//! same assets the windowed game does, runs the identical per-frame funnel
-//! ([`crate::run_frame`], shared verbatim with [`crate::EggGame::run`]), and
-//! captures the framebuffer through [`RgbaImage::encode_png`].
+//! person) to *see* what a change does: `egg_game_headless …` loads the same
+//! assets the windowed game does, runs the identical per-frame funnel
+//! ([`crate::run_frame`], shared verbatim with the Bevy host's `EggGame::run`),
+//! and captures the framebuffer through [`RgbaImage::encode_png`].
 //!
-//! Native-only (the whole module is `#[cfg(not(target_arch = "wasm32"))]`),
-//! dispatched from `main()` before any Bevy plugin is built, mirroring the
-//! `mod hot_reload` cfg precedent.
+//! Native-only (the whole module is `#[cfg(not(target_arch = "wasm32"))]` at its
+//! `mod` site): it reads bundled assets off disk and decodes PNGs with the
+//! `image` crate, neither of which the web build wants. [`crate::run_frame`] is
+//! not gated — the web host calls it.
 //!
 //! Determinism is the contract: the console is a pure in-memory
 //! [`HeadlessConsole`] (writes never touch disk — they land in a `HashMap` and a
@@ -42,10 +43,10 @@ const DEFAULT_MAP: &str = "bedroom";
 const DEFAULT_STREAM: u64 = 0x0a02_bdbf_7bb3_c0a7;
 
 const USAGE: &str = "\
-egg_game_bevy headless — boot the game headless, script input, capture PNGs
+egg_game_headless — boot the game headless, script input, capture PNGs
 
 USAGE:
-    egg_game_bevy headless [OPTIONS]
+    egg_game_headless [OPTIONS]
 
 OPTIONS:
     --map NAME        Start on this map (default: bedroom). Errors listing the
@@ -64,6 +65,8 @@ OPTIONS:
     --script FILE     Run an input script (see below); --frames/--out are ignored
                       and shots land in --out-dir.
     --out-dir DIR     Directory for a script's `shot` commands (default: .).
+    --assets DIR      Read bundled game assets from DIR instead of auto-detecting
+                      (tries ./assets, then ../../assets).
     --editor          Open the map editor overlay (like pressing L) before frame 1.
     --list-maps       Print the loaded map names and exit.
     --help            Print this help and exit.
@@ -83,14 +86,13 @@ SCRIPT (line-based; blank lines and `#` comments skipped):
           backspace, delete, insert, home, end, pageup, pagedown, f1-f12, and the
           punctuation scancodes (minus, equals, comma, period, slash, …).";
 
-/// The harness entry, dispatched from `main()` when the first CLI arg is
-/// `headless`. Parses the rest of the command line, boots the assets, sets the
-/// requested state, then either runs a fixed frame count or an input script,
-/// writing PNGs and a run summary. Exits the process directly on a usage error
-/// (code 2) or a fatal boot/IO error (code 1); returns normally on success (the
-/// caller then returns from `main`, so no Bevy app is ever built).
+/// The harness entry, the headless binary's `main`. Parses the command line,
+/// boots the assets, sets the requested state, then either runs a fixed frame
+/// count or an input script, writing PNGs and a run summary. Exits the process
+/// directly on a usage error (code 2) or a fatal boot/IO error (code 1); returns
+/// normally on success.
 pub fn run() {
-    let args: Vec<String> = std::env::args().skip(2).collect();
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let args = match Args::parse(&args) {
         Ok(a) => a,
         Err(e) => {
@@ -103,8 +105,12 @@ pub fn run() {
         return;
     }
 
+    // Resolve the asset root once (a `--assets` override, else auto-detect), so
+    // boot and the console both read from the same tree.
+    let root = resolve_asset_root(args.assets.as_deref());
+
     let mut state = EggState::default();
-    if let Err(e) = boot(&mut state) {
+    if let Err(e) = boot(&mut state, &root) {
         eprintln!("fatal: {e}");
         std::process::exit(1);
     }
@@ -118,7 +124,7 @@ pub fn run() {
         return;
     }
 
-    let mut console = HeadlessConsole::new();
+    let mut console = HeadlessConsole::with_root(root);
     // `--save` pre-seeds the in-memory store so the one-time save load below
     // picks it up — exactly as the real console would serve save.json.
     if let Some(path) = &args.save {
@@ -247,8 +253,7 @@ pub fn run() {
 /// through. Audio and exit are inert; the framebuffer is a fixed-size surface
 /// gamestate composites into; and the string-named file store is a `HashMap`, so
 /// a save flush (or any engine write) is captured in memory and logged, never
-/// written to the real `assets/` tree the windowed [`crate::fantasy_console::FantasyConsole`]
-/// would touch.
+/// written to the real `assets/` tree the windowed host would touch.
 struct HeadlessConsole {
     output: RgbaImage,
     /// In-memory stand-in for the host's file store. Writes land here only.
@@ -257,14 +262,28 @@ struct HeadlessConsole {
     /// surfaced in the run summary so a test/agent can see what the game tried to
     /// persist without anything reaching disk.
     written: Vec<String>,
+    /// Where read fallbacks resolve bundled assets from (see
+    /// [`resolve_asset_root`]). Held so a read and the run's boot agree on the
+    /// tree, and so the crate's own tests can point at `../../assets`.
+    asset_root: PathBuf,
 }
 
 impl HeadlessConsole {
+    /// A console rooted at the auto-detected asset tree — used by the tests,
+    /// which run with the crate directory as CWD. (Runtime always resolves the
+    /// root explicitly and calls [`with_root`](Self::with_root), so this is
+    /// test-only.)
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_root(resolve_asset_root(None))
+    }
+    /// A console whose read fallbacks resolve under `asset_root`.
+    fn with_root(asset_root: PathBuf) -> Self {
         Self {
             output: RgbaImage::new(WIDTH as u32, HEIGHT as u32),
             files: HashMap::new(),
             written: Vec::new(),
+            asset_root,
         }
     }
 }
@@ -275,8 +294,8 @@ impl ConsoleApi for HeadlessConsole {
     fn sfx(&mut self, _sfx_id: &str, _opts: SfxOptions) {}
 
     /// Capture the write in memory (and log its path). Never touches disk — the
-    /// whole reason the harness uses its own console rather than
-    /// `FantasyConsole`, whose native `write_file` rewrites real files.
+    /// whole reason the harness uses its own console rather than the windowed
+    /// host's, whose native `write_file` rewrites real files.
     fn write_file(&mut self, path: &str, bytes: &[u8]) {
         self.written.push(path.to_string());
         self.files.insert(path.to_string(), bytes.to_vec());
@@ -292,7 +311,7 @@ impl ConsoleApi for HeadlessConsole {
         if let Some(bytes) = self.files.get(path) {
             return Some(bytes.clone());
         }
-        read_asset(path)
+        read_asset(&self.asset_root, path)
     }
 
     fn output_image(&mut self) -> &mut RgbaImage {
@@ -300,54 +319,69 @@ impl ConsoleApi for HeadlessConsole {
     }
 }
 
-/// Validate an asset-namespace `path` and resolve it under `assets/` — the same
-/// rule [`crate::fantasy_console`]'s `asset_path` applies (no absolute paths, no
-/// `..` climbing out of the data root).
-fn asset_path(path: &str) -> Option<PathBuf> {
+/// Resolve the `assets/` root the harness reads bundled game data from. A
+/// `cargo run -p egg_game_headless` invocation keeps the repo root as CWD (so
+/// `./assets` is right there), but the crate's own tests run with CWD =
+/// `crates/egg_game_headless`, where the tree is two levels up. An explicit
+/// `--assets DIR` override wins unconditionally (a bad path then fails loudly at
+/// read time rather than silently falling back); otherwise try `assets`, then
+/// `../../assets`, and take the first that exists.
+fn resolve_asset_root(override_dir: Option<&str>) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return PathBuf::from(dir);
+    }
+    for candidate in ["assets", "../../assets"] {
+        if Path::new(candidate).exists() {
+            return PathBuf::from(candidate);
+        }
+    }
+    PathBuf::from("assets")
+}
+
+/// Validate an asset-namespace `path` and resolve it under `root` — the same
+/// rule the real console's `asset_path` applies (no absolute paths, no `..`
+/// climbing out of the data root). The validation is on the engine's relative
+/// path; `root` only picks which tree it lands in.
+fn asset_path(root: &Path, path: &str) -> Option<PathBuf> {
     let rel = Path::new(path);
     if rel.is_absolute() || rel.components().any(|c| matches!(c, Component::ParentDir)) {
         return None;
     }
-    Some(Path::new("assets").join(rel))
+    Some(root.join(rel))
 }
 
 /// Read a bundled asset off disk (read-only), or `None` if it's missing or the
-/// path is refused. Host tests and the harness both run with the repo root as
-/// CWD, so `assets/…` resolves.
-fn read_asset(path: &str) -> Option<Vec<u8>> {
-    std::fs::read(asset_path(path)?).ok()
+/// path is refused.
+fn read_asset(root: &Path, path: &str) -> Option<Vec<u8>> {
+    std::fs::read(asset_path(root, path)?).ok()
 }
 
-/// Decode PNG bytes into a Bevy [`Image`](bevy::image::Image) with the host's
-/// public sync codec — the same decode the windowed asset loader ultimately runs,
-/// so the pixel bytes (and thus the palette-index matching in
-/// [`crate::fantasy_console::FantasyConsole::indexed_sprites_from_image`]) are
-/// identical. `is_srgb` only labels the texture format; it doesn't touch the
-/// 8-bit bytes we read back.
-fn decode_png(bytes: &[u8]) -> Result<bevy::image::Image, String> {
-    bevy::image::Image::from_buffer(
-        bytes,
-        bevy::image::ImageType::Extension("png"),
-        bevy::image::CompressedImageFormats::NONE,
-        true,
-        bevy::image::ImageSampler::nearest(),
-        bevy::asset::RenderAssetUsages::all(),
-    )
-    .map_err(|e| format!("{e:?}"))
+/// Decode PNG `bytes` into the engine's [`RgbaImage`] with the `image` crate.
+///
+/// A *different* decoder from the hand-written [`RgbaImage::encode_png`] the
+/// harness screenshots with — which is exactly what makes the round-trip test
+/// (encode there, decode here) a genuine independent oracle. `to_rgba8` yields
+/// straight 8-bit RGBA with no premultiplication, so a fully-transparent but
+/// coloured pixel keeps its colour channels, matching the encoder byte-for-byte.
+fn decode_png(bytes: &[u8]) -> Result<RgbaImage, String> {
+    let rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    Ok(RgbaImage::from_vec(rgba.into_raw(), w, h))
 }
 
 /// Build the engine [`Font`] from a decoded 128×(≥128) font atlas, copying the
-/// pixels exactly as `FantasyConsole::set_font` does (a blank 128×128 font zipped
+/// pixels exactly as the console's `set_font` does (a blank 128×128 font zipped
 /// against the source bytes, so a taller sheet is truncated to the first 128
 /// rows).
-fn build_font(img: &bevy::image::Image) -> Result<Font, String> {
-    let (w, h) = (img.size().x, img.size().y);
+fn build_font(img: &RgbaImage) -> Result<Font, String> {
+    let (w, h) = (img.width(), img.height());
     if w != 128 || h < 128 {
         return Err(format!("font sized {w}x{h} (expected width 128, height >= 128)"));
     }
-    let src = img.data.as_ref().ok_or("font image has no pixel data")?;
     let mut font = Font::blank();
-    for (dst, s) in font.image_mut().data_mut().iter_mut().zip(src.iter()) {
+    for (dst, s) in font.image_mut().data_mut().iter_mut().zip(img.data().iter()) {
         *dst = *s;
     }
     font.refresh();
@@ -360,14 +394,14 @@ fn build_font(img: &bevy::image::Image) -> Result<Font, String> {
 /// `load_assets`' phase 3 conversions exactly. A missing/broken essential
 /// (manifest, font, sheet, script, scenes) is fatal; an individual map or image
 /// layer that fails is warned and skipped, so one bad map can't wedge boot.
-fn boot(state: &mut EggState) -> Result<(), String> {
-    let manifest_bytes = read_asset("game.manifest").ok_or("missing assets/game.manifest")?;
+fn boot(state: &mut EggState, root: &Path) -> Result<(), String> {
+    let manifest_bytes = read_asset(root, "game.manifest").ok_or("missing assets/game.manifest")?;
     let manifest = egg_core::data::tiled::manifest_from_json(&manifest_bytes)
         .map_err(|e| format!("game.manifest: {e}"))?;
 
     let mut loaded = 0usize;
     for name in &manifest.maps {
-        let Some(bytes) = read_asset(&format!("maps/{name}.tmj")) else {
+        let Some(bytes) = read_asset(root, &format!("maps/{name}.tmj")) else {
             eprintln!("warning: skipping map `{name}` (missing maps/{name}.tmj)");
             continue;
         };
@@ -383,15 +417,13 @@ fn boot(state: &mut EggState) -> Result<(), String> {
         // as `attach_map_images` does in the windowed loader.
         let rel_paths: Vec<String> = map.image_layer_paths().iter().map(|s| s.to_string()).collect();
         for rel in rel_paths {
-            let Some(img_bytes) = read_asset(&format!("maps/{rel}")) else {
+            let Some(img_bytes) = read_asset(root, &format!("maps/{rel}")) else {
                 eprintln!("warning: image layer `{rel}` for map `{name}` missing; layer has no pixels");
                 continue;
             };
             match decode_png(&img_bytes) {
-                Ok(img) => {
-                    let pixels = crate::fantasy_console::FantasyConsole::sprites_from_image(&img);
-                    map.attach_image(&rel, pixels);
-                }
+                // The decoded RgbaImage *is* the layer's pixels — attach it.
+                Ok(pixels) => map.attach_image(&rel, pixels),
                 Err(e) => {
                     eprintln!("warning: image layer `{rel}` for map `{name}` failed to decode: {e}")
                 }
@@ -402,25 +434,27 @@ fn boot(state: &mut EggState) -> Result<(), String> {
     }
     eprintln!("loaded {loaded}/{} map(s)", manifest.maps.len());
 
-    let font_bytes = read_asset("fonts/tic80_font.png").ok_or("missing assets/fonts/tic80_font.png")?;
+    let font_bytes = read_asset(root, "fonts/tic80_font.png").ok_or("missing assets/fonts/tic80_font.png")?;
     let font_img = decode_png(&font_bytes).map_err(|e| format!("font decode: {e}"))?;
     state.set_font(build_font(&font_img)?);
 
-    let sheet_bytes = read_asset("sprites/sheet.png").ok_or("missing assets/sprites/sheet.png")?;
+    let sheet_bytes = read_asset(root, "sprites/sheet.png").ok_or("missing assets/sprites/sheet.png")?;
     let sheet_img = decode_png(&sheet_bytes).map_err(|e| format!("sheet decode: {e}"))?;
     let palette = state.draw_state.palettes[0].clone();
-    state.draw_state.rgba_sprites =
-        crate::fantasy_console::FantasyConsole::sprites_from_image(&sheet_img);
-    state.draw_state.indexed_sprites =
-        crate::fantasy_console::FantasyConsole::indexed_sprites_from_image(&sheet_img, &palette);
+    // The decoded sheet is the RGBA form; derive the indexed form from it with
+    // the engine's palette-matching policy, then hand both to DrawState (the
+    // single owner of the sheets).
+    let indexed = sheet_img.to_indexed(&palette);
+    state.draw_state.rgba_sprites = sheet_img;
+    state.draw_state.indexed_sprites = indexed;
 
-    let script_bytes = read_asset("script/en.eggtext").ok_or("missing assets/script/en.eggtext")?;
+    let script_bytes = read_asset(root, "script/en.eggtext").ok_or("missing assets/script/en.eggtext")?;
     let script_text = std::str::from_utf8(&script_bytes).map_err(|e| format!("script utf8: {e}"))?;
     let script_file =
         egg_core::data::script::eggtext::parse(script_text).map_err(|e| format!("script parse: {e}"))?;
     state.script.set_base(script_file);
 
-    let scene_bytes = read_asset("data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
+    let scene_bytes = read_asset(root, "data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
     let scene_text = std::str::from_utf8(&scene_bytes).map_err(|e| format!("scenes utf8: {e}"))?;
     let scene_file =
         egg_core::data::scene::parse(scene_text).map_err(|e| format!("scenes parse: {e}"))?;
@@ -779,12 +813,14 @@ struct Args {
     out: Option<String>,
     script: Option<String>,
     out_dir: Option<String>,
+    /// Override the auto-detected asset root (`--assets DIR`).
+    assets: Option<String>,
 }
 
 impl Args {
-    /// Parse the args following `headless`. Hand-rolled (no clap — no new deps):
-    /// value-taking flags consume the next arg, an unknown flag or a missing
-    /// value is an error the caller turns into a usage message + exit 2.
+    /// Parse the harness args. Hand-rolled (no clap — no new deps): value-taking
+    /// flags consume the next arg, an unknown flag or a missing value is an error
+    /// the caller turns into a usage message + exit 2.
     fn parse(args: &[String]) -> Result<Args, String> {
         let mut out = Args::default();
         let mut i = 0;
@@ -810,6 +846,7 @@ impl Args {
                 "--out" => out.out = Some(take(args, &mut i, arg)?),
                 "--script" => out.script = Some(take(args, &mut i, arg)?),
                 "--out-dir" => out.out_dir = Some(take(args, &mut i, arg)?),
+                "--assets" => out.assets = Some(take(args, &mut i, arg)?),
                 other => return Err(format!("unknown argument: {other}")),
             }
             i += 1;
@@ -847,11 +884,11 @@ mod tests {
     use super::*;
     use egg_core::render::image::Rgba;
 
-    /// A PNG the encoder produces decodes back — through the very
-    /// [`decode_png`] the harness boots assets with (Bevy's sync codec) — to the
-    /// exact same RGBA bytes, fully-transparent pixels' colour included.
+    /// A PNG the engine's [`RgbaImage::encode_png`] produces decodes back —
+    /// through the `image` crate ([`decode_png`], an independent decoder) — to
+    /// the exact same RGBA bytes, fully-transparent pixels' colour included.
     #[test]
-    fn png_round_trips_through_bevy_decode() {
+    fn png_round_trips_through_image_decode() {
         let mut img = RgbaImage::new(3, 2);
         img.set_pixel(0, 0, Rgba::new(255, 0, 0, 255));
         img.set_pixel(1, 0, Rgba::new(0, 255, 0, 128));
@@ -861,9 +898,9 @@ mod tests {
         img.set_pixel(2, 1, Rgba::new(1, 2, 3, 4));
 
         let png = img.encode_png();
-        let decoded = decode_png(&png).expect("bevy decodes our PNG");
-        assert_eq!((decoded.size().x, decoded.size().y), (3, 2));
-        assert_eq!(decoded.data.as_deref(), Some(img.data()));
+        let decoded = decode_png(&png).expect("image crate decodes our PNG");
+        assert_eq!((decoded.width(), decoded.height()), (3, 2));
+        assert_eq!(decoded.data(), img.data());
     }
 
     /// The console is disk-isolated: writes land in memory + the log (never on
@@ -879,10 +916,10 @@ mod tests {
             Some(b"hi".to_vec())
         );
         assert_eq!(console.written, vec!["maps/should_not_exist.tmj".to_string()]);
-        assert!(
-            !Path::new("assets/maps/should_not_exist.tmj").exists(),
-            "the write must not have reached disk"
-        );
+        // The write must not have reached disk — check the resolved on-disk path,
+        // not a bare `assets/` (which needn't exist from the crate's CWD).
+        let on_disk = asset_path(&console.asset_root, "maps/should_not_exist.tmj").unwrap();
+        assert!(!on_disk.exists(), "the write must not have reached disk");
 
         // Memory wins over a same-named on-disk asset.
         console
@@ -903,15 +940,15 @@ mod tests {
         );
     }
 
-    /// The whole-harness regression net: a real asset boot from `./assets`, the
-    /// default map loaded, 60 neutral frames run through [`run_frame`]. The
-    /// composited output must not be a single flat colour (the world drew), and
-    /// [`RgbaImage::encode_png`] must still emit a valid PNG signature. Host
-    /// tests run with the repo root as CWD, so `assets/…` resolves.
+    /// The whole-harness regression net: a real asset boot from the auto-detected
+    /// root, the default map loaded, 60 neutral frames run through [`run_frame`].
+    /// The composited output must not be a single flat colour (the world drew),
+    /// and [`RgbaImage::encode_png`] must still emit a valid PNG signature.
     #[test]
     fn boot_and_run_produces_a_non_uniform_frame() {
+        let root = resolve_asset_root(None);
         let mut state = EggState::default();
-        boot(&mut state).expect("assets boot from ./assets");
+        boot(&mut state, &root).expect("assets boot from the resolved root");
 
         let mut console = HeadlessConsole::new();
         state.load_data(&mut console);
@@ -1024,7 +1061,7 @@ shot frame_one";
     fn args_parse_values_and_reject_unknowns() {
         let ok = Args::parse(&strs(&[
             "--map", "town", "--pos", "10,20", "--flag", "is_night", "--flag", "met_dog",
-            "--seed", "7", "--frames", "3", "--editor",
+            "--seed", "7", "--frames", "3", "--editor", "--assets", "../../assets",
         ]))
         .expect("parses");
         assert_eq!(ok.map.as_deref(), Some("town"));
@@ -1033,6 +1070,7 @@ shot frame_one";
         assert_eq!(ok.seed, Some(7));
         assert_eq!(ok.frames, Some(3));
         assert!(ok.editor);
+        assert_eq!(ok.assets.as_deref(), Some("../../assets"));
 
         assert!(Args::parse(&strs(&["--bogus"])).is_err(), "unknown flag");
         assert!(Args::parse(&strs(&["--map"])).is_err(), "missing value");

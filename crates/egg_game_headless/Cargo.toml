@@ -1,0 +1,21 @@
+[package]
+name = "egg_game_headless"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# The engine + the in-game editor. Unconditional (both targets): `run_frame`
+# lives in this crate's lib and the Bevy host calls it on native AND web, so the
+# lib must link these on wasm too. Neither pulls in Bevy.
+egg_core = { path = "../../egg_core" }
+egg_editor = { path = "../egg_editor" }
+
+# PNG *decode* only, and native-only. The harness reads bundled sheets/fonts/
+# image-layers off disk and needs a decoder; screenshot *encoding* stays on the
+# engine's hand-written `RgbaImage::encode_png` (also the web image-layer
+# persistence seam), so `image` is never used for output. Gated off wasm because
+# the harness never runs on web — this keeps `image` out of the wasm build while
+# unifying on native with the 0.25.x the Bevy host already pins (png feature
+# only, no default codecs, so nothing else is dragged in).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

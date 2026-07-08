@@ -143,6 +143,32 @@ impl RgbaImage {
         write_chunk(&mut out, b"IEND", &[]);
         out
     }
+
+    /// Convert to indexed form by matching each pixel's RGB against `palette`:
+    /// the first entry whose R/G/B equal the pixel's becomes that pixel's index,
+    /// and a pixel matching none becomes index 0. Alpha is ignored — only the
+    /// colour channels are compared, so a transparent pixel still indexes by its
+    /// stored colour.
+    ///
+    /// This is the single home for the sheet-indexing policy: the host converts a
+    /// loaded RGBA sheet with it (via `sprites_from_image(...).to_indexed(...)`),
+    /// and the headless harness applies it to a decoded sheet the same way, so
+    /// both routes produce byte-identical indexed sprites.
+    pub fn to_indexed(&self, palette: &[[u8; 3]]) -> IndexedImage {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let mut data = Vec::with_capacity(width * height);
+        'outer: for pixel in self.data.chunks_exact(4) {
+            for (i, colour) in palette.iter().enumerate() {
+                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
+                    data.push(i.try_into().unwrap());
+                    continue 'outer;
+                }
+            }
+            data.push(0);
+        }
+        IndexedImage::from_vec(data, width, height)
+    }
 }
 
 /// The fixed 8-byte PNG file signature every stream starts with.
@@ -309,5 +335,21 @@ mod png_tests {
         // Bit depth 8, colour type 6 (RGBA).
         assert_eq!(png[24], 8, "bit depth");
         assert_eq!(png[25], 6, "colour type RGBA");
+    }
+
+    /// The sheet-indexing policy: an exact RGB match takes that palette index, a
+    /// non-match falls to 0, and alpha is ignored (a pixel whose RGB matches but
+    /// whose alpha differs still indexes by colour).
+    #[test]
+    fn to_indexed_matches_rgb_ignores_alpha() {
+        let palette = [[10, 20, 30], [40, 50, 60]];
+        let mut img = RgbaImage::new(3, 1);
+        img.set_pixel(0, 0, Rgba::new(10, 20, 30, 255)); // exact match -> index 0
+        img.set_pixel(1, 0, Rgba::new(40, 50, 60, 0)); // RGB matches entry 1, alpha differs
+        img.set_pixel(2, 0, Rgba::new(99, 99, 99, 255)); // no match -> 0
+        let indexed = img.to_indexed(&palette);
+        assert_eq!(indexed.get_pixel(0, 0), 0, "exact RGB -> its index");
+        assert_eq!(indexed.get_pixel(1, 0), 1, "RGB match despite alpha mismatch");
+        assert_eq!(indexed.get_pixel(2, 0), 0, "no palette match -> 0");
     }
 }

@@ -34,6 +34,10 @@ egg_core = { path = "egg_core" }
 # window's `MapViewer` (and each F8 view owns its own), so it depends on the
 # editor crate directly — `egg_core` no longer re-exports it.
 egg_editor = { path = "crates/egg_editor" }
+# The Bevy-free crate that owns the shared per-frame funnel (`run_frame`, which
+# `EggGame::run` delegates to on native AND web) and the native headless CLI
+# harness. Depending on it here is what lets the host import `run_frame`.
+egg_game_headless = { path = "crates/egg_game_headless" }
 serde = "1.0.173"
 serde_json = "1.0.103"
 
@@ -56,7 +60,7 @@ console_error_panic_hook = "0.1"
 
 [workspace]
 
-members = ["egg_core", "crates/egg_render", "crates/egg_platform", "crates/egg_world", "crates/egg_ui", "crates/egg_editor"]
+members = ["egg_core", "crates/egg_render", "crates/egg_platform", "crates/egg_world", "crates/egg_ui", "crates/egg_editor", "crates/egg_game_headless"]
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

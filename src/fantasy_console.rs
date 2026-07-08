@@ -119,28 +119,13 @@ impl FantasyConsole {
         )
     }
     /// Convert an RGBA sprite sheet to indexed form by matching each pixel
-    /// against `palette`. Pixels that don't match a palette entry become
-    /// index 0. Host-side: the palette-matching policy is the host's, and the
-    /// result is stored on [`DrawState`](egg_core::draw_state::DrawState).
+    /// against `palette` (exact RGB → that index, miss → 0). A thin wrapper over
+    /// the engine's own [`RgbaImage::to_indexed`], which owns the policy — the
+    /// headless harness applies the identical rule to its decoded sheet, so both
+    /// routes produce the same indexed sprites. The result is stored on
+    /// [`DrawState`](egg_core::draw_state::DrawState).
     pub fn indexed_sprites_from_image(sheet: &Image, palette: &[[u8; 3]]) -> IndexedImage {
-        let width = sheet.size().x as usize;
-        let height = sheet.size().y as usize;
-        let mut data = Vec::with_capacity(width * height);
-        'outer: for pixel in sheet
-            .data
-            .as_ref()
-            .expect("Tried to read uninitialised image.")
-            .chunks_exact(4)
-        {
-            for (i, colour) in palette.iter().enumerate() {
-                if pixel[0] == colour[0] && pixel[1] == colour[1] && pixel[2] == colour[2] {
-                    data.push(i.try_into().unwrap());
-                    continue 'outer;
-                }
-            }
-            data.push(0);
-        }
-        IndexedImage::from_vec(data, width, height)
+        Self::sprites_from_image(sheet).to_indexed(palette)
     }
 }
 
