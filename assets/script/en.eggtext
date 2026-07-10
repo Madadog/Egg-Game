@@ -68,6 +68,18 @@ menu_music_test = "Music Test"
 #list item_chegg
     Mystery Egg
     There's something inside.
+    
+#list item_t1
+    Toy Truck
+    A cheap, plastic universe of entertainment for a baby.
+    
+#list item_t2
+    Toy Car
+    It goes "vroom" if you provide the sound.
+    
+#list item_t3
+    Toys
+    The toys have merged, becoming more powerful than the sum of their parts.
 
 // --- bedroom ---
 

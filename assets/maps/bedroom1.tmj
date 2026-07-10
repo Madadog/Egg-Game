@@ -181,6 +181,72 @@
           "width": 8,
           "x": 80,
           "y": 37
+        },
+        {
+          "height": 8,
+          "id": 6,
+          "name": "",
+          "properties": [
+            {
+              "name": "func",
+              "type": "string",
+              "value": "give_item"
+            },
+            {
+              "name": "item",
+              "type": "string",
+              "value": "t1"
+            },
+            {
+              "name": "anim",
+              "type": "string",
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":1065,\"duration\":1,\"options\":{\"id\":0,\"transparent\":0},\"outline_colour\":1,\"palette_rotate\":0}]"
+            },
+            {
+              "name": "removable",
+              "type": "string",
+              "value": "true"
+            }
+          ],
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 8,
+          "x": 99,
+          "y": 71
+        },
+        {
+          "height": 8,
+          "id": 7,
+          "name": "",
+          "properties": [
+            {
+              "name": "func",
+              "type": "string",
+              "value": "give_item"
+            },
+            {
+              "name": "item",
+              "type": "string",
+              "value": "t2"
+            },
+            {
+              "name": "anim",
+              "type": "string",
+              "value": "[{\"pos\":{\"x\":0,\"y\":0},\"spr_id\":1066,\"duration\":1,\"options\":{\"id\":0,\"transparent\":0},\"outline_colour\":1,\"palette_rotate\":0}]"
+            },
+            {
+              "name": "removable",
+              "type": "string",
+              "value": "true"
+            }
+          ],
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 8,
+          "x": 112,
+          "y": 74
         }
       ],
       "opacity": 1,
@@ -191,7 +257,7 @@
     }
   ],
   "nextlayerid": 7,
-  "nextobjectid": 6,
+  "nextobjectid": 8,
   "orientation": "orthogonal",
   "properties": [
     {

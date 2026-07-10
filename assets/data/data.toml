@@ -67,6 +67,15 @@ sprite = 513
 [items.lm]
 sprite = 514
 
+[items.t1]
+sprite = 1065
+
+[items.t2]
+sprite = 1066
+
+[items.t3]
+sprite = 1067
+
 [presets.bro]
 hitbox = [
     0,
