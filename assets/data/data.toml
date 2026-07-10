@@ -12,6 +12,11 @@
 # --- items ---
 # `[items.<key>]`, keyed by the id saves store and interactions name
 # (InteractFn::GiveItem). `sprite` is its sheet sprite id.
+#   use = { dialogue = "..." }   optional: what placing the item on the bag's
+#   use = { cutscene = "..." }   "Use" button fires — a dialogue key, a cutscene
+#   use = { func = "..." }       name, or an InteractFn func name (as .tmj objects
+#                                use: "toggle_dog", …). Absent ⇒ no use (deny buzz,
+#                                item stays held). Using does not consume the item.
 #
 # --- creature presets ---
 # `[presets.<name>]`, keyed by the name a save/egg stores. Fields:

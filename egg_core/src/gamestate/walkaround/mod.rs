@@ -22,7 +22,7 @@ use log::info;
 
 use self::cutscene::Cutscene;
 use self::inventory::{Inventory, InventoryUi, InventoryUiState};
-use crate::data::eggdata::GameItems;
+use crate::data::eggdata::{GameItems, UseDef};
 
 mod cutscene;
 pub mod inventory;
@@ -1002,6 +1002,35 @@ impl WalkaroundState {
     /// overlay the walkaround owns, not a top-level mode.
     fn step_inventory(&mut self, ctx: &mut Ctx<impl ConsoleApi>) -> Option<GameMode> {
         self.inventory_ui.step(ctx);
+        // A "Use" placed on the Use button this frame stages the item's authored
+        // effect here; drain and fire it now. The bag has closed (the Use path
+        // sets `Close`), so it plays in the world — the same `fire_interaction`
+        // seam a map object uses, with the same borrow dance for the bag's
+        // inventory (which `fire_interaction` also borrows).
+        if let Some(def) = self.inventory_ui.pending_use.take() {
+            let interaction = match def {
+                UseDef::Dialogue(key) => Some(Interaction::Dialogue(key)),
+                UseDef::Cutscene(name) => Some(Interaction::Cutscene(name)),
+                UseDef::Func(name) => {
+                    // Resolve the func name against the player's current hitbox
+                    // (the piano's origin etc.); an unknown name logs and does
+                    // nothing, like an unknown cutscene (garbage tolerance).
+                    let hitbox = self.player_ref().hitbox();
+                    match InteractFn::from_name(&name, None, None, None, hitbox) {
+                        Some(f) => Some(Interaction::Func(f)),
+                        None => {
+                            info!("use effect: unknown func {name:?}");
+                            None
+                        }
+                    }
+                }
+            };
+            if let Some(interaction) = interaction {
+                let mut inventory = std::mem::take(&mut self.inventory_ui.inventory);
+                self.fire_interaction(ctx, &interaction, &mut inventory);
+                self.inventory_ui.inventory = inventory;
+            }
+        }
         match self.inventory_ui.state {
             InventoryUiState::Close => None,
             InventoryUiState::Options => Some(GameMode::InventoryOptions),
@@ -2510,6 +2539,146 @@ mod tests {
             trans,
             Some(GameMode::InventoryOptions),
             "Options state asks to open the options menu"
+        );
+    }
+
+    /// A one-frame rising edge on the primary controller's A button, so a single
+    /// bag `step` sees `just_pressed(pad.a)` (activating a button under the cursor).
+    fn press_a(parts: &mut CtxParts) {
+        parts.input.controllers[0].a = [true, false];
+    }
+
+    /// Placing a held item on the Drop button (cursor 9) and pressing A discards
+    /// it: the item leaves the inventory, the held state clears, and the cursor
+    /// returns to the grid (off the now-hidden buttons). Driven through the real
+    /// `inventory_ui.step` so it exercises the A-on-button routing, not just the
+    /// helper.
+    #[test]
+    fn bag_drop_button_removes_the_held_item() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+
+        // Hold slot 0's item ("ff") with the cursor on the Drop button.
+        walk.inventory_ui.state = InventoryUiState::Items(9, Some((0, "ff".into())));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.inventory_ui.step(ctx));
+
+        assert_eq!(
+            walk.inventory_ui.inventory.get(0),
+            None,
+            "the dropped item is removed from its slot",
+        );
+        assert!(walk.inventory_ui.pending_use.is_none(), "drop fires no use effect");
+        match &walk.inventory_ui.state {
+            InventoryUiState::Items(i, sel) => {
+                assert!(sel.is_none(), "no longer holding after a drop");
+                assert!(*i < 8, "cursor normalised back onto the grid, off the buttons");
+            }
+            other => panic!("still on the Items page after a drop, got {other:?}"),
+        }
+    }
+
+    /// Using an item with no authored `on_use` denies: the deny path keeps the
+    /// item held, the cursor on the Use button, and the bag open (nothing staged).
+    #[test]
+    fn bag_use_button_without_effect_denies_and_keeps_holding() {
+        let mut console = TestConsole::new();
+        // Default items (ff/lm/chegg) carry no `use`.
+        let mut parts = CtxParts::new();
+        let mut walk = WalkaroundState::new();
+
+        walk.inventory_ui.state = InventoryUiState::Items(8, Some((0, "ff".into())));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.inventory_ui.step(ctx));
+
+        assert!(walk.inventory_ui.pending_use.is_none(), "no effect staged");
+        assert_eq!(
+            walk.inventory_ui.inventory.get(0),
+            Some("ff"),
+            "the item is untouched (using never consumes, and this one has no use)",
+        );
+        match &walk.inventory_ui.state {
+            InventoryUiState::Items(i, sel) => {
+                assert_eq!(*i, 8, "cursor stays on the Use button");
+                assert!(sel.is_some(), "still holding after a denied use");
+            }
+            other => panic!("bag stays open on the Items page, got {other:?}"),
+        }
+    }
+
+    /// Using an item that *has* an `on_use` stages its effect in `pending_use`,
+    /// puts the held item back down (using never consumes it), and closes the bag
+    /// so the effect plays out in the world.
+    #[test]
+    fn bag_use_button_with_effect_stages_it_and_closes() {
+        use crate::data::eggdata::{GameItems, ItemDef};
+        use std::collections::BTreeMap;
+
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        // An item whose use fires a dialogue.
+        let mut defs = BTreeMap::new();
+        defs.insert(
+            "potion".to_string(),
+            ItemDef {
+                sprite: 1,
+                on_use: Some(UseDef::Dialogue("gulp".into())),
+            },
+        );
+        parts.items = GameItems::from_data(&defs);
+
+        let mut walk = WalkaroundState::new();
+        walk.inventory_ui.inventory.items = [const { None }; 8];
+        walk.inventory_ui.inventory.items[0] = Some("potion".into());
+        walk.inventory_ui.state = InventoryUiState::Items(8, Some((0, "potion".into())));
+        press_a(&mut parts);
+        with_ctx(&mut console, &mut parts, |ctx| walk.inventory_ui.step(ctx));
+
+        assert_eq!(
+            walk.inventory_ui.pending_use,
+            Some(UseDef::Dialogue("gulp".into())),
+            "the item's use-effect is staged for the walkaround to fire",
+        );
+        assert!(
+            matches!(walk.inventory_ui.state, InventoryUiState::Close),
+            "the bag closes so the effect plays in the world",
+        );
+        assert_eq!(
+            walk.inventory_ui.inventory.get(0),
+            Some("potion"),
+            "using does not consume the item",
+        );
+    }
+
+    /// `step_inventory` drains a staged `pending_use` and fires it: a `Dialogue`
+    /// use-effect opens the walkaround dialogue box (via the shared
+    /// `fire_interaction` seam) the same frame, and clears `pending_use`.
+    #[test]
+    fn step_inventory_fires_a_staged_dialogue_use() {
+        let mut console = TestConsole::new();
+        let mut parts = CtxParts::new();
+        // Register the dialogue the use-effect names so it resolves to messages.
+        let script = crate::data::script::eggtext::parse("#dialogue gulp\n    Glug glug.\n")
+            .expect("test script parses");
+        parts.script.set_base(script);
+
+        let mut walk = WalkaroundState::new();
+        // The Use path has already closed the bag and staged the effect.
+        walk.inventory_ui.state = InventoryUiState::Close;
+        walk.inventory_ui.pending_use = Some(UseDef::Dialogue("gulp".into()));
+        assert!(!walk.dialogue.is_active(), "no dialogue is up before firing");
+
+        let trans = with_ctx(&mut console, &mut parts, |ctx| walk.step_inventory(ctx));
+
+        assert_eq!(trans, None, "firing a use-effect drives no mode transition");
+        assert!(
+            walk.dialogue.is_active(),
+            "the use-effect's dialogue box opened in the world",
+        );
+        assert!(
+            walk.inventory_ui.pending_use.is_none(),
+            "pending_use was drained by the fire",
         );
     }
 

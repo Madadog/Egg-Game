@@ -1,6 +1,6 @@
 use crate::{
     Ctx,
-    data::eggdata::GameItems,
+    data::eggdata::{GameItems, UseDef},
     data::sound,
     platform::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed},
     render::{print_to_centered_with_font, print_to_with_font},
@@ -128,12 +128,38 @@ impl InventoryUiState {
                     self.change(system)
                 };
             }
-            Self::Items(i, _) => {
+            Self::Items(i, sel) => {
+                // The Use(8)/Drop(9) buttons exist only while an item is held;
+                // normalise a stale button cursor back into the grid the moment
+                // it's gone (a defensive fixup — the click paths already reset it).
+                let holding = sel.is_some();
+                if !holding && *i >= 8 {
+                    *i = 3;
+                }
+                if *i >= 8 {
+                    // On the button strip: left/right slides between the two
+                    // buttons (and off Use back into the grid); up/down returns to
+                    // the grid. Reachable only while holding, so no bounds worry.
+                    match (dx, dy) {
+                        (1, _) => *i = 9,
+                        (-1, _) => *i = if *i == 9 { 8 } else { 3 },
+                        (_, d) if d != 0 => *i = 3,
+                        _ => {}
+                    }
+                    return;
+                }
                 if (*i == 0 || *i == 4) && dx == -1 {
                     self.back(system);
                     return;
                 };
-                let dx = if *i == 3 { dx.min(0) } else { dx };
+                // Right off the right column (3 or 7) steps onto the Use button
+                // while holding; otherwise it's clamped so the top-right slot
+                // doesn't wrap to the bottom-left.
+                if holding && (*i == 3 || *i == 7) && dx == 1 {
+                    *i = 8;
+                    return;
+                }
+                let dx = if *i == 3 || *i == 7 { dx.min(0) } else { dx };
                 let new = *i as i32 + dx + dy * 4;
                 if (0..8).contains(&new) {
                     *i = new as usize;
@@ -161,6 +187,13 @@ pub enum InvKey {
     Slot(usize),
     /// An egg slot on the Eggs page (`0..4`).
     Egg(usize),
+    /// The "Use" button — placing the held item here fires its use-effect. Shown
+    /// only while an item is held (see [`InventoryUi::build_buttons`]); the dpad
+    /// cursor reaches it as index 8.
+    Use,
+    /// The "Drop" button — placing the held item here discards it. Shown only
+    /// while an item is held; the dpad cursor reaches it as index 9.
+    Drop,
 }
 
 /// A 20×20 item/egg slot: an outlined box keyed for hit-testing, wrapping an
@@ -184,6 +217,12 @@ pub struct InventoryUi {
     pub inventory: Inventory,
     pub state: InventoryUiState,
     pub dialogue: Dialogue,
+    /// A "Use" the player placed on the Use button this frame: the authored
+    /// effect of the used item, staged here for the walkaround to drain and fire
+    /// (`step_inventory`) once the bag has closed, so the dialogue/cutscene plays
+    /// in the world rather than under the frozen overlay. `None` the rest of the
+    /// time.
+    pub pending_use: Option<UseDef>,
 }
 impl Default for InventoryUi {
     fn default() -> Self {
@@ -199,6 +238,7 @@ impl InventoryUi {
             // walkaround entry.
             state: InventoryUiState::Close,
             dialogue: Dialogue::default(),
+            pending_use: None,
         }
     }
     pub fn open(&mut self, system: &mut impl ConsoleApi) {
@@ -396,6 +436,66 @@ impl InventoryUi {
         let root = b.centered(panel).size(screen.0, screen.1).id();
         b.finish(root, screen)
     }
+    /// Build the floating "Use"/"Drop" button strip and its screen placement, or
+    /// `None` when no item is held — the buttons exist only while dragging one.
+    ///
+    /// A detached mini-row hung off the panel's right edge and vertically centred
+    /// against it (the strip right of the centred panel is free on the base
+    /// screen), so it never shifts or resizes the centred panel on pickup. Laid
+    /// out at the origin and *placed* via the returned `(x, y)` offset with the
+    /// `Ui::*_at` helpers — so both hit-testing (`step`) and drawing (`draw`)
+    /// feed off the same laid-out rects and always agree (the panel's own
+    /// build-once pattern). Anchored to the shared panel's top-right slot rect,
+    /// so it tracks the panel at any framebuffer size.
+    fn build_buttons<S: ConsoleApi>(
+        &self,
+        ctx: &Ctx<S>,
+        panel: &Ui<InvKey>,
+    ) -> Option<(Ui<InvKey>, i16, i16)> {
+        use crate::render::PrintOptions;
+
+        // Only while an item is held (which only happens on the Items page).
+        if !matches!(self.state, InventoryUiState::Items(_, Some(_))) {
+            return None;
+        }
+        let small = ctx.save.small_text_on;
+        let body_opts = PrintOptions {
+            color: 12,
+            small_text: small,
+            ..Default::default()
+        };
+        // Each button is an outlined box (the slots' palette convention) wrapping
+        // its label, sized to the text plus a small pad — like the panel's hint box.
+        let button = |b: &mut UiBuilder<InvKey>, label: &str, key: InvKey| -> NodeId {
+            let w = ctx.text_width(label, body_opts.clone());
+            let text = b.text(label).small(small).size(w as f32, 8.0).id();
+            b.boxed([text])
+                .size((w + 4) as f32, 11.0)
+                .pad_lrtb(2.0, 2.0, 1.0, 0.0)
+                .outlined(0, 1)
+                .key(key)
+                .id()
+        };
+        let mut b = UiBuilder::new();
+        let use_btn = button(&mut b, &ctx.script.label("inventory_use"), InvKey::Use);
+        let drop_btn = button(&mut b, &ctx.script.label("inventory_drop"), InvKey::Drop);
+        let row = b.row(2.0, [use_btn, drop_btn]).id();
+        let (sw, sh) = ctx.draw.size();
+        let ui = b.finish(row, (sw as f32, sh as f32));
+
+        // Place right of the panel, vertically centred against it. The panel is
+        // screen-centred, so its vertical centre is the screen's; the top-right
+        // slot's right edge plus the main box's 2px right pad is the panel's right
+        // edge (a small gap beyond it clears the panel outline).
+        let bh = ui.rect(InvKey::Use).map(|r| r.h).unwrap_or(11);
+        let panel_right = panel
+            .rect(InvKey::Slot(3))
+            .map(|s| s.x + s.w + 2)
+            .unwrap_or(sw as i16 * 3 / 4);
+        let bx = panel_right + 3;
+        let by = sh as i16 / 2 - bh / 2;
+        Some((ui, bx, by))
+    }
     pub fn draw(&self, ctx: &mut Ctx<impl ConsoleApi>) {
         use crate::draw_state::{LayerId::*, PALETTE_MAP_IDENTITY};
         use crate::render::image::{Rgba, RgbaImage};
@@ -441,7 +541,14 @@ impl InventoryUi {
 
         // Lay out and draw the whole panel in one pass...
         let ui = self.build_ui(&*ctx);
+        // ...plus the floating Use/Drop strip while an item is held (None
+        // otherwise), placed off the panel's right edge. Same laid-out rects the
+        // cursor highlight below and `step`'s hit-test read.
+        let buttons = self.build_buttons(&*ctx, &ui);
         ui.draw(ctx.draw, ctx.font, FG);
+        if let Some((btns, bx, by)) = &buttons {
+            btns.draw_at(*bx, *by, ctx.draw, ctx.font, FG);
+        }
 
         // Unlock emblems: each shell whose story flag is set shows its icon
         // (sprite `596 + slot index`) centred on its 16×16 egg. `rect` resolves
@@ -468,7 +575,18 @@ impl InventoryUi {
         // ...then overlay the state-specific bits using the laid-out rects.
         match &self.state {
             InventoryUiState::Items(current, selected) => {
-                if let Some(slot) = ui.rect(InvKey::Slot(*current)) {
+                // The cursor may sit on a slot (`0..8`) or, while holding, on the
+                // Use(8)/Drop(9) button — resolve its rect from whichever tree laid
+                // it out, so the highlight and floating sprite follow onto a button.
+                let cursor = if *current < 8 {
+                    ui.rect(InvKey::Slot(*current))
+                } else {
+                    buttons.as_ref().and_then(|(bu, bx, by)| {
+                        let key = if *current == 8 { InvKey::Use } else { InvKey::Drop };
+                        bu.rect_at(*bx, *by, key)
+                    })
+                };
+                if let Some(slot) = cursor {
                     ctx.draw.rgba(FG).stroke_rect(
                         slot.x.into(),
                         slot.y.into(),
@@ -591,13 +709,83 @@ impl InventoryUi {
             system.play_sound(sound::deny());
         }
     }
+    /// Activate the bag button the held item was placed on. Drop discards the
+    /// item (the existing [`drop_item`](Self::drop_item) path) and returns the
+    /// cursor to the origin slot; Use looks up the item's authored `on_use` and,
+    /// if any, stages it in [`pending_use`](Self::pending_use), puts the held item
+    /// back down (using never consumes it) and closes the bag so the effect plays
+    /// in the world — otherwise a deny buzz, still holding, bag still open. Kept
+    /// out of [`click`](Self::click) because Use needs the item registry on `ctx`,
+    /// which `click` (mouse/A both) doesn't take. No-op unless an item is held.
+    fn activate_button(&mut self, ctx: &mut Ctx<impl ConsoleApi>, key: InvKey) {
+        match key {
+            InvKey::Drop => {
+                // The origin slot the held item came from, so the cursor lands
+                // back on it once the button (index >= 8) is gone.
+                let origin = match &self.state {
+                    InventoryUiState::Items(cur, sel) => {
+                        sel.as_ref().map(|(o, _)| *o).unwrap_or(*cur)
+                    }
+                    _ => return,
+                };
+                self.drop_item(ctx.system);
+                if let InventoryUiState::Items(i @ 8.., None) = &mut self.state {
+                    *i = origin;
+                }
+            }
+            InvKey::Use => {
+                let Some(key) = (match &self.state {
+                    InventoryUiState::Items(_, Some((_, key))) => Some(key.clone()),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                match ctx.items.get(&key).and_then(|d| d.on_use.clone()) {
+                    // No authored use: deny, keep holding, bag stays open.
+                    None => ctx.system.play_sound(sound::deny()),
+                    Some(def) => {
+                        self.pending_use = Some(def);
+                        if let InventoryUiState::Items(_, selected) = &mut self.state {
+                            *selected = None;
+                        }
+                        self.state = InventoryUiState::Close;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     pub fn step(&mut self, ctx: &mut Ctx<impl ConsoleApi>) {
         // --- Mouse: hover moves the cursor, left-click acts, right-click backs out. ---
         let ui = self.build_ui(&*ctx);
+        // The floating Use/Drop strip, if an item is held. Hit-tested first — it
+        // sits outside the panel, so it never overlaps a slot.
+        let buttons = self.build_buttons(&*ctx, &ui);
         let mouse = ctx.input.mouse;
         let mut mouse_clicked = false;
-        if let Some(key) = ui.hit(mouse.pos()) {
+        let hit = buttons
+            .as_ref()
+            .and_then(|(bu, bx, by)| bu.hit_at(*bx, *by, mouse.pos()))
+            .or_else(|| ui.hit(mouse.pos()));
+        if let Some(key) = hit {
             match key {
+                InvKey::Use | InvKey::Drop => {
+                    // Hover slides the cursor onto the button (index 8/9, keeping
+                    // the held item), left-click places it there to activate.
+                    let target = if key == InvKey::Use { 8 } else { 9 };
+                    let drag = match &self.state {
+                        InventoryUiState::Items(_, sel) => sel.clone(),
+                        _ => None,
+                    };
+                    if mouse.moved() {
+                        self.state = InventoryUiState::Items(target, drag.clone());
+                    }
+                    if just_pressed(mouse.left) {
+                        self.state = InventoryUiState::Items(target, drag);
+                        self.activate_button(ctx, key);
+                        mouse_clicked = true;
+                    }
+                }
                 InvKey::Page(i) => {
                     if mouse.moved() {
                         self.state = InventoryUiState::PageSelect(i as i32);
@@ -643,7 +831,15 @@ impl InventoryUi {
         let (dx, dy) = dpad_delta(&pad, just_pressed);
         self.state.arrows(ctx.system, dx.into(), dy.into());
         if just_pressed(pad.a) && !mouse_clicked {
-            self.click(ctx.system)
+            // A on the held item over a button (cursor 8/9) activates it;
+            // anywhere else it's the normal pick-up / put-down / swap.
+            match &self.state {
+                InventoryUiState::Items(i, Some(_)) if *i >= 8 => {
+                    let key = if *i == 8 { InvKey::Use } else { InvKey::Drop };
+                    self.activate_button(ctx, key);
+                }
+                _ => self.click(ctx.system),
+            }
         };
         if just_pressed(pad.b) {
             self.state.back(ctx.system)
@@ -652,5 +848,68 @@ impl InventoryUi {
         if just_pressed(pad.x) {
             self.drop_item(ctx.system)
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::test_console::TestConsole;
+
+    /// An Items state holding a copy of `origin`'s item, cursor at `cursor`.
+    fn held(cursor: usize) -> InventoryUiState {
+        InventoryUiState::Items(cursor, Some((0, "ff".to_string())))
+    }
+
+    /// The dpad reaches the Use(8)/Drop(9) buttons only while an item is held,
+    /// and can always escape them back into the grid; an empty-handed cursor can
+    /// never land on them (right off the right column just clamps, as before).
+    #[test]
+    fn dpad_reaches_and_escapes_buttons_only_while_holding() {
+        let mut sys = TestConsole::new();
+
+        // Empty-handed: right off the top-right slot (3) clamps — no button.
+        let mut s = InventoryUiState::Items(3, None);
+        s.arrows(&mut sys, 1, 0);
+        assert!(
+            matches!(s, InventoryUiState::Items(3, None)),
+            "no button reachable without a held item",
+        );
+
+        // Holding: right off 3 steps onto Use(8), then onto Drop(9)...
+        let mut s = held(3);
+        s.arrows(&mut sys, 1, 0);
+        assert!(matches!(s, InventoryUiState::Items(8, _)), "3 -> Use");
+        s.arrows(&mut sys, 1, 0);
+        assert!(matches!(s, InventoryUiState::Items(9, _)), "Use -> Drop");
+        // ...left walks Drop -> Use -> back into the grid's right column.
+        s.arrows(&mut sys, -1, 0);
+        assert!(matches!(s, InventoryUiState::Items(8, _)), "Drop -> Use");
+        s.arrows(&mut sys, -1, 0);
+        assert!(matches!(s, InventoryUiState::Items(3, _)), "Use -> grid");
+
+        // Up/down off a button also returns to the grid (both escapable).
+        let mut s = held(8);
+        s.arrows(&mut sys, 0, 1);
+        assert!(matches!(s, InventoryUiState::Items(3, _)), "down off Use -> grid");
+
+        // The bottom-right slot (7) reaches the buttons too.
+        let mut s = held(7);
+        s.arrows(&mut sys, 1, 0);
+        assert!(matches!(s, InventoryUiState::Items(8, _)), "7 -> Use");
+    }
+
+    /// A button cursor (8/9) left with nothing held is normalised back into the
+    /// grid on the next dpad tick, so once the held item is gone the cursor can
+    /// never be stranded off the slots.
+    #[test]
+    fn stale_button_cursor_normalises_into_grid() {
+        let mut sys = TestConsole::new();
+        let mut s = InventoryUiState::Items(9, None);
+        s.arrows(&mut sys, 0, 0);
+        assert!(
+            matches!(s, InventoryUiState::Items(3, None)),
+            "8/9 with no held item -> grid",
+        );
     }
 }

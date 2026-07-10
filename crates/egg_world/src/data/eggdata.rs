@@ -36,14 +36,34 @@ use crate::world::player::{
 /// and the script/map paths are.
 pub const DATA_PATH: &str = "data/data.toml";
 
-/// The fixed, gameplay-relevant data for one item — currently just which sprite
-/// draws it. Its display name and description are NOT here: those are text, so
-/// they live in the script (the `item_<key>` list, read via
-/// `Ctx::item_name` /
-/// `Ctx::item_desc`).
+/// The authored use-effect of an item: what placing it on the bag's Use button
+/// fires. Deliberately the data-file spelling of [`Interaction`](crate::world::interact::Interaction)
+/// — resolved to one at fire time (an `Interaction` holds runtime payloads that
+/// don't belong in TOML).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UseDef {
+    /// A dialogue-registry key. `use = { dialogue = "..." }`
+    Dialogue(String),
+    /// A cutscene-registry name. `use = { cutscene = "..." }`
+    Cutscene(String),
+    /// An [`InteractFn`](crate::world::interact::InteractFn) `func` name (same
+    /// vocabulary as `.tmj` objects: "toggle_dog", …). `use = { func = "..." }`
+    Func(String),
+}
+
+/// The fixed, gameplay-relevant data for one item — which sprite draws it and
+/// (optionally) what using it does. Its display name and description are NOT
+/// here: those are text, so they live in the script (the `item_<key>` list, read
+/// via `Ctx::item_name` / `Ctx::item_desc`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDef {
     pub sprite: i32,
+    /// The effect placing this item on the bag's Use button fires. Absent (the
+    /// default) ⇒ the item has no use (a deny buzz, and it stays held). The TOML
+    /// key is `use`; `on_use` is the field name because `use` is a Rust keyword.
+    #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
+    pub on_use: Option<UseDef>,
 }
 
 /// The registry of every item the game knows about, keyed by the persistent
@@ -73,7 +93,13 @@ impl GameItems {
         }
     }
     pub fn add(&mut self, key: &str, sprite: i32) -> &mut Self {
-        self.items.insert(key.to_string(), ItemDef { sprite });
+        self.items.insert(
+            key.to_string(),
+            ItemDef {
+                sprite,
+                on_use: None,
+            },
+        );
         self
     }
     pub fn get(&self, key: &str) -> Option<&ItemDef> {
@@ -456,6 +482,82 @@ sprite = 514
         assert!(parse("items = [not a table]").is_err());
     }
 
+    /// An item's optional `use` key parses into the matching [`UseDef`] for each
+    /// of its three forms, and an item with no `use` reads back as `on_use ==
+    /// None`.
+    #[test]
+    fn item_use_parses_every_form() {
+        let src = "\
+[items.plain]
+sprite = 1
+
+[items.talk]
+sprite = 2
+use = { dialogue = \"hello\" }
+
+[items.scene]
+sprite = 3
+use = { cutscene = \"intro\" }
+
+[items.act]
+sprite = 4
+use = { func = \"toggle_dog\" }
+";
+        let data = parse(src).expect("parse");
+        assert_eq!(data.items["plain"].on_use, None, "no `use` ⇒ None");
+        assert_eq!(
+            data.items["talk"].on_use,
+            Some(UseDef::Dialogue("hello".into())),
+        );
+        assert_eq!(
+            data.items["scene"].on_use,
+            Some(UseDef::Cutscene("intro".into())),
+        );
+        assert_eq!(
+            data.items["act"].on_use,
+            Some(UseDef::Func("toggle_dog".into())),
+        );
+    }
+
+    /// An item with no `on_use` serialises to no `use` key (the
+    /// `skip_serializing_if`) — so the shipped file stays clean for items that
+    /// don't use it.
+    #[test]
+    fn item_use_none_elides_the_key() {
+        let mut file = DataFile::default();
+        file.items
+            .insert("plain".into(), ItemDef { sprite: 1, on_use: None });
+        let toml = to_toml(&file).expect("serialise");
+        assert!(toml.contains("[items.plain]"), "plain item present: {toml}");
+        assert!(
+            !toml.contains("use"),
+            "no `on_use` ⇒ no `use` key at all: {toml}",
+        );
+    }
+
+    /// A set `on_use` round-trips through a TOML serialise/parse unchanged, for
+    /// each of the three forms.
+    #[test]
+    fn item_use_round_trips_through_toml() {
+        for def in [
+            UseDef::Dialogue("hello".into()),
+            UseDef::Cutscene("intro".into()),
+            UseDef::Func("toggle_dog".into()),
+        ] {
+            let mut file = DataFile::default();
+            file.items.insert(
+                "talk".into(),
+                ItemDef {
+                    sprite: 2,
+                    on_use: Some(def.clone()),
+                },
+            );
+            let toml = to_toml(&file).expect("serialise");
+            let parsed = parse(&toml).expect("reparse");
+            assert_eq!(parsed, file, "use round-trips: {def:?} via {toml}");
+        }
+    }
+
     /// The shipped `data.toml` parses to the expected items, and its walk grids
     /// resolve to the right cells — the permanent regression that pins the
     /// behaviour the old pattern builders used to produce, now that the grids are
@@ -471,7 +573,7 @@ sprite = 514
         let items = parse(include_str!("../../../../assets/data/data.toml"))
             .expect("shipped data.toml parses")
             .items;
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 6);
         assert_eq!(items["chegg"].sprite, 524);
 
         let spawn = |name: &str| presets.spawn(&PresetId::new(name)).unwrap();
