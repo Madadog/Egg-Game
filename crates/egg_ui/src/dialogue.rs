@@ -543,8 +543,14 @@ impl Dialogue {
     /// Draw the open `#choice` menu as a bordered panel stacked just above the
     /// dialogue box: one option per row, the highlighted one filled in the
     /// bright selection colour (palette #9, the same unmistakable blue the text
-    /// editor uses) with a `>` cursor. A no-op when no choice is open, so the
-    /// draw site can call it unconditionally after the box.
+    /// editor uses) with a `>` cursor. The panel is as wide as the largest
+    /// option (existing padding intent) but never wider than the dialogue box
+    /// itself (`self.width`) — an option too wide to fit at that clamped width
+    /// wraps onto extra rows instead of overflowing (see [`wrap_choice_options`]),
+    /// with continuation rows indented to align under the first row's text and
+    /// the selection highlight stretched to cover every row of the option. A
+    /// no-op when no choice is open, so the draw site can call it
+    /// unconditionally after the box.
     pub fn draw_choice(
         &self,
         draw_state: &mut DrawState,
@@ -559,19 +565,15 @@ impl Dialogue {
 
         let (screen_w, screen_h) = draw_state.size();
         let options = print_options(small_text);
-        // Choice box takes width of largest option + padding
-        let w = choice
-            .options
-            .iter()
-            .map(|x| text_width(font, &format!("> {} <", x.text), options.clone()))
-            .max()
-            .unwrap_or_default()
-            + 4;
+        let (w, wrapped) =
+            wrap_choice_options(font, &choice.options, small_text, self.width as i32);
         let box_h = 24;
         let row_h = 8;
         let pad = 3;
+        let prefix_w = choice_marker_width(font, options.clone());
 
-        let panel_h = choice.options.len() as i32 * row_h + pad;
+        let total_rows: i32 = wrapped.iter().map(|lines| lines.len() as i32).sum();
+        let panel_h = total_rows * row_h + pad;
         let x = (screen_w - w) / 2;
         // Sit just above where the dialogue box lands (a 2px gap), so a prompt
         // page and its options read as one stacked unit.
@@ -586,28 +588,99 @@ impl Dialogue {
 
         let canvas = draw_state.rgba(layer);
         canvas.outlined_rect(x, y, w, panel_h, bg, outline);
-        for (i, option) in choice.options.iter().enumerate() {
-            let row_y = y + pad + i as i32 * row_h;
+        let mut row = 0;
+        for (i, lines) in wrapped.iter().enumerate() {
             let selected = i == choice.selected;
+            let row_y = y + pad + row * row_h;
             if selected {
-                canvas.fill_rect(x + 1, row_y - 2, w - 2, row_h + 1, sel);
+                // Stretch the highlight over every wrapped row of the option,
+                // not just its first.
+                canvas.fill_rect(x + 1, row_y - 2, w - 2, lines.len() as i32 * row_h + 1, sel);
             }
-            let marker = if selected { ">" } else { " " };
-            let line = format!("{marker} {}", option.text);
-            print_to_with_font(
-                font,
-                canvas,
-                &line,
-                x + pad,
-                row_y,
-                text_col,
-                PrintOptions {
-                    color: 12,
-                    ..options.clone()
-                },
-            );
+            for (j, line) in lines.iter().enumerate() {
+                let line_y = row_y + j as i32 * row_h;
+                // The `>`/` ` marker only ever sits on an option's first row;
+                // continuation rows are indented past where it would be, so
+                // their text lines up with the first row's.
+                let (text, line_x) = if j == 0 {
+                    let marker = if selected { ">" } else { " " };
+                    (format!("{marker} {line}"), x + pad)
+                } else {
+                    (line.clone(), x + pad + prefix_w)
+                };
+                print_to_with_font(
+                    font,
+                    canvas,
+                    &text,
+                    line_x,
+                    line_y,
+                    text_col,
+                    PrintOptions {
+                        color: 12,
+                        ..options.clone()
+                    },
+                );
+            }
+            row += lines.len() as i32;
         }
     }
+}
+
+/// Width of the `"> "` marker prefix drawn before every option's first row
+/// (and reserved as the indent before every continuation row). The selected
+/// `">"` and unselected `" "` markers are both a single glyph before the
+/// space, so one measurement covers both.
+fn choice_marker_width(font: &Font, options: PrintOptions) -> i32 {
+    text_width(font, "> ", options)
+}
+
+/// Wrap each `#choice` option to fit a panel no wider than `max_width`,
+/// returning that panel's width alongside every option's rendered lines (one
+/// entry per option, one `String` per row).
+///
+/// The *unclamped* width is still the widest `"> option <"` — the existing
+/// padding intent — but capped to `max_width` so the panel drawn in
+/// [`Dialogue::draw_choice`] never overruns the dialogue box it sits above.
+/// Only an option that can't fit inside the clamped width on one line breaks
+/// onto more, via [`fit_default_paragraph`]; short options that already fit
+/// come back as a single untouched line, so the common case (all short
+/// options) renders exactly as before. The wrap width reserves the panel's
+/// left padding and the `"> "` marker prefix so wrapped text can't run past
+/// the panel border.
+fn wrap_choice_options(
+    font: &Font,
+    options: &[ChoiceOption],
+    small_text: bool,
+    max_width: i32,
+) -> (i32, Vec<Vec<String>>) {
+    let print_opts = print_options(small_text);
+    const PAD: i32 = 3;
+
+    let unclamped_w = options
+        .iter()
+        .map(|x| text_width(font, &format!("> {} <", x.text), print_opts.clone()))
+        .max()
+        .unwrap_or_default()
+        + 4;
+    let w = unclamped_w.min(max_width);
+
+    let wrap_width = (w - PAD - choice_marker_width(font, print_opts.clone())).max(1) as usize;
+
+    let lines = options
+        .iter()
+        .map(|opt| {
+            if text_width(font, &opt.text, print_opts.clone()) <= wrap_width as i32 {
+                vec![opt.text.clone()]
+            } else {
+                fit_default_paragraph(font, &opt.text, wrap_width, small_text)
+                    .lines()
+                    .map(str::to_string)
+                    .collect()
+            }
+        })
+        .collect();
+
+    (w, lines)
 }
 
 impl Debug for Dialogue {
@@ -878,6 +951,52 @@ mod tests {
         // Clearing the choice lets the queued auto-text advance again.
         d.choice = None;
         assert!(d.can_autoadvance());
+    }
+
+    #[test]
+    fn choice_wrap_clamps_panel_width_and_wraps_an_overlong_option() {
+        // Every glyph forced to 8px (same trick as the test below), so
+        // wrapping is driven purely by character count, not font metrics.
+        let mut font = Font::blank();
+        font.image_mut().data_mut().fill(255);
+        font.refresh();
+
+        let long_text = "A very long option that must wrap";
+        let options = vec![
+            ChoiceOption {
+                text: "Hi".into(),
+                sets: vec![],
+            },
+            ChoiceOption {
+                text: long_text.into(),
+                sets: vec![],
+            },
+        ];
+
+        // Unclamped, the long option would need a much wider panel than 60px
+        // — the clamp must kick in.
+        let (w, lines) = wrap_choice_options(&font, &options, false, 60);
+        assert!(w <= 60, "panel width {w} exceeded the 60px clamp");
+
+        // The short option already fits: it comes back untouched as a single
+        // row, so it renders exactly as it did before wrapping existed.
+        assert_eq!(lines[0], vec!["Hi".to_string()]);
+
+        // The long option can't fit the clamped panel on one line, so it must
+        // break onto more than one row instead of overflowing.
+        assert!(
+            lines[1].len() > 1,
+            "expected the long option to wrap, got {:?}",
+            lines[1]
+        );
+        // Wrapping must not drop any words.
+        let rejoined = lines[1].join(" ");
+        for word in long_text.split_whitespace() {
+            assert!(
+                rejoined.contains(word),
+                "lost word {word:?} while wrapping: {rejoined:?}"
+            );
+        }
     }
 
     #[test]
