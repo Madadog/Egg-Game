@@ -17,6 +17,7 @@
 // dialogue may branch on it (`#if is_night`) and set it (`#set is_night true`).
 #flag is_night
 #flag SYCOPHANT
+#flag INSULT
 
 // --- UI labels ---
 
@@ -328,13 +329,11 @@ menu_music_test = "Music Test"
 
     
 #dialogue debug_mistake
-    What was the gamedev THINKING?
+    ... What was the gamedev THINKING?
     #choice
-        #option Yes
+        #option \"Huhuhu, gamedev smart.\"
             #set SYCOPHANT true
-        #option Look, Imma be real here, I don't think he was?!?
-            #set SYCOPHANT false
-        #option Maybe?
+        #option Nothing.
             #set SYCOPHANT false
         
     // Actually silently discard 90% of the player's input ^u^
@@ -344,11 +343,34 @@ menu_music_test = "Music Test"
     The likeness isn't perfect.
     
 #dialogue debug_portrait2
-    #if SYCOPHANT
-        She's glamorous. The artist did a really great job drawing this, if I do say so myself.
+    #pic m_normal
+    "Hey! "
+    "Heeeey! " #delay 30
+    "Hi! " #delay 30
+    ... Why are you so small?
+    #choice
+        #option Why are you so large?
+            #set INSULT true
+        #option I'm not sure
+            #set INSULT false
+
+    #pic m_close
+    ... Hmm...
+
+    #if INSULT
+        #pic m_narrow
+        ... Low hanging fruit.
+
+        #pic m_smug
+        As expected from an insect like yourself.
     #else
-        She's glamorous.
+        #pic m_normal
+        Hey, it isn't all that bad.
+        
+        #pic m_smile
+        ... At least you're not stuck in the floor like me.
     #end
+        
     
 #dialogue debug_sign
     The sign says "Welcome to EGG GAME!"
@@ -690,7 +712,7 @@ menu_music_test = "Music Test"
     #flip true
     Right.
     
-    #pic c_closed
+    #pic c_close
     Left again.
     
     #pic c_normal
@@ -720,7 +742,7 @@ menu_music_test = "Music Test"
     "left" #delay 1
     "..." #delay 5
 
-    #pic c_normal
+    #pic c_close
     #flip false
     "left" #delay 1
     #flip true

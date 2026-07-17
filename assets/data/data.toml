@@ -1086,73 +1086,73 @@ file = "21_footstep_plain"
 spr_id = 2816
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_wave]
 spr_id = 2819
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_away]
 spr_id = 2828
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_grin]
 spr_id = 2834
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_regret]
 spr_id = 2837
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_close]
 spr_id = 2912
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_hmm]
 spr_id = 2921
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_frus]
 spr_id = 2924
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_yell]
 spr_id = 2927
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_no]
 spr_id = 3008
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_oof]
 spr_id = 3113
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.y_smug]
 spr_id = 3011
 w = 3
 h = 3
-offset = [6, 5]
+offset = [5, 5]
 
 [portraits.horror]
 spr_ids = [661, 662, 693, 694]
@@ -1182,7 +1182,7 @@ w = 3
 h = 3
 offset = [5, 5]
 
-[portraits.c_closed]
+[portraits.c_close]
 spr_id = 3308
 w = 3
 h = 3
@@ -1250,6 +1250,12 @@ offset = [3, -2]
 
 [portraits.m_smug]
 spr_id = 4528
+w = 4
+h = 4
+offset = [3, -2]
+
+[portraits.m_close]
+spr_id = 4532
 w = 4
 h = 4
 offset = [3, -2]
