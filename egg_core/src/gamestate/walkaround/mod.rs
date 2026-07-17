@@ -2661,7 +2661,9 @@ mod tests {
         // Register the dialogue the use-effect names so it resolves to messages.
         let script = crate::data::script::eggtext::parse("#dialogue gulp\n    Glug glug.\n")
             .expect("test script parses");
-        parts.script.set_base(script);
+        parts
+            .script
+            .set_base(script, &crate::data::portraits::Portraits::builtin());
 
         let mut walk = WalkaroundState::new();
         // The Use path has already closed the bag and staged the effect.

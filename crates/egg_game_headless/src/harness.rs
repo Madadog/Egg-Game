@@ -363,7 +363,13 @@ fn read_asset(root: &Path, path: &str) -> Option<Vec<u8>> {
 /// (encode there, decode here) a genuine independent oracle. `to_rgba8` yields
 /// straight 8-bit RGBA with no premultiplication, so a fully-transparent but
 /// coloured pixel keeps its colour channels, matching the encoder byte-for-byte.
-fn decode_png(bytes: &[u8]) -> Result<RgbaImage, String> {
+///
+/// Public beyond this crate: it's the Bevy host's PNG-decode seam too. The host
+/// links Bevy's async asset loader for *initial* sheet load but has no
+/// equivalent for a hot-reload triggered by an mtime poll outside that loader —
+/// rather than duplicate the `image`-crate call, its hot-reload path (see
+/// `src/hot_reload.rs`) calls straight through here.
+pub fn decode_png(bytes: &[u8]) -> Result<RgbaImage, String> {
     let rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?
         .to_rgba8();
@@ -388,19 +394,42 @@ fn build_font(img: &RgbaImage) -> Result<Font, String> {
     Ok(font)
 }
 
-/// Boot the game's assets from disk into `state`, no Bevy `App`: the manifest,
-/// its maps (with image layers attached), the font, the sprite sheet (RGBA +
-/// indexed), the dialogue script, and the cutscene registry. Mirrors
-/// `load_assets`' phase 3 conversions exactly. A missing/broken essential
-/// (manifest, font, sheet, script, scenes) is fatal; an individual map or image
-/// layer that fails is warned and skipped, so one bad map can't wedge boot.
+/// The `.tmj` file stems under `<root>/maps/`, sorted for determinism — the
+/// directory scan `boot` uses in place of a manifest, mirroring the windowed
+/// host's native `fantasy_console::map_stems`. A missing/unreadable maps
+/// directory is fatal (like the font): unlike an individual bad map, there's no
+/// sensible way to boot with none at all.
+fn map_stems(root: &Path) -> Result<Vec<String>, String> {
+    let dir = root.join("maps");
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("reading maps dir {}: {e}", dir.display()))?;
+    let mut stems = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // `.extension()` only matches the last dot, so `office_backup.tmj.bak`
+        // reads as extension `bak` and is excluded automatically.
+        if path.extension().and_then(|e| e.to_str()) == Some("tmj")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            stems.push(stem.to_string());
+        }
+    }
+    stems.sort();
+    Ok(stems)
+}
+
+/// Boot the game's assets from disk into `state`, no Bevy `App`: the maps
+/// (discovered from `<root>/maps/*.tmj` — see [`map_stems`] — with image
+/// layers attached), the font, the sprite sheet (RGBA + indexed), the dialogue
+/// script, and the cutscene registry. Mirrors `load_assets`' phase 2
+/// conversions exactly. A missing/broken essential (the maps dir, font, sheet,
+/// script, scenes) is fatal; an individual map or image layer that fails is
+/// warned and skipped, so one bad map can't wedge boot.
 fn boot(state: &mut EggState, root: &Path) -> Result<(), String> {
-    let manifest_bytes = read_asset(root, "game.manifest").ok_or("missing assets/game.manifest")?;
-    let manifest = egg_core::data::tiled::manifest_from_json(&manifest_bytes)
-        .map_err(|e| format!("game.manifest: {e}"))?;
+    let names = map_stems(root)?;
 
     let mut loaded = 0usize;
-    for name in &manifest.maps {
+    for name in &names {
         let Some(bytes) = read_asset(root, &format!("maps/{name}.tmj")) else {
             eprintln!("warning: skipping map `{name}` (missing maps/{name}.tmj)");
             continue;
@@ -432,7 +461,7 @@ fn boot(state: &mut EggState, root: &Path) -> Result<(), String> {
         state.maps.insert(name.clone(), map);
         loaded += 1;
     }
-    eprintln!("loaded {loaded}/{} map(s)", manifest.maps.len());
+    eprintln!("loaded {loaded}/{} map(s)", names.len());
 
     let font_bytes = read_asset(root, "fonts/tic80_font.png").ok_or("missing assets/fonts/tic80_font.png")?;
     let font_img = decode_png(&font_bytes).map_err(|e| format!("font decode: {e}"))?;
@@ -452,7 +481,7 @@ fn boot(state: &mut EggState, root: &Path) -> Result<(), String> {
     let script_text = std::str::from_utf8(&script_bytes).map_err(|e| format!("script utf8: {e}"))?;
     let script_file =
         egg_core::data::script::eggtext::parse(script_text).map_err(|e| format!("script parse: {e}"))?;
-    state.script.set_base(script_file);
+    state.script.set_base(script_file, &state.portraits);
 
     let scene_bytes = read_asset(root, "data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
     let scene_text = std::str::from_utf8(&scene_bytes).map_err(|e| format!("scenes utf8: {e}"))?;

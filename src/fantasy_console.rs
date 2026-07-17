@@ -212,8 +212,8 @@ impl ConsoleApi for FantasyConsole {
     }
     /// Web build: every write lands in `localStorage`. The save (user data) keeps
     /// its historical raw-path key (`"save.json"`) byte-for-byte. Asset-namespace
-    /// writes persist as overrides that survive a reload: text (maps, manifest,
-    /// eggtext, eggscene, editor layout, `data.toml`) verbatim under
+    /// writes persist as overrides that survive a reload: text (maps, eggtext,
+    /// eggscene, editor layout, `data.toml`) verbatim under
     /// [`ASSET_OVERRIDE_PREFIX`], and binary (image-layer PNGs, or any future
     /// binary asset) base64-encoded under [`ASSET_OVERRIDE_B64_PREFIX`] — a JS
     /// string can't hold raw bytes, so binary rides the base64 leg (see
@@ -246,6 +246,40 @@ impl ConsoleApi for FantasyConsole {
             // authoring save must never take down the game.
             info!("Failed to persist {key} to localStorage (quota?): {e:?}");
         }
+    }
+
+    /// Retire `assets/<path>` by renaming it to `<path>.bak` (overwriting any
+    /// existing backup first — `fs::rename` errors instead of overwriting on
+    /// Windows) — matches the `.bak` orphan convention
+    /// [`write_file`](Self::write_file) already leaves behind, so a deletion
+    /// stays recoverable rather than destructive. Missing file / IO error:
+    /// logged and swallowed, same tone as `write_file`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remove_file(&mut self, path: &str) {
+        let Some(dest) = asset_path(path) else {
+            info!("remove_file: refusing non-relative path {path:?}");
+            return;
+        };
+        if !dest.exists() {
+            return;
+        }
+        let backup = format!("{}.bak", dest.display());
+        let _ = std::fs::remove_file(&backup);
+        match std::fs::rename(&dest, &backup) {
+            Ok(()) => info!("Retired {} -> {backup}", dest.display()),
+            Err(e) => info!("remove_file: failed to retire {}: {e}", dest.display()),
+        }
+    }
+    /// Web build: drop any persisted override for `path`, both the text and
+    /// binary key (whichever form a prior [`write_file`](Self::write_file)
+    /// used) — so a retired asset falls back to the bundled fetch (or nothing,
+    /// once removed upstream too) instead of resurrecting a stale override on
+    /// the next load.
+    #[cfg(target_arch = "wasm32")]
+    fn remove_file(&mut self, path: &str) {
+        let Some(storage) = local_storage() else { return };
+        let _ = storage.remove_item(&format!("{ASSET_OVERRIDE_PREFIX}{path}"));
+        let _ = storage.remove_item(&format!("{ASSET_OVERRIDE_B64_PREFIX}{path}"));
     }
 
     /// Read a file back from the same namespaces [`write_file`](Self::write_file)
@@ -504,7 +538,7 @@ impl SfxAssets {
 /// no filesystem to scan and falls back to the names declared in
 /// [`egg_core::data::sound`].
 #[cfg(not(target_arch = "wasm32"))]
-fn sfx_stems() -> Vec<String> {
+pub fn sfx_stems() -> Vec<String> {
     let mut stems = Vec::new();
     let Ok(entries) = std::fs::read_dir("assets/sfx") else {
         return egg_core::data::sound::sfx_ids();
@@ -521,8 +555,63 @@ fn sfx_stems() -> Vec<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn sfx_stems() -> Vec<String> {
+pub fn sfx_stems() -> Vec<String> {
     egg_core::data::sound::sfx_ids()
+}
+
+/// The map file stems to load (`maps/<name>.tmj`), sorted for determinism — the
+/// maps directory is the single source of truth for which maps exist, replacing
+/// a hand-maintained manifest. Mirrors [`sfx_stems`]'s "native scans, wasm32
+/// falls back to a static list" split, since web has no filesystem to scan at
+/// runtime.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn map_stems() -> Vec<String> {
+    let mut stems = Vec::new();
+    let Ok(entries) = std::fs::read_dir("assets/maps") else {
+        return stems;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // `.extension()` only matches the *last* dot, so `office_backup.tmj.bak`
+        // reads as extension `bak` and is correctly excluded — no separate
+        // orphan check needed.
+        if path.extension().and_then(|e| e.to_str()) == Some("tmj")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            stems.push(stem.to_string());
+        }
+    }
+    stems.sort();
+    stems
+}
+
+// The compile-time `MAP_NAMES` list `build.rs` bakes from `assets/maps/*.tmj`
+// at build time (see the root `build.rs`) — web has no filesystem to scan at
+// runtime, unlike `map_stems`'s native path. (A plain comment, not a doc
+// comment: rustdoc can't attach docs to a macro invocation.)
+#[cfg(target_arch = "wasm32")]
+include!(concat!(env!("OUT_DIR"), "/map_names.rs"));
+
+/// Web build: start from the compile-time [`MAP_NAMES`] list, then union in any
+/// web-editor-created maps persisted as localStorage overrides
+/// (`maps/<name>.tmj`, see [`FantasyConsole::write_file`]) — a map authored
+/// in-browser postdates the build, so without this it would vanish on reload.
+#[cfg(target_arch = "wasm32")]
+pub fn map_stems() -> Vec<String> {
+    let mut stems: std::collections::BTreeSet<String> =
+        MAP_NAMES.iter().map(|s| s.to_string()).collect();
+    if let Some(storage) = local_storage() {
+        let len = storage.length().unwrap_or(0);
+        for i in 0..len {
+            if let Ok(Some(key)) = storage.key(i)
+                && let Some(rest) = key.strip_prefix(ASSET_OVERRIDE_PREFIX)
+                && let Some(name) = rest.strip_prefix("maps/").and_then(|s| s.strip_suffix(".tmj"))
+            {
+                stems.insert(name.to_string());
+            }
+        }
+    }
+    stems.into_iter().collect()
 }
 
 /// Standard audio playback at the game's mixing volume.

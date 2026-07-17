@@ -51,6 +51,7 @@ pub use egg_ui as ui;
 // the editor crate. The host depends on it directly (repo-root `Cargo.toml`).
 
 use crate::data::eggdata::{GameItems, Presets};
+use crate::data::portraits::Portraits;
 use crate::data::save::{SAVE_PATH, SaveData};
 use crate::data::scene::{CutsceneDef, SceneFile};
 use crate::data::script::Script;
@@ -233,6 +234,14 @@ pub struct EggState {
     /// [`Ctx::presets`]. Defaults to the embedded built-ins ([`Presets::builtin`]);
     /// [`load_data`](Self::load_data) re-derives it from the runtime `data.toml`.
     pub presets: Presets,
+    /// The loaded dialogue-portrait registry (sprite cells + offset per script
+    /// name). Defaults to the embedded built-ins ([`Portraits::builtin`]);
+    /// [`load_data`](Self::load_data) re-derives it from the runtime `data.toml`
+    /// and re-bakes any already-installed dialogue against it (see
+    /// [`Script::reresolve_portraits`]). Not threaded through [`Ctx`]: portrait
+    /// names resolve to values at script-install time (`Script::set_base`/
+    /// `set_language`), so nothing reads this registry at draw time.
+    pub portraits: Portraits,
     /// The loaded bitmap [`Font`], threaded into every state through [`Ctx::font`].
     /// Starts blank ([`Font::blank`]); the host installs the real glyph atlas at
     /// asset-load time via [`set_font`](Self::set_font). Game data, not a console
@@ -406,12 +415,16 @@ impl EggState {
     }
 
     /// Load the game-data file (`assets/data/data.toml`) from the host's file
-    /// store, once, installing the item registry it defines (a full replace, so
-    /// the file is the source of truth). Mirrors [`load_save`](Self::load_save):
-    /// a missing file is ignored silently and a malformed one logs, either way
-    /// leaving the built-in [`GameItems::default`] in place. Called at the top of
-    /// [`run`](Self::run) so the registry is ready before the save's inventory is
-    /// rehydrated against it.
+    /// store, once, installing the item/preset/portrait registries it defines (a
+    /// full replace, so the file is the source of truth) and re-baking any
+    /// already-installed dialogue against the fresh portrait registry (see
+    /// [`Script::reresolve_portraits`]) — a script installed before this runs
+    /// (e.g. the boot-time base language) would otherwise keep stale portraits.
+    /// Mirrors [`load_save`](Self::load_save): a missing file is ignored
+    /// silently and a malformed one logs, either way leaving the built-in
+    /// [`GameItems::default`]/[`Presets::builtin`]/[`Portraits::builtin`] in
+    /// place. Called at the top of [`run`](Self::run) so the registry is ready
+    /// before the save's inventory is rehydrated against it.
     ///
     /// Cross-platform note: on native the host serves asset paths through the
     /// file store, so this reads the real file; on web the file store is
@@ -435,6 +448,11 @@ impl EggState {
             Ok(data) => {
                 self.items = GameItems::from_data(&data.items);
                 self.presets = eggdata::Presets::from_data(&data);
+                self.portraits = Portraits::from_data(&data);
+                // Portrait names were baked into `Message`s when the script was
+                // installed; re-bake them now against the fresh registry so a
+                // reload actually reaches dialogue that's already loaded.
+                self.script.reresolve_portraits(&self.portraits);
             }
             Err(e) => log::error!("Failed to parse game data ({}): {e}", eggdata::DATA_PATH),
         }
@@ -442,7 +460,8 @@ impl EggState {
 
     /// Re-load `data.toml` from the host's file store, *bypassing* the once-guard
     /// [`load_data`](Self::load_data) honours, so an external edit picked up by the
-    /// host's native hot-reload re-installs the item/preset registries. Same
+    /// host's native hot-reload re-installs the item/preset/portrait registries
+    /// (and re-bakes installed dialogue against the new portraits). Same
     /// parse+install and last-good-wins error semantics as `load_data` (a
     /// missing/malformed file leaves the current registries untouched).
     pub fn reload_data(&mut self, system: &mut impl platform::ConsoleApi) {
@@ -506,6 +525,7 @@ impl Default for EggState {
             maps: MapStore::default(),
             items: GameItems::default(),
             presets: Presets::builtin(),
+            portraits: Portraits::builtin(),
             font: Font::blank(),
             rng: Lcg64Xsh32::default(),
             script: Script::new(),
@@ -627,6 +647,45 @@ mod tests {
         let mut state = EggState::default();
         state.load_data(&mut console);
         assert!(state.items.contains("ff"));
+    }
+
+    /// `load_data` also installs the portrait registry (like items/presets) and
+    /// re-bakes any already-installed dialogue against it — the portrait name in
+    /// a `Message` is baked in at `Script::set_base` time, so a script installed
+    /// before `load_data` runs (as the boot-time base language is) would
+    /// otherwise keep stale portraits after a `data.toml` reload.
+    #[test]
+    fn load_data_installs_portraits_and_rebakes_dialogue() {
+        use crate::data::eggdata::DATA_PATH;
+        use crate::data::script::eggtext;
+
+        let mut console = TestConsole::new();
+        console.files.insert(
+            DATA_PATH.to_string(),
+            b"[portraits.p]\nspr_id = 42\noffset = [0, 0]\n".to_vec(),
+        );
+        let mut state = EggState::default();
+        // Install a script naming the portrait before `load_data` runs, so it
+        // resolves against the built-in (default) registry first — `p` isn't
+        // shipped, so the message starts with no portrait.
+        state.script.set_base(
+            eggtext::parse("#dialogue d\n    #pic p\n    Hi.").expect("parse eggtext"),
+            &state.portraits,
+        );
+        assert_eq!(
+            state.script.get_dialogue("d", &state.save)[0].portrait,
+            None,
+            "unknown against the built-in registry"
+        );
+
+        state.load_data(&mut console);
+
+        let portrait = state.script.get_dialogue("d", &state.save)[0].portrait.clone();
+        assert_eq!(
+            portrait.map(|p| p.sprite.cells[0].spr_id),
+            Some(42),
+            "load_data re-baked the installed dialogue against the runtime portrait registry",
+        );
     }
 
     /// The inventory survives a full save→load cycle through the real sync

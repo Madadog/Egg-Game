@@ -37,7 +37,7 @@ pub enum Interaction {
 ///
 /// The cases that a map authors declaratively are *named* — a `.tmj` object
 /// with a `func` property round-trips through [`from_name`](Self::from_name) /
-/// [`name`](Self::name) (the `sound::by_name` / `portraits::by_name` precedent),
+/// [`name`](Self::name) (the `sound::by_name`-style name lookup precedent),
 /// so the in-game editor can place and re-save them. State-only conditionals
 /// that used to live here (the stairwell window/painting pair) are gone: they
 /// are now plain dialogue objects driven by named save flags + `#set`/`#if` in

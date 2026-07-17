@@ -1083,49 +1083,173 @@ file = "21_footstep_plain"
 # --- dialogue portraits (see header) ---
 
 [portraits.y_normal]
-spr_ids = [920, 921, 952, 953]
-offset = [8, 13]
+spr_id = 2816
+w = 3
+h = 3
+offset = [6, 5]
 
-[portraits.y_look]
-spr_ids = [980, 981, 1012, 1013]
-offset = [8, 15]
-
-[portraits.y_close]
-spr_ids = [982, 983, 1012, 1013]
-offset = [8, 15]
-
-[portraits.y_oof]
-spr_ids = [1014, 1015, 1012, 1013]
-offset = [8, 15]
-
-[portraits.y_no]
-spr_ids = [984, 985, 1016, 1013]
-offset = [8, 15]
-
-[portraits.y_yell]
-spr_ids = [986, 987, 1018, 1019]
-offset = [3, 11]
+[portraits.y_wave]
+spr_id = 2819
+w = 3
+h = 3
+offset = [6, 5]
 
 [portraits.y_away]
-spr_ids = [988, 989, 1020, 1021]
-offset = [8, 13]
+spr_id = 2828
+w = 3
+h = 3
+offset = [6, 5]
 
-[portraits.y_smug]
-spr_ids = [990, 991, 1022, 1023]
-offset = [3, 7]
-
-[portraits.y_frus]
-spr_ids = [926, 927, 958, 959]
-offset = [3, 7]
-
-[portraits.y_hmm]
-spr_ids = [924, 925, 956, 957]
-offset = [3, 7]
+[portraits.y_grin]
+spr_id = 2834
+w = 3
+h = 3
+offset = [6, 5]
 
 [portraits.y_regret]
-spr_ids = [922, 923, 954, 955]
-offset = [8, 13]
+spr_id = 2837
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_close]
+spr_id = 2912
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_hmm]
+spr_id = 2921
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_frus]
+spr_id = 2924
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_yell]
+spr_id = 2927
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_no]
+spr_id = 3008
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_oof]
+spr_id = 3113
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.y_smug]
+spr_id = 3011
+w = 3
+h = 3
+offset = [6, 5]
 
 [portraits.horror]
 spr_ids = [661, 662, 693, 694]
 offset = [10, 10]
+
+[portraits.c_normal]
+spr_id = 3296
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_smile]
+spr_id = 3299
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_narrow]
+spr_id = 3302
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_consider]
+spr_id = 3305
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_closed]
+spr_id = 3308
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_squint]
+spr_id = 3311
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_aside]
+spr_id = 3311
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.c_joy]
+spr_id = 3707
+w = 3
+h = 3
+offset = [5, 5]
+
+[portraits.b_normal]
+spr_id = 3904
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.b_smug]
+spr_id = 3907
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.b_open]
+spr_id = 3910
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.b_frus]
+spr_id = 4006
+w = 3
+h = 3
+offset = [6, 5]
+
+[portraits.m_normal]
+spr_id = 4384
+w = 4
+h = 4
+offset = [3, -2]
+
+[portraits.m_smile]
+spr_id = 4388
+w = 4
+h = 4
+offset = [3, -2]
+
+[portraits.m_narrow]
+spr_id = 4392
+w = 4
+h = 4
+offset = [3, -2]
+
+[portraits.m_smug]
+spr_id = 4528
+w = 4
+h = 4
+offset = [3, -2]

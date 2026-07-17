@@ -21,7 +21,7 @@ use egg_world::data::{
     save::SaveData,
     script::Script,
     sound::{self, SfxData},
-    tiled::{GameManifest, TiledMap, TiledMapLayer, manifest_from_json, manifest_to_json},
+    tiled::{TiledMap, TiledMapLayer},
 };
 use egg_world::draw_state::{
     BgColour, DrawParams, DrawState, LayerId, PALETTE_MAP_IDENTITY, palette_map_rotate,

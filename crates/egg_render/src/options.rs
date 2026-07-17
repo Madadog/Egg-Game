@@ -55,7 +55,7 @@ impl Default for MapOptions {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Flip {
     #[default]
     None,
@@ -77,6 +77,46 @@ impl Flip {
     /// Whether this flip mirrors vertically.
     pub const fn y(&self) -> bool {
         matches!(self, Flip::Vertical | Flip::Both)
+    }
+    /// Build a flip from independent horizontal/vertical mirror flags — the
+    /// inverse of [`x`](Self::x)/[`y`](Self::y).
+    pub const fn from_axes(x: bool, y: bool) -> Self {
+        match (x, y) {
+            (false, false) => Flip::None,
+            (true, false) => Flip::Horizontal,
+            (false, true) => Flip::Vertical,
+            (true, true) => Flip::Both,
+        }
+    }
+    /// Compose two flips: the Klein four-group operation on independent
+    /// mirror axes — an axis ends up mirrored if exactly one operand mirrors
+    /// it (two mirrors on the same axis cancel). `Flip::None` is the identity.
+    pub const fn compose(self, other: Flip) -> Flip {
+        Self::from_axes(self.x() ^ other.x(), self.y() ^ other.y())
+    }
+    /// Compose this *outer* whole-sprite mirror with one cell's own `(flip,
+    /// rotate)`, returning the single `(Flip, Rotate)` pair that reproduces
+    /// the mirrored cell as one blit.
+    ///
+    /// The raster core (`sheet.rs`) maps output coordinates through `rotate`
+    /// first, then `flip`, so as an image operation a cell is
+    /// rotate-applied-after-flip. Mirroring the whole assembly by an outer `M`
+    /// conjugates that op through the dihedral relation `M∘R = R⁻¹∘M`: the
+    /// flip half always XORs with `M` (mirrors commute and cancel in pairs),
+    /// while the rotate half is only ever swapped between `By90` and `By270`
+    /// — and only when `M` mirrors exactly one axis (`Horizontal` or
+    /// `Vertical`), since a 90° turn maps to its inverse when reflected across
+    /// a single axis but is fixed by a reflection across both (`Both`) or
+    /// neither (`None`). `By180` and `None` are their own inverse, so they
+    /// never change.
+    pub const fn compose_cell(self, cell_flip: Flip, cell_rotate: Rotate) -> (Flip, Rotate) {
+        let flip = self.compose(cell_flip);
+        let rotate = match (self, cell_rotate) {
+            (Flip::Horizontal | Flip::Vertical, Rotate::By90) => Rotate::By270,
+            (Flip::Horizontal | Flip::Vertical, Rotate::By270) => Rotate::By90,
+            (_, r) => r,
+        };
+        (flip, rotate)
     }
 }
 
@@ -194,6 +234,41 @@ impl Default for FontOptions<'_> {
             fixed: false,
             scale: 1,
             alt_font: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `compose_cell` combines an outer whole-sprite mirror with a cell's own
+    /// `(flip, rotate)` into the single pair a blit applies directly. Table:
+    /// `(outer, cell_flip, cell_rotate) -> (flip, rotate)`.
+    #[test]
+    fn compose_cell_table() {
+        let cases: &[(Flip, Flip, Rotate, Flip, Rotate)] = &[
+            // Outer mirrors exactly one axis: By90/By270 swap under it, but
+            // an unrotated cell only picks up the flip.
+            (Flip::Horizontal, Flip::None, Rotate::None, Flip::Horizontal, Rotate::None),
+            (Flip::Horizontal, Flip::None, Rotate::By90, Flip::Horizontal, Rotate::By270),
+            (Flip::Vertical, Flip::None, Rotate::By270, Flip::Vertical, Rotate::By90),
+            // Outer `Both` mirrors both axes, so By90/By270 are fixed (only a
+            // single-axis mirror swaps them).
+            (Flip::Both, Flip::None, Rotate::By90, Flip::Both, Rotate::By90),
+            // Outer `None` is the identity: the cell passes through unchanged.
+            (Flip::None, Flip::Horizontal, Rotate::By90, Flip::Horizontal, Rotate::By90),
+            // Flip composition is a pure per-axis XOR, independent of rotate.
+            (Flip::Horizontal, Flip::Horizontal, Rotate::None, Flip::None, Rotate::None),
+            (Flip::Horizontal, Flip::Vertical, Rotate::None, Flip::Both, Rotate::None),
+            (Flip::Horizontal, Flip::Both, Rotate::None, Flip::Vertical, Rotate::None),
+        ];
+        for &(outer, cell_flip, cell_rotate, want_flip, want_rotate) in cases {
+            assert_eq!(
+                outer.compose_cell(cell_flip, cell_rotate),
+                (want_flip, want_rotate),
+                "outer={outer:?} cell=({cell_flip:?}, {cell_rotate:?})"
+            );
         }
     }
 }

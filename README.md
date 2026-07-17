@@ -14,7 +14,13 @@ Controls are:
 * Arrow Keys: Navigate
 * Z: Activate
 * X: Inventory / Cancel
-* M: Toggle debug info
+
+Debug controls:
+* C: Debug menu
+* P: Pause sim
+* N: Fast forward
+* 
+
 
 ## Build / Run
 To build or run, first make sure you have [Rust installed](https://rustup.rs/). 

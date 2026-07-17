@@ -23,7 +23,7 @@ use std::collections::HashSet;
 // is map-editor-specific, so the outline runs a focused single-panel dock.)
 use super::map::dock::{DEFAULT_DOCK, MIN_DOCK, MIN_WORLD, Side};
 use egg_ui::text_field::{REPEAT_DELAY, REPEAT_RATE, TextEvent, TextField, TextOp};
-use egg_world::data::portraits::Portrait;
+use egg_world::data::portraits::{Portrait, Portraits};
 use egg_world::data::save::SaveData;
 use egg_world::data::scene;
 use egg_world::data::script::Script;
@@ -901,7 +901,9 @@ impl TextEditor {
 
     /// Advance one frame: route this view's already-mapped mouse + keyboard into
     /// the buffer. `fb_w`/`fb_h` are the view's framebuffer size (cursor space),
-    /// so the click regions match what [`draw`](Self::draw) lays out.
+    /// so the click regions match what [`draw`](Self::draw) lays out. `portraits`
+    /// is the live runtime registry (not the built-in default) so the dialogue
+    /// previewer's `#pic` resolution matches what the game itself would show.
     pub fn step(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -909,6 +911,7 @@ impl TextEditor {
         font: &Font,
         fb_w: i32,
         fb_h: i32,
+        portraits: &Portraits,
     ) {
         if self.path.is_none() {
             self.open(system, EGGTEXT_PATH, TextAnchor::Top);
@@ -1236,7 +1239,7 @@ impl TextEditor {
         }
         self.last_caret = self.field.cursor();
         // Drive the dialogue previewer (parse/follow-caret/tick) for this frame.
-        self.update_preview(system, font, r.preview.map_or(0, |p| p.w), changed);
+        self.update_preview(system, font, r.preview.map_or(0, |p| p.w), changed, portraits);
     }
 
     /// Paint the editor into the view's BG layer (which `composite_into` blits to
@@ -1917,13 +1920,16 @@ impl TextEditor {
     /// Advance the previewer one frame: (re)parse the buffer on edit, follow the
     /// caret to its dialogue + turn, and tick the typewriter. `panel_w` is the
     /// preview dock's width (for text fitting); `changed` is whether the buffer
-    /// changed. A cheap no-op when the preview is hidden.
+    /// changed; `portraits` is the live registry `#pic` names resolve against
+    /// (the preview must match what the game would actually show, not the
+    /// built-in default). A cheap no-op when the preview is hidden.
     fn update_preview(
         &mut self,
         system: &mut impl ConsoleApi,
         font: &Font,
         panel_w: i32,
         changed: bool,
+        portraits: &Portraits,
     ) {
         if self.preview_dock.side.is_none() {
             return;
@@ -1934,7 +1940,7 @@ impl TextEditor {
                 .flatten()
                 .map(|file| {
                     let mut s = Script::new();
-                    s.set_base(file);
+                    s.set_base(file, portraits);
                     s
                 });
         }
@@ -2831,7 +2837,7 @@ title = Hello
         ed.rebuild_outline();
 
         // Idle step (mouse still, no keys) then a draw with the caret at the top.
-        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136);
+        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136, &Portraits::builtin());
         ed.draw(&mut draw, &Font::blank());
 
         // Drive the caret to the buffer end, let the visual caret-follow move the
@@ -3392,7 +3398,7 @@ title = Hello
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0); // inside the dialogue, first turn
 
-        ed.update_preview(&mut console, &Font::blank(), 200, true); // parse + resolve pages
+        ed.update_preview(&mut console, &Font::blank(), 200, true, &Portraits::builtin()); // parse + resolve pages
         assert_eq!(ed.preview.key.as_deref(), Some("talk"));
         assert_eq!(ed.preview.pages.len(), 3, "three turns resolved");
         assert_eq!(ed.preview.page, 0);
@@ -3425,10 +3431,10 @@ title = Hello
 
         // Moving the caret (no edit) makes the preview follow to that turn.
         ed.field.move_to_line_col(1, 0);
-        ed.update_preview(&mut console, &Font::blank(), 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true, &Portraits::builtin());
         assert_eq!(ed.preview.page, 0);
         ed.field.move_to_line_col(5, 0);
-        ed.update_preview(&mut console, &Font::blank(), 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false, &Portraits::builtin());
         assert_eq!(ed.preview.page, 2, "preview followed the caret to turn 3");
     }
 
@@ -3443,18 +3449,18 @@ title = Hello
         let mut ed = editor_with("script/en.eggtext", src);
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0); // first turn
-        ed.update_preview(&mut console, &Font::blank(), 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true, &Portraits::builtin());
         assert_eq!(ed.preview.page, 0);
 
         ed.preview_next(); // step forward a turn via the button
         assert_eq!(ed.preview.page, 1);
         // A follow frame with the caret still on turn 0 must not revert it.
-        ed.update_preview(&mut console, &Font::blank(), 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false, &Portraits::builtin());
         assert_eq!(ed.preview.page, 1, "manual page step persists");
 
         // Moving the caret to a different turn resumes following.
         ed.field.move_to_line_col(5, 0); // third turn
-        ed.update_preview(&mut console, &Font::blank(), 200, false);
+        ed.update_preview(&mut console, &Font::blank(), 200, false, &Portraits::builtin());
         assert_eq!(ed.preview.page, 2, "a caret move resumes follow");
     }
 
@@ -3470,7 +3476,7 @@ title = Hello
         let mut ed = editor_with("script/en.eggtext", src);
         ed.rebuild_outline();
         ed.field.move_to_line_col(1, 0);
-        ed.update_preview(&mut console, &Font::blank(), 200, true);
+        ed.update_preview(&mut console, &Font::blank(), 200, true, &Portraits::builtin());
         assert_eq!(ed.preview.pages.len(), 2, "delayed clauses stay one turn");
         let first = &ed.preview.pages[0].text;
         assert!(
@@ -3532,7 +3538,7 @@ title = Hello
         let mut ed = TextEditor::default();
         ed.open(&mut console, "script/en.eggtext", TextAnchor::Line(150));
         assert_eq!(ed.scroll, 0, "open resets the scroll");
-        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136);
+        ed.step(&mut console, &EggInput::new(), &Font::blank(), 240, 136, &Portraits::builtin());
         assert!(ed.scroll > 0, "the step scrolled the deep caret into view");
     }
 

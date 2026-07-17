@@ -323,18 +323,18 @@ menu_music_test = "Music Test"
     You kids don't know what it's like. In my day, the gamedev didn't even assign me any interaction dialogue.
 
 #dialogue debug_computer
-    It's a computer.\n
-    ... Wow, looks like it's got EGG GAME installed! #delay 60
+    It's a computer...\n 
+    ... Wow, looks like it's got EGG GAME installed!#delay 30
 
     
 #dialogue debug_mistake
     What was the gamedev THINKING?
     #choice
-        #option \"Huhuhu, gamedev smart.\"
+        #option Yes
             #set SYCOPHANT true
-        #option \"I am an apricot.\"
+        #option Look, Imma be real here, I don't think he was?!?
             #set SYCOPHANT false
-        #option Nothing.
+        #option Maybe?
             #set SYCOPHANT false
         
     // Actually silently discard 90% of the player's input ^u^
@@ -397,8 +397,8 @@ menu_music_test = "Music Test"
     You interact with the floating tentacled monster covered in hundreds of eyes.
 
     #autoflip
-    #pic y_look
-    Why did I do that?
+    #pic y_normal
+    ... Why did I do that?
 
     #pic horror
     "Because I'm the most conspicuous entity in the entire map! You just got railroaded by the gamedev!!!"
@@ -411,14 +411,14 @@ menu_music_test = "Music Test"
     #pic y_away
     Yeah, because there's no other content anywhere in the game. It's version 0.1.1 and this is still just a walking simulator...
     
-    #pic y_look
+    #pic y_normal
     #flip false
     ... How many years have you been developing this game for, anyway?
 
     #pic horror
     Hahahahaha! That's a loaded question.
 
-    #pic y_look
+    #pic y_normal
     ......... How many years...?
 
     #pic horror
@@ -428,7 +428,7 @@ menu_music_test = "Music Test"
     #pic horror
     BUT the fraction of that time spent in ACTIVE DEVELOPMENT has really only been a couple months.
     
-    #pic y_normal
+    #pic y_grin
     What the heck!?
     " How on earth does it take three or four years just to make a walking simulator?" #delay 30
     
@@ -436,7 +436,7 @@ menu_music_test = "Music Test"
     My insistence on writing dialogue like this, for one thing.
     " Anyway, it's only taken three or four months to get here." #delay 30
     
-    #pic y_normal
+    #pic y_grin
     Haha, keep telling yourself that!
     
     #pic horror
@@ -444,7 +444,7 @@ menu_music_test = "Music Test"
     ... Also I was kinda busy.
     " This is really just a hobby for me, you know..." #delay 30
     
-    #pic y_look
+    #pic y_normal
     Fair...
     "... I guess..." #delay 30
     "\n... So wait, I'm literally three or four years old now?" #delay 30
@@ -453,17 +453,17 @@ menu_music_test = "Music Test"
     Yeah.
     "\nDon't worry, it gets worse as you get older." #delay 30
     
-    #pic y_normal
+    #pic y_grin
     ... At this rate, by version 0.1.6 I'll be old enough to drive!    
     
-    #pic y_look
+    #pic y_normal
     #flip false
     Hey, do I even have a name yet?
     
     #pic horror
     Of course. I wouldn't just write a protagonist without a name.
     
-    #pic y_look
+    #pic y_normal
     What is it, then?
     " ... Don't tell me it's something stupid like \"you\" or \"player\"" #delay 30
     
@@ -509,7 +509,7 @@ menu_music_test = "Music Test"
     #pic horror
     Similar, but different scale. These days people autocomplete entire codebases.
     
-    #pic y_look
+    #pic y_normal
     ... And does autocomplete result in maintainable code?
     
     #pic horror
@@ -521,13 +521,13 @@ menu_music_test = "Music Test"
     #flip true
     Luckily I'm an eldritch horror so I don't really have to worry about that stuff.
     
-    #pic y_look
+    #pic y_normal
     ... So you're relying on autocomplete garbage getting good enough to apply the coding discipline you should've had from the start?
     
     #pic horror
     It's not autocomplete garbage, her name is FantasiaMerge-31b-ablit- Q4_S and she's a catgirl who loves code, treats and headpats.
     
-    #pic y_look
+    #pic y_normal
     ...
     "\n..." #delay 30
     "\n..." #delay 30
@@ -539,7 +539,7 @@ menu_music_test = "Music Test"
     #flip true
     The logic is rock solid.
     
-    #pic y_look
+    #pic y_normal
     I worry about you, you know.
     " Do you realise my continued existence depends on you?" #delay 30
     " ... Can you imagine how that feels?" #delay 30
@@ -561,7 +561,7 @@ menu_music_test = "Music Test"
     #flip true
     ... Would I choose to spend an hour a day writing and testing dozens of lines of code I can realistically describe in two sentences?
     
-    #pic y_look
+    #pic y_normal
     You could just manage your time like a normal person. Get a work-life balance, spend 30m a day actively working on this game, the rest of the time away.
     
     #pic horror
@@ -576,3 +576,177 @@ menu_music_test = "Music Test"
 
     #pic horror
     Press [a] to access the debug menu. Hold [ctrl+shift] to noclip. [n] to see memory usage. [m] to see map stuff. [d] for player info.
+
+    
+#dialogue portrait_test
+    #pic y_normal
+    Hello!
+    
+    #pic y_close
+    *Ahem*. I've been called here to introduce the portrait test.\n
+    It's a debug thing that lets you look at all the dialogue portraits.
+    
+    #pic y_wave
+    I won't waste any more time, so without further ado...
+
+    #pic b_normal
+    #flip true
+    ...
+    
+    #pic b_open
+    #flip true
+    "W- "
+    wait, you're opening on ME?\n #delay 30
+    It's my turn already?!? #delay 30
+    I'm not ready! Where- Where's my script? What are my lines?!
+
+    (Just act naturally!)
+
+    #pic b_normal
+    #flip true
+    ... "Act naturally"...
+
+    #pic b_smug
+    #flip true
+    "Heh heh heh... "
+    It's a good thing I don't know what that means. My vocabulary is INCREDIBLY small.#delay 30
+
+    #pic m_smile
+    Okay, outta the way. It's my turn with the camera.
+
+    #pic b_open
+    #flip true
+    "Wait- "
+    "Hold on a second, "#delay 30
+    "I didn't even get any screentime yet! I've had, what, 4 lines?!? " #delay 30
+    ... If that?  #delay 30
+
+    #pic m_smile
+    "You've had ENOUGH lines. "
+    Move over, kid. #delay 30
+
+    #pic b_frus
+    #flip true
+    I'll get you for this...
+
+    #pic m_smug
+    Whatever.
+    
+    #pic m_normal
+    Anyway, hey guys! I am thrilled to finally be here! Allow me to introduce myself...
+
+    #pic c_normal
+    #flip true
+    What are you doing?
+
+    #pic m_narrow
+    Uhh...\n
+    "Who... " #delay 30
+    Who are you? #delay 30
+
+    #pic c_narrow
+    #flip true
+    This is a portrait test. No introductions.
+
+    #pic m_narrow
+    ...\n
+    ... What, are you gonna stop me? #delay 30
+
+    #pic c_narrow
+    #flip true
+    I'll tell. 
+
+    #pic m_narrow
+    "... "
+    Who, exactly? #delay 30
+
+    #pic y_frus
+    #flip true
+    Me.
+    Your time's up.
+
+    #pic m_smile
+    "Heheheh, sorry about that!"
+
+    #pic c_normal
+    #flip true
+    Portrait test is over.
+
+    #pic c_smile
+    #flip true
+    Thanks for playing.
+    
+    #pic c_smile
+    #flip true
+    "... "
+    Bye. #delay 30
+
+    
+#dialogue portrait_flip_test
+    #pic c_normal
+    Left.
+    
+    #pic c_normal
+    #flip true
+    Right.
+    
+    #pic c_closed
+    Left again.
+    
+    #pic c_normal
+    #flip true
+    Right again.
+    
+    #pic c_normal
+    #flip false
+    "Left," #delay 1
+    " " #delay 30
+    #flip true
+    "right," #delay 1
+    " " #delay 30
+    #flip false
+    "left," #delay 1
+    " " #delay 30
+    #flip true
+    "right," #delay 1
+    " " #delay 30
+    #flip false
+    "left," #delay 1
+    " " #delay 30
+    #flip true
+    "right," #delay 1
+    " " #delay 30
+    #flip false
+    "left" #delay 1
+    "..." #delay 5
+
+    #pic c_normal
+    #flip false
+    "left" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left\n" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left" #delay 1
+    #flip true
+    "right" #delay 1
+    #flip false
+    "left..." #delay 1
+    
+    #pic c_consider
+    ... Can I go now...?

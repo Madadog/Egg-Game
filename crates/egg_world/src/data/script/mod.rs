@@ -27,9 +27,10 @@
 //! translations work and switching is just another [`Script::set_language`].
 //!
 //! Portrait and sound references in dialogue are names (e.g. `"horror"`,
-//! `"gain"`), resolved to values at install time via
-//! [`portraits::by_name`](crate::data::portraits::by_name) and
-//! [`sound::by_name`](crate::data::sound::by_name).
+//! `"gain"`), resolved to values at install time against a
+//! [`Portraits`](crate::data::portraits::Portraits) registry threaded in by the
+//! caller (portraits are runtime data — see [`Script::set_base`]) and
+//! [`sound::by_name`](crate::data::sound::by_name) (sound effects are not).
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -38,9 +39,10 @@ use serde::Deserialize;
 pub mod eggtext;
 pub mod message;
 
+use crate::data::portraits::Portraits;
 use crate::data::save::SaveData;
 use crate::data::script::message::{ChoiceOption, Message, TextContent};
-use crate::data::{portraits, sound};
+use crate::data::sound;
 
 // --- on-disk schema (deserialized as-is, names not yet resolved) ---
 
@@ -170,7 +172,7 @@ fn default_true() -> bool {
 }
 
 impl ContentDef {
-    fn resolve(self) -> Option<TextContent> {
+    fn resolve(self, portraits: &Portraits) -> Option<TextContent> {
         Some(match self {
             ContentDef::Text(s) => TextContent::text(s),
             ContentDef::Auto(s) => TextContent::auto(s),
@@ -183,7 +185,7 @@ impl ContentDef {
                     return None;
                 }
             },
-            ContentDef::Portrait(name) => TextContent::Portrait(resolve_portrait(name)),
+            ContentDef::Portrait(name) => TextContent::Portrait(resolve_portrait(name, portraits)),
             ContentDef::Pause => TextContent::Pause,
             ContentDef::Flip(b) => TextContent::Flip(b),
             ContentDef::SetFlag(name, value) => TextContent::SetFlag(name, value),
@@ -202,14 +204,14 @@ impl ContentDef {
 }
 
 impl MessageDef {
-    fn resolve(self) -> Message {
+    fn resolve(self, portraits: &Portraits) -> Message {
         Message {
             content: self
                 .content
                 .into_iter()
-                .filter_map(ContentDef::resolve)
+                .filter_map(|c| c.resolve(portraits))
                 .collect(),
-            portrait: resolve_portrait(self.portrait),
+            portrait: resolve_portrait(self.portrait, portraits),
             flip_portrait: self.flip,
             pause_when_done: self.pause,
         }
@@ -217,48 +219,55 @@ impl MessageDef {
 }
 
 impl Entry {
-    fn resolve(self) -> Vec<Message> {
+    fn resolve(self, portraits: &Portraits) -> Vec<Message> {
         match self {
             Entry::Line(s) => vec![Message::from(s)],
             Entry::Pages(pages) => pages.into_iter().map(Message::from).collect(),
-            Entry::Conversation { messages } => {
-                messages.into_iter().map(MessageDef::resolve).collect()
-            }
+            Entry::Conversation { messages } => messages
+                .into_iter()
+                .map(|m| m.resolve(portraits))
+                .collect(),
         }
     }
 }
 
 impl SegmentDef {
-    fn resolve(self) -> Segment {
+    fn resolve(self, portraits: &Portraits) -> Segment {
         match self {
-            SegmentDef::Plain(entry) => Segment::Plain(entry.resolve()),
+            SegmentDef::Plain(entry) => Segment::Plain(entry.resolve(portraits)),
             SegmentDef::If {
                 flag,
                 then,
                 otherwise,
             } => Segment::If {
                 flag,
-                then: then.resolve(),
-                otherwise: otherwise.map(Entry::resolve).unwrap_or_default(),
+                then: then.resolve(portraits),
+                otherwise: otherwise
+                    .map(|e| e.resolve(portraits))
+                    .unwrap_or_default(),
             },
         }
     }
 }
 
 impl DialogueDef {
-    fn resolve(self) -> Vec<Segment> {
+    fn resolve(self, portraits: &Portraits) -> Vec<Segment> {
         match self {
-            DialogueDef::Plain(entry) => vec![Segment::Plain(entry.resolve())],
-            DialogueDef::Segments { segments } => {
-                segments.into_iter().map(SegmentDef::resolve).collect()
-            }
+            DialogueDef::Plain(entry) => vec![Segment::Plain(entry.resolve(portraits))],
+            DialogueDef::Segments { segments } => segments
+                .into_iter()
+                .map(|s| s.resolve(portraits))
+                .collect(),
         }
     }
 }
 
-fn resolve_portrait(name: Option<String>) -> Option<portraits::Portrait> {
+fn resolve_portrait(
+    name: Option<String>,
+    portraits: &Portraits,
+) -> Option<crate::data::portraits::Portrait> {
     let name = name?;
-    let portrait = portraits::by_name(&name);
+    let portrait = portraits.get(&name);
     if portrait.is_none() {
         log::warn!("dialogue references unknown portrait {name:?}");
     }
@@ -330,12 +339,12 @@ struct Language {
 }
 
 impl Language {
-    fn resolve(file: ScriptFile) -> Self {
+    fn resolve(file: ScriptFile, portraits: &Portraits) -> Self {
         let raw_dialogue = file.dialogue.clone();
         let mut entries: HashMap<String, Vec<Segment>> = file
             .dialogue
             .into_iter()
-            .map(|(key, entry)| (key, entry.resolve()))
+            .map(|(key, entry)| (key, entry.resolve(portraits)))
             .collect();
         for (key, lines) in file.lists {
             let messages = lines.into_iter().map(Message::from).collect();
@@ -365,17 +374,38 @@ impl Script {
     }
 
     /// Install the base/fallback language (also makes it active). Call once at
-    /// startup with the default language file.
-    pub fn set_base(&mut self, file: ScriptFile) {
-        let language = Language::resolve(file);
+    /// startup with the default language file. `portraits` is the runtime
+    /// registry portrait names resolve against (see
+    /// [`reresolve_portraits`](Self::reresolve_portraits) for what happens when
+    /// it later changes).
+    pub fn set_base(&mut self, file: ScriptFile, portraits: &Portraits) {
+        let language = Language::resolve(file, portraits);
         self.active = language.clone();
         self.base = language;
     }
 
     /// Swap the active language at runtime. Keys it doesn't define fall back to
     /// the base language installed by [`Script::set_base`].
-    pub fn set_language(&mut self, file: ScriptFile) {
-        self.active = Language::resolve(file);
+    pub fn set_language(&mut self, file: ScriptFile, portraits: &Portraits) {
+        self.active = Language::resolve(file, portraits);
+    }
+
+    /// Re-resolve every installed dialogue's portrait names against a fresh
+    /// `portraits` registry. Portrait names are baked into `Message`s once, at
+    /// [`set_base`](Self::set_base)/[`set_language`](Self::set_language) time —
+    /// so when `data.toml` reloads with different portrait data, the dialogue
+    /// already installed in `entries` is stale until it's re-baked here. Lists
+    /// carry no portraits and aren't in `raw_dialogue`, so only dialogue needs
+    /// this; re-resolution is authoritative, so a name absent from the new
+    /// registry resolves to `None` rather than keeping its last-good value.
+    pub fn reresolve_portraits(&mut self, portraits: &Portraits) {
+        for language in [&mut self.base, &mut self.active] {
+            for (key, def) in &language.raw_dialogue {
+                language
+                    .entries
+                    .insert(key.clone(), def.clone().resolve(portraits));
+            }
+        }
     }
 
     /// A UI label, or `[key]` if undefined in both the active and base languages.
@@ -480,13 +510,14 @@ impl Script {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::eggdata;
     use crate::data::script::eggtext;
 
     /// Install a script from `.eggtext` source (the DSL resolves to the same
-    /// [`ScriptFile`] the JSON loader produces).
+    /// [`ScriptFile`] the JSON loader produces), against the built-in portraits.
     fn script(src: &str) -> Script {
         let mut script = Script::new();
-        script.set_base(eggtext::parse(src).expect("parse eggtext"));
+        script.set_base(eggtext::parse(src).expect("parse eggtext"), &Portraits::builtin());
         script
     }
 
@@ -671,5 +702,39 @@ mod tests {
         }
         // Now the `#if` flattens to the tea branch.
         assert_eq!(plain(&script.get_dialogue("react", &save)), "Enjoy your tea.");
+    }
+
+    /// A portrait name resolves against whatever [`Portraits`] registry is
+    /// threaded through — and [`Script::reresolve_portraits`] re-bakes already
+    /// installed dialogue against a *new* registry, since the portrait name was
+    /// baked into the `Message` at install time. A name the new registry drops
+    /// entirely resolves to `None`: re-resolution is authoritative, not
+    /// last-good-wins per message.
+    #[test]
+    fn reresolve_portraits_rebakes_installed_dialogue() {
+        let spr_id = |script: &Script| {
+            script.get_dialogue("d", &SaveData::default())[0]
+                .portrait
+                .as_ref()
+                .map(|p| p.sprite.cells[0].spr_id)
+        };
+
+        let v1 = eggdata::parse("[portraits.p]\nspr_id = 1\noffset = [0, 0]\n").expect("parse");
+        let mut script = Script::new();
+        script.set_base(
+            eggtext::parse("#dialogue d\n    #pic p\n    Hi.").expect("parse eggtext"),
+            &Portraits::from_data(&v1),
+        );
+        assert_eq!(spr_id(&script), Some(1), "resolves against the registry at set_base time");
+
+        // A data.toml reload that redefines `p` re-bakes the installed message.
+        let v2 = eggdata::parse("[portraits.p]\nspr_id = 99\noffset = [0, 0]\n").expect("parse");
+        script.reresolve_portraits(&Portraits::from_data(&v2));
+        assert_eq!(spr_id(&script), Some(99), "reresolve_portraits picks up the new cells");
+
+        // A reload that drops `p` entirely clears the portrait, not keeps it.
+        let v3 = eggdata::parse("[portraits.other]\nspr_id = 5\noffset = [0, 0]\n").expect("parse");
+        script.reresolve_portraits(&Portraits::from_data(&v3));
+        assert_eq!(spr_id(&script), None, "a name the new registry drops resolves to None");
     }
 }

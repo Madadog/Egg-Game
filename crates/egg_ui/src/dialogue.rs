@@ -16,12 +16,12 @@
 
 use std::fmt::Debug;
 
+use egg_platform::{ConsoleApi, ConsoleHelper};
+use egg_render::geometry::Vec2;
 use egg_world::data::save::SaveData;
 use egg_world::draw_state::{DrawState, LayerId};
-use egg_render::geometry::Vec2;
-use egg_platform::{ConsoleApi, ConsoleHelper};
 
-use egg_render::{Font, PrintOptions, SpriteOptions, print_to_with_font};
+use egg_render::{Flip, Font, PrintOptions, SpriteOptions, print_to_with_font, text_width};
 
 use egg_world::data::portraits::Portrait;
 use egg_world::data::script::message::{ChoiceOption, Message, TextContent};
@@ -376,8 +376,8 @@ impl Dialogue {
         sw: i32,
         sh: i32,
     ) {
-        use egg_world::draw_state::PALETTE_MAP_IDENTITY;
         use egg_render::Canvas;
+        use egg_world::draw_state::PALETTE_MAP_IDENTITY;
         // Measure the render target, matching `draw_dialogue_box_with_offset` so
         // this variant's portrait stays aligned with the text box on any
         // framebuffer (not just the main window).
@@ -451,12 +451,12 @@ impl Dialogue {
 
         // Portrait
         if let Some(portrait) = &self.portrait {
-            let pw = if self.flip_portrait {
+            let (pw, flip) = if self.flip_portrait {
                 x -= 12;
-                -w
+                (-w, Flip::Horizontal)
             } else {
                 x += 14;
-                w
+                (w, Flip::None)
             };
             y -= 2;
             draw_state.rgba(layer).outlined_rect(
@@ -476,6 +476,8 @@ impl Dialogue {
                     ((screen_w - pw) / 2 - 15) as i16,
                     ((screen_h - h) - 8) as i16,
                 ),
+                None,
+                flip,
             );
             draw_state.rgba(layer).stroke_rect(
                 (screen_w - pw) / 2 - 13,
@@ -556,12 +558,20 @@ impl Dialogue {
         };
 
         let (screen_w, screen_h) = draw_state.size();
-        let w = self.width as i32;
+        let options = print_options(small_text);
+        // Choice box takes width of largest option + padding
+        let w = choice
+            .options
+            .iter()
+            .map(|x| text_width(font, &format!("> {} <", x.text), options.clone()))
+            .max()
+            .unwrap_or_default()
+            + 4;
         let box_h = 24;
         let row_h = 8;
         let pad = 3;
 
-        let panel_h = choice.options.len() as i32 * row_h + pad * 2;
+        let panel_h = choice.options.len() as i32 * row_h + pad;
         let x = (screen_w - w) / 2;
         // Sit just above where the dialogue box lands (a 2px gap), so a prompt
         // page and its options read as one stacked unit.
@@ -572,16 +582,15 @@ impl Dialogue {
         let bg = draw_state.colour(if self.dark_theme { 1 } else { 2 });
         let outline = draw_state.colour(if self.dark_theme { 1 } else { 3 });
         let text_col = draw_state.colour(12);
-        let sel = draw_state.colour(9);
+        let sel = draw_state.colour(3);
 
-        let options = print_options(small_text);
         let canvas = draw_state.rgba(layer);
         canvas.outlined_rect(x, y, w, panel_h, bg, outline);
         for (i, option) in choice.options.iter().enumerate() {
             let row_y = y + pad + i as i32 * row_h;
             let selected = i == choice.selected;
             if selected {
-                canvas.fill_rect(x + 1, row_y - 1, w - 2, row_h, sel);
+                canvas.fill_rect(x + 1, row_y - 2, w - 2, row_h + 1, sel);
             }
             let marker = if selected { ">" } else { " " };
             let line = format!("{marker} {}", option.text);
@@ -798,8 +807,8 @@ mod tests {
 
     #[test]
     fn choice_menu_moves_wraps_confirms_and_sets_the_flag() {
-        use egg_world::data::script::message::ChoiceOption;
         use egg_platform::NullConsole;
+        use egg_world::data::script::message::ChoiceOption;
 
         let mut console = NullConsole::new();
         let font = Font::blank();

@@ -12,6 +12,10 @@
 //! assets off disk and decodes PNGs with the `image` crate. [`run_frame`] is
 //! deliberately *not* gated — the web host calls it too, so it must compile for
 //! wasm (it touches no filesystem, no Bevy, and no `image`).
+//!
+//! [`decode_png`] is also exported for the Bevy host to reuse directly: it
+//! needs a Bevy-free PNG decode for asset hot-reload, which runs outside
+//! Bevy's async asset loader (see `src/hot_reload.rs`).
 
 use egg_core::EggState;
 use egg_core::platform::{ConsoleApi, EggInput};
@@ -21,6 +25,8 @@ use egg_editor::map::MapViewer;
 mod harness;
 #[cfg(not(target_arch = "wasm32"))]
 pub use harness::run;
+#[cfg(not(target_arch = "wasm32"))]
+pub use harness::decode_png;
 
 /// Drive one whole frame around an arbitrary [`ConsoleApi`]: advance the sim,
 /// then — while the primary map editor is focused (in walkaround, no scrubber,

@@ -13,10 +13,11 @@ use egg_core::platform::{EggInput, HEIGHT, ScanCode, WIDTH};
 // `EggGame::run` delegates to it, exactly as before the extraction.
 use egg_game_headless::run_frame;
 use fantasy_console::{
-    ConsolePlugin, FantasyConsole, SfxAssets, play_music, play_sounds, screen_scale, update_texture,
+    ConsolePlugin, FantasyConsole, SfxAssets, map_stems, play_music, play_sounds, screen_scale,
+    update_texture,
 };
 use script_asset::{SceneAsset, ScriptAsset, ScriptPlugin};
-use tiled::{ManifestAsset, TiledMapAsset, TiledMapPlugin};
+use tiled::{TiledMapAsset, TiledMapPlugin};
 
 mod base64;
 mod fantasy_console;
@@ -191,26 +192,26 @@ impl Plugin for CorePlugin {
 }
 
 /// Asset loading plugin. Spans both data domains (Tiled maps via
-/// [`crate::tiled`] and language scripts via [`crate::script_asset`]) plus the
-/// manifest that names them, so it lives in the host root rather than inside
-/// either loader's module. The loader is manifest-driven and runs in **three
-/// phases** (all in [`load_assets`], gated on resource presence/load state):
+/// [`crate::tiled`] and language scripts via [`crate::script_asset`]), so it
+/// lives in the host root rather than inside either loader's module. The set of
+/// maps is discovered, not hand-listed (see [`fantasy_console::map_stems`]), so
+/// [`GameAssets`] is built synchronously in [`setup_assets`]; [`load_assets`]
+/// then runs in **two phases** from there (gated on resource presence/load
+/// state):
 ///
-/// 1. **expand** — wait for the manifest, then build [`GameAssets`] from the
-///    maps it names (so the set of maps is data, not code).
-/// 2. **discover images** — once the essentials are loaded and every map has
+/// 1. **discover images** — once the essentials are loaded and every map has
 ///    settled, walk the *loaded* maps for their image-layer PNG paths, resolve
 ///    each under `maps/`, and start loading it (recorded in
 ///    [`GameAssets::map_images`]). This phase can only run after the maps parse,
 ///    since only then are their image-layer paths known.
-/// 3. **install** — once those image handles have also settled, decode each into
+/// 2. **install** — once those image handles have also settled, decode each into
 ///    the engine's `RgbaImage`, attach it to its map, and insert the maps (plus
 ///    sheets/flags/script) into the engine. Essentials failure is fatal; a
 ///    failed map *or* image is logged and skipped, so neither can wedge boot.
 ///
 /// Registers:
-/// * resources: [`Manifest`] + [`GameAssets`] + [`SfxAssets`] (inserted by
-///   [`setup_assets`]) and [`PendingLanguage`] (init).
+/// * resources: [`GameAssets`] + [`SfxAssets`] (inserted by [`setup_assets`])
+///   and [`PendingLanguage`] (init).
 /// * `Startup`: [`setup_assets`].
 /// * `Update`: [`load_assets`], [`poll_language_change`] (registered unordered).
 struct AssetsPlugin;
@@ -222,12 +223,6 @@ impl Plugin for AssetsPlugin {
             .add_systems(Update, (load_assets, poll_language_change));
     }
 }
-
-/// The asset manifest handle, loaded first (in `setup_assets`). `load_assets`
-/// waits for it, then builds the real [`GameAssets`] from the maps it names — so
-/// the set of maps is data, not code.
-#[derive(Resource)]
-pub struct Manifest(pub Handle<ManifestAsset>);
 
 /// One image-layer PNG a loaded map references: which map it belongs to, the
 /// path as authored (relative to the map, the key the engine attaches it under),
@@ -244,10 +239,11 @@ pub struct MapImage {
     pub handle: Handle<Image>,
 }
 
-/// Every handle the game needs to boot, expanded from the [`Manifest`]. Built
-/// once the manifest finishes loading (see [`GameAssets::from_manifest`]); the
-/// font/sheet/script are fixed, while the maps come from the manifest's name
-/// list.
+/// Every handle the game needs to boot, expanded from the discovered map stems
+/// (see [`GameAssets::from_names`] and [`fantasy_console::map_stems`]). Built
+/// synchronously in [`setup_assets`], since discovery needs no asset load to
+/// finish; the font/sheet/script are fixed, while the maps come from the
+/// discovered name list.
 #[derive(Debug, Resource)]
 pub struct GameAssets {
     pub font: Handle<Image>,
@@ -269,19 +265,18 @@ pub struct GameAssets {
     pub map_images: Option<Vec<MapImage>>,
 }
 impl GameAssets {
-    /// Expand a loaded [`GameManifest`] into concrete asset handles: each map
-    /// stem → `maps/<name>.tmj`, plus the fixed font/sheet/script. Kicks off
-    /// loading all of them.
-    fn from_manifest(assets: &AssetServer, manifest: &egg_core::data::tiled::GameManifest) -> Self {
+    /// Expand the discovered map stems (see [`fantasy_console::map_stems`]) into
+    /// concrete asset handles: each stem → `maps/<name>.tmj`, plus the fixed
+    /// font/sheet/script. Kicks off loading all of them.
+    fn from_names(assets: &AssetServer, names: &[String]) -> Self {
         Self {
             font: assets.load("fonts/tic80_font.png"),
             sheet: assets.load("sprites/sheet.png"),
-            maps: manifest
-                .maps
+            maps: names
                 .iter()
                 .map(|name| assets.load(format!("maps/{name}.tmj")))
                 .collect(),
-            map_names: manifest.maps.clone(),
+            map_names: names.to_vec(),
             script: assets.load("script/en.eggtext"),
             scenes: assets.load("data/main.eggscene"),
             map_images: None,
@@ -340,10 +335,11 @@ impl GameAssets {
 }
 
 fn setup_assets(mut commands: Commands, assets: Res<AssetServer>) {
-    // Load the manifest first; `load_assets` expands it into GameAssets once it
-    // arrives. The manifest's bespoke `.manifest` extension keeps it off the
-    // script loader (which owns `.json`).
-    commands.insert_resource(Manifest(assets.load("game.manifest")));
+    // Map discovery is synchronous (a directory scan on native, a compile-time
+    // list on wasm32 — see `fantasy_console::map_stems`), so `GameAssets` can be
+    // built and its handles kicked off loading immediately; `load_assets` picks
+    // up from there once they settle.
+    commands.insert_resource(GameAssets::from_names(&assets, &map_stems()));
     commands.insert_resource(SfxAssets::new(&assets));
 }
 
@@ -375,41 +371,21 @@ fn prefer_override<T>(
 #[allow(clippy::too_many_arguments)]
 fn load_assets(
     mut commands: Commands,
-    manifest: Option<Res<Manifest>>,
     game_assets: Option<ResMut<GameAssets>>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     maps: Res<Assets<TiledMapAsset>>,
-    manifests: Res<Assets<ManifestAsset>>,
     scripts: Res<Assets<ScriptAsset>>,
     scenes: Res<Assets<SceneAsset>>,
     mut state: ResMut<EggGame>,
 ) {
-    // Phase 1: wait for the manifest, then expand it into GameAssets from the
-    // maps it names. We only do this once — GameAssets existing is the signal
-    // that phase 1 is done.
-    if game_assets.is_none() {
-        let Some(manifest) = manifest else { return };
-        match assets.get_load_state(manifest.0.id()) {
-            Some(s) if s.is_loaded() => {
-                // Prefer a persisted manifest override (web editor writes) over the
-                // bundled copy; on native there's no override so the Bevy asset is
-                // used unchanged.
-                let bundled = manifests.get(&manifest.0).map(|m| m.0.clone());
-                let manifest = prefer_override("game.manifest", bundled, |b| {
-                    egg_core::data::tiled::manifest_from_json(b).map_err(|e| e.to_string())
-                });
-                if let Some(manifest) = manifest {
-                    info!("Manifest loaded: {} map(s).", manifest.maps.len());
-                    commands.insert_resource(GameAssets::from_manifest(&assets, &manifest));
-                }
-            }
-            Some(s) if s.is_failed() => panic!("Could not load game.manifest: {s:?}"),
-            _ => {}
-        }
+    // `GameAssets` is inserted synchronously by `setup_assets` (map discovery
+    // needs no asset load to finish), so it's present from the very first tick;
+    // once phase 2 (below) installs everything it's removed, and every later
+    // tick returns here immediately — nothing left to do.
+    let Some(mut game_assets) = game_assets else {
         return;
-    }
-    let mut game_assets = game_assets.unwrap();
+    };
 
     // A *failed* essential can never resolve: fail loudly (as the old loader did)
     // rather than waiting on the loading screen forever. This guard holds across
@@ -418,11 +394,11 @@ fn load_assets(
         panic!("Essential asset failed to load: {which}");
     }
 
-    // Phase 2: once the essentials are loaded and every map has settled (loaded
+    // Phase 1: once the essentials are loaded and every map has settled (loaded
     // or failed — never blocking boot on an individual map), discover the
     // image-layer PNGs the loaded maps reference and start loading them. We only
-    // know a map's image paths after it parses, so this can't be folded into
-    // phase 1. `map_images` going from `None` to `Some` is the phase-2-done flag.
+    // know a map's image paths after it parses, so this can't run any earlier.
+    // `map_images` going from `None` to `Some` is the phase-1-done flag.
     if game_assets.map_images.is_none() {
         if !(game_assets.essentials_loaded(&assets) && game_assets.maps_settled(&assets)) {
             return;
@@ -452,7 +428,7 @@ fn load_assets(
         return;
     }
 
-    // Phase 3: install once those image handles have also settled (same
+    // Phase 2: install once those image handles have also settled (same
     // never-wedge rule — a missing/failed PNG just leaves its layer pixel-less).
     if !game_assets.images_settled(&assets) {
         return;
@@ -520,7 +496,10 @@ fn load_assets(
         },
     );
     if let Some(file) = script_file {
-        state.state.script.set_base(file);
+        // One deref of the `ResMut` so the `script`/`portraits` field borrows
+        // below are disjoint (see `poll_language_change` for the same fix).
+        let s = &mut state.state;
+        s.script.set_base(file, &s.portraits);
     }
     // The cutscene registry installs alongside the dialogue (both are essentials,
     // so they've settled by here).
@@ -538,7 +517,6 @@ fn load_assets(
     state.loaded = true;
     info!("Finished loading assets.");
     commands.remove_resource::<GameAssets>();
-    commands.remove_resource::<Manifest>();
 }
 
 /// Attach the decoded image-layer pixels to `map` (keyed `name`) before it's
@@ -589,7 +567,11 @@ fn poll_language_change(
     if let Some(handle) = pending.0.clone()
         && let Some(script) = scripts.get(&handle)
     {
-        state.state.script.set_language(script.0.clone());
+        // One deref of the `ResMut` so the `script`/`portraits` field borrows
+        // below are disjoint (two `state.state...` projections would each
+        // re-deref the `ResMut`, which the borrow checker can't split).
+        let s = &mut state.state;
+        s.script.set_language(script.0.clone(), &s.portraits);
         pending.0 = None;
         info!("Switched active language.");
     }
@@ -772,10 +754,10 @@ fn step_state(
         // keeps showing it.
         let (w, h) = (g.system.width(), g.system.height());
         g.text_editor
-            .step(&mut g.system, &g.input, &g.state.font, w, h);
+            .step(&mut g.system, &g.input, &g.state.font, w, h, &g.state.portraits);
         if let Some(source) = g.text_editor.pending_script.take() {
             match egg_core::data::script::eggtext::parse(&source) {
-                Ok(file) => g.state.script.set_base(file),
+                Ok(file) => g.state.script.set_base(file, &g.state.portraits),
                 Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
             }
         }

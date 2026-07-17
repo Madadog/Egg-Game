@@ -441,9 +441,11 @@ impl MapViewer {
         }
     }
 
-    /// Create a blank modern map: insert it, write its `.tmj`, and add it to the
-    /// manifest. (Disk writes are silent no-ops on web — the map still lives in
-    /// the store for the session.)
+    /// Create a blank modern map: insert it into the store and write its
+    /// `.tmj`. No manifest bookkeeping needed — the maps directory is scanned to
+    /// find what loads, so the new file is discovered on its own at the next
+    /// boot/hot-reload scan. (Disk writes are silent no-ops on web — the map
+    /// still lives in the store for the session.)
     pub(super) fn create_map(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -456,11 +458,6 @@ impl MapViewer {
         let json = map.to_tmj(&[]);
         maps.insert(name, map);
         system.write_file(&format!("maps/{name}.tmj"), json.as_bytes());
-        self.manifest_mutate(system, maps, |m| {
-            if !m.maps.iter().any(|n| n == name) {
-                m.maps.push(name.to_string());
-            }
-        });
         self.maps_selected = Some(name.to_string());
     }
 
@@ -482,19 +479,15 @@ impl MapViewer {
             .unwrap_or_else(|| orig.to_tmj(&[]).into_bytes());
         maps.insert(name.clone(), orig);
         system.write_file(&format!("maps/{name}.tmj"), &bytes);
-        let added = name.clone();
-        self.manifest_mutate(system, maps, |m| {
-            if !m.maps.contains(&added) {
-                m.maps.push(added.clone());
-            }
-        });
         self.maps_selected = Some(name);
     }
 
-    /// Rename `from` to `to`: write the new `.tmj` (byte-copy), re-key the store,
-    /// and update the manifest. The old `.tmj` is orphaned (no `remove_file`); the
-    /// manifest drop keeps it from reloading. Warps pointing at `from` are left
-    /// dangling — they no-op at runtime ([`map_by_name`] returns `None`).
+    /// Rename `from` to `to`: write the new `.tmj` (byte-copy), re-key the
+    /// store, and retire the old `.tmj` (`ConsoleApi::remove_file`) so it stops
+    /// being discovered under its old name — without that it would resurrect at
+    /// the next boot/hot-reload scan alongside the renamed copy. Warps pointing
+    /// at `from` are left dangling — they no-op at runtime ([`map_by_name`]
+    /// returns `None`).
     pub(super) fn rename_map(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -509,20 +502,15 @@ impl MapViewer {
             let json = map.to_tmj(&[]);
             system.write_file(&format!("maps/{to}.tmj"), json.as_bytes());
         }
+        system.remove_file(&format!("maps/{from}.tmj"));
         maps.rename(from, to);
-        let (from_s, to_s) = (from.to_string(), to.to_string());
-        self.manifest_mutate(system, maps, |m| {
-            for n in m.maps.iter_mut() {
-                if *n == from_s {
-                    *n = to_s.clone();
-                }
-            }
-        });
         self.maps_selected = Some(to.to_string());
     }
 
-    /// Delete a map: drop it from the store and the manifest. The `.tmj` is left
-    /// on disk (no `remove_file` in the console API) but won't reload.
+    /// Delete a map: drop it from the store and retire its `.tmj`
+    /// (`ConsoleApi::remove_file`) — without that it would resurrect at the next
+    /// boot/hot-reload scan, since the maps directory (not a manifest) is what's
+    /// scanned to find what loads.
     pub(super) fn delete_map(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -530,28 +518,10 @@ impl MapViewer {
         name: &str,
     ) {
         maps.remove(name);
-        self.manifest_mutate(system, maps, |m| m.maps.retain(|n| n != name));
+        system.remove_file(&format!("maps/{name}.tmj"));
         if self.maps_selected.as_deref() == Some(name) {
             self.maps_selected = None;
         }
-    }
-
-    /// Read-modify-write the asset manifest. Falls back to the store's current
-    /// names if no manifest file is present, so a fresh manifest is still correct.
-    pub(super) fn manifest_mutate(
-        &self,
-        system: &mut impl ConsoleApi,
-        maps: &MapStore,
-        f: impl FnOnce(&mut GameManifest),
-    ) {
-        let mut manifest = system
-            .read_file("game.manifest")
-            .and_then(|b| manifest_from_json(&b).ok())
-            .unwrap_or_else(|| GameManifest {
-                maps: maps.names().iter().map(|s| s.to_string()).collect(),
-            });
-        f(&mut manifest);
-        system.write_file("game.manifest", manifest_to_json(&manifest).as_bytes());
     }
 
     // --- Draw -----------------------------------------------------------------
@@ -563,7 +533,9 @@ mod tests {
     use egg_platform::null_console::NullConsole;
 
     /// Create → duplicate → rename → delete a map, checking the store and the
-    /// written manifest stay consistent at each step (native file path).
+    /// on-disk `.tmj` files stay consistent at each step: no manifest, so a
+    /// rename/delete must retire the old file itself or it would resurrect at
+    /// the next directory scan (native file path).
     #[test]
     fn map_crud_round_trip() {
         use egg_platform::test_console::TestConsole;
@@ -572,13 +544,8 @@ mod tests {
         let mut maps = MapStore::default();
         let mut viewer = MapViewer::default();
 
-        let manifest = |c: &TestConsole| -> Vec<String> {
-            manifest_from_json(c.files.get("game.manifest").expect("manifest written"))
-                .expect("manifest parses")
-                .maps
-        };
-
-        // Create at an explicit size.
+        // Create at an explicit size: lands in the store and writes its `.tmj`
+        // — no manifest to update, the maps directory is the source of truth.
         viewer.create_map(&mut console, &mut maps, "newmap", 20, 15);
         assert!(maps.is_modern("newmap"));
         assert_eq!(
@@ -586,7 +553,6 @@ mod tests {
             Some((20, 15))
         );
         assert!(console.files.contains_key("maps/newmap.tmj"));
-        assert!(manifest(&console).contains(&"newmap".to_string()));
 
         // Duplicate the selected map.
         viewer.maps_selected = Some("newmap".to_string());
@@ -594,19 +560,28 @@ mod tests {
         assert!(maps.contains("newmap_copy"));
         assert!(console.files.contains_key("maps/newmap_copy.tmj"));
 
-        // Rename.
+        // Rename: the new `.tmj` is written and the old one retired so it can't
+        // resurrect at the next scan; the unrelated duplicate is untouched.
         viewer.rename_map(&mut console, &mut maps, "newmap", "renamed");
         assert!(!maps.contains("newmap"));
         assert!(maps.contains("renamed"));
         assert!(console.files.contains_key("maps/renamed.tmj"));
-        let m = manifest(&console);
-        assert!(m.contains(&"renamed".to_string()));
-        assert!(!m.contains(&"newmap".to_string()));
+        assert!(
+            !console.files.contains_key("maps/newmap.tmj"),
+            "the old name is retired, not left to resurrect"
+        );
+        assert!(
+            console.files.contains_key("maps/newmap_copy.tmj"),
+            "unrelated file untouched"
+        );
 
-        // Delete.
+        // Delete: dropped from the store and its `.tmj` retired too.
         viewer.delete_map(&mut console, &mut maps, "renamed");
         assert!(!maps.contains("renamed"));
-        assert!(!manifest(&console).contains(&"renamed".to_string()));
+        assert!(
+            !console.files.contains_key("maps/renamed.tmj"),
+            "deleted map's file is retired"
+        );
     }
 
     /// Adding a layer is undoable (and redoable), and deleting a layer restores

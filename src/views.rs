@@ -501,11 +501,17 @@ pub fn update_views(
             );
             let g = &mut *game;
             let view = &mut views.views[i];
-            view.text_editor
-                .step(&mut g.system, &view.input, &g.state.font, fb_w, fb_h);
+            view.text_editor.step(
+                &mut g.system,
+                &view.input,
+                &g.state.font,
+                fb_w,
+                fb_h,
+                &g.state.portraits,
+            );
             if let Some(source) = view.text_editor.pending_script.take() {
                 match egg_core::data::script::eggtext::parse(&source) {
-                    Ok(file) => g.state.script.set_base(file),
+                    Ok(file) => g.state.script.set_base(file, &g.state.portraits),
                     Err(e) => warn!("text editor: invalid eggtext on save: {e}"),
                 }
             }

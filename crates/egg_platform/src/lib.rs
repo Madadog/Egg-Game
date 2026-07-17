@@ -64,6 +64,15 @@ pub trait ConsoleApi {
     /// or the host has no readable storage for that path.
     fn read_file(&mut self, path: &str) -> Option<Vec<u8>>;
 
+    /// Retire an asset file so it stops loading at the next boot / hot-reload
+    /// scan — the counterpart to [`write_file`](Self::write_file) for editor
+    /// deletes and renames (e.g. the map editor deleting or renaming a map: with
+    /// no manifest, the directory itself is what's scanned to find maps, so the
+    /// old `.tmj` must stop existing under its old name or it resurrects).
+    /// Default: no-op — a host with no writable asset storage (headless
+    /// stepping, a minimal test console) has nothing to retire.
+    fn remove_file(&mut self, _path: &str) {}
+
     /// Canonical final surface composited by gamestate draw fns each frame.
     fn output_image(&mut self) -> &mut RgbaImage;
 
@@ -166,6 +175,9 @@ pub mod test_console {
         }
         fn read_file(&mut self, path: &str) -> Option<Vec<u8>> {
             self.files.get(path).cloned()
+        }
+        fn remove_file(&mut self, path: &str) {
+            self.files.remove(path);
         }
         fn output_image(&mut self) -> &mut RgbaImage {
             &mut self.output

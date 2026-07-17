@@ -53,6 +53,7 @@ impl ConsoleApi for NullConsole {
     fn read_file(&mut self, _path: &str) -> Option<Vec<u8>> {
         None
     }
+    fn remove_file(&mut self, _path: &str) {}
     fn output_image(&mut self) -> &mut RgbaImage {
         &mut self.output
     }

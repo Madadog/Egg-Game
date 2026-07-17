@@ -958,6 +958,7 @@ fn snap_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::portraits::Portraits;
     use crate::data::save::SaveData;
     use crate::data::scene;
     use crate::data::script::Script;
@@ -1377,6 +1378,7 @@ mod tests {
                  \x20   #set picked_b true",
             )
             .unwrap(),
+            &Portraits::builtin(),
         );
         let def = scene::parse("#cutscene t\n    dialogue ask")
             .unwrap()

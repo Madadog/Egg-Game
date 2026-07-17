@@ -1393,6 +1393,7 @@ impl MapViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egg_world::data::portraits::Portraits;
     use egg_world::data::script::eggtext;
 
     fn vocab(items: &[&str]) -> Vec<String> {
@@ -1413,7 +1414,10 @@ mod tests {
         let screen = (240.0, 136.0);
 
         let mut script = Script::default();
-        script.set_base(eggtext::parse("#dialogue greet\n    Hello there!").unwrap());
+        script.set_base(
+            eggtext::parse("#dialogue greet\n    Hello there!").unwrap(),
+            &Portraits::builtin(),
+        );
         let save = SaveData::default();
 
         let mut map = MapInfo::default();

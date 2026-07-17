@@ -63,8 +63,10 @@ impl MapStore {
     pub fn get_mut(&mut self, name: &str) -> Option<&mut TiledMap> {
         self.maps.get_mut(name)
     }
-    /// Drop a map from the store (its `.tmj` on disk is left untouched — the
-    /// editor removes the name from the manifest so it won't reload).
+    /// Drop a map from the store. The maps directory is scanned to find what
+    /// loads, so the editor's `delete_map` also retires the on-disk `.tmj`
+    /// (`ConsoleApi::remove_file`) — without that it would resurrect on the next
+    /// boot/hot-reload scan.
     pub fn remove(&mut self, name: &str) -> Option<TiledMap> {
         self.maps.remove(name)
     }
@@ -322,10 +324,7 @@ fn layer_sprite_components(map: &TiledMap, layer: &LayerInfo) -> Vec<SpriteCompo
             let sprite = MetaSprite {
                 cells: world_cells
                     .into_iter()
-                    .map(|(world, spr_id)| MetaCell {
-                        offset: world - origin,
-                        spr_id,
-                    })
+                    .map(|(world, spr_id)| MetaCell::new(world - origin, spr_id))
                     .collect(),
             };
             components.push(SpriteComponent {
@@ -577,13 +576,15 @@ impl SpriteComponent {
     pub fn cell_params(&self, cam_x: i32, cam_y: i32) -> impl Iterator<Item = DrawParams> + '_ {
         let transparent = self.transparent;
         let palette_rotate = self.palette_rotate;
-        self.sprite.iter_at(self.origin).map(move |(pos, spr_id)| {
+        self.sprite.iter_at(self.origin).map(move |(pos, cell)| {
             DrawParams::new(
-                spr_id,
+                cell.spr_id,
                 i32::from(pos.x) - cam_x,
                 i32::from(pos.y) - cam_y,
                 SpriteOptions {
                     transparent,
+                    flip: cell.flip,
+                    rotate: cell.rotate,
                     ..SpriteOptions::default()
                 },
                 None,

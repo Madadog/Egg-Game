@@ -33,41 +33,6 @@ pub fn from_json(bytes: &[u8]) -> Result<TiledMap, serde_json::Error> {
     Ok(map)
 }
 
-/// Parse the game asset manifest (`assets/game.manifest`) into a [`GameManifest`].
-/// JSON content, but a bespoke extension so it doesn't collide with the script
-/// loader (which owns `.json`); the host reads the bytes and calls this, just
-/// like [`from_json`] for maps.
-pub fn manifest_from_json(bytes: &[u8]) -> Result<GameManifest, serde_json::Error> {
-    serde_json::from_slice(bytes)
-}
-
-/// Serialise a [`GameManifest`] back to its `assets/game.manifest` JSON, for the
-/// in-editor map CRUD (which appends/removes map stems as maps are created and
-/// deleted). Pretty-printed to stay human-diffable like the hand-authored file.
-pub fn manifest_to_json(manifest: &GameManifest) -> String {
-    serde_json::to_string_pretty(manifest).unwrap_or_else(|_| "{\"maps\":[]}".to_string())
-}
-
-/// The game's asset manifest: the data-driven list of what to load at boot,
-/// replacing a hardcoded set of map paths in the host. Each entry is a **base
-/// name** (file stem), not a path — the host expands `maps/<name>.tmj`, and
-/// stores each loaded map in the [`crate::world::map::MapStore`] under that same stem
-/// (which is also the name the in-game editor saves back to). Shaped to grow:
-/// new asset categories become new fields, and the list defaults to empty so a
-/// partial manifest still parses.
-///
-/// Serialised as JSON in `assets/game.manifest`:
-/// ```json
-/// { "maps": ["office", "town", ...] }
-/// ```
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct GameManifest {
-    /// Map file stems to load (`maps/<name>.tmj`). The order is the load order;
-    /// the names become the [`crate::world::map::MapStore`] keys.
-    #[serde(default)]
-    pub maps: Vec<String>,
-}
-
 /// A typed Tiled custom property (`{ name, type, value }`) read for round-trip
 /// fidelity. Unlike the kind-specific [`ObjectProperties`] (string) and
 /// [`ImageLayerProperty`] (bool), this keeps the raw `value` as a JSON
@@ -1463,8 +1428,8 @@ impl TiledMap {
     }
 }
 
-/// Serialize `value` as JSON that is pretty-printed (two-space indent, matching
-/// [`manifest_to_json`]) **except** for arrays whose elements are all scalars
+/// Serialize `value` as JSON that is pretty-printed (two-space indent) **except**
+/// for arrays whose elements are all scalars
 /// (numbers / strings / bools / null), which stay inline on one line. In a Tiled
 /// map this keeps the structure browsable while the one huge per-layer tile
 /// `data` array — the only large scalar array — stays compact.
@@ -1522,7 +1487,7 @@ fn is_scalar(v: &Value) -> bool {
 // Tests for map serialization/deserialization:
 #[cfg(test)]
 mod tests {
-    use super::{GameManifest, TiledMap, TiledMapLayer, from_json, manifest_from_json};
+    use super::{TiledMap, TiledMapLayer, from_json};
     use crate::draw_state::BgColour;
     use crate::world::interact::{InteractFn, Interaction};
     use crate::world::map::{Gate, MapObject, ObjectEffect, Trigger, WarpMode};
@@ -1538,30 +1503,6 @@ mod tests {
                 _ => None,
             })
             .expect("map has an image layer")
-    }
-
-    /// The manifest parses and lists the maps to load.
-    #[test]
-    fn manifest_parses() {
-        let json = r#"{
-            "maps": ["office", "town"]
-        }"#;
-        let manifest: GameManifest = manifest_from_json(json.as_bytes()).unwrap();
-        assert_eq!(manifest.maps, vec!["office", "town"]);
-    }
-
-    /// The real `assets/game.manifest` parses and names every shipping map, and
-    /// deliberately excludes the backup map.
-    #[test]
-    fn real_manifest_parses() {
-        let bytes = std::fs::read("../../assets/game.manifest").unwrap();
-        let manifest = manifest_from_json(&bytes).unwrap();
-        assert!(manifest.maps.contains(&"office".to_string()));
-        assert!(manifest.maps.contains(&"house_stairwell".to_string()));
-        assert!(
-            !manifest.maps.iter().any(|m| m.contains("backup")),
-            "the backup map is not shipped"
-        );
     }
 
     /// The destination-map name of an object's warp effect, or `None` if it
