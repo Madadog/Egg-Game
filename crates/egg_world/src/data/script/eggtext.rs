@@ -74,6 +74,34 @@
 //!     characters trade left/right automatically. An explicit `#flip` still
 //!     overrides it for that message.
 //!
+//! ## Conditionals
+//!
+//! `#if NAME` (or `#if not NAME`) opens a branch on a declared `#flag`; zero
+//! or more `#elif NAME` / `#elif not NAME` add further conditions, tried in
+//! order; an optional trailing `#else` covers everything else; `#end` closes
+//! the chain. `not` is reserved for this — `#flag not` is a parse error — so
+//! `#if not NAME` can never be mistaken for testing a flag literally named
+//! `not`. Nesting an `#if` inside another is not supported (yet).
+//!
+//! The whole chain resolves to a single carrier message: the branch is
+//! chosen live, at *playback* time, against the actual save, the moment the
+//! dialogue box reaches that point — not once, up front, when the
+//! conversation is fetched. That's what lets an earlier `#choice`/`#set` in
+//! the same conversation steer a later `#if` in it (see below).
+//!
+//! ```text
+//! #flag liked_the_gift
+//! #flag visited_before
+//! #dialogue thanks
+//!     #if liked_the_gift
+//!     Thank you, I love it!
+//!     #elif not visited_before
+//!     Oh... well, thanks for stopping by, I guess.
+//!     #else
+//!     ...Thanks, I suppose.
+//!     #end
+//! ```
+//!
 //! ## Choices
 //!
 //! A `#choice` opens an interactive menu. It takes the rest of its message —
@@ -104,7 +132,9 @@
 
 use std::collections::BTreeSet;
 
-use super::{ChoiceOptionDef, ContentDef, DialogueDef, Entry, MessageDef, ScriptFile, SegmentDef};
+use super::{
+    ChoiceOptionDef, ContentDef, DialogueDef, ElifDef, Entry, MessageDef, ScriptFile, SegmentDef,
+};
 
 /// A parse failure, carrying the 1-based source line it occurred on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +190,12 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
                 if name.is_empty() {
                     return Err(ParseError::new(line_no, "`#flag` needs a name"));
                 }
+                if name == "not" {
+                    return Err(ParseError::new(
+                        line_no,
+                        "`not` is reserved and can't be a flag name (needed for `#if not NAME`)",
+                    ));
+                }
                 if seen_entry {
                     return Err(ParseError::new(
                         line_no,
@@ -200,8 +236,10 @@ pub fn parse(src: &str) -> Result<ScriptFile, ParseError> {
                     "label is missing a name before `=`",
                 ));
             }
-            file.labels
-                .insert(key.to_string(), parse_value(&logical[eq + 1..]));
+            file.labels.insert(
+                key.to_string(),
+                parse_value(&logical[eq + 1..], line_no)?,
+            );
         } else {
             return Err(ParseError::new(
                 line_no,
@@ -247,15 +285,17 @@ fn parse_list(body: &[(usize, &str)]) -> Result<Vec<String>, ParseError> {
                 "`#list` items can't be directives",
             ));
         }
-        items.push(parse_value(logical));
+        items.push(parse_value(logical, line_no)?);
     }
     Ok(items)
 }
 
-/// A structural marker line inside a `#dialogue` body: the `#if`/`#else`/`#end`
-/// conditional delimiters, which split the body at message boundaries.
+/// A structural marker line inside a `#dialogue` body: the `#if`/`#elif`/
+/// `#else`/`#end` conditional delimiters, which split the body at message
+/// boundaries.
 enum Marker {
-    If(String),
+    If { flag: String, negated: bool },
+    Elif { flag: String, negated: bool },
     Else,
     End,
 }
@@ -269,13 +309,13 @@ enum BodyItem<'a> {
 
 /// A `#dialogue` body. Without conditionals it reduces to the tightest plain
 /// shape ([`Entry::Line`] for a lone bare line, [`Entry::Pages`] for several),
-/// wrapped as a single-segment [`DialogueDef::Plain`]. With `#if`/`#else`/`#end`
-/// it becomes a [`DialogueDef::Segments`] list: unconditional runs and
-/// flag-gated branches. Each `#if` resolves (see [`SegmentDef::resolve`] in
-/// `crate::data::script`) to a single carrier message the dialogue box picks a
-/// branch from live, at *playback* time — not once, up front, at
-/// [`get_dialogue`]. `flags` is the declared vocabulary, against which every
-/// `#set`/`#if` name is checked.
+/// wrapped as a single-segment [`DialogueDef::Plain`]. With `#if`/`#elif`/
+/// `#else`/`#end` it becomes a [`DialogueDef::Segments`] list: unconditional
+/// runs and flag-gated chains. Each `#if` chain resolves (see
+/// [`SegmentDef::resolve`] in `crate::data::script`) to a single carrier
+/// message the dialogue box picks a branch from live, at *playback* time —
+/// not once, up front, at [`get_dialogue`]. `flags` is the declared
+/// vocabulary, against which every `#set`/`#if`/`#elif` name is checked.
 ///
 /// [`get_dialogue`]: crate::data::script::Script::get_dialogue
 fn parse_dialogue(
@@ -323,8 +363,10 @@ fn parse_dialogue(
     builder.finish()
 }
 
-/// Recognise a `#if NAME` / `#else` / `#end` line. Returns `None` for any other
-/// line (ordinary message content). A bare `#if` with no name is a parse error.
+/// Recognise a `#if [not] NAME` / `#elif [not] NAME` / `#else` / `#end` line.
+/// Returns `None` for any other line (ordinary message content). A bare
+/// `#if`/`#elif` with no name, a `not` with nothing after it, or a stray
+/// extra word are all parse errors.
 fn parse_marker(logical: &str, line_no: usize) -> Result<Option<Marker>, ParseError> {
     let Some(rest) = logical.strip_prefix('#') else {
         return Ok(None);
@@ -332,15 +374,54 @@ fn parse_marker(logical: &str, line_no: usize) -> Result<Option<Marker>, ParseEr
     let (keyword, arg) = split_first_word(rest);
     Ok(Some(match keyword {
         "if" => {
-            if arg.is_empty() {
-                return Err(ParseError::new(line_no, "`#if` needs a flag name"));
-            }
-            Marker::If(arg.to_string())
+            let (flag, negated) = parse_condition(arg, line_no, "if")?;
+            Marker::If { flag, negated }
+        }
+        "elif" => {
+            let (flag, negated) = parse_condition(arg, line_no, "elif")?;
+            Marker::Elif { flag, negated }
         }
         "else" => Marker::Else,
         "end" => Marker::End,
         _ => return Ok(None),
     }))
+}
+
+/// Parse the `[not] NAME` argument shared by `#if`/`#elif`: a bare flag name,
+/// or `not` followed by one. `not` is only recognised as a whole word (via
+/// [`split_first_word`]), so a flag whose name merely *starts with* `not`
+/// (e.g. `nothing`) is never mistaken for negation — and `not` itself can
+/// never be a declared flag name (see the `#flag` check in [`parse`]), so
+/// `#if not` with nothing after it is unambiguously an error rather than a
+/// (impossible) test of a flag literally named `not`.
+fn parse_condition(
+    arg: &str,
+    line_no: usize,
+    keyword: &str,
+) -> Result<(String, bool), ParseError> {
+    if arg.is_empty() {
+        return Err(ParseError::new(line_no, format!("`#{keyword}` needs a flag name")));
+    }
+    let (first, rest) = split_first_word(arg);
+    let (name_part, negated) = if first == "not" {
+        if rest.is_empty() {
+            return Err(ParseError::new(
+                line_no,
+                format!("`#{keyword} not` needs a flag name"),
+            ));
+        }
+        (rest, true)
+    } else {
+        (arg, false)
+    };
+    let (flag, extra) = split_first_word(name_part);
+    if !extra.is_empty() {
+        return Err(ParseError::new(
+            line_no,
+            format!("`#{keyword}` has an unexpected extra word {extra:?}"),
+        ));
+    }
+    Ok((flag.to_string(), negated))
 }
 
 /// Tracks portrait-side state (`#autoflip` + explicit `#flip`) across a whole
@@ -387,27 +468,42 @@ impl AutoflipState {
     }
 }
 
-/// Assembles resolved messages and `#if`/`#else`/`#end` markers into a
-/// [`DialogueDef`]. Tracks at most one open conditional (no nesting) and the
-/// branch (`then`/`else`) currently collecting messages.
+/// Assembles resolved messages and `#if`/`#elif`/`#else`/`#end` markers into a
+/// [`DialogueDef`]. Tracks at most one open conditional chain (no nesting) and
+/// the branch (`#if`'s own `then`, the current `#elif`'s, or `#else`)
+/// currently collecting messages.
 #[derive(Default)]
 struct SegmentBuilder {
     segments: Vec<SegmentDef>,
     /// The unconditional run collecting messages outside any `#if`.
     plain: Vec<MessageDef>,
-    /// The open conditional, if any: its flag, its `then`/`else` message runs,
-    /// and whether `#else` has been seen (so the run goes to `otherwise`).
+    /// The open conditional chain, if any.
     open: Option<OpenIf>,
 }
 
-/// The currently-open `#if`, awaiting its `#end`.
+/// The currently-open `#if`/`#elif`/`#else` chain, awaiting its `#end`.
 struct OpenIf {
     flag: String,
+    negated: bool,
     then: Vec<MessageDef>,
+    /// Completed `#elif` branches in document order; the last one (if any) is
+    /// where a message currently routes to, unless `in_else`.
+    elifs: Vec<OpenElif>,
     otherwise: Vec<MessageDef>,
+    /// Whether `#else` has been seen: newly gathered messages go to
+    /// `otherwise`, and a further `#elif` is now an error.
     in_else: bool,
     /// The line the `#if` opened on, so a missing `#end` points back at it.
     open_line: usize,
+}
+
+/// One in-progress `#elif [not] NAME` branch: its condition, plus the
+/// messages gathered for it since (reduced to an [`Entry`] only once the
+/// whole chain closes at `#end`).
+struct OpenElif {
+    flag: String,
+    negated: bool,
+    then: Vec<MessageDef>,
 }
 
 impl SegmentBuilder {
@@ -415,7 +511,10 @@ impl SegmentBuilder {
     fn push_message(&mut self, def: MessageDef) {
         match &mut self.open {
             Some(open) if open.in_else => open.otherwise.push(def),
-            Some(open) => open.then.push(def),
+            Some(open) => match open.elifs.last_mut() {
+                Some(elif) => elif.then.push(def),
+                None => open.then.push(def),
+            },
             None => self.plain.push(def),
         }
     }
@@ -427,7 +526,7 @@ impl SegmentBuilder {
         flags: &BTreeSet<String>,
     ) -> Result<(), ParseError> {
         match marker {
-            Marker::If(flag) => {
+            Marker::If { flag, negated } => {
                 if self.open.is_some() {
                     return Err(ParseError::new(
                         line_no,
@@ -439,10 +538,26 @@ impl SegmentBuilder {
                 self.flush_plain();
                 self.open = Some(OpenIf {
                     flag: flag.clone(),
+                    negated: *negated,
                     then: Vec::new(),
+                    elifs: Vec::new(),
                     otherwise: Vec::new(),
                     in_else: false,
                     open_line: line_no,
+                });
+            }
+            Marker::Elif { flag, negated } => {
+                let Some(open) = &mut self.open else {
+                    return Err(ParseError::new(line_no, "`#elif` without a matching `#if`"));
+                };
+                if open.in_else {
+                    return Err(ParseError::new(line_no, "`#elif` can't follow `#else`"));
+                }
+                check_flag(flag, line_no, flags)?;
+                open.elifs.push(OpenElif {
+                    flag: flag.clone(),
+                    negated: *negated,
+                    then: Vec::new(),
                 });
             }
             Marker::Else => {
@@ -460,8 +575,18 @@ impl SegmentBuilder {
                 };
                 self.segments.push(SegmentDef::If {
                     flag: open.flag,
+                    negated: open.negated,
                     then: reduce_entry(open.then),
                     otherwise: (!open.otherwise.is_empty()).then(|| reduce_entry(open.otherwise)),
+                    elifs: open
+                        .elifs
+                        .into_iter()
+                        .map(|elif| ElifDef {
+                            flag: elif.flag,
+                            negated: elif.negated,
+                            then: reduce_entry(elif.then),
+                        })
+                        .collect(),
                 });
             }
         }
@@ -553,7 +678,9 @@ fn parse_message(
             break;
         }
         // `#set NAME BOOL` takes two arguments, so it is parsed as a whole line
-        // rather than through the single-arg `directive_segments` splitter.
+        // rather than through `directive_segments` (which only ever captures
+        // one argument per directive, erroring on a second rather than
+        // dropping it — no help for a directive whose grammar wants two).
         if let Some(rest) = logical.strip_prefix("#set")
             && (rest.is_empty() || rest.starts_with([' ', '\t']))
         {
@@ -570,8 +697,8 @@ fn parse_message(
             continue;
         }
         // `#shake FRAMES [AMP]` can take two arguments, so like `#set` it is
-        // parsed as a whole line rather than through the single-arg
-        // `directive_segments` splitter (which would silently drop the AMP).
+        // parsed as a whole line rather than through `directive_segments`
+        // (same reason: two arguments, one-arg-per-directive splitter).
         if let Some(rest) = logical.strip_prefix("#shake")
             && (rest.is_empty() || rest.starts_with([' ', '\t']))
         {
@@ -580,7 +707,7 @@ fn parse_message(
             continue;
         }
         if logical.starts_with('#') {
-            for (name, arg) in directive_segments(logical) {
+            for (name, arg) in directive_segments(logical, line_no)? {
                 match name {
                     "pic" => {
                         let portrait = match arg {
@@ -608,8 +735,24 @@ fn parse_message(
                         def.content.push(ContentDef::Sound(name.to_string()));
                     }
                     "delay" => def.content.push(ContentDef::Delay(parse_u8(arg, line_no)?)),
-                    "nopause" => def.pause = false,
-                    "autoflip" => autoflip = true,
+                    "nopause" => {
+                        if let Some(extra) = arg {
+                            return Err(ParseError::new(
+                                line_no,
+                                format!("`#nopause` takes no arguments, found {extra:?}"),
+                            ));
+                        }
+                        def.pause = false;
+                    }
+                    "autoflip" => {
+                        if let Some(extra) = arg {
+                            return Err(ParseError::new(
+                                line_no,
+                                format!("`#autoflip` takes no arguments, found {extra:?}"),
+                            ));
+                        }
+                        autoflip = true;
+                    }
                     other => {
                         return Err(ParseError::new(
                             line_no,
@@ -658,7 +801,7 @@ fn parse_choice(
             continue;
         }
         if let Some(rest) = strip_directive(logical, "option") {
-            let text = parse_value(rest);
+            let text = parse_value(rest, line_no)?;
             if text.is_empty() {
                 return Err(ParseError::new(line_no, "`#option` needs display text"));
             }
@@ -773,12 +916,22 @@ pub(crate) fn split_first_word(s: &str) -> (&str, &str) {
 
 /// Break a directive line into `(name, first-arg)` segments, e.g.
 /// `#pic y_oof #flip false` → `[("pic", Some("y_oof")), ("flip", Some("false"))]`.
-fn directive_segments(logical: &str) -> Vec<(&str, Option<&str>)> {
+/// Any token the grammar doesn't consume is a line-pointed [`ParseError`]
+/// rather than being silently dropped: a second bare word for a directive
+/// that only takes one argument (`#sound gain loss`), or a stray word that
+/// isn't a `#directive` at all.
+fn directive_segments(
+    logical: &str,
+    line_no: usize,
+) -> Result<Vec<(&str, Option<&str>)>, ParseError> {
     let mut segments = Vec::new();
     let mut tokens = logical.split_whitespace().peekable();
     while let Some(token) = tokens.next() {
         let Some(name) = token.strip_prefix('#') else {
-            continue;
+            return Err(ParseError::new(
+                line_no,
+                format!("unexpected token {token:?} (expected a `#directive`)"),
+            ));
         };
         let mut arg = None;
         while let Some(next) = tokens.peek() {
@@ -787,27 +940,32 @@ fn directive_segments(logical: &str) -> Vec<(&str, Option<&str>)> {
             }
             if arg.is_none() {
                 arg = Some(*next);
+                tokens.next();
+            } else {
+                return Err(ParseError::new(
+                    line_no,
+                    format!("`#{name}` has an unexpected extra argument {next:?}"),
+                ));
             }
-            tokens.next();
         }
         segments.push((name, arg));
     }
-    segments
+    Ok(segments)
 }
 
 /// A standalone string value (label value or list item): the verbatim contents
 /// of a `"quoted"` span, otherwise the trimmed line. Escapes are resolved.
-pub(crate) fn parse_value(s: &str) -> String {
+pub(crate) fn parse_value(s: &str, line_no: usize) -> Result<String, ParseError> {
     let s = s.trim();
-    match quoted_span(s) {
+    Ok(match quoted_span(s, line_no)? {
         Some((inner, _)) => unescape(inner),
         None => unescape(s),
-    }
+    })
 }
 
 /// A dialogue text line: its resolved text and an optional trailing `#delay N`.
 fn split_text(logical: &str, line_no: usize) -> Result<(String, Option<u8>), ParseError> {
-    if let Some((inner, after)) = quoted_span(logical) {
+    if let Some((inner, after)) = quoted_span(logical, line_no)? {
         Ok((unescape(inner), parse_trailing_delay(after, line_no)?))
     } else {
         let (text, delay) = peel_trailing_delay(logical);
@@ -815,13 +973,44 @@ fn split_text(logical: &str, line_no: usize) -> Result<(String, Option<u8>), Par
     }
 }
 
-/// If `s` opens with a double quote, return the span between it and the final
-/// double quote, plus whatever trails the closing quote.
-pub(crate) fn quoted_span(s: &str) -> Option<(&str, &str)> {
+/// If `s` opens with a double quote, return the span between it and its
+/// closing double quote, plus whatever trails the closing quote. The closing
+/// quote is the line's one *unescaped* `"` remaining after the opening one:
+/// finding none before the line ends is a missing-closing-quote
+/// [`ParseError`]; finding more than one means an interior quote the author
+/// forgot to escape (e.g. `"a" and "b"`, which used to silently fold into one
+/// verbatim string via `str::rfind` matching the *last* quote in the line) —
+/// also an error, asking for `\"` instead.
+pub(crate) fn quoted_span(
+    s: &str,
+    line_no: usize,
+) -> Result<Option<(&str, &str)>, ParseError> {
     let s = s.trim_start();
-    let rest = s.strip_prefix('"')?;
-    let close = rest.rfind('"')?;
-    Some((&rest[..close], &rest[close + 1..]))
+    let Some(rest) = s.strip_prefix('"') else {
+        return Ok(None);
+    };
+    let mut quotes = Vec::new();
+    let mut chars = rest.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '"' => quotes.push(i),
+            _ => {}
+        }
+    }
+    match quotes.as_slice() {
+        [] => Err(ParseError::new(
+            line_no,
+            "quoted text is missing its closing `\"`",
+        )),
+        &[close] => Ok(Some((&rest[..close], &rest[close + 1..]))),
+        _ => Err(ParseError::new(
+            line_no,
+            "unescaped `\"` inside quoted text — escape it as `\\\"`",
+        )),
+    }
 }
 
 /// Parse the text that follows a closing quote: nothing, or a `#delay N`.
@@ -1184,8 +1373,10 @@ mod tests {
             segments[0],
             SegmentDef::If {
                 flag: "seen".into(),
+                negated: false,
                 then: Entry::Line("After.".into()),
                 otherwise: Some(Entry::Line("Before.".into())),
+                elifs: vec![],
             },
         );
     }
@@ -1200,8 +1391,10 @@ mod tests {
             segments[0],
             SegmentDef::If {
                 flag: "seen".into(),
+                negated: false,
                 then: Entry::Line("Yes.".into()),
-                otherwise: None
+                otherwise: None,
+                elifs: vec![],
             },
         );
     }
@@ -1257,6 +1450,145 @@ mod tests {
             3
         );
         assert_eq!(parse("#dialogue d\n    Hi.\n    #end").unwrap_err().line, 3);
+    }
+
+    #[test]
+    fn if_not_negates_and_swaps_nothing_at_parse_time() {
+        // `negated` just rides along on the flat schema; the swap happens at
+        // resolution (see `crate::data::script::tests`), not here.
+        let def = dialogue_def(
+            "#flag seen\n\
+             #dialogue d\n\
+             \x20   #if not seen\n\
+             \x20   Before.\n\
+             \x20   #else\n\
+             \x20   After.\n\
+             \x20   #end",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        assert_eq!(
+            segments[0],
+            SegmentDef::If {
+                flag: "seen".into(),
+                negated: true,
+                then: Entry::Line("Before.".into()),
+                otherwise: Some(Entry::Line("After.".into())),
+                elifs: vec![],
+            },
+        );
+    }
+
+    #[test]
+    fn elif_chain_parses_into_ordered_elifs() {
+        let def = dialogue_def(
+            "#flag a\n#flag b\n\
+             #dialogue d\n\
+             \x20   #if a\n\
+             \x20   A.\n\
+             \x20   #elif not b\n\
+             \x20   B.\n\
+             \x20   #else\n\
+             \x20   C.\n\
+             \x20   #end",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        assert_eq!(
+            segments[0],
+            SegmentDef::If {
+                flag: "a".into(),
+                negated: false,
+                then: Entry::Line("A.".into()),
+                otherwise: Some(Entry::Line("C.".into())),
+                elifs: vec![ElifDef {
+                    flag: "b".into(),
+                    negated: true,
+                    then: Entry::Line("B.".into()),
+                }],
+            },
+        );
+    }
+
+    #[test]
+    fn elif_without_a_matching_if_errors_at_the_line() {
+        let err = parse("#dialogue d\n    #elif a\n    Bye.").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn elif_after_else_errors_at_the_line() {
+        let err = parse(
+            "#flag a\n#flag b\n#dialogue d\n    #if a\n    X.\n    #else\n    Y.\n    #elif b\n    Z.\n    #end",
+        )
+        .unwrap_err();
+        assert_eq!(err.line, 8);
+    }
+
+    #[test]
+    fn if_not_and_elif_not_need_a_flag_name() {
+        assert_eq!(
+            parse("#dialogue d\n    #if not\n    Hi.\n    #end")
+                .unwrap_err()
+                .line,
+            2
+        );
+        assert_eq!(
+            parse("#flag a\n#dialogue d\n    #if a\n    Hi.\n    #elif not\n    Bye.\n    #end")
+                .unwrap_err()
+                .line,
+            5
+        );
+    }
+
+    #[test]
+    fn flag_named_not_is_reserved() {
+        let err = parse("#flag not").unwrap_err();
+        assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn stray_directive_token_errors_at_the_line() {
+        let err = parse("#dialogue d\n    #pic y_oof stray_typo\n    Hi.").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn sound_extra_argument_errors_at_the_line() {
+        let err = parse("#dialogue d\n    #sound gain loss\n    Hi.").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn multi_directive_line_still_parses() {
+        // `#pic y_oof #flip false` must keep working: each directive gets its
+        // own single argument, split at the next `#`.
+        let messages = convo("#dialogue d\n    #pic y_oof #flip false\n    Hi.");
+        assert_eq!(messages[0].portrait.as_deref(), Some("y_oof"));
+        assert!(!messages[0].flip);
+    }
+
+    #[test]
+    fn unescaped_interior_quote_errors_at_the_line() {
+        // Old (`str::rfind`-based) behaviour silently matched the *last*
+        // quote in the line, folding the middle into one verbatim string.
+        let err = parse("#dialogue d\n    \"a\" and \"b\"").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn quote_missing_its_closing_mark_errors_at_the_line() {
+        // The trailing `\"` is an *escaped* quote, not a terminator, so there
+        // is no unescaped closing quote at all — the author forgot one.
+        let err = parse("#dialogue d\n    \"abc\\\"").unwrap_err();
+        assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn the_real_corpus_parses() {
+        parse(include_str!("../../../../../assets/script/en.eggtext")).expect("parse en.eggtext");
     }
 
     #[test]

@@ -79,13 +79,30 @@ pub enum DialogueDef {
 }
 
 /// One piece of a dialogue body: an unconditional run of messages, or a
-/// flag-gated `#if`. A conditional resolves to a single carrier message
-/// (`TextContent::If`) holding both its `then` and `else` branches (`else`
-/// empty if absent); the choice between them is made at *playback* time,
-/// against the live save, when the dialogue box reaches that item — not once,
-/// up front, when the conversation is fetched. JSON: a plain [`Entry`], or
-/// `{ "if": "flag", "then": <entry>, "else": <entry> }` (the `else` key
-/// optional).
+/// flag-gated `#if`/`#elif`/`#else` chain.
+///
+/// **On disk** the chain is stored flat, in the shape it's authored in: the
+/// `#if`'s own condition and branch, an ordered `elifs` list, and the
+/// optional trailing `#else` branch. `negated` (`#if not NAME`) is stored
+/// per-condition (on `If` itself and on each [`ElifDef`]) rather than baked
+/// into anything else.
+///
+/// **At resolution** ([`SegmentDef::resolve`]) the flat chain is rebuilt into
+/// nested `TextContent::If` carriers, from the inside out: the `#else`
+/// branch (or nothing, if absent) is innermost, each `#elif` wraps it as
+/// another carrier, and the `#if` wraps last. Either way it still resolves to
+/// exactly one carrier message, so the dialogue box always picks a branch
+/// one flag at a time, live, against the save the moment playback reaches it
+/// — not once, up front, when the conversation is fetched. Negation is also
+/// resolved here, by swapping a branch's `then`/`otherwise` when its carrier
+/// is built, so `TextContent::If` itself never needs to know about `not`.
+///
+/// JSON: a plain [`Entry`], or `{ "if": "flag", "then": <entry>, "negated":
+/// bool, "elifs": [...], "else": <entry> }`. `negated`, `elifs` and `else`
+/// all default when absent, so the pre-`#elif` shape — `{ "if", "then",
+/// "else" }` — still deserializes unchanged, and the untagged-enum
+/// discrimination against [`Entry`] (by the presence of the `if` key) is
+/// untouched.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum SegmentDef {
@@ -93,10 +110,26 @@ pub enum SegmentDef {
     If {
         #[serde(rename = "if")]
         flag: String,
+        #[serde(default)]
+        negated: bool,
         then: Entry,
         #[serde(default, rename = "else")]
         otherwise: Option<Entry>,
+        #[serde(default)]
+        elifs: Vec<ElifDef>,
     },
+}
+
+/// One `#elif [not] NAME` branch of a [`SegmentDef::If`] chain: its own
+/// condition (`flag`/`negated`) and the branch it guards, gathered flat
+/// alongside its `#if` (see [`SegmentDef`]'s doc for how the chain nests at
+/// resolution). JSON: `{ "flag": "name", "negated": bool, "then": <entry> }`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ElifDef {
+    pub flag: String,
+    #[serde(default)]
+    pub negated: bool,
+    pub then: Entry,
 }
 
 /// A dialogue entry: a single line, a sequence of manually-advanced pages, or a
@@ -233,30 +266,61 @@ impl Entry {
 }
 
 impl SegmentDef {
-    /// A `Plain` segment resolves to its messages as-is. An `If` resolves to
-    /// exactly one carrier message holding a [`TextContent::If`] — both
-    /// branches, unpicked — so the dialogue box can choose between them live
-    /// when playback gets there. All the carrier `Message`'s own fields
-    /// (portrait/pause/flip) are `Message::default()` and never read: the box
-    /// treats an `If` item specially rather than displaying the carrier itself
-    /// (see `Dialogue::consume_text_content` in `egg_ui`).
+    /// A `Plain` segment resolves to its messages as-is. An `If`/`elif`/`else`
+    /// chain resolves to exactly one carrier message, built inside-out: the
+    /// `#else` branch (or nothing) is innermost, each `#elif` wraps it as
+    /// another [`TextContent::If`] carrier, and the `#if` wraps last — so
+    /// however many `#elif`s were authored, the dialogue box still walks one
+    /// carrier at a time, live, against the save when playback gets there.
+    /// All the carrier `Message`s' own fields (portrait/pause/flip) are
+    /// `Message::default()` and never read: the box treats an `If` item
+    /// specially rather than displaying the carrier itself (see
+    /// `Dialogue::consume_text_content` in `egg_ui`).
     fn resolve(self, portraits: &Portraits) -> Vec<Message> {
         match self {
             SegmentDef::Plain(entry) => entry.resolve(portraits),
             SegmentDef::If {
                 flag,
+                negated,
                 then,
                 otherwise,
-            } => vec![Message {
-                content: vec![TextContent::If {
-                    flag,
-                    then: then.resolve(portraits),
-                    otherwise: otherwise
-                        .map(|e| e.resolve(portraits))
-                        .unwrap_or_default(),
-                }],
-                ..Message::default()
-            }],
+                elifs,
+            } => {
+                let mut rest = otherwise.map(|e| e.resolve(portraits)).unwrap_or_default();
+                for elif in elifs.into_iter().rev() {
+                    let carrier =
+                        if_carrier(elif.flag, elif.negated, elif.then.resolve(portraits), rest);
+                    rest = vec![Message {
+                        content: vec![carrier],
+                        ..Message::default()
+                    }];
+                }
+                vec![Message {
+                    content: vec![if_carrier(flag, negated, then.resolve(portraits), rest)],
+                    ..Message::default()
+                }]
+            }
+        }
+    }
+}
+
+/// Build one runtime `#if`/`#elif` carrier. [`TextContent::If`] always means
+/// "if `flag` is true show `then`, else show `otherwise`", so resolving a
+/// negated condition (`#if not`/`#elif not`) is just a matter of swapping
+/// which resolved branch plays which role — `TextContent::If` itself never
+/// needs to represent `not`.
+fn if_carrier(flag: String, negated: bool, then: Vec<Message>, otherwise: Vec<Message>) -> TextContent {
+    if negated {
+        TextContent::If {
+            flag,
+            then: otherwise,
+            otherwise: then,
+        }
+    } else {
+        TextContent::If {
+            flag,
+            then,
+            otherwise,
         }
     }
 }
@@ -547,6 +611,98 @@ mod tests {
             }
             other => panic!("expected a single If carrier, got {other:?}"),
         }
+    }
+
+    /// `#if not NAME` swaps which resolved branch plays `then` vs `otherwise`
+    /// in the runtime carrier, since `TextContent::If` itself always means
+    /// "show `then` when the flag is true".
+    #[test]
+    fn if_not_swaps_the_branches_at_resolution() {
+        let script = script(
+            "#flag seen\n\
+             #dialogue d\n\
+             \x20   #if not seen\n\
+             \x20   Before.\n\
+             \x20   #else\n\
+             \x20   After.\n\
+             \x20   #end",
+        );
+        let convo = script.get_dialogue("d");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "seen");
+                assert_eq!(plain(then), "After.", "then fires when the flag IS true, i.e. `not seen` is false");
+                assert_eq!(
+                    plain(otherwise),
+                    "Before.",
+                    "otherwise fires when the flag is false, i.e. `not seen` is true"
+                );
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
+    }
+
+    /// An `#if`/`#elif`/`#else` chain still resolves to exactly one carrier
+    /// message; the `#elif` nests one level inside the `#if`'s `otherwise`.
+    #[test]
+    fn if_elif_else_chain_resolves_to_nested_carriers() {
+        let script = script(
+            "#flag a\n#flag b\n\
+             #dialogue d\n\
+             \x20   #if a\n\
+             \x20   A branch.\n\
+             \x20   #elif b\n\
+             \x20   B branch.\n\
+             \x20   #else\n\
+             \x20   Else branch.\n\
+             \x20   #end",
+        );
+        let convo = script.get_dialogue("d");
+        assert_eq!(convo.len(), 1, "the whole chain resolves to one carrier message");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "a");
+                assert_eq!(plain(then), "A branch.");
+                assert_eq!(otherwise.len(), 1, "the #elif nests inside the #if's otherwise branch");
+                match &otherwise[0].content[..] {
+                    [TextContent::If { flag, then, otherwise }] => {
+                        assert_eq!(flag, "b");
+                        assert_eq!(plain(then), "B branch.");
+                        assert_eq!(plain(otherwise), "Else branch.");
+                    }
+                    other => panic!("expected a nested If carrier for the #elif, got {other:?}"),
+                }
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
+    }
+
+    /// The pre-`#elif` JSON shape — just `if`/`then`/`else`, no `negated` or
+    /// `elifs` keys — still deserializes, defaulting the new fields.
+    #[test]
+    fn old_if_json_shape_without_elif_or_negated_still_deserializes() {
+        let json = r#"{
+            "dialogue": {
+                "d": { "segments": [
+                    { "if": "seen", "then": "After.", "else": "Before." }
+                ] }
+            },
+            "flags": ["seen"]
+        }"#;
+        let file: ScriptFile = serde_json::from_str(json).expect("old shape still deserializes");
+        let DialogueDef::Segments { segments } = &file.dialogue["d"] else {
+            panic!("expected segments");
+        };
+        assert_eq!(
+            segments[0],
+            SegmentDef::If {
+                flag: "seen".into(),
+                negated: false,
+                then: Entry::Line("After.".into()),
+                otherwise: Some(Entry::Line("Before.".into())),
+                elifs: vec![],
+            },
+        );
     }
 
     #[test]

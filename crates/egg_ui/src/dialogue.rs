@@ -1250,6 +1250,40 @@ mod tests {
         assert!(!d.next_text(&mut console, &font, &mut save, false));
     }
 
+    /// An `#if`/`#elif`/`#else` chain still resolves to one carrier and picks
+    /// the first matching branch live — proof the nested-carrier resolution
+    /// (`SegmentDef::resolve` in `egg_world`) plays back with no runtime
+    /// changes: the `#if` wins even when a later `#elif` would also match.
+    #[test]
+    fn an_elif_chain_picks_the_first_matching_branch_live() {
+        let src = "#flag a\n#flag b\n\
+                    #dialogue conv\n\
+                    \x20   #if a\n\
+                    \x20   A branch.\n\
+                    \x20   #elif b\n\
+                    \x20   B branch.\n\
+                    \x20   #else\n\
+                    \x20   Neither.\n\
+                    \x20   #end";
+        let messages = dialogue_from(src, "conv");
+
+        let play = |a: bool, b: bool| -> String {
+            let mut console = NullConsole::new();
+            let font = Font::blank();
+            let mut save = SaveData::default();
+            save.set_flag("a", a);
+            save.set_flag("b", b);
+            let mut d = Dialogue::default();
+            d.set_messages(&mut console, &font, &mut save, &messages);
+            d.current_text.clone().unwrap_or_default()
+        };
+
+        assert_eq!(play(true, false), "A branch.");
+        assert_eq!(play(true, true), "A branch.", "the #if wins even when the #elif also matches");
+        assert_eq!(play(false, true), "B branch.");
+        assert_eq!(play(false, false), "Neither.");
+    }
+
     /// A `#set` (not just a `#choice`) earlier in a conversation also drives a
     /// later `#if` in that same conversation — the `#set`/`#if` pairing goes
     /// through the same live-`save` mechanism as the choice case, just without
