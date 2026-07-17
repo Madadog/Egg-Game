@@ -389,7 +389,12 @@
     {
       "name": "music",
       "type": "string",
-      "value": "filler"
+      "value": "select"
+    },
+    {
+      "name": "music_speed",
+      "type": "float",
+      "value": 0.9
     }
   ],
   "renderorder": "right-down",
