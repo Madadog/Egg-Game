@@ -194,10 +194,11 @@ impl<S: ConsoleApi> Ctx<'_, S> {
             .unwrap_or_default()
     }
 
-    /// A dialogue conversation by key, resolved against the live save so its
-    /// `#if` branches pick by the player's flags (see [`Script::get_dialogue`]).
+    /// A dialogue conversation by key. Any `#if` in it comes back as an
+    /// unpicked branch carrier — it picks by the player's flags at *playback*
+    /// time, in the dialogue box (see [`Script::get_dialogue`]), not here.
     pub fn get_dialogue(&self, key: &str) -> Vec<Message> {
-        self.script.get_dialogue(key, self.save)
+        self.script.get_dialogue(key)
     }
 
     /// A cutscene definition by name from the loaded registry, or `None` if
@@ -673,14 +674,14 @@ mod tests {
             &state.portraits,
         );
         assert_eq!(
-            state.script.get_dialogue("d", &state.save)[0].portrait,
+            state.script.get_dialogue("d")[0].portrait,
             None,
             "unknown against the built-in registry"
         );
 
         state.load_data(&mut console);
 
-        let portrait = state.script.get_dialogue("d", &state.save)[0].portrait.clone();
+        let portrait = state.script.get_dialogue("d")[0].portrait.clone();
         assert_eq!(
             portrait.map(|p| p.sprite.cells[0].spr_id),
             Some(42),

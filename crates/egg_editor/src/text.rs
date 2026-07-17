@@ -1970,7 +1970,7 @@ impl TextEditor {
     fn reload_preview(&mut self, system: &mut impl ConsoleApi, font: &Font, panel_w: i32) {
         let width = (panel_w - 8).clamp(40, 220) as usize;
         let messages = match (&self.preview.script, &self.preview.key) {
-            (Some(script), Some(key)) => script.get_dialogue(key, &SaveData::default()),
+            (Some(script), Some(key)) => script.get_dialogue(key),
             _ => Vec::new(),
         };
         let small = self.preview.small_font;

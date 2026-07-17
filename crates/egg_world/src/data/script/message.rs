@@ -61,18 +61,39 @@ pub enum TextContent {
     /// nor [`is_skip`](Self::is_skip)) until the player picks one; the picked
     /// option's flags are then written through the same [`SetFlag`](Self::SetFlag)
     /// machinery (`save.set_flag`) and playback continues. Follow-up text
-    /// branches on those flags through the ordinary `#if` flatten on the next
-    /// [`get_dialogue`](crate::data::script::Script::get_dialogue).
+    /// branches on those flags through the ordinary `#if` — evaluated at
+    /// *playback* time (see [`If`](Self::If)), so a later `#if` in the very same
+    /// conversation already sees the flag the choice just set.
     Choice(Vec<ChoiceOption>),
+    /// The runtime `#if` — both branches are carried into the playback queue as
+    /// one carrier item, and the dialogue box picks one against the live save
+    /// the moment playback reaches it (not once, up front, when the
+    /// conversation is fetched). That is what lets an earlier `#choice`/`#set`
+    /// in the same conversation steer a later `#if` in it: the flag is live by
+    /// the time this item is consumed. `otherwise` is empty when the source had
+    /// no `#else`. See [`crate::data::script::eggtext`] and
+    /// `Dialogue::consume_text_content` (`egg_ui`) for the two ends of this.
+    If {
+        flag: String,
+        then: Vec<Message>,
+        otherwise: Vec<Message>,
+    },
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
         use TextContent::*;
         !matches!(self, Text { pause: true, .. } | Pause | Choice(_))
     }
+    /// Consumed in place rather than shown directly. `If` belongs here too: the
+    /// carrier itself never renders — consuming it splices the chosen branch's
+    /// content into the queue, and `next_text`'s `is_skip` recursion flows
+    /// straight into that spliced content in the same call.
     pub fn is_skip(&self) -> bool {
         use TextContent::*;
-        matches!(self, Sound(_) | Portrait(_) | Flip(_) | SetFlag(..) | Shake { .. })
+        matches!(
+            self,
+            Sound(_) | Portrait(_) | Flip(_) | SetFlag(..) | Shake { .. } | If { .. }
+        )
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).
     pub fn text(s: impl Into<String>) -> Self {

@@ -36,6 +36,45 @@ pub fn print_options(small_text: bool) -> PrintOptions {
     }
 }
 
+/// Lower a sequence of [`Message`]s into the forward-order [`TextContent`]
+/// queue [`Dialogue::next_text`] pops from (the caller reverses it into the
+/// stack). Shared by [`Dialogue::set_messages`], which lowers a whole fetched
+/// conversation, and the `TextContent::If` arm of
+/// [`Dialogue::consume_text_content`], which lowers just the chosen branch and
+/// splices it back in — same rules either way.
+///
+/// Per message: a message whose content is *exactly one* [`TextContent::If`]
+/// item is a branch carrier, not a real page — it pushes just that item, with
+/// no `Portrait`/`Flip` (those would visibly clobber the current speaker
+/// portrait the instant playback reaches it, even when the branch it resolves
+/// to turns out empty) and never a trailing `Pause` (that's decided where the
+/// branch is consumed — see the `If` arm — since it depends on what follows
+/// the `#end`, which this function alone can't see). It still counts as "a
+/// following message" for the *previous* message's own pause rule below, same
+/// as any other message would.
+///
+/// Any other message: `Portrait`, `Flip`, its content, then a `Pause` if
+/// `pause_when_done` and it isn't the last message. No pause follows the very
+/// last message — the caller (closing the box, or the `If` arm splicing more
+/// content after a branch) handles that.
+fn lower_messages(messages: &[Message]) -> Vec<TextContent> {
+    let mut queue: Vec<TextContent> = Vec::new();
+    let last = messages.len().saturating_sub(1);
+    for (i, message) in messages.iter().enumerate() {
+        if let [TextContent::If { .. }] = message.content.as_slice() {
+            queue.extend(message.content.iter().cloned());
+            continue;
+        }
+        queue.push(TextContent::Portrait(message.portrait.clone()));
+        queue.push(TextContent::Flip(message.flip_portrait));
+        queue.extend(message.content.iter().cloned());
+        if message.pause_when_done && i != last {
+            queue.push(TextContent::Pause);
+        }
+    }
+    queue
+}
+
 /// A live [`TextContent::Choice`]: the options being offered and the highlighted
 /// index. Set when the box consumes a `Choice` item and cleared once the player
 /// confirms (see [`Dialogue::confirm_choice`]). While it is `Some`, the box is
@@ -111,16 +150,15 @@ impl Dialogue {
             self.set_current_text(font, save, string);
         }
     }
-    /// Queue a sequence of [`Message`]s. Each message sets its speaker
-    /// (portrait + flip) before emitting its content; a `Pause` is inserted
-    /// between messages whose `pause_when_done` is set, so the player must
-    /// press to continue (otherwise it auto-advances). No pause is added after
-    /// the final message — closing the box handles that.
+    /// Queue a sequence of [`Message`]s (see [`lower_messages`]).
     ///
     /// `save` is threaded through playback (not just for the wrap setting
     /// `small_text_on`): a [`TextContent::SetFlag`] item — authored as `#set` —
-    /// writes its named flag the moment it is consumed, so passing `&mut save`
-    /// is what lets dialogue mutate progress as it plays.
+    /// writes its named flag the moment it is consumed, and a
+    /// [`TextContent::If`] item reads the same live `save` the moment
+    /// playback reaches it, so passing `&mut save` is what lets dialogue both
+    /// mutate progress as it plays *and* branch on progress set earlier in the
+    /// very same conversation.
     pub fn set_messages(
         &mut self,
         system: &mut impl ConsoleApi,
@@ -128,17 +166,7 @@ impl Dialogue {
         save: &mut SaveData,
         messages: &[Message],
     ) {
-        let mut queue: Vec<TextContent> = Vec::new();
-        let last = messages.len().saturating_sub(1);
-        for (i, message) in messages.iter().enumerate() {
-            queue.push(TextContent::Portrait(message.portrait.clone()));
-            queue.push(TextContent::Flip(message.flip_portrait));
-            queue.extend(message.content.iter().cloned());
-            if message.pause_when_done && i != last {
-                queue.push(TextContent::Pause);
-            }
-        }
-        self.next_text = queue.into_iter().rev().collect();
+        self.next_text = lower_messages(messages).into_iter().rev().collect();
         self.next_text(system, font, save, false);
     }
     pub fn next_text(
@@ -231,6 +259,38 @@ impl Dialogue {
                     options,
                     selected: 0,
                 });
+                true
+            }
+            // The runtime `#if`: pick a branch against the *live* `save` right
+            // now, at the moment playback reaches it — not once, up front, when
+            // the conversation was fetched. This is what lets a `#choice`/`#set`
+            // earlier in the same conversation steer this. Being `is_skip`, the
+            // `next_text` recursion flows straight into the spliced branch in
+            // the same call, so nothing is displayed for the carrier itself.
+            TextContent::If {
+                flag,
+                then,
+                otherwise,
+            } => {
+                let branch = if save.flag(&flag) { &then } else { &otherwise };
+                let mut spliced = lower_messages(branch);
+                // The pause separating the branch's last page from whatever
+                // follows the `#end` — only when both sides actually exist
+                // (mirrors the ordinary between-messages pause rule). One
+                // accepted edge case: an `#if` whose chosen branch is empty,
+                // sitting at the very end of a conversation, costs one extra
+                // (silent, no visible change) advance press versus the old
+                // flatten-at-fetch behaviour — the pause after the *preceding*
+                // page was already emitted statically and can't be retracted
+                // now that we know the branch turned out empty. Everywhere else
+                // press counts are identical.
+                if !spliced.is_empty()
+                    && branch.last().is_some_and(|m| m.pause_when_done)
+                    && !self.next_text.is_empty()
+                {
+                    spliced.push(TextContent::Pause);
+                }
+                self.next_text.extend(spliced.into_iter().rev());
                 true
             }
         }
@@ -1011,5 +1071,212 @@ mod tests {
         let out = fit_paragraph(&font, "AAA BBB", 4, false, false);
         assert!(out.contains("AAA"), "got {out:?}");
         assert!(out.contains("BBB"), "got {out:?}");
+    }
+
+    // --- runtime `#if` (a `#choice`/`#set` earlier in a conversation steering
+    // a later `#if` in the very same conversation, resolved live as playback
+    // reaches it — see `TextContent::If` and `lower_messages`) ---
+
+    /// Parse `.eggtext` `src` and resolve dialogue key `key` from it, against
+    /// the built-in portraits — same route as `egg_world`'s own script tests
+    /// (`crate::data::script::mod::tests::script`), just reachable from here as
+    /// a normal dependency rather than an in-crate helper.
+    fn dialogue_from(src: &str, key: &str) -> Vec<Message> {
+        use egg_world::data::portraits::Portraits;
+        use egg_world::data::script::{Script, eggtext};
+        let mut script = Script::new();
+        script.set_base(
+            eggtext::parse(src).expect("parse eggtext"),
+            &Portraits::builtin(),
+        );
+        script.get_dialogue(key)
+    }
+
+    /// Advance playback past a pause to the next real content, looping
+    /// `next_text` until `current_text` changes, a choice opens, or the queue
+    /// empties — a lone `Pause` (or an `If` resolving to an empty branch) is
+    /// consumed without visibly changing anything, so one driver "press" can
+    /// take more than one `next_text` call to land on the next real page. Must
+    /// stop the instant a choice opens rather than looping past it: unlike
+    /// production (which gates every `next_text` call on `!is_choosing()`),
+    /// nothing here would otherwise stop `next_text` from popping straight
+    /// through an open menu.
+    ///
+    /// Calls [`Dialogue::finish_line`] first, same as the real driver only
+    /// calling `next_text` once `is_line_done()` — without it, a `Text` item
+    /// reached mid-typewriter would just get requeued by
+    /// [`Dialogue::add_text`] rather than shown (`current_text` is still
+    /// `Some` and not yet "done").
+    fn advance(d: &mut Dialogue, console: &mut impl ConsoleApi, font: &Font, save: &mut SaveData) -> bool {
+        d.finish_line();
+        let before = d.current_text.clone();
+        loop {
+            if !d.next_text(console, font, save, false) {
+                return false;
+            }
+            if d.is_choosing() || d.current_text != before {
+                return true;
+            }
+        }
+    }
+
+    /// The motivating bug this whole runtime-`#if` change fixes (mirrors
+    /// `debug_portrait2` in `assets/script/en.eggtext`): a `#choice` sets a
+    /// flag, and later in the *same* conversation an `#if` branches on it.
+    /// Before this change, `#if` was flattened once when the conversation was
+    /// fetched — before the choice had been made — so it always saw the flag's
+    /// value from *before* this conversation started. Now it's picked live, at
+    /// playback time, so it sees whatever the player just chose.
+    #[test]
+    fn a_choice_earlier_in_a_conversation_steers_a_later_if_in_it() {
+        let src = "#flag flag_set\n\
+                    #dialogue conv\n\
+                    \x20   Hi!\n\
+                    \x20   #choice\n\
+                    \x20   #option Large\n\
+                    \x20   #set flag_set true\n\
+                    \x20   #option Small\n\
+                    \x20   #set flag_set false\n\
+                    \n\
+                    \x20   Hmm...\n\
+                    \n\
+                    \x20   #if flag_set\n\
+                    \x20   Big branch.\n\
+                    \x20   #else\n\
+                    \x20   Small branch.\n\
+                    \x20   #end";
+        let messages = dialogue_from(src, "conv");
+
+        // Play the whole conversation once per picked option, asserting which
+        // branch text the box ends up showing.
+        let play = |pick: usize| -> String {
+            let mut console = NullConsole::new();
+            let font = Font::blank();
+            let mut save = SaveData::default();
+            let mut d = Dialogue::default();
+
+            d.set_messages(&mut console, &font, &mut save, &messages);
+            assert_eq!(d.current_text.as_deref(), Some("Hi!"));
+
+            advance(&mut d, &mut console, &font, &mut save);
+            assert!(d.is_choosing(), "the choice opens next");
+            d.choice.as_mut().unwrap().selected = pick;
+            d.confirm_choice(&mut console, &font, &mut save);
+
+            advance(&mut d, &mut console, &font, &mut save);
+            assert_eq!(d.current_text.as_deref(), Some("Hmm..."), "the page between the choice and the #if");
+
+            advance(&mut d, &mut console, &font, &mut save);
+            d.current_text.clone().unwrap_or_default()
+        };
+
+        assert_eq!(play(0), "Big branch.", "picking option 0 sets flag_set true");
+        assert_eq!(play(1), "Small branch.", "picking option 1 sets flag_set false");
+    }
+
+    /// An `#if` whose chosen branch is empty, sitting mid-conversation, must
+    /// not cost an extra press: the branch contributes nothing, so the very
+    /// next `next_text` call after the one that eats the preceding pause lands
+    /// straight on the following message — not a further no-op call.
+    #[test]
+    fn an_if_with_an_empty_branch_flows_into_the_next_message_without_an_extra_press() {
+        let src = "#flag unset_flag\n\
+                    #dialogue conv\n\
+                    \x20   First.\n\
+                    \n\
+                    \x20   #if unset_flag\n\
+                    \x20   Never shown.\n\
+                    \x20   #end\n\
+                    \n\
+                    \x20   Second.";
+        let messages = dialogue_from(src, "conv");
+
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.current_text.as_deref(), Some("First."));
+
+        // `finish_line` before each call mirrors the real driver only calling
+        // `next_text` once `is_line_done()` — otherwise `add_text` would just
+        // requeue the next `Text` item instead of showing it.
+        //
+        // One press eats the pause after "First." — no visible change yet.
+        d.finish_line();
+        assert!(d.next_text(&mut console, &font, &mut save, false));
+        assert_eq!(d.current_text.as_deref(), Some("First."));
+
+        // The very next press resolves the (empty) branch and lands straight
+        // on "Second." — proof there's no second, spurious pause in between.
+        d.finish_line();
+        assert!(d.next_text(&mut console, &font, &mut save, false));
+        assert_eq!(d.current_text.as_deref(), Some("Second."));
+    }
+
+    /// A chosen (non-empty) branch followed by more conversation gets exactly
+    /// one `Pause` between its last page and the following page — the same
+    /// single silent press any ordinary paused message transition costs, no
+    /// more.
+    #[test]
+    fn a_chosen_branch_gets_exactly_one_pause_before_the_following_message() {
+        let src = "#flag set_flag\n\
+                    #dialogue conv\n\
+                    \x20   #if set_flag\n\
+                    \x20   Branch page.\n\
+                    \x20   #end\n\
+                    \n\
+                    \x20   Outro.";
+        let messages = dialogue_from(src, "conv");
+
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        save.set_flag("set_flag", true);
+        let mut d = Dialogue::default();
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.current_text.as_deref(), Some("Branch page."));
+
+        // The one pause after the branch's last page — no visible change.
+        d.finish_line();
+        assert!(d.next_text(&mut console, &font, &mut save, false));
+        assert_eq!(d.current_text.as_deref(), Some("Branch page."));
+        // Immediately followed by "Outro." — not a second no-op call.
+        d.finish_line();
+        assert!(d.next_text(&mut console, &font, &mut save, false));
+        assert_eq!(d.current_text.as_deref(), Some("Outro."));
+        // Nothing left.
+        d.finish_line();
+        assert!(!d.next_text(&mut console, &font, &mut save, false));
+    }
+
+    /// A `#set` (not just a `#choice`) earlier in a conversation also drives a
+    /// later `#if` in that same conversation — the `#set`/`#if` pairing goes
+    /// through the same live-`save` mechanism as the choice case, just without
+    /// the interactive menu.
+    #[test]
+    fn a_set_earlier_in_a_conversation_drives_a_later_if_in_it() {
+        let src = "#flag flag_x\n\
+                    #dialogue conv\n\
+                    \x20   #set flag_x true\n\
+                    \x20   Intro.\n\
+                    \n\
+                    \x20   #if flag_x\n\
+                    \x20   Yes.\n\
+                    \x20   #else\n\
+                    \x20   No.\n\
+                    \x20   #end";
+        let messages = dialogue_from(src, "conv");
+
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.current_text.as_deref(), Some("Intro."));
+        assert!(save.flag("flag_x"), "the #set fired immediately, during its own message");
+
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Yes."));
     }
 }

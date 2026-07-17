@@ -81,9 +81,12 @@
 //! `#option TEXT` lines, each followed by the `#set NAME BOOL` flags it writes
 //! when picked (the same `#set` that fires inline elsewhere). It needs at least
 //! two options; the picked option's flags then steer later dialogue through the
-//! ordinary `#if` (evaluated on the next lookup — a choice records the decision,
-//! the world reacts to the flag). No `#end` — the block runs to the message's
-//! end (its blank line).
+//! ordinary `#if` — evaluated live, at *playback* time, as the dialogue box
+//! plays past it (a choice writes its flag the moment it's picked; the box
+//! reads the same live save when it later reaches an `#if`), so a `#choice`
+//! earlier in a conversation can steer an `#if` later in that very same
+//! conversation. No `#end` — the block runs to the message's end (its blank
+//! line).
 //!
 //! ```text
 //! #flag chose_tea
@@ -268,8 +271,11 @@ enum BodyItem<'a> {
 /// shape ([`Entry::Line`] for a lone bare line, [`Entry::Pages`] for several),
 /// wrapped as a single-segment [`DialogueDef::Plain`]. With `#if`/`#else`/`#end`
 /// it becomes a [`DialogueDef::Segments`] list: unconditional runs and
-/// flag-gated branches, included whole at [`get_dialogue`] time. `flags` is the
-/// declared vocabulary, against which every `#set`/`#if` name is checked.
+/// flag-gated branches. Each `#if` resolves (see [`SegmentDef::resolve`] in
+/// `crate::data::script`) to a single carrier message the dialogue box picks a
+/// branch from live, at *playback* time — not once, up front, at
+/// [`get_dialogue`]. `flags` is the declared vocabulary, against which every
+/// `#set`/`#if` name is checked.
 ///
 /// [`get_dialogue`]: crate::data::script::Script::get_dialogue
 fn parse_dialogue(

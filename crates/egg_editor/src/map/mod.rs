@@ -1181,10 +1181,13 @@ pub struct MapViewer {
     /// Every dialogue key the script defines, refreshed each step — the Dialog
     /// browser's pick list.
     dialogue_keys: Vec<String>,
-    /// The faithful preview, resolved each step from `script.get_dialogue` (so
-    /// advanced dialogues and `#if` branches preview exactly as in-game). Drawn as
-    /// the real dialogue box; `build_dialogue`/`draw` read it without needing the
-    /// `Script`/`SaveData` again.
+    /// The faithful preview, resolved each step by `sync_dialogue` from
+    /// `script.get_dialogue` with every `#if` carrier flattened against the
+    /// live save (`resolve_if_carriers`) — this panel pages through it by
+    /// index rather than driving a live `Dialogue` widget, so it needs
+    /// ordinary, always-displayable messages, not unpicked branch carriers.
+    /// Drawn as the real dialogue box; `build_dialogue`/`draw` read it without
+    /// needing the `Script`/`SaveData` again.
     dialogue_preview: Vec<Message>,
     /// Set when the Dialog panel's "edit in text editor" link is clicked: a
     /// request for the host to open the text editor at this dialogue's block,

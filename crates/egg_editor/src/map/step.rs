@@ -4,6 +4,8 @@
 
 use super::*;
 
+use egg_world::data::script::message::TextContent;
+
 impl MapViewer {
     /// True while a text field is capturing keyboard input — the host suppresses
     /// its global debug hotkeys so typed dialogue keys don't trigger them.
@@ -269,10 +271,16 @@ impl MapViewer {
             self.set_dialogue_key(key);
         }
 
-        // Resolve the live script against the save, so advanced dialogue and `#if`
-        // branches preview exactly as they'd play.
+        // Fetch the conversation, then resolve any `#if` carrier against the
+        // live save. `Script::get_dialogue` no longer picks branches itself —
+        // that now happens at *playback* time, inside a live `Dialogue`
+        // widget's `next_text` — but this panel isn't one: it's a simple
+        // by-index browser over `dialogue_preview` (see `draw_dialogue_preview`),
+        // so it has to flatten `#if`s itself here, once, to keep every indexed
+        // entry a normal displayable message (mirrors what `Script::get_dialogue`
+        // used to do internally before `#if` resolution moved to playback time).
         let preview = match &self.dialogue_key {
-            Some(key) => script.get_dialogue(key, save),
+            Some(key) => resolve_if_carriers(script.get_dialogue(key), save),
             None => Vec::new(),
         };
         self.dialogue_msg = self.dialogue_msg.min(preview.len().saturating_sub(1));
@@ -1211,6 +1219,35 @@ impl MapViewer {
         // survives, so a block can be pasted into a different map.)
         self.selection = None;
     }
+}
+
+/// Flatten every `#if` carrier in `messages` to its branch chosen by `save`,
+/// same choice a live [`Dialogue`] widget would make at playback time — used
+/// by [`MapViewer::sync_dialogue`] to feed its simple by-index preview panel
+/// (not a playback widget) a sequence of ordinary, always-displayable
+/// messages, the same shape `Script::get_dialogue` used to hand back itself
+/// before `#if` resolution moved to playback time.
+fn resolve_if_carriers(messages: Vec<Message>, save: &SaveData) -> Vec<Message> {
+    let mut out = Vec::with_capacity(messages.len());
+    for message in messages {
+        let branch = match message.content.as_slice() {
+            [TextContent::If {
+                flag,
+                then,
+                otherwise,
+            }] => Some(if save.flag(flag) {
+                then.clone()
+            } else {
+                otherwise.clone()
+            }),
+            _ => None,
+        };
+        match branch {
+            Some(branch) => out.extend(branch),
+            None => out.push(message),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

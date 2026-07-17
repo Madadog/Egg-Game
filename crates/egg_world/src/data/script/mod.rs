@@ -40,7 +40,6 @@ pub mod eggtext;
 pub mod message;
 
 use crate::data::portraits::Portraits;
-use crate::data::save::SaveData;
 use crate::data::script::message::{ChoiceOption, Message, TextContent};
 use crate::data::sound;
 
@@ -80,11 +79,13 @@ pub enum DialogueDef {
 }
 
 /// One piece of a dialogue body: an unconditional run of messages, or a
-/// flag-gated `#if`. A conditional includes its whole `then` branch when the
-/// named flag is set, otherwise its `else` branch (empty if absent); the choice
-/// is made at `Ctx::get_dialogue` time against the
-/// live save. JSON: a plain [`Entry`], or `{ "if": "flag", "then": <entry>,
-/// "else": <entry> }` (the `else` key optional).
+/// flag-gated `#if`. A conditional resolves to a single carrier message
+/// (`TextContent::If`) holding both its `then` and `else` branches (`else`
+/// empty if absent); the choice between them is made at *playback* time,
+/// against the live save, when the dialogue box reaches that item — not once,
+/// up front, when the conversation is fetched. JSON: a plain [`Entry`], or
+/// `{ "if": "flag", "then": <entry>, "else": <entry> }` (the `else` key
+/// optional).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum SegmentDef {
@@ -232,31 +233,41 @@ impl Entry {
 }
 
 impl SegmentDef {
-    fn resolve(self, portraits: &Portraits) -> Segment {
+    /// A `Plain` segment resolves to its messages as-is. An `If` resolves to
+    /// exactly one carrier message holding a [`TextContent::If`] — both
+    /// branches, unpicked — so the dialogue box can choose between them live
+    /// when playback gets there. All the carrier `Message`'s own fields
+    /// (portrait/pause/flip) are `Message::default()` and never read: the box
+    /// treats an `If` item specially rather than displaying the carrier itself
+    /// (see `Dialogue::consume_text_content` in `egg_ui`).
+    fn resolve(self, portraits: &Portraits) -> Vec<Message> {
         match self {
-            SegmentDef::Plain(entry) => Segment::Plain(entry.resolve(portraits)),
+            SegmentDef::Plain(entry) => entry.resolve(portraits),
             SegmentDef::If {
                 flag,
                 then,
                 otherwise,
-            } => Segment::If {
-                flag,
-                then: then.resolve(portraits),
-                otherwise: otherwise
-                    .map(|e| e.resolve(portraits))
-                    .unwrap_or_default(),
-            },
+            } => vec![Message {
+                content: vec![TextContent::If {
+                    flag,
+                    then: then.resolve(portraits),
+                    otherwise: otherwise
+                        .map(|e| e.resolve(portraits))
+                        .unwrap_or_default(),
+                }],
+                ..Message::default()
+            }],
         }
     }
 }
 
 impl DialogueDef {
-    fn resolve(self, portraits: &Portraits) -> Vec<Segment> {
+    fn resolve(self, portraits: &Portraits) -> Vec<Message> {
         match self {
-            DialogueDef::Plain(entry) => vec![Segment::Plain(entry.resolve(portraits))],
+            DialogueDef::Plain(entry) => entry.resolve(portraits),
             DialogueDef::Segments { segments } => segments
                 .into_iter()
-                .map(|s| s.resolve(portraits))
+                .flat_map(|s| s.resolve(portraits))
                 .collect(),
         }
     }
@@ -276,60 +287,23 @@ fn resolve_portrait(
 
 // --- resolved, in-memory script ---
 
-/// One resolved piece of a dialogue entry: a run of messages always shown, or a
-/// flag-gated branch resolved per lookup against the live save (see
-/// [`flatten`](Segment::flatten)). The `#if`/`#else`/`#end` model — and the only
-/// reason a resolved entry is kept as segments rather than a flat `Vec<Message>`.
-#[derive(Debug, Clone)]
-enum Segment {
-    Plain(Vec<Message>),
-    /// `then` when `flag` is set, otherwise `otherwise` (which is empty when the
-    /// `#if` had no `#else`).
-    If {
-        flag: String,
-        then: Vec<Message>,
-        otherwise: Vec<Message>,
-    },
-}
-
-impl Segment {
-    /// Flatten a segment list to the messages that actually play, choosing each
-    /// conditional's branch by the live save flags. Lists (always a single
-    /// [`Plain`](Segment::Plain) segment) flatten the same way with any save.
-    fn flatten(segments: &[Segment], save: &SaveData) -> Vec<Message> {
-        let mut out = Vec::new();
-        for segment in segments {
-            match segment {
-                Segment::Plain(messages) => out.extend(messages.iter().cloned()),
-                Segment::If {
-                    flag,
-                    then,
-                    otherwise,
-                } => {
-                    let branch = if save.flag(flag) { then } else { otherwise };
-                    out.extend(branch.iter().cloned());
-                }
-            }
-        }
-        out
-    }
-}
-
 /// One resolved language. Portrait/sound names are turned into values and every
-/// keyed entry — dialogue *and* lists — becomes a `Vec<Segment>`; the
-/// dialogue-vs-list distinction only exists in the JSON file (a list is one
-/// unconditional [`Plain`](Segment::Plain) segment). `labels` stay separate
-/// because they're printed directly rather than run through the dialogue system.
+/// keyed entry — dialogue *and* lists — becomes a flat `Vec<Message>`; the
+/// dialogue-vs-list distinction only exists in the JSON file. An `#if` in a
+/// dialogue entry survives resolution as a single carrier `Message` holding a
+/// [`TextContent::If`] (see [`SegmentDef::resolve`]) rather than being picked
+/// here — that happens at playback time, in the dialogue box, against the live
+/// save. `labels` stay separate because they're printed directly rather than
+/// run through the dialogue system.
 #[derive(Debug, Clone, Default)]
 struct Language {
     labels: HashMap<String, String>,
     /// Both `dialogue` and `lists` JSON sections, keyed together. A list entry
-    /// is stored as one single-line [`Message`] per string, in one `Plain`
-    /// segment.
-    entries: HashMap<String, Vec<Segment>>,
+    /// is stored as one single-line [`Message`] per string.
+    entries: HashMap<String, Vec<Message>>,
     /// The original, unresolved dialogue defs, kept verbatim so the in-game
     /// dialogue editor can load a key back into an editable draft and classify
-    /// it (a resolved `Vec<Segment>` has lost the `#if` structure and the
+    /// it (a resolved `Vec<Message>` has lost the `#if` structure and the
     /// authored shape). Dialogue only — lists live in `entries` and aren't here,
     /// so `raw_dialogue.keys()` is exactly the dialogue key set.
     raw_dialogue: HashMap<String, DialogueDef>,
@@ -341,14 +315,14 @@ struct Language {
 impl Language {
     fn resolve(file: ScriptFile, portraits: &Portraits) -> Self {
         let raw_dialogue = file.dialogue.clone();
-        let mut entries: HashMap<String, Vec<Segment>> = file
+        let mut entries: HashMap<String, Vec<Message>> = file
             .dialogue
             .into_iter()
             .map(|(key, entry)| (key, entry.resolve(portraits)))
             .collect();
         for (key, lines) in file.lists {
             let messages = lines.into_iter().map(Message::from).collect();
-            entries.insert(key, vec![Segment::Plain(messages)]);
+            entries.insert(key, messages);
         }
         Language {
             labels: file.labels,
@@ -419,8 +393,7 @@ impl Script {
     }
 
     /// An ordered string list (e.g. debug-menu entries), or empty if undefined.
-    /// Stored as single-line messages, read back as their plain text. Lists are
-    /// unconditional, so the (always single, `Plain`) segments need no save.
+    /// Stored as single-line messages, read back as their plain text.
     pub fn list(&self, key: &str) -> Vec<String> {
         self.list_messages(key)
             .map(|msgs| msgs.iter().map(Message::to_plain_string).collect())
@@ -436,13 +409,16 @@ impl Script {
             .map(Message::to_plain_string)
     }
 
-    /// A dialogue conversation resolved against the live `save` (its `#if`
-    /// branches choose by `save.flags`), falling back to the `default` entry
-    /// then an empty conversation for unknown keys.
-    pub fn get_dialogue(&self, key: &str, save: &SaveData) -> Vec<Message> {
+    /// A dialogue conversation's messages, falling back to the `default` entry
+    /// then an empty conversation for unknown keys. Any `#if` in it comes back
+    /// as an unpicked [`TextContent::If`] carrier — branch selection happens at
+    /// *playback* time, in the dialogue box, against the live save (not here),
+    /// so a `#choice`/`#set` earlier in the same conversation is visible to a
+    /// later `#if` in it.
+    pub fn get_dialogue(&self, key: &str) -> Vec<Message> {
         self.entry(key)
             .or_else(|| self.entry("default"))
-            .map(|segments| Segment::flatten(segments, save))
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -461,7 +437,7 @@ impl Script {
     /// A dialogue key's original, unresolved [`DialogueDef`] (active language
     /// then base), for the in-game editor to load into an editable draft. Unlike
     /// [`get_dialogue`](Self::get_dialogue) this keeps the authored `#if`
-    /// structure and shape rather than flattening against a save.
+    /// structure and shape rather than resolving it to a carrier item.
     pub fn raw_dialogue(&self, key: &str) -> Option<&DialogueDef> {
         self.active
             .raw_dialogue
@@ -480,26 +456,16 @@ impl Script {
             .collect()
     }
 
-    /// A list entry's messages, flattening its unconditional segments. Used by
-    /// [`list`](Self::list)/[`list_get`](Self::list_get), which have no save to
-    /// resolve conditionals against — lists never carry any.
+    /// A list entry's messages. Used by [`list`](Self::list)/
+    /// [`list_get`](Self::list_get) to read them back as plain text; lists are
+    /// authored unconditionally, so there's no `#if` carrier to worry about.
     fn list_messages(&self, key: &str) -> Option<Vec<Message>> {
-        self.entry(key).map(|segments| {
-            segments
-                .iter()
-                .flat_map(|segment| match segment {
-                    Segment::Plain(messages) => messages.clone(),
-                    // Lists are authored unconditionally; an `If` here would be a
-                    // misuse, so take its `then` branch as a best effort.
-                    Segment::If { then, .. } => then.clone(),
-                })
-                .collect()
-        })
+        self.entry(key).cloned()
     }
 
-    /// Look up a keyed entry (dialogue or list) as its resolved segments, active
+    /// Look up a keyed entry (dialogue or list) as its resolved messages, active
     /// language then base.
-    fn entry(&self, key: &str) -> Option<&Vec<Segment>> {
+    fn entry(&self, key: &str) -> Option<&Vec<Message>> {
         self.active
             .entries
             .get(key)
@@ -527,7 +493,13 @@ mod tests {
     }
 
     #[test]
-    fn get_dialogue_picks_the_if_branch_by_flag() {
+    fn get_dialogue_resolves_the_if_branch_into_a_carrier() {
+        // No save is threaded through resolution any more: both branches ride
+        // along in a single `TextContent::If` carrier message, unpicked. Branch
+        // selection is egg_ui's job, at playback time (see
+        // `Dialogue::consume_text_content`), which is what lets a `#choice`/
+        // `#set` earlier in the *same* conversation steer this later `#if` — see
+        // the end-to-end test in `egg_ui::dialogue`.
         let script = script(
             "#flag seen\n\
              #dialogue d\n\
@@ -538,19 +510,23 @@ mod tests {
              \x20   #end",
         );
 
-        let mut save = SaveData::default();
-        // Flag unset → the `#else` branch.
-        assert_eq!(plain(&script.get_dialogue("d", &save)), "Before.");
-        // Flag set → the `#if` branch.
-        save.set_flag("seen", true);
-        assert_eq!(plain(&script.get_dialogue("d", &save)), "After.");
+        let convo = script.get_dialogue("d");
+        assert_eq!(convo.len(), 1, "the whole #if resolves to one carrier message");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "seen");
+                assert_eq!(plain(then), "After.");
+                assert_eq!(plain(otherwise), "Before.");
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
     }
 
     /// `is_night` is an ordinary declared flag, so dialogue branches on it like
     /// any other — confirming the day/night state (now a plain flag, not a typed
     /// bool) is reachable from `#if is_night` once `#flag is_night` is declared.
     #[test]
-    fn is_night_flag_branches_dialogue() {
+    fn is_night_flag_resolves_into_an_if_carrier() {
         use crate::data::save::IS_NIGHT_FLAG;
         let script = script(
             "#flag is_night\n\
@@ -562,16 +538,19 @@ mod tests {
              \x20   #end",
         );
 
-        let mut save = SaveData::default();
-        // Day (flag unset) → the `#else` branch.
-        assert_eq!(plain(&script.get_dialogue("d", &save)), "Good morning.");
-        // Night (flag set) → the `#if` branch.
-        save.set_flag(IS_NIGHT_FLAG, true);
-        assert_eq!(plain(&script.get_dialogue("d", &save)), "Good evening.");
+        let convo = script.get_dialogue("d");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, IS_NIGHT_FLAG);
+                assert_eq!(plain(then), "Good evening.");
+                assert_eq!(plain(otherwise), "Good morning.");
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
     }
 
     #[test]
-    fn get_dialogue_skips_an_if_without_else_when_unset() {
+    fn get_dialogue_resolves_an_if_without_else_to_an_empty_otherwise() {
         let script = script(
             "#flag seen\n\
              #dialogue d\n\
@@ -580,22 +559,27 @@ mod tests {
              \x20   Extra.\n\
              \x20   #end",
         );
-        let mut save = SaveData::default();
-        // No `#else`, flag unset → only the unconditional message survives.
-        let convo = script.get_dialogue("d", &save);
-        assert_eq!(convo.len(), 1);
-        assert_eq!(plain(&convo), "Intro.");
-        // Flag set → both messages, in order.
-        save.set_flag("seen", true);
-        let convo = script.get_dialogue("d", &save);
+        // The unconditional message, then the If carrier.
+        let convo = script.get_dialogue("d");
         assert_eq!(convo.len(), 2);
-        assert_eq!(plain(&convo), "Intro.Extra.");
+        assert_eq!(convo[0].to_plain_string(), "Intro.");
+        match &convo[1].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "seen");
+                assert_eq!(plain(then), "Extra.");
+                assert!(
+                    otherwise.is_empty(),
+                    "no #else means an empty otherwise branch"
+                );
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
     }
 
     #[test]
     fn set_flag_item_survives_resolution() {
         let script = script("#flag seen\n#dialogue d\n    #set seen true\n    Hi.");
-        let convo = script.get_dialogue("d", &SaveData::default());
+        let convo = script.get_dialogue("d");
         // The `#set` becomes a SetFlag content item ahead of the text, so it
         // fires the moment playback reaches it.
         assert!(matches!(
@@ -620,16 +604,11 @@ mod tests {
     #[test]
     fn unknown_key_falls_back_to_default() {
         let script = script("#dialogue default\n    Nothing here.");
-        assert_eq!(
-            plain(&script.get_dialogue("missing", &SaveData::default())),
-            "Nothing here."
-        );
+        assert_eq!(plain(&script.get_dialogue("missing")), "Nothing here.");
     }
 
     #[test]
-    fn lists_read_back_through_segments() {
-        // Lists resolve to one unconditional `Plain` segment; `list`/`list_get`
-        // flatten it without needing a save.
+    fn lists_read_back_as_plain_entries() {
         let script = script("#list things\n    one\n    two\n    three");
         assert_eq!(script.list("things"), ["one", "two", "three"]);
         assert_eq!(script.list_get("things", 1).as_deref(), Some("two"));
@@ -638,8 +617,8 @@ mod tests {
 
     #[test]
     fn choice_resolves_to_a_runtime_choice_item() {
-        // A `#choice` survives flatten as message content (no new segment kind);
-        // the conversation carries a runtime `Choice` with each option's flags.
+        // A `#choice` resolves as message content like any other directive; the
+        // conversation carries a runtime `Choice` with each option's flags.
         let script = script(
             "#flag chose_tea\n\
              #dialogue ask\n\
@@ -649,7 +628,7 @@ mod tests {
              \x20   #set chose_tea true\n\
              \x20   #option Coffee",
         );
-        let convo = script.get_dialogue("ask", &SaveData::default());
+        let convo = script.get_dialogue("ask");
         let options = convo
             .iter()
             .flat_map(|m| &m.content)
@@ -665,10 +644,14 @@ mod tests {
     }
 
     #[test]
-    fn a_pick_flag_branches_a_later_if() {
-        // The end-to-end story: picking an option sets a flag through the same
-        // `set_flag` path the box uses, and a *later* `get_dialogue` flattens the
-        // ordinary `#if` to the matching branch — no second branching system.
+    fn a_pick_flag_and_a_later_if_share_the_same_flag_name() {
+        // Resolution-level half of the story: `ask`'s choice and `react`'s `#if`
+        // resolve independently of each other and of any save — but they name
+        // the same flag, so when a real save picks up the choice's `sets` and
+        // the dialogue box later evaluates the `#if` against it, the two agree.
+        // The actual runtime hookup (a choice's flag steering a *same*-
+        // conversation `#if`, playback-side) is the end-to-end test in
+        // `egg_ui::dialogue`, since resolution no longer touches a save at all.
         let script = script(
             "#flag chose_tea\n\
              #dialogue ask\n\
@@ -683,12 +666,8 @@ mod tests {
              \x20   Coffee it is.\n\
              \x20   #end",
         );
-        // Before any pick, the `#else` branch shows.
-        let mut save = SaveData::default();
-        assert_eq!(plain(&script.get_dialogue("react", &save)), "Coffee it is.");
 
-        // Apply the tea option's flags exactly as `Dialogue::confirm_choice` does.
-        let convo = script.get_dialogue("ask", &save);
+        let convo = script.get_dialogue("ask");
         let options = convo
             .iter()
             .flat_map(|m| &m.content)
@@ -697,11 +676,17 @@ mod tests {
                 _ => None,
             })
             .expect("a Choice");
-        for (name, value) in &options[0].sets {
-            save.set_flag(name, *value);
+        assert_eq!(options[0].sets, vec![("chose_tea".to_string(), true)]);
+
+        let convo = script.get_dialogue("react");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "chose_tea", "names the same flag the choice sets");
+                assert_eq!(plain(then), "Enjoy your tea.");
+                assert_eq!(plain(otherwise), "Coffee it is.");
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
         }
-        // Now the `#if` flattens to the tea branch.
-        assert_eq!(plain(&script.get_dialogue("react", &save)), "Enjoy your tea.");
     }
 
     /// A portrait name resolves against whatever [`Portraits`] registry is
@@ -713,7 +698,7 @@ mod tests {
     #[test]
     fn reresolve_portraits_rebakes_installed_dialogue() {
         let spr_id = |script: &Script| {
-            script.get_dialogue("d", &SaveData::default())[0]
+            script.get_dialogue("d")[0]
                 .portrait
                 .as_ref()
                 .map(|p| p.sprite.cells[0].spr_id)
