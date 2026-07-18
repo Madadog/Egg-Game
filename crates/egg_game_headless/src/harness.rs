@@ -69,6 +69,9 @@ OPTIONS:
                       (tries ./assets, then ../../assets).
     --editor          Open the map editor overlay (like pressing L) before frame 1.
     --list-maps       Print the loaded map names and exit.
+    --check           Cross-reference the data web (dialogue/cutscene/map/
+                      portrait/sound/preset/flag references) and print a
+                      report; exits nonzero iff it found any error.
     --help            Print this help and exit.
 
 SCRIPT (line-based; blank lines and `#` comments skipped):
@@ -122,6 +125,11 @@ pub fn run() {
             println!("{name}");
         }
         return;
+    }
+
+    if args.check {
+        let mut console = HeadlessConsole::with_root(root.clone());
+        std::process::exit(run_check(&mut state, &mut console, &root));
     }
 
     let mut console = HeadlessConsole::with_root(root);
@@ -477,19 +485,82 @@ fn boot(state: &mut EggState, root: &Path) -> Result<(), String> {
     state.draw_state.rgba_sprites = sheet_img;
     state.draw_state.indexed_sprites = indexed;
 
-    let script_bytes = read_asset(root, "script/en.eggtext").ok_or("missing assets/script/en.eggtext")?;
-    let script_text = std::str::from_utf8(&script_bytes).map_err(|e| format!("script utf8: {e}"))?;
-    let script_file =
-        egg_core::data::script::eggtext::parse(script_text).map_err(|e| format!("script parse: {e}"))?;
+    let script_file = load_script_file(root)?;
     state.script.set_base(script_file, &state.portraits);
 
-    let scene_bytes = read_asset(root, "data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
-    let scene_text = std::str::from_utf8(&scene_bytes).map_err(|e| format!("scenes utf8: {e}"))?;
-    let scene_file =
-        egg_core::data::scene::parse(scene_text).map_err(|e| format!("scenes parse: {e}"))?;
+    let scene_file = load_scene_file(root)?;
     state.set_scenes(scene_file);
 
     Ok(())
+}
+
+/// Read + parse `script/en.eggtext` under `root` into a raw [`ScriptFile`].
+/// Shared by [`boot`] (which resolves and installs it) and `--check` (which
+/// wants the raw, pre-resolution tree to cross-reference — see
+/// [`run_check`]), so the two never drift on how the script is loaded.
+fn load_script_file(root: &Path) -> Result<egg_core::data::script::ScriptFile, String> {
+    let script_bytes = read_asset(root, "script/en.eggtext").ok_or("missing assets/script/en.eggtext")?;
+    let script_text = std::str::from_utf8(&script_bytes).map_err(|e| format!("script utf8: {e}"))?;
+    egg_core::data::script::eggtext::parse(script_text).map_err(|e| format!("script parse: {e}"))
+}
+
+/// Read + parse `data/main.eggscene` under `root` into a [`SceneFile`].
+/// Shared by [`boot`] and `--check`, mirroring [`load_script_file`].
+fn load_scene_file(root: &Path) -> Result<egg_core::data::scene::SceneFile, String> {
+    let scene_bytes = read_asset(root, "data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
+    let scene_text = std::str::from_utf8(&scene_bytes).map_err(|e| format!("scenes utf8: {e}"))?;
+    egg_core::data::scene::parse(scene_text).map_err(|e| format!("scenes parse: {e}"))
+}
+
+/// Run [`egg_core::data::validate::check`] over the assets under `root` and
+/// print its report. `state` must already be booted (for its map store) —
+/// this additionally runs `load_data` on it to pick up the *live*
+/// `data/data.toml` (presets/portraits), rather than the binary's
+/// compiled-in defaults, so `--check` always reports on the tree it read
+/// maps/script/scenes from, `--assets` override included. Returns the
+/// process exit code: 0 if the report has no errors (warnings don't fail the
+/// run), 1 otherwise.
+fn run_check(state: &mut EggState, console: &mut HeadlessConsole, root: &Path) -> i32 {
+    state.load_data(console);
+
+    let script_file = match load_script_file(root) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("fatal: {e}");
+            return 1;
+        }
+    };
+    let scene_file = match load_scene_file(root) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("fatal: {e}");
+            return 1;
+        }
+    };
+
+    let mut maps = std::collections::BTreeMap::new();
+    for name in state.maps.names() {
+        if let Some(map) = state.maps.get(name) {
+            maps.insert(name.to_string(), map.parse_objects());
+        }
+    }
+
+    let report = egg_core::data::validate::check(
+        &script_file,
+        &scene_file,
+        &maps,
+        &state.portraits,
+        &state.presets,
+        egg_core::data::validate::ENGINE_DIALOGUE_ROOTS,
+    );
+    print!("{report}");
+    if report.is_clean() {
+        println!("clean: 0 error(s), {} warning(s)", report.warnings.len());
+        0
+    } else {
+        eprintln!("FAILED: {} error(s), {} warning(s)", report.errors.len(), report.warnings.len());
+        1
+    }
 }
 
 /// The live harness: the booted engine, the disk-isolated console, one reused
@@ -832,6 +903,7 @@ fn scancode_from_name(name: &str) -> Option<ScanCode> {
 struct Args {
     help: bool,
     list_maps: bool,
+    check: bool,
     editor: bool,
     map: Option<String>,
     pos: Option<(i16, i16)>,
@@ -858,6 +930,7 @@ impl Args {
             match arg {
                 "--help" | "-h" => out.help = true,
                 "--list-maps" => out.list_maps = true,
+                "--check" => out.check = true,
                 "--editor" => out.editor = true,
                 "--map" => out.map = Some(take(args, &mut i, arg)?),
                 "--pos" => out.pos = Some(parse_pos(&take(args, &mut i, arg)?)?),

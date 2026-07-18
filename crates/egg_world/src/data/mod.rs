@@ -6,3 +6,4 @@ pub mod scene;
 pub mod script;
 pub mod sound;
 pub mod tiled;
+pub mod validate;
