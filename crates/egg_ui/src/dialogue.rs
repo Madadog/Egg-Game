@@ -141,12 +141,15 @@ pub struct Dialogue {
     pub portrait: Option<Portrait>,
     pub dark_theme: bool,
     pub flip_portrait: bool,
-    /// The typewriter's pace: frames held between each revealed character —
-    /// the `#speed N` directive (`0` is the default, unthrottled per-tick
-    /// reveal). Persists across pages within one conversation; only another
-    /// `#speed` (or [`Dialogue::close`], which resets everything for a new
+    /// The typewriter's pace, as a rate with [`speed_frames`](Self::speed_frames):
+    /// reveal this many characters every that many frames — the `#speed`
+    /// directive (`1`/`1` is the default one-character-per-tick reveal).
+    /// Persists across pages within one conversation; only another `#speed`
+    /// (or [`Dialogue::close`], which resets everything for a new
     /// conversation) changes it — see [`TextContent::Speed`].
-    pub speed: u8,
+    pub speed_chars: u8,
+    /// The other side of the pace rate — see [`speed_chars`](Self::speed_chars).
+    pub speed_frames: u8,
     /// The open choice menu, if the box is currently awaiting a selection.
     pub choice: Option<ChoiceState>,
     /// A `#shake FRAMES [AMP]` playback just passed, waiting for the world's
@@ -168,7 +171,8 @@ impl Dialogue {
             portrait: None,
             dark_theme: false,
             flip_portrait: false,
-            speed: 0,
+            speed_chars: 1,
+            speed_frames: 1,
             choice: None,
             pending_shake: None,
         }
@@ -270,11 +274,12 @@ impl Dialogue {
                 self.print_time = None;
                 true
             }
-            // `#speed N`: set the typewriter's pace for everything revealed
+            // `#speed`: set the typewriter's pace for everything revealed
             // from here on — persists until another `#speed` changes it (see
             // [`TextContent::Speed`]).
-            TextContent::Speed(n) => {
-                self.speed = n;
+            TextContent::Speed { chars, frames } => {
+                self.speed_chars = chars;
+                self.speed_frames = frames;
                 true
             }
             TextContent::Delay(x) => {
@@ -403,11 +408,13 @@ impl Dialogue {
                     system.play_sound(sound::pop());
                 }
             }
-            self.step_text(amount);
-            // `#speed 0` (the default) preserves the ordinary one-frame gap
-            // between characters; `#speed N` holds for `N` frames instead —
-            // see [`TextContent::Speed`].
-            self.delay += self.speed.max(1) as usize;
+            // The pace is a rate: each reveal step shows `speed_chars`
+            // characters (scaled by `amount`, so a fast-forward tick still
+            // doubles it), then holds `speed_frames` frames before the next.
+            // The default `1`/`1` is the ordinary one-character step with a
+            // one-frame gap — see [`TextContent::Speed`].
+            self.step_text(amount * self.speed_chars.max(1) as usize);
+            self.delay += self.speed_frames.max(1) as usize;
         }
         if self.is_line_done() && self.can_autoadvance() {
             self.next_text(system, font, save, false);
@@ -819,7 +826,7 @@ impl Debug for Dialogue {
             .field("delay", &self.delay)
             .field("print_time", &self.print_time)
             .field("portrait", &self.portrait)
-            .field("speed", &self.speed)
+            .field("speed", &(self.speed_chars, self.speed_frames))
             .field("choice", &self.choice)
             .finish()
     }
@@ -1287,21 +1294,26 @@ mod tests {
         assert!(d.flip_portrait, "flip side survives a redundant #pic");
     }
 
-    // --- `#speed N` typewriter pacing ---
+    // --- `#speed` typewriter pacing ---
 
-    /// `#speed N` holds `N` frames between each revealed character — slower
-    /// than the default pace — but a manual skip still completes the reveal
-    /// instantly regardless, same as it always has for `#delay`.
+    /// The slowdown form: `#speed 1/N` holds `N` frames between each revealed
+    /// character — slower than the default pace — but a manual skip still
+    /// completes the reveal instantly regardless, same as it always has for
+    /// `#delay`.
     #[test]
-    fn speed_paces_reveal_and_skip_still_completes_instantly() {
-        let messages = dialogue_from("#dialogue d\n    #speed 5\n    Hi.", "d");
+    fn speed_slowdown_paces_reveal_and_skip_still_completes_instantly() {
+        let messages = dialogue_from("#dialogue d\n    #speed 1/5\n    Hi.", "d");
         let mut console = NullConsole::new();
         let font = Font::blank();
         let mut save = SaveData::default();
         let mut d = Dialogue::default();
 
         d.set_messages(&mut console, &font, &mut save, &messages);
-        assert_eq!(d.speed, 5, "the #speed directive set the widget's pace");
+        assert_eq!(
+            (d.speed_chars, d.speed_frames),
+            (1, 5),
+            "the #speed directive set the widget's pace"
+        );
         assert_eq!(d.characters, 0);
 
         // 3 (of the 5 held) frames isn't enough to reveal the second
@@ -1314,6 +1326,33 @@ mod tests {
         d.skip(&mut console, &font, &mut save);
         assert!(d.is_line_done());
         assert_eq!(d.characters, 2, "skip reveals the rest of the line instantly");
+    }
+
+    /// The speedup form: `#speed N` reveals `N` characters per step instead
+    /// of one, at the default one-frame gap between steps.
+    #[test]
+    fn speed_multichar_steps_reveal_several_characters_at_once() {
+        let messages = dialogue_from("#dialogue d\n    #speed 3\n    Hello there.", "d");
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!((d.speed_chars, d.speed_frames), (3, 1));
+        assert_eq!(d.characters, 0);
+
+        d.tick(&mut console, &font, &mut save, 1);
+        assert_eq!(d.characters, 3, "one reveal step shows three characters");
+
+        // The default pace's one-frame gap still applies between steps.
+        d.tick(&mut console, &font, &mut save, 1);
+        assert_eq!(d.characters, 3, "held for the gap frame");
+        d.tick(&mut console, &font, &mut save, 1);
+        assert_eq!(d.characters, 6, "next step shows three more");
+
+        d.skip(&mut console, &font, &mut save);
+        assert!(d.is_line_done());
     }
 
     /// The motivating bug this whole runtime-`#if` change fixes (mirrors

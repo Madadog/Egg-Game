@@ -89,13 +89,15 @@ pub enum TextContent {
     /// unambiguously that new page's, not an append to the old one.
     /// Synthesized at lowering time; never authored directly.
     Clear,
-    /// The `#speed N` directive: sets the typewriter's pace (frames held
-    /// between each revealed character) for all subsequent text in this
-    /// dialogue — block-scoped from where it appears onward, like
+    /// The `#speed` directive: the typewriter's pace as a rate — reveal
+    /// `chars` characters every `frames` frames — for all subsequent text in
+    /// this dialogue. Block-scoped from where it appears onward, like
     /// `#autoflip`, and it persists across page breaks within the same
-    /// conversation until another `#speed` changes it. `0` is the default:
-    /// the ordinary, unthrottled per-tick reveal.
-    Speed(u8),
+    /// conversation until another `#speed` changes it. `1/1` is the default
+    /// (the ordinary one-character-per-tick reveal); `#speed 3` (= `3/1`)
+    /// triples it, `#speed 1/10` holds ten frames between characters. See
+    /// [`crate::data::script::eggtext`] for the surface syntax.
+    Speed { chars: u8, frames: u8 },
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
@@ -117,7 +119,7 @@ impl TextContent {
                 | Shake { .. }
                 | If { .. }
                 | Clear
-                | Speed(_)
+                | Speed { .. }
         )
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).

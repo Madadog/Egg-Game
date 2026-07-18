@@ -78,11 +78,14 @@
 //!     whatever side was in effect.
 //!   * `#sound NAME` plays a sound effect at that point.
 //!   * `#delay N` is a standalone `N`-frame pause.
-//!   * `#speed N` sets the typewriter's pace (frames held between each
-//!     revealed character) for all subsequent text in the dialogue — block
-//!     scope from where it appears onward, like `#autoflip`, persisting
-//!     across page breaks until another `#speed` changes it. `0` (the
-//!     default) is the ordinary, unthrottled per-tick reveal.
+//!   * `#speed CHARS` / `#speed CHARS/FRAMES` sets the typewriter's pace as a
+//!     rate — reveal `CHARS` characters every `FRAMES` frames — for all
+//!     subsequent text in the dialogue: block scope from where it appears
+//!     onward, like `#autoflip`, persisting across page breaks until another
+//!     `#speed` changes it. `#speed 3` reveals three characters at a time,
+//!     `#speed 1/10` holds ten frames between characters, and `#speed 1`
+//!     (= `1/1`) is the default one-character-per-tick reveal. Both sides are
+//!     1-255; `0` on either side is an error.
 //!   * `#nopause` flows straight on to the next message instead of waiting for
 //!     the player to advance.
 //!   * `#autoflip` (block scope, from where it appears onward) auto-alternates
@@ -1083,7 +1086,10 @@ fn parse_message(
                         def.content.push(ContentDef::Sound(name.to_string()));
                     }
                     "delay" => def.content.push(ContentDef::Delay(parse_u8(arg, line_no)?)),
-                    "speed" => def.content.push(ContentDef::Speed(parse_u8(arg, line_no)?)),
+                    "speed" => {
+                        let (chars, frames) = parse_speed(arg, line_no)?;
+                        def.content.push(ContentDef::Speed(chars, frames));
+                    }
                     "nopause" => {
                         if let Some(extra) = arg {
                             return Err(ParseError::new(
@@ -1425,6 +1431,25 @@ fn parse_u8(arg: Option<&str>, line_no: usize) -> Result<u8, ParseError> {
         .ok_or_else(|| ParseError::new(line_no, "expected a number 0-255"))
 }
 
+/// The argument of `#speed`: a rate, `CHARS` or `CHARS/FRAMES` (reveal that
+/// many characters every that many frames). Both sides are 1-255 — a zero on
+/// either side would mean "never reveal anything" or divide the pace by
+/// nothing, so it's rejected rather than silently clamped.
+fn parse_speed(arg: Option<&str>, line_no: usize) -> Result<(u8, u8), ParseError> {
+    let err = || ParseError::new(line_no, "`#speed` needs `CHARS` or `CHARS/FRAMES`, each 1-255");
+    let arg = arg.ok_or_else(err)?;
+    let (chars, frames) = match arg.split_once('/') {
+        Some((chars, frames)) => (chars, frames),
+        None => (arg, "1"),
+    };
+    let chars: u8 = chars.parse().map_err(|_| err())?;
+    let frames: u8 = frames.parse().map_err(|_| err())?;
+    if chars == 0 || frames == 0 {
+        return Err(err());
+    }
+    Ok((chars, frames))
+}
+
 /// The arguments of `#shake FRAMES [AMP]`: a frame count, and an optional pixel
 /// amplitude defaulting to the cutscene `shake` verb's
 /// [`DEFAULT_SHAKE_AMPLITUDE`](crate::data::scene::DEFAULT_SHAKE_AMPLITUDE) —
@@ -1602,18 +1627,46 @@ mod tests {
         assert_eq!(messages[0].portrait, PortraitChange::Clear);
     }
 
-    /// `#speed N` emits an inline `Speed` content item wherever it appears —
+    /// `#speed` emits an inline `Speed` content item wherever it appears —
     /// no special block-scope bookkeeping at parse time, since (like
     /// `#sound`/`#set`) it's simply carried forward by the `Dialogue` widget
     /// as playback reaches it (see `egg_ui::dialogue`'s tests for the actual
-    /// cross-page persistence).
+    /// cross-page persistence). A bare `CHARS` argument is chars-per-frame
+    /// (`10` = `(10, 1)`); `CHARS/FRAMES` spells the full rate, so `1/10` —
+    /// one character every ten frames — is the slowdown form.
     #[test]
     fn speed_emits_inline() {
-        let messages = convo("#dialogue d\n    #speed 10\n    Sloooow.");
+        let messages = convo("#dialogue d\n    #speed 10\n    Faaast.");
         assert_eq!(
             messages[0].content,
-            vec![ContentDef::Speed(10), ContentDef::Text("Sloooow.".into())],
+            vec![ContentDef::Speed(10, 1), ContentDef::Text("Faaast.".into())],
         );
+        let messages = convo("#dialogue d\n    #speed 1/10\n    Sloooow.");
+        assert_eq!(
+            messages[0].content,
+            vec![ContentDef::Speed(1, 10), ContentDef::Text("Sloooow.".into())],
+        );
+    }
+
+    /// `#speed` rejects a zero on either side of the rate — `0` chars would
+    /// never reveal anything, and `0` frames is not a pace — and anything
+    /// that isn't a number at all.
+    #[test]
+    fn speed_zero_or_junk_is_an_error() {
+        for src in [
+            "#dialogue d\n    #speed 0\n    Hi.",
+            "#dialogue d\n    #speed 1/0\n    Hi.",
+            "#dialogue d\n    #speed 0/5\n    Hi.",
+            "#dialogue d\n    #speed fast\n    Hi.",
+            "#dialogue d\n    #speed\n    Hi.",
+        ] {
+            let err = parse(src).unwrap_err();
+            assert!(
+                err.message.contains("#speed"),
+                "{src:?} should fail on the `#speed` argument, got: {}",
+                err.message
+            );
+        }
     }
 
     #[test]

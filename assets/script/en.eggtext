@@ -5,8 +5,8 @@
 // split them into messages (pages), `#pic`/`#sound`/`#flip` set the speaker
 // (a message with no `#pic`/`#flip` just carries over whoever was showing;
 // `#pic none` explicitly clears back to narration), a trailing `#delay N`
-// reveals text piece by piece, and `#speed N` sets the typewriter's pace for
-// the rest of the dialogue. Within a dialogue body `#set NAME true|false`
+// reveals text piece by piece, and `#speed CHARS` (or `CHARS/FRAMES`, e.g.
+// `1/10` for slow) sets the typewriter's pace for the rest of the dialogue. Within a dialogue body `#set NAME true|false`
 // toggles a save flag as it plays, and `#if NAME` / `#else` / `#end` include
 // whole messages only when a flag is set.
 //
@@ -232,9 +232,9 @@ menu_music_test = "Music Test"
     It never looks as bad from outside.
 
 #dialogue town_wide
-    #speed 10
+    #speed 1/10
     This line is slow...
-    #speed 0
+    #speed 1
     "\nT h i s   l i n e   i s   w i d e ." #delay 30
     "\nAnd this line goes from side to side." #delay 30
 

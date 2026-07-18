@@ -637,7 +637,7 @@ fn walk_content(
         | ContentDef::Pause
         | ContentDef::Flip(_)
         | ContentDef::Shake(_, _)
-        | ContentDef::Speed(_) => {}
+        | ContentDef::Speed(_, _) => {}
     }
 }
 
@@ -901,7 +901,9 @@ fn skeleton_diff_content(base: &ContentDef, overlay: &ContentDef) -> Option<Stri
         (ContentDef::Shake(bf, ba), ContentDef::Shake(of, oa)) => {
             (bf != of || ba != oa).then(|| format!("#shake {bf} {ba} vs #shake {of} {oa}"))
         }
-        (ContentDef::Speed(bn), ContentDef::Speed(on)) => (bn != on).then(|| format!("#speed {bn} vs {on}")),
+        (ContentDef::Speed(bc, bf), ContentDef::Speed(oc, of)) => {
+            ((bc, bf) != (oc, of)).then(|| format!("#speed {bc}/{bf} vs {oc}/{of}"))
+        }
         (ContentDef::Choice(bo), ContentDef::Choice(oo)) => skeleton_diff_choice(bo, oo),
         (b, o) => Some(format!("{} vs {}", content_kind(b), content_kind(o))),
     }
@@ -923,7 +925,7 @@ fn content_kind(c: &ContentDef) -> &'static str {
         ContentDef::SetFlag(..) => "#set",
         ContentDef::Shake(..) => "#shake",
         ContentDef::Choice(_) => "#choice",
-        ContentDef::Speed(_) => "#speed",
+        ContentDef::Speed(..) => "#speed",
     }
 }
 

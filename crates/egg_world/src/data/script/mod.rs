@@ -250,10 +250,11 @@ pub enum ContentDef {
     /// An interactive menu — the `#choice` block. JSON:
     /// `{"choice": [{"text": "Yes", "sets": [["flag", true]]}, ...]}`.
     Choice(Vec<ChoiceOptionDef>),
-    /// The `#speed N` directive: the typewriter's pace (frames held between
-    /// each revealed character) for all subsequent text in the dialogue.
-    /// JSON: `{"speed": 10}`.
-    Speed(u8),
+    /// The `#speed` directive: the typewriter's pace as a `(chars, frames)`
+    /// rate — reveal that many characters every that many frames — for all
+    /// subsequent text in the dialogue. Surface syntax `#speed 3` is `(3, 1)`,
+    /// `#speed 1/10` is `(1, 10)`. JSON: `{"speed": [1, 10]}`.
+    Speed(u8, u8),
 }
 
 /// One option of a [`ContentDef::Choice`]: its menu text and the flags it sets
@@ -298,7 +299,7 @@ impl ContentDef {
                     })
                     .collect(),
             ),
-            ContentDef::Speed(n) => TextContent::Speed(n),
+            ContentDef::Speed(chars, frames) => TextContent::Speed { chars, frames },
         })
     }
 }
