@@ -23,7 +23,10 @@ use crate::data::eggdata::Presets;
 use crate::data::portraits::Portraits;
 use crate::data::save::IS_NIGHT_FLAG;
 use crate::data::scene::{CutsceneContent, GetEntity, SceneFile};
-use crate::data::script::{ContentDef, DialogueDef, Entry, MessageDef, PortraitChange, ScriptFile, SegmentDef};
+use crate::data::script::{
+    ChoiceOptionDef, ContentDef, DialogueDef, ElifDef, Entry, MessageDef, PortraitChange, ScriptFile,
+    SegmentDef,
+};
 use crate::data::sound;
 use crate::world::interact::Interaction;
 use crate::world::map::{MapObject, ObjectEffect};
@@ -102,6 +105,25 @@ pub enum Finding {
     /// A declared flag some content reads (an `#if`/`#elif` or a map gate)
     /// but nothing ever sets — so the branch always goes the same way.
     FlagNeverSet { flag: String },
+
+    /// A language overlay's dialogue entry has drifted structurally from the
+    /// base entry it translates — see [`check_overlay`]. `path` is a
+    /// human-readable pointer to the first place they diverge (e.g. `message
+    /// 3: directive 2: #pic "a_normal" vs "b_open"`, or `branch structure
+    /// differs at #if "FLAG"`).
+    OverlaySkeletonMismatch { lang: String, key: String, path: String },
+    /// A language overlay defines a dialogue key the base script doesn't —
+    /// it can never be reached as a coherent translation (the base is the
+    /// authority on what keys exist; an overlay only *overrides* base keys).
+    OverlayOrphanDialogue { lang: String, key: String },
+    /// A language overlay's `#list` has a different entry count than the
+    /// base's same-named list — list entries are read back by index, so a
+    /// length mismatch silently shifts every entry after the drift.
+    OverlayListLength { lang: String, key: String, base_len: usize, overlay_len: usize },
+    /// A language overlay declares a `#flag` the base script never declares.
+    /// The base is the sole authority on the flag vocabulary — an overlay
+    /// only ever reads/sets flags the base already named.
+    OverlayUndeclaredFlag { lang: String, flag: String },
 }
 
 impl Finding {
@@ -171,6 +193,18 @@ impl fmt::Display for Finding {
             }
             Finding::FlagNeverSet { flag } => {
                 write!(f, "flag `{flag}` is read but never set")
+            }
+            Finding::OverlaySkeletonMismatch { lang, key, path } => {
+                write!(f, "overlay `{lang}` dialogue `{key}`: skeleton differs from base: {path}")
+            }
+            Finding::OverlayOrphanDialogue { lang, key } => {
+                write!(f, "overlay `{lang}`: dialogue `{key}` is not defined in the base script")
+            }
+            Finding::OverlayListLength { lang, key, base_len, overlay_len } => {
+                write!(f, "overlay `{lang}`: list `{key}` has {overlay_len} entries, base has {base_len}")
+            }
+            Finding::OverlayUndeclaredFlag { lang, flag } => {
+                write!(f, "overlay `{lang}`: flag `{flag}` is not declared in the base script")
             }
         }
     }
@@ -607,6 +641,304 @@ fn walk_content(
     }
 }
 
+// --- language-overlay skeleton lint ---
+//
+// A translation is supposed to change only human-readable text — never the
+// directives, branching, or choices around it, since those drive save flags
+// and pacing the *base* author already decided once. [`check_overlay`] pins
+// that: for every dialogue key an overlay shares with the base, the two
+// entries' *skeletons* (everything but text payloads) must match exactly.
+
+/// Cross-reference one language overlay against the base script it
+/// translates: every dialogue key the overlay also defines in `base` must
+/// keep the base entry's skeleton (see [`skeleton_diff_dialogue`]); a key the
+/// overlay defines that `base` doesn't is an orphan (unreachable — a
+/// dialogue key only ever resolves through the base's key set, see
+/// [`crate::data::script::Script::get_dialogue`]); an overlay `#list` sharing
+/// a name with a base list must have the same entry count (lists are read
+/// back by index); and every overlay `#flag` must already be declared in
+/// `base`. A key `base` defines that the overlay *doesn't* is not a
+/// finding — that's the fallback the whole overlay mechanism exists for (see
+/// [`crate::data::script::Script::set_language`]). `lang` is carried into
+/// every [`Finding`] for identification, not looked up here — the caller
+/// (a directory scan) owns the mapping from language name to `ScriptFile`.
+pub fn check_overlay(base: &ScriptFile, overlay: &ScriptFile, lang: &str) -> Report {
+    let mut report = Report::default();
+
+    let mut keys: Vec<&String> = overlay.dialogue.keys().collect();
+    keys.sort();
+    for key in keys {
+        match base.dialogue.get(key) {
+            None => report.push(Finding::OverlayOrphanDialogue { lang: lang.to_string(), key: key.clone() }),
+            Some(base_def) => {
+                if let Some(path) = skeleton_diff_dialogue(base_def, &overlay.dialogue[key]) {
+                    report.push(Finding::OverlaySkeletonMismatch { lang: lang.to_string(), key: key.clone(), path });
+                }
+            }
+        }
+    }
+
+    let mut list_keys: Vec<&String> = overlay.lists.keys().collect();
+    list_keys.sort();
+    for key in list_keys {
+        if let Some(base_list) = base.lists.get(key) {
+            let overlay_list = &overlay.lists[key];
+            if base_list.len() != overlay_list.len() {
+                report.push(Finding::OverlayListLength {
+                    lang: lang.to_string(),
+                    key: key.clone(),
+                    base_len: base_list.len(),
+                    overlay_len: overlay_list.len(),
+                });
+            }
+        }
+    }
+
+    for flag in &overlay.flags {
+        if !base.flags.contains(flag) {
+            report.push(Finding::OverlayUndeclaredFlag { lang: lang.to_string(), flag: flag.clone() });
+        }
+    }
+
+    report
+}
+
+/// A [`SegmentDef::If`]/[`ElifDef`] condition's `#if`/`#elif [not] NAME`
+/// spelling, for a mismatch message.
+fn condition_label(flag: &str, negated: bool) -> String {
+    if negated {
+        format!("#if not {flag:?}")
+    } else {
+        format!("#if {flag:?}")
+    }
+}
+
+/// The skeleton of a whole dialogue entry: identical branch structure
+/// (`#if`/`#elif`/`#else` shape, flag names, negation) all the way down, with
+/// every leaf [`Entry`] compared via [`skeleton_diff_entry`]. `None` means the
+/// skeletons match; `Some(path)` names the first point of divergence, read
+/// outside-in (e.g. `#if "a" then: message 2: directive 1: ...`).
+fn skeleton_diff_dialogue(base: &DialogueDef, overlay: &DialogueDef) -> Option<String> {
+    match (base, overlay) {
+        (DialogueDef::Plain(b), DialogueDef::Plain(o)) => skeleton_diff_entry(b, o),
+        (DialogueDef::Segments { segments: bs }, DialogueDef::Segments { segments: os }) => {
+            if bs.len() != os.len() {
+                return Some(format!("segment count differs ({} vs {})", bs.len(), os.len()));
+            }
+            bs.iter()
+                .zip(os)
+                .enumerate()
+                .find_map(|(i, (b, o))| skeleton_diff_segment(b, o).map(|sub| format!("segment {}: {sub}", i + 1)))
+        }
+        (DialogueDef::Plain(_), DialogueDef::Segments { .. }) => {
+            Some("branch structure differs (overlay adds #if branching the base doesn't have)".to_string())
+        }
+        (DialogueDef::Segments { .. }, DialogueDef::Plain(_)) => {
+            Some("branch structure differs (base has #if branching the overlay doesn't have)".to_string())
+        }
+    }
+}
+
+/// One piece of a dialogue body's skeleton: an unconditional [`Entry`], or an
+/// `#if`/`#elif`/`#else` chain's condition + each branch, recursively.
+fn skeleton_diff_segment(base: &SegmentDef, overlay: &SegmentDef) -> Option<String> {
+    match (base, overlay) {
+        (SegmentDef::Plain(b), SegmentDef::Plain(o)) => skeleton_diff_entry(b, o),
+        (
+            SegmentDef::If { flag: bf, negated: bn, then: bt, otherwise: bo, elifs: be },
+            SegmentDef::If { flag: of, negated: on, then: ot, otherwise: oo, elifs: oe },
+        ) => {
+            if bf != of || bn != on {
+                return Some(format!(
+                    "branch structure differs at {} (overlay has {})",
+                    condition_label(bf, *bn),
+                    condition_label(of, *on),
+                ));
+            }
+            let label = condition_label(bf, *bn);
+            if let Some(sub) = skeleton_diff_dialogue(bt, ot) {
+                return Some(format!("{label} then: {sub}"));
+            }
+            match (bo, oo) {
+                (None, None) => {}
+                (Some(b), Some(o)) => {
+                    if let Some(sub) = skeleton_diff_dialogue(b, o) {
+                        return Some(format!("{label} else: {sub}"));
+                    }
+                }
+                (Some(_), None) => return Some(format!("{label}: base has #else, overlay doesn't")),
+                (None, Some(_)) => return Some(format!("{label}: overlay has #else, base doesn't")),
+            }
+            if be.len() != oe.len() {
+                return Some(format!("{label}: elif count differs ({} vs {})", be.len(), oe.len()));
+            }
+            be.iter()
+                .zip(oe)
+                .enumerate()
+                .find_map(|(i, (b, o))| skeleton_diff_elif(b, o).map(|sub| format!("{label} elif {}: {sub}", i + 1)))
+        }
+        (SegmentDef::Plain(_), SegmentDef::If { flag, negated, .. }) => {
+            Some(format!("branch structure differs at {} (base has no matching #if)", condition_label(flag, *negated)))
+        }
+        (SegmentDef::If { flag, negated, .. }, SegmentDef::Plain(_)) => {
+            Some(format!("branch structure differs at {} (overlay has no matching #if)", condition_label(flag, *negated)))
+        }
+    }
+}
+
+fn skeleton_diff_elif(base: &ElifDef, overlay: &ElifDef) -> Option<String> {
+    if base.flag != overlay.flag || base.negated != overlay.negated {
+        return Some(format!(
+            "condition differs ({} vs {})",
+            condition_label(&base.flag, base.negated).replace("#if", "#elif"),
+            condition_label(&overlay.flag, overlay.negated).replace("#if", "#elif"),
+        ));
+    }
+    skeleton_diff_dialogue(&base.then, &overlay.then)
+}
+
+/// The skeleton of a leaf [`Entry`]: its messages' directive sequences,
+/// text stripped out. `Line`/`Pages`/`Conversation` are just three on-disk
+/// shorthands for the same thing — a `Vec<MessageDef>` ([`entry_messages`]
+/// expands the shorthands) — so a translator adding a directive that turns a
+/// plain `Line` into a `Conversation` shows up as an ordinary directive-count
+/// mismatch on message 1, not a spurious "shape" error; and the flat/scoped
+/// `#if` authoring styles ([`crate::data::script::eggtext`]'s module doc)
+/// parse to the exact same [`DialogueDef`] tree already, so they need no
+/// special-casing here at all.
+fn skeleton_diff_entry(base: &Entry, overlay: &Entry) -> Option<String> {
+    let bm = entry_messages(base);
+    let om = entry_messages(overlay);
+    if bm.len() != om.len() {
+        return Some(format!("page/message count differs ({} vs {})", bm.len(), om.len()));
+    }
+    bm.iter()
+        .zip(&om)
+        .enumerate()
+        .find_map(|(i, (b, o))| skeleton_diff_message(b, o).map(|sub| format!("message {}: {sub}", i + 1)))
+}
+
+/// Expand an [`Entry`] to the `Vec<MessageDef>` it's shorthand for: `Line`/
+/// `Pages` are exactly the plain-text, default-portrait/flip/pause message(s)
+/// that the parser's `reduce_entry` (`eggtext.rs`) collapses to, so
+/// re-inflating them here needs no registry and can't disagree with it.
+fn entry_messages(entry: &Entry) -> Vec<MessageDef> {
+    fn plain(text: &str) -> MessageDef {
+        MessageDef {
+            portrait: PortraitChange::Keep,
+            flip: None,
+            pause: true,
+            content: vec![ContentDef::Text(text.to_string())],
+        }
+    }
+    match entry {
+        Entry::Line(s) => vec![plain(s)],
+        Entry::Pages(pages) => pages.iter().map(|s| plain(s)).collect(),
+        Entry::Conversation { messages } => messages.clone(),
+    }
+}
+
+/// The skeleton of one message: portrait/flip/pause state, then each content
+/// item's directive kind + non-text arguments in order.
+fn skeleton_diff_message(base: &MessageDef, overlay: &MessageDef) -> Option<String> {
+    if base.portrait != overlay.portrait {
+        return Some(format!(
+            "#pic {} vs {}",
+            portrait_change_label(&base.portrait),
+            portrait_change_label(&overlay.portrait),
+        ));
+    }
+    if base.flip != overlay.flip {
+        return Some(format!("#flip {:?} vs {:?}", base.flip, overlay.flip));
+    }
+    if base.pause != overlay.pause {
+        return Some(format!("pause {} vs {} (#nopause)", base.pause, overlay.pause));
+    }
+    if base.content.len() != overlay.content.len() {
+        return Some(format!("directive count differs ({} vs {})", base.content.len(), overlay.content.len()));
+    }
+    base.content
+        .iter()
+        .zip(&overlay.content)
+        .enumerate()
+        .find_map(|(i, (b, o))| skeleton_diff_content(b, o).map(|sub| format!("directive {}: {sub}", i + 1)))
+}
+
+fn portrait_change_label(p: &PortraitChange) -> String {
+    match p {
+        PortraitChange::Keep => "keep".to_string(),
+        PortraitChange::Clear => "none".to_string(),
+        PortraitChange::Set(name) => format!("{name:?}"),
+    }
+}
+
+fn portrait_label(p: &Option<String>) -> String {
+    match p {
+        Some(name) => format!("{name:?}"),
+        None => "none".to_string(),
+    }
+}
+
+/// One content item's skeleton: same directive kind, same non-text argument
+/// values (text/label strings are exactly what's allowed to differ).
+fn skeleton_diff_content(base: &ContentDef, overlay: &ContentDef) -> Option<String> {
+    match (base, overlay) {
+        (ContentDef::Text(_), ContentDef::Text(_)) | (ContentDef::Auto(_), ContentDef::Auto(_)) => None,
+        (ContentDef::Delayed(_, bd), ContentDef::Delayed(_, od)) => {
+            (bd != od).then(|| format!("#delay {bd} vs {od}"))
+        }
+        (ContentDef::Delay(bd), ContentDef::Delay(od)) => (bd != od).then(|| format!("#delay {bd} vs {od}")),
+        (ContentDef::Sound(bn), ContentDef::Sound(on)) => {
+            (bn != on).then(|| format!("#sound {bn:?} vs {on:?}"))
+        }
+        (ContentDef::Portrait(bp), ContentDef::Portrait(op)) => (bp != op)
+            .then(|| format!("#pic {} vs {}", portrait_label(bp), portrait_label(op))),
+        (ContentDef::Pause, ContentDef::Pause) => None,
+        (ContentDef::Flip(bf), ContentDef::Flip(of)) => (bf != of).then(|| format!("#flip {bf} vs {of}")),
+        (ContentDef::SetFlag(bn, bv), ContentDef::SetFlag(on, ov)) => {
+            (bn != on || bv != ov).then(|| format!("#set {bn:?} {bv} vs #set {on:?} {ov}"))
+        }
+        (ContentDef::Shake(bf, ba), ContentDef::Shake(of, oa)) => {
+            (bf != of || ba != oa).then(|| format!("#shake {bf} {ba} vs #shake {of} {oa}"))
+        }
+        (ContentDef::Speed(bn), ContentDef::Speed(on)) => (bn != on).then(|| format!("#speed {bn} vs {on}")),
+        (ContentDef::Choice(bo), ContentDef::Choice(oo)) => skeleton_diff_choice(bo, oo),
+        (b, o) => Some(format!("{} vs {}", content_kind(b), content_kind(o))),
+    }
+}
+
+/// A short label for a [`ContentDef`]'s kind, used only when two different
+/// kinds land in the same slot (same-kind mismatches report their own
+/// arguments instead — see [`skeleton_diff_content`]).
+fn content_kind(c: &ContentDef) -> &'static str {
+    match c {
+        ContentDef::Text(_) => "text",
+        ContentDef::Auto(_) => "auto text",
+        ContentDef::Delayed(_, _) => "#delay text",
+        ContentDef::Delay(_) => "#delay",
+        ContentDef::Sound(_) => "#sound",
+        ContentDef::Portrait(_) => "#pic",
+        ContentDef::Pause => "pause",
+        ContentDef::Flip(_) => "#flip",
+        ContentDef::SetFlag(..) => "#set",
+        ContentDef::Shake(..) => "#shake",
+        ContentDef::Choice(_) => "#choice",
+        ContentDef::Speed(_) => "#speed",
+    }
+}
+
+/// A `#choice` block's skeleton: same option count, each option's `sets` in
+/// the same order (option label text is free).
+fn skeleton_diff_choice(base: &[ChoiceOptionDef], overlay: &[ChoiceOptionDef]) -> Option<String> {
+    if base.len() != overlay.len() {
+        return Some(format!("#choice option count differs ({} vs {})", base.len(), overlay.len()));
+    }
+    base.iter().zip(overlay).enumerate().find_map(|(i, (b, o))| {
+        (b.sets != o.sets)
+            .then(|| format!("#choice option {}: sets {:?} vs {:?}", i + 1, b.sets, o.sets))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,5 +1184,237 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("error:"), "{text}");
         assert!(lines[1].starts_with("warning:"), "{text}");
+    }
+
+    // --- wave 5: language-overlay skeleton lint ---
+
+    /// A matching skeleton with only text changed is clean — the whole point
+    /// of the lint (an honest translation) must never trip it.
+    #[test]
+    fn overlay_matching_skeleton_different_text_is_clean() {
+        let base = script("#dialogue d\n    #pic p\n    Hello.\n\n    Bye.");
+        let overlay = script("#dialogue d\n    #pic p\n    Hola.\n\n    Adios.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert!(report.is_clean(), "{:?}", report.errors);
+    }
+
+    /// A base key an overlay simply doesn't define is the fallback the whole
+    /// overlay mechanism exists for ([`super::script::Script::get_dialogue`])
+    /// — not a finding.
+    #[test]
+    fn overlay_missing_key_is_silent() {
+        let base = script("#dialogue d\n    Hi.\n#dialogue untranslated\n    Only in English.");
+        let overlay = script("#dialogue d\n    Hola.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert!(report.is_clean(), "{:?}", report.errors);
+    }
+
+    /// A key the overlay defines that the base doesn't is an orphan: it can
+    /// never be reached, since lookup only ever resolves through the base's
+    /// key set.
+    #[test]
+    fn overlay_orphan_key_is_an_error() {
+        let base = script("#dialogue d\n    Hi.");
+        let overlay = script("#dialogue d\n    Hola.\n#dialogue extra\n    Solo en overlay.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(matches!(&report.errors[0], Finding::OverlayOrphanDialogue { key, .. } if key == "extra"));
+    }
+
+    /// A directive's argument changing (a portrait swapped for a different
+    /// one) is a skeleton mismatch even though both sides are syntactically
+    /// valid `#pic` directives.
+    #[test]
+    fn overlay_directive_arg_change_is_an_error() {
+        let base = script("#dialogue d\n    #pic a_normal\n    Hi.");
+        let overlay = script("#dialogue d\n    #pic b_open\n    Hola.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { key, path, .. } => {
+                assert_eq!(key, "d");
+                assert!(path.contains("a_normal") && path.contains("b_open"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// A directive present in the base but dropped in the overlay is a
+    /// mismatch — a translator can't silently drop a `#sound`.
+    #[test]
+    fn overlay_missing_directive_is_an_error() {
+        let base = script("#dialogue d\n    #sound gain\n    Hi.");
+        let overlay = script("#dialogue d\n    Hola.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { path, .. } => {
+                assert!(path.contains("directive count differs"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// Dropping (or adding) `#if` branching entirely changes the entry's
+    /// structure, not just its words.
+    #[test]
+    fn overlay_branch_structure_change_is_an_error() {
+        let base = script(
+            "#flag seen\n\
+             #dialogue d\n\
+             \x20   #if seen\n\
+             \x20   After.\n\
+             \x20   #else\n\
+             \x20   Before.\n\
+             \x20   #end",
+        );
+        let overlay = script("#dialogue d\n    Siempre igual.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { path, .. } => {
+                assert!(path.contains("branch structure differs"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// `#choice` needing the same option COUNT: dropping an option changes
+    /// what the player can pick, not just its label.
+    #[test]
+    fn overlay_choice_option_count_change_is_an_error() {
+        let base = script(
+            "#flag chose_tea\n\
+             #dialogue ask\n\
+             \x20   Tea, coffee, or water?\n\
+             \x20   #choice\n\
+             \x20   #option Tea\n\
+             \x20   #set chose_tea true\n\
+             \x20   #option Coffee\n\
+             \x20   #option Water",
+        );
+        let overlay = script(
+            "#flag chose_tea\n\
+             #dialogue ask\n\
+             \x20   ¿Te o cafe?\n\
+             \x20   #choice\n\
+             \x20   #option Te\n\
+             \x20   #set chose_tea true\n\
+             \x20   #option Cafe",
+        );
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { path, .. } => {
+                assert!(path.contains("option count"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// Same option count, but an option's `sets` (the flag it writes) has
+    /// changed underneath a translated label — the label may change freely,
+    /// the flag it wires may not.
+    #[test]
+    fn overlay_choice_option_sets_change_is_an_error() {
+        let base = script(
+            "#flag chose_tea\n\
+             #flag chose_coffee\n\
+             #dialogue ask\n\
+             \x20   Tea or coffee?\n\
+             \x20   #choice\n\
+             \x20   #option Tea\n\
+             \x20   #set chose_tea true\n\
+             \x20   #option Coffee",
+        );
+        let overlay = script(
+            "#flag chose_tea\n\
+             #flag chose_coffee\n\
+             #dialogue ask\n\
+             \x20   ¿Te o cafe?\n\
+             \x20   #choice\n\
+             \x20   #option Te\n\
+             \x20   #set chose_coffee true\n\
+             \x20   #option Cafe",
+        );
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { path, .. } => {
+                assert!(path.contains("sets"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// A `#list`'s entries are read back by index, so an overlay list with a
+    /// different entry count than the base's same-named list is an error.
+    #[test]
+    fn overlay_list_length_mismatch_is_an_error() {
+        let base = script("#list things\n    one\n    two\n    three");
+        let overlay = script("#list things\n    uno\n    dos");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(matches!(
+            &report.errors[0],
+            Finding::OverlayListLength { key, base_len: 3, overlay_len: 2, .. } if key == "things"
+        ));
+    }
+
+    /// An overlay `#flag` the base never declares is an error — the base is
+    /// the sole authority on the flag vocabulary.
+    #[test]
+    fn overlay_undeclared_flag_is_an_error() {
+        let base = script("#dialogue d\n    Hi.");
+        let overlay = script("#flag only_in_overlay\n#dialogue d\n    Hola.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(matches!(
+            &report.errors[0],
+            Finding::OverlayUndeclaredFlag { flag, .. } if flag == "only_in_overlay"
+        ));
+    }
+
+    /// The flat and scoped `#if` authoring styles (see the `eggtext` module
+    /// doc's Conditionals section) parse to the exact same `DialogueDef`
+    /// tree, so an overlay reindenting flat -> scoped (or vice versa) with
+    /// otherwise identical structure must pass: the lint walks parsed defs,
+    /// not surface syntax, so it can't tell the two styles apart in the
+    /// first place.
+    #[test]
+    fn overlay_flat_and_scoped_if_styles_are_equivalent() {
+        let base_flat = script(
+            "#flag INSULT\n\
+             #dialogue d\n\
+             \x20   #pic m_close\n\
+             \x20   ... Hmm...\n\n\
+             \x20   #if INSULT\n\
+             \x20   #pic m_narrow\n\
+             \x20   ... Low hanging fruit.\n\
+             \x20   #else\n\
+             \x20   #pic m_normal\n\
+             \x20   Hey, it isn't all that bad.\n\
+             \x20   #end",
+        );
+        let overlay_scoped = script(
+            "#flag INSULT\n\
+             #dialogue d\n\
+             \x20   #pic m_close\n\
+             \x20   ... Eh...\n\n\
+             \x20   #if INSULT\n\
+             \x20       #pic m_narrow\n\
+             \x20       ... Fruta al alcance de la mano.\n\
+             \x20   #else\n\
+             \x20       #pic m_normal\n\
+             \x20       Oye, no es tan malo.",
+        );
+        let report = check_overlay(&base_flat, &overlay_scoped, "es");
+        assert!(report.is_clean(), "{:?}", report.errors);
+
+        // And the reverse direction — a "base" authored scoped, an overlay
+        // authored flat — is equally clean, confirming neither style is
+        // treated as canonical.
+        let report = check_overlay(&overlay_scoped, &base_flat, "es");
+        assert!(report.is_clean(), "{:?}", report.errors);
     }
 }

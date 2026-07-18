@@ -81,6 +81,24 @@
 //! speed inflated to suit); omitted ⇒ natural speed until done. Motions:
 //! `walk X Y`, `noclip X Y`, `to NAME`, `beside NAME [gap]`, `face NAME`,
 //! `face DX DY`, `teleport X Y`, `record [noclip] DX DY N …`.
+//!
+//! # What belongs where
+//!
+//! `.eggscene` owns the *world*: entities (spawning/binding/moving them),
+//! the camera, map changes, inventory. It is language-independent —
+//! choreography is staged once, not per language — and reaches dialogue only
+//! by key (the `dialogue KEY` step above), resolved against whichever
+//! language is active when the scene actually plays. A cutscene must never
+//! embed text or other per-language behaviour of its own; if it needs to say
+//! something, that something is a `#dialogue` block in
+//! [`.eggtext`](crate::data::script::eggtext), referenced by key.
+//!
+//! [`.eggtext`](crate::data::script::eggtext) owns *presentation* and the
+//! save flags presentation reads/writes: text, portraits, sounds, pacing,
+//! choices, `#set`/`#if`. It is authored **per language** — every key is
+//! translated as a unit, and a translation is linted against the base
+//! script's skeleton (see
+//! [`crate::data::validate::check_overlay`]) rather than trusted by eye.
 
 use std::collections::HashMap;
 

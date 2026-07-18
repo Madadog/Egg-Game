@@ -196,6 +196,25 @@
 //! ```
 //!
 //! Escapes understood in text and labels: `\n` `\t` `\r` `\\` `\"` `\#`.
+//!
+//! # What belongs where
+//!
+//! `.eggtext` owns *presentation*, and the save flags that presentation
+//! reads and writes: text, portraits/flips, sounds, pacing (`#delay`/
+//! `#speed`), shakes, `#choice`, `#set`, and the `#if`/`#elif`/`#else`
+//! branching that reads a flag back. It is authored **per language** — every
+//! key here is translated as a unit, and a translation is linted against the
+//! base script's *skeleton* (its directives, branches, and choices, with
+//! only text left free) rather than trusted by eye — see
+//! [`crate::data::validate::check_overlay`].
+//!
+//! [`.eggscene`](crate::data::scene) owns the *world*: entities, camera, map
+//! changes, inventory. It is language-independent — choreography is staged
+//! once, not per language — and reaches dialogue only by key (its `dialogue
+//! KEY` step), resolved against whichever language is active at play time.
+//! An `.eggscene` file must never embed text or other per-language behaviour
+//! of its own; if a cutscene needs to say something, that something belongs
+//! in a `#dialogue` block here, referenced by key.
 
 use std::collections::BTreeSet;
 
