@@ -511,13 +511,13 @@ fn walk_segment(
         SegmentDef::Plain(entry) => walk_entry(key, entry, flags, portraits, report, set_flags, read_flags),
         SegmentDef::If { flag, then, otherwise, elifs, .. } => {
             check_condition(key, flag, flags, report, read_flags);
-            walk_entry(key, then, flags, portraits, report, set_flags, read_flags);
+            walk_dialogue(key, then, flags, portraits, report, set_flags, read_flags);
             if let Some(otherwise) = otherwise {
-                walk_entry(key, otherwise, flags, portraits, report, set_flags, read_flags);
+                walk_dialogue(key, otherwise, flags, portraits, report, set_flags, read_flags);
             }
             for elif in elifs {
                 check_condition(key, &elif.flag, flags, report, read_flags);
-                walk_entry(key, &elif.then, flags, portraits, report, set_flags, read_flags);
+                walk_dialogue(key, &elif.then, flags, portraits, report, set_flags, read_flags);
             }
         }
     }

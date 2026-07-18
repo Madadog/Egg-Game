@@ -94,10 +94,9 @@
 //!
 //! `#if NAME` (or `#if not NAME`) opens a branch on a declared `#flag`; zero
 //! or more `#elif NAME` / `#elif not NAME` add further conditions, tried in
-//! order; an optional trailing `#else` covers everything else; `#end` closes
-//! the chain. `not` is reserved for this — `#flag not` is a parse error — so
-//! `#if not NAME` can never be mistaken for testing a flag literally named
-//! `not`. Nesting an `#if` inside another is not supported (yet).
+//! order; an optional trailing `#else` covers everything else. `not` is
+//! reserved for this — `#flag not` is a parse error — so `#if not NAME` can
+//! never be mistaken for testing a flag literally named `not`.
 //!
 //! The whole chain resolves to a single carrier message: the branch is
 //! chosen live, at *playback* time, against the actual save, the moment the
@@ -105,17 +104,66 @@
 //! conversation is fetched. That's what lets an earlier `#choice`/`#set` in
 //! the same conversation steer a later `#if` in it (see below).
 //!
+//! **Indentation inside a chain is significant** — how far a branch's content
+//! is indented past its own `#if`/`#elif`/`#else` decides how the chain
+//! closes, and it's decided *once* per chain, by the first line of actual
+//! content anywhere in it (comments and blank lines don't count):
+//!
+//! * **Scoped** — that first line is indented *deeper* than the `#if`. Every
+//!   line strictly deeper belongs to whichever branch is currently
+//!   collecting; `#elif`/`#else`/`#end` are recognised at the `#if`'s own
+//!   depth, operating on the chain. Any *other* line at that depth or
+//!   shallower — a dedent, or simply the end of the `#dialogue` body — closes
+//!   the chain implicitly. `#end` is therefore optional here (though still
+//!   accepted, and sometimes clearer):
+//!
+//!   ```text
+//!   #if liked_the_gift
+//!       Thank you, I love it!
+//!   #elif not visited_before
+//!       Oh... well, thanks for stopping by, I guess.
+//!   #else
+//!       ...Thanks, I suppose.
+//!   ```
+//!
+//! * **Flat** — that first line is at *exactly* the same depth as the `#if`.
+//!   Content at that depth belongs to the branch, `#elif`/`#else` switch it,
+//!   and — since there's no shallower line to signal a close — `#end` is
+//!   required:
+//!
+//!   ```text
+//!   #if liked_the_gift
+//!   Thank you, I love it!
+//!   #elif not visited_before
+//!   Oh... well, thanks for stopping by, I guess.
+//!   #else
+//!   ...Thanks, I suppose.
+//!   #end
+//!   ```
+//!
+//! Both styles resolve to the exact same [`DialogueDef`]; pick whichever
+//! reads better for the conversation at hand.
+//!
+//! **Nesting**: inside any branch, an `#if` indented strictly deeper than the
+//! enclosing one opens a *nested* chain (scoped or flat, independently, to
+//! any depth) — it closes the same way before control returns to the outer
+//! branch. An `#if` at the *same* depth as an already-open flat-mode chain is
+//! rejected (`` `#if` cannot be nested inside another `#if` ``): at that
+//! depth it's ambiguous whether it's meant as the flat chain's own content or
+//! a sibling replacing it, so it's a parse error rather than a guess. A
+//! misindented line — one that lands strictly between an open chain's own
+//! depth and its content's — is also a parse error, pointing at the line and
+//! naming the depth that would continue the chain or the `#end` that would
+//! close it.
+//!
 //! ```text
-//! #flag liked_the_gift
-//! #flag visited_before
-//! #dialogue thanks
-//!     #if liked_the_gift
-//!     Thank you, I love it!
-//!     #elif not visited_before
-//!     Oh... well, thanks for stopping by, I guess.
+//! #dialogue debug_portrait2
+//!     #if INSULT
+//!         #pic m_narrow
+//!         ... Low hanging fruit.
 //!     #else
-//!     ...Thanks, I suppose.
-//!     #end
+//!         #pic m_normal
+//!         Hey, it isn't all that bad.
 //! ```
 //!
 //! ## Choices
@@ -130,7 +178,10 @@
 //! reads the same live save when it later reaches an `#if`), so a `#choice`
 //! earlier in a conversation can steer an `#if` later in that very same
 //! conversation. No `#end` — the block runs to the message's end (its blank
-//! line).
+//! line). Indentation inside it is purely cosmetic (a `#choice` doesn't open a
+//! scope the way an `#if` does): the canonical style steps `#option` in past
+//! `#choice`, and each `#option`'s `#set`s in past it again, but every line at
+//! one flat depth works exactly the same:
 //!
 //! ```text
 //! #flag chose_tea
@@ -138,10 +189,10 @@
 //! #dialogue barista
 //!     What'll it be?
 //!     #choice
-//!     #option Tea
-//!     #set chose_tea true
-//!     #option "Coffee, black"
-//!     #set chose_coffee true
+//!         #option Tea
+//!             #set chose_tea true
+//!         #option "Coffee, black"
+//!             #set chose_coffee true
 //! ```
 //!
 //! Escapes understood in text and labels: `\n` `\t` `\r` `\\` `\"` `\#`.
@@ -318,17 +369,25 @@ enum Marker {
 }
 
 /// One scanned piece of a `#dialogue` body in document order: a blank-line-
-/// delimited message group, or a conditional [`Marker`].
+/// delimited message group, or a conditional [`Marker`] — each carrying the
+/// column *depth* (the length of its line's leading whitespace; a tab counts
+/// as one column, same as a space — see the module doc) that
+/// [`SegmentBuilder::route`] scopes `#if`/`#elif`/`#else`/`#end` by. A
+/// group's depth is its *first* line's; lines after that aren't depth-
+/// checked against each other (a `#choice`'s `#option`/`#set` lines
+/// legitimately step deeper within the same message/group).
 enum BodyItem<'a> {
-    Group(Vec<(usize, &'a str)>),
-    Marker(usize, Marker),
+    Group(usize, Vec<(usize, &'a str)>),
+    Marker(usize, usize, Marker),
 }
 
 /// A `#dialogue` body. Without conditionals it reduces to the tightest plain
 /// shape ([`Entry::Line`] for a lone bare line, [`Entry::Pages`] for several),
 /// wrapped as a single-segment [`DialogueDef::Plain`]. With `#if`/`#elif`/
 /// `#else`/`#end` it becomes a [`DialogueDef::Segments`] list: unconditional
-/// runs and flag-gated chains. Each `#if` chain resolves (see
+/// runs and flag-gated chains, which may themselves nest further chains
+/// inside a branch (see the module doc's Conditionals section for the
+/// indentation rules that decide it). Each `#if` chain resolves (see
 /// [`SegmentDef::resolve`] in `crate::data::script`) to a single carrier
 /// message the dialogue box picks a branch from live, at *playback* time —
 /// not once, up front, at [`get_dialogue`]. `flags` is the declared
@@ -341,40 +400,56 @@ fn parse_dialogue(
 ) -> Result<DialogueDef, ParseError> {
     // Scan the body into message groups and conditional markers. A blank line OR
     // a marker line ends the current message group.
-    fn flush<'a>(current: &mut Vec<(usize, &'a str)>, items: &mut Vec<BodyItem<'a>>) {
+    fn flush<'a>(
+        depth: &mut Option<usize>,
+        current: &mut Vec<(usize, &'a str)>,
+        items: &mut Vec<BodyItem<'a>>,
+    ) {
         if !current.is_empty() {
-            items.push(BodyItem::Group(std::mem::take(current)));
+            items.push(BodyItem::Group(
+                depth.take().expect("depth is set whenever current is non-empty"),
+                std::mem::take(current),
+            ));
         }
     }
     let mut items: Vec<BodyItem> = Vec::new();
     let mut current: Vec<(usize, &str)> = Vec::new();
+    let mut current_depth: Option<usize> = None;
     for &(line_no, raw) in body {
         let logical = raw.trim_start();
         if logical.is_empty() {
-            flush(&mut current, &mut items);
+            flush(&mut current_depth, &mut current, &mut items);
         } else if is_comment(logical) {
             continue;
-        } else if let Some(marker) = parse_marker(logical, line_no)? {
-            flush(&mut current, &mut items);
-            items.push(BodyItem::Marker(line_no, marker));
         } else {
-            current.push((line_no, logical));
+            let depth = raw.len() - logical.len();
+            if let Some(marker) = parse_marker(logical, line_no)? {
+                flush(&mut current_depth, &mut current, &mut items);
+                items.push(BodyItem::Marker(line_no, depth, marker));
+            } else {
+                if current.is_empty() {
+                    current_depth = Some(depth);
+                }
+                current.push((line_no, logical));
+            }
         }
     }
-    flush(&mut current, &mut items);
+    flush(&mut current_depth, &mut current, &mut items);
 
     // Resolve every message group in document order so `#autoflip`/`#flip` side
-    // tracking spans the whole entry exactly as before, then thread the resolved
-    // messages back through the markers to build segments.
+    // tracking spans the whole entry exactly as before, then route the resolved
+    // messages/markers — by depth — into the (possibly nested) segment tree.
     let mut resolver = AutoflipState::default();
     let mut builder = SegmentBuilder::default();
     for item in &items {
         match item {
-            BodyItem::Group(group) => {
+            BodyItem::Group(depth, group) => {
                 let def = resolver.resolve(parse_message(group, flags)?);
-                builder.push_message(def);
+                builder.route(*depth, group[0].0, Item::Message(def), flags)?;
             }
-            BodyItem::Marker(line_no, marker) => builder.marker(*line_no, marker, flags)?,
+            BodyItem::Marker(line_no, depth, marker) => {
+                builder.route(*depth, *line_no, Item::Marker(marker), flags)?;
+            }
         }
     }
     builder.finish()
@@ -485,132 +560,51 @@ impl AutoflipState {
     }
 }
 
-/// Assembles resolved messages and `#if`/`#elif`/`#else`/`#end` markers into a
-/// [`DialogueDef`]. Tracks at most one open conditional chain (no nesting) and
-/// the branch (`#if`'s own `then`, the current `#elif`'s, or `#else`)
-/// currently collecting messages.
+/// One item being routed into the segment tree: a resolved message, or a
+/// structural marker. [`SegmentBuilder::route`] takes each one's depth and
+/// line separately (a `Group`'s representative depth is its first line's).
+enum Item<'a> {
+    Message(MessageDef),
+    Marker(&'a Marker),
+}
+
+/// Whether an open `#if [not] NAME`'s branches are written **scoped**
+/// (content strictly *deeper* than the `#if` itself; `#end` optional — a
+/// dedent to the `#if`'s own depth or shallower closes it implicitly) or
+/// **flat** (content at *exactly* the `#if`'s own depth; `#end` required).
+/// Decided once per chain, by the first branch-content line encountered
+/// anywhere in it (in `then`, an `#elif`, or `#else`) — see the module doc's
+/// Conditionals section. `None` until that first line arrives; a chain whose
+/// every branch stays empty never needs to decide and closes the same way
+/// [`Mode::Scoped`] would (silently, no `#end` required).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Flat,
+    Scoped,
+}
+
+/// One branch's messages/nested segments, mid-collection. Structurally the
+/// same as the whole dialogue body's own top-level state (an unconditional
+/// `plain` run plus completed `segments`), reused recursively so a branch can
+/// itself hold further `#if` chains — a nested `#if` resolves through the
+/// exact same [`SegmentDef::If`]/`TextContent::If` carrier machinery as a
+/// top-level one (see `crate::data::script::SegmentDef`'s doc).
 #[derive(Default)]
-struct SegmentBuilder {
+struct ScopeBuilder {
     segments: Vec<SegmentDef>,
-    /// The unconditional run collecting messages outside any `#if`.
+    /// The unconditional run collecting messages since the last segment (or
+    /// the branch's start).
     plain: Vec<MessageDef>,
-    /// The open conditional chain, if any.
-    open: Option<OpenIf>,
 }
 
-/// The currently-open `#if`/`#elif`/`#else` chain, awaiting its `#end`.
-struct OpenIf {
-    flag: String,
-    negated: bool,
-    then: Vec<MessageDef>,
-    /// Completed `#elif` branches in document order; the last one (if any) is
-    /// where a message currently routes to, unless `in_else`.
-    elifs: Vec<OpenElif>,
-    otherwise: Vec<MessageDef>,
-    /// Whether `#else` has been seen: newly gathered messages go to
-    /// `otherwise`, and a further `#elif` is now an error.
-    in_else: bool,
-    /// The line the `#if` opened on, so a missing `#end` points back at it.
-    open_line: usize,
-}
-
-/// One in-progress `#elif [not] NAME` branch: its condition, plus the
-/// messages gathered for it since (reduced to an [`Entry`] only once the
-/// whole chain closes at `#end`).
-struct OpenElif {
-    flag: String,
-    negated: bool,
-    then: Vec<MessageDef>,
-}
-
-impl SegmentBuilder {
-    /// Route a resolved message to the open branch, or to the plain run.
+impl ScopeBuilder {
     fn push_message(&mut self, def: MessageDef) {
-        match &mut self.open {
-            Some(open) if open.in_else => open.otherwise.push(def),
-            Some(open) => match open.elifs.last_mut() {
-                Some(elif) => elif.then.push(def),
-                None => open.then.push(def),
-            },
-            None => self.plain.push(def),
-        }
+        self.plain.push(def);
     }
 
-    fn marker(
-        &mut self,
-        line_no: usize,
-        marker: &Marker,
-        flags: &BTreeSet<String>,
-    ) -> Result<(), ParseError> {
-        match marker {
-            Marker::If { flag, negated } => {
-                if self.open.is_some() {
-                    return Err(ParseError::new(
-                        line_no,
-                        "`#if` cannot be nested inside another `#if`",
-                    ));
-                }
-                check_flag(flag, line_no, flags)?;
-                // Close the current plain run so the conditional slots in order.
-                self.flush_plain();
-                self.open = Some(OpenIf {
-                    flag: flag.clone(),
-                    negated: *negated,
-                    then: Vec::new(),
-                    elifs: Vec::new(),
-                    otherwise: Vec::new(),
-                    in_else: false,
-                    open_line: line_no,
-                });
-            }
-            Marker::Elif { flag, negated } => {
-                let Some(open) = &mut self.open else {
-                    return Err(ParseError::new(line_no, "`#elif` without a matching `#if`"));
-                };
-                if open.in_else {
-                    return Err(ParseError::new(line_no, "`#elif` can't follow `#else`"));
-                }
-                check_flag(flag, line_no, flags)?;
-                open.elifs.push(OpenElif {
-                    flag: flag.clone(),
-                    negated: *negated,
-                    then: Vec::new(),
-                });
-            }
-            Marker::Else => {
-                let Some(open) = &mut self.open else {
-                    return Err(ParseError::new(line_no, "`#else` without a matching `#if`"));
-                };
-                if open.in_else {
-                    return Err(ParseError::new(line_no, "a second `#else` in one `#if`"));
-                }
-                open.in_else = true;
-            }
-            Marker::End => {
-                let Some(open) = self.open.take() else {
-                    return Err(ParseError::new(line_no, "`#end` without a matching `#if`"));
-                };
-                self.segments.push(SegmentDef::If {
-                    flag: open.flag,
-                    negated: open.negated,
-                    then: reduce_entry(open.then),
-                    otherwise: (!open.otherwise.is_empty()).then(|| reduce_entry(open.otherwise)),
-                    elifs: open
-                        .elifs
-                        .into_iter()
-                        .map(|elif| ElifDef {
-                            flag: elif.flag,
-                            negated: elif.negated,
-                            then: reduce_entry(elif.then),
-                        })
-                        .collect(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Flush the pending plain run as a `Plain` segment, if non-empty.
+    /// Flush the pending plain run as a `Plain` segment, if non-empty —
+    /// called right before a nested segment slots in, so document order
+    /// survives.
     fn flush_plain(&mut self) {
         if !self.plain.is_empty() {
             self.segments
@@ -620,24 +614,336 @@ impl SegmentBuilder {
         }
     }
 
-    fn finish(mut self) -> Result<DialogueDef, ParseError> {
-        if let Some(open) = &self.open {
-            // The body ended with a conditional still open; point at the `#if`.
-            return Err(ParseError::new(
-                open.open_line,
-                "`#if` is missing its closing `#end`",
-            ));
-        }
-        // A body with no conditionals is one plain run: keep the compact
-        // single-entry shape so existing entries round-trip unchanged.
+    /// Append an already-closed nested `#if` chain's segment.
+    fn push_segment(&mut self, segment: SegmentDef) {
+        self.flush_plain();
+        self.segments.push(segment);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.segments.is_empty() && self.plain.is_empty()
+    }
+
+    /// Collapse to the simplest equivalent [`DialogueDef`]: a bare
+    /// [`DialogueDef::Plain`] if no nested segment was ever collected (the
+    /// pre-nesting shape, so it round-trips unchanged), else `Segments`.
+    fn finish(mut self) -> DialogueDef {
         if self.segments.is_empty() {
-            return Ok(DialogueDef::Plain(reduce_entry(self.plain)));
+            return DialogueDef::Plain(reduce_entry(self.plain));
         }
         self.flush_plain();
-        Ok(DialogueDef::Segments {
+        DialogueDef::Segments {
             segments: self.segments,
-        })
+        }
     }
+}
+
+/// One in-progress `#elif [not] NAME` branch: its condition, plus the
+/// messages/segments gathered for it since (reduced to a [`DialogueDef`]
+/// only once the whole chain closes).
+struct OpenElif {
+    flag: String,
+    negated: bool,
+    then: ScopeBuilder,
+}
+
+/// The currently-open `#if`/`#elif`/`#else` chain, awaiting its close (an
+/// `#end` at `if_depth`, or — once [`Mode::Scoped`] is locked in — any line
+/// at `if_depth` or shallower that isn't itself a matching
+/// `#elif`/`#else`/`#end`; see [`SegmentBuilder::route`]).
+struct OpenIf {
+    flag: String,
+    negated: bool,
+    /// The `#if` line's own depth. `#elif`/`#else`/`#end` operate on this
+    /// chain only when they land at exactly this depth, regardless of mode.
+    if_depth: usize,
+    /// `None` until the chain's first branch-content line decides it — see
+    /// [`Mode`].
+    mode: Option<Mode>,
+    then: ScopeBuilder,
+    /// Completed/in-progress `#elif` branches in document order; the last one
+    /// (if any) is where content currently routes, unless `in_else`.
+    elifs: Vec<OpenElif>,
+    otherwise: ScopeBuilder,
+    /// Whether `#else` has been seen: newly gathered content goes to
+    /// `otherwise`, and a further `#elif` is now an error.
+    in_else: bool,
+    /// The line the `#if` opened on, so a `Mode::Flat` chain's missing `#end`
+    /// points back at it.
+    open_line: usize,
+}
+
+impl OpenIf {
+    fn new(flag: String, negated: bool, if_depth: usize, open_line: usize) -> Self {
+        Self {
+            flag,
+            negated,
+            if_depth,
+            mode: None,
+            then: ScopeBuilder::default(),
+            elifs: Vec::new(),
+            otherwise: ScopeBuilder::default(),
+            in_else: false,
+            open_line,
+        }
+    }
+
+    /// The branch content currently routes to: `then`, the last open
+    /// `#elif`, or `otherwise` once `#else` has been seen.
+    fn current_branch_mut(&mut self) -> &mut ScopeBuilder {
+        if self.in_else {
+            &mut self.otherwise
+        } else if let Some(elif) = self.elifs.last_mut() {
+            &mut elif.then
+        } else {
+            &mut self.then
+        }
+    }
+
+    /// Reduce this closed chain to its on-disk [`SegmentDef`].
+    fn finish(self) -> SegmentDef {
+        SegmentDef::If {
+            flag: self.flag,
+            negated: self.negated,
+            then: self.then.finish(),
+            otherwise: (!self.otherwise.is_empty()).then(|| self.otherwise.finish()),
+            elifs: self
+                .elifs
+                .into_iter()
+                .map(|elif| ElifDef {
+                    flag: elif.flag,
+                    negated: elif.negated,
+                    then: elif.then.finish(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Assembles resolved messages and `#if`/`#elif`/`#else`/`#end` markers into a
+/// [`DialogueDef`], honouring the depth-scoping rules in the module doc.
+/// `stack` holds every currently-open `#if` chain, outermost first — a
+/// strictly-deeper `#if` pushes a nested chain onto it, and a chain pops off
+/// as it closes (explicitly via `#end`, or implicitly via a dedent once it's
+/// [`Mode::Scoped`]).
+#[derive(Default)]
+struct SegmentBuilder {
+    /// The unconditional run/segments outside any `#if` — same shape as an
+    /// open chain's branch, since the whole body is itself "one scope".
+    top: ScopeBuilder,
+    stack: Vec<OpenIf>,
+}
+
+impl SegmentBuilder {
+    /// Route one body item to wherever its depth places it: the innermost
+    /// open chain's current branch, a newly-opened nested `#if`, an
+    /// `#elif`/`#else`/`#end` operating on an open chain, or — implicitly
+    /// closing one or more [`Mode::Scoped`] chains along the way — whatever
+    /// scope encloses them.
+    fn route(
+        &mut self,
+        depth: usize,
+        line_no: usize,
+        item: Item,
+        flags: &BTreeSet<String>,
+    ) -> Result<(), ParseError> {
+        loop {
+            // Peek the innermost open chain's depth/mode as plain values, so
+            // nothing borrows `self.stack` across the `pop`/`push` calls below.
+            let Some(top) = self.stack.last() else {
+                return self.route_top_level(depth, line_no, item, flags);
+            };
+            let if_depth = top.if_depth;
+            let mode = top.mode;
+
+            // An `#elif`/`#else`/`#end` at exactly the open chain's own depth
+            // always operates on it, regardless of mode.
+            if depth == if_depth
+                && let Item::Marker(marker) = &item
+                && !matches!(marker, Marker::If { .. })
+            {
+                return self.apply_marker_to_top(line_no, marker, flags);
+            }
+
+            if depth > if_depth {
+                // Content (or a nested `#if`) strictly inside the chain's
+                // branch: the first such line, in either mode, locks Scoped.
+                if mode.is_none() {
+                    self.stack.last_mut().unwrap().mode = Some(Mode::Scoped);
+                }
+                return match item {
+                    Item::Message(def) => {
+                        self.stack
+                            .last_mut()
+                            .unwrap()
+                            .current_branch_mut()
+                            .push_message(def);
+                        Ok(())
+                    }
+                    Item::Marker(Marker::If { flag, negated }) => {
+                        check_flag(flag, line_no, flags)?;
+                        self.stack
+                            .last_mut()
+                            .unwrap()
+                            .current_branch_mut()
+                            .flush_plain();
+                        self.stack.push(OpenIf::new(flag.clone(), *negated, depth, line_no));
+                        Ok(())
+                    }
+                    Item::Marker(other) => Err(unmatched_marker_error(other, line_no)),
+                };
+            }
+
+            if depth == if_depth {
+                if mode == Some(Mode::Scoped) {
+                    // Any other line at the chain's own depth closes it
+                    // implicitly; reprocess this same item against whatever
+                    // now encloses it.
+                    self.close_top();
+                    continue;
+                }
+                // First contact at exactly `if_depth` (mode was `None` or
+                // already `Flat`): flat-style content, or an ambiguous
+                // same-depth nested `#if`.
+                self.stack.last_mut().unwrap().mode = Some(Mode::Flat);
+                return match item {
+                    Item::Message(def) => {
+                        self.stack
+                            .last_mut()
+                            .unwrap()
+                            .current_branch_mut()
+                            .push_message(def);
+                        Ok(())
+                    }
+                    Item::Marker(Marker::If { .. }) => Err(ParseError::new(
+                        line_no,
+                        "`#if` cannot be nested inside another `#if`",
+                    )),
+                    Item::Marker(_) => unreachable!("Elif/Else/End at if_depth handled above"),
+                };
+            }
+
+            // depth < if_depth: a dedent past the chain's own content depth.
+            if mode == Some(Mode::Flat) {
+                let open_line = self.stack.last().unwrap().open_line;
+                return Err(ParseError::new(
+                    line_no,
+                    format!(
+                        "line dedents to depth {depth}, but the `#if` opened at line \
+                         {open_line} keeps its (flat-style) content at depth {if_depth} — \
+                         indent to depth {if_depth} to continue it, or add `#end` before \
+                         dedenting"
+                    ),
+                ));
+            }
+            // `Mode::Scoped` or never-decided (`None`, an empty chain): the
+            // dedent closes it implicitly, same as the `depth == if_depth`
+            // scoped case above.
+            self.close_top();
+        }
+    }
+
+    fn route_top_level(
+        &mut self,
+        depth: usize,
+        line_no: usize,
+        item: Item,
+        flags: &BTreeSet<String>,
+    ) -> Result<(), ParseError> {
+        match item {
+            Item::Message(def) => {
+                self.top.push_message(def);
+                Ok(())
+            }
+            Item::Marker(Marker::If { flag, negated }) => {
+                check_flag(flag, line_no, flags)?;
+                self.top.flush_plain();
+                self.stack.push(OpenIf::new(flag.clone(), *negated, depth, line_no));
+                Ok(())
+            }
+            Item::Marker(other) => Err(unmatched_marker_error(other, line_no)),
+        }
+    }
+
+    /// Handle an `#elif`/`#else`/`#end` that lands at the innermost open
+    /// chain's own depth.
+    fn apply_marker_to_top(
+        &mut self,
+        line_no: usize,
+        marker: &Marker,
+        flags: &BTreeSet<String>,
+    ) -> Result<(), ParseError> {
+        let top = self.stack.last_mut().unwrap();
+        match marker {
+            Marker::Elif { flag, negated } => {
+                if top.in_else {
+                    return Err(ParseError::new(line_no, "`#elif` can't follow `#else`"));
+                }
+                check_flag(flag, line_no, flags)?;
+                top.elifs.push(OpenElif {
+                    flag: flag.clone(),
+                    negated: *negated,
+                    then: ScopeBuilder::default(),
+                });
+                Ok(())
+            }
+            Marker::Else => {
+                if top.in_else {
+                    return Err(ParseError::new(line_no, "a second `#else` in one `#if`"));
+                }
+                top.in_else = true;
+                Ok(())
+            }
+            Marker::End => {
+                self.close_top();
+                Ok(())
+            }
+            Marker::If { .. } => unreachable!("the caller filters `#if` out before calling"),
+        }
+    }
+
+    /// Pop the innermost open chain, reduce it to a [`SegmentDef`], and
+    /// append it to whichever scope now encloses it (the new innermost open
+    /// chain's current branch, or the top level).
+    fn close_top(&mut self) {
+        let segment = self.stack.pop().unwrap().finish();
+        match self.stack.last_mut() {
+            Some(parent) => parent.current_branch_mut().push_segment(segment),
+            None => self.top.push_segment(segment),
+        }
+    }
+
+    fn finish(mut self) -> Result<DialogueDef, ParseError> {
+        // Any chain still open at the end of the body closes implicitly if
+        // it's `Mode::Scoped` (or never decided — an empty chain) — `#end` is
+        // genuinely optional there, including at the very end of the body.
+        // A `Mode::Flat` chain always needs an explicit `#end`, though.
+        while let Some(open) = self.stack.last() {
+            if open.mode == Some(Mode::Flat) {
+                return Err(ParseError::new(
+                    open.open_line,
+                    "`#if` is missing its closing `#end`",
+                ));
+            }
+            self.close_top();
+        }
+        Ok(self.top.finish())
+    }
+}
+
+/// The line-pointed error for an `#elif`/`#else`/`#end` that doesn't land on
+/// any open chain's own depth — the same wording regardless of *why* (no
+/// chain open at all, or one open but at a different depth): either way nothing
+/// matches it. Never called with `Marker::If` (an unmatched `#if` opens a new
+/// chain instead of erroring).
+fn unmatched_marker_error(marker: &Marker, line_no: usize) -> ParseError {
+    let keyword = match marker {
+        Marker::If { .. } => unreachable!("an `#if` always opens rather than erroring here"),
+        Marker::Elif { .. } => "elif",
+        Marker::Else => "else",
+        Marker::End => "end",
+    };
+    ParseError::new(line_no, format!("`#{keyword}` without a matching `#if`"))
 }
 
 /// A `#set`/`#if` may only name a declared `#flag`; otherwise it is a
@@ -1461,8 +1767,8 @@ mod tests {
             SegmentDef::If {
                 flag: "seen".into(),
                 negated: false,
-                then: Entry::Line("After.".into()),
-                otherwise: Some(Entry::Line("Before.".into())),
+                then: DialogueDef::Plain(Entry::Line("After.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("Before.".into()))),
                 elifs: vec![],
             },
         );
@@ -1479,7 +1785,7 @@ mod tests {
             SegmentDef::If {
                 flag: "seen".into(),
                 negated: false,
-                then: Entry::Line("Yes.".into()),
+                then: DialogueDef::Plain(Entry::Line("Yes.".into())),
                 otherwise: None,
                 elifs: vec![],
             },
@@ -1560,8 +1866,8 @@ mod tests {
             SegmentDef::If {
                 flag: "seen".into(),
                 negated: true,
-                then: Entry::Line("Before.".into()),
-                otherwise: Some(Entry::Line("After.".into())),
+                then: DialogueDef::Plain(Entry::Line("Before.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("After.".into()))),
                 elifs: vec![],
             },
         );
@@ -1588,12 +1894,12 @@ mod tests {
             SegmentDef::If {
                 flag: "a".into(),
                 negated: false,
-                then: Entry::Line("A.".into()),
-                otherwise: Some(Entry::Line("C.".into())),
+                then: DialogueDef::Plain(Entry::Line("A.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("C.".into()))),
                 elifs: vec![ElifDef {
                     flag: "b".into(),
                     negated: true,
-                    then: Entry::Line("B.".into()),
+                    then: DialogueDef::Plain(Entry::Line("B.".into())),
                 }],
             },
         );
@@ -1777,5 +2083,208 @@ mod tests {
         let err = parse("#dialogue d\n    #choice\n    #option A\n    loose text\n    #option B")
             .unwrap_err();
         assert_eq!(err.line, 4);
+    }
+
+    // --- wave 4: indentation-scoped conditionals ---
+
+    /// A scoped `#if` (branch content indented deeper than the `#if` itself)
+    /// with no `#end` at all: a later line back at the `#if`'s own depth
+    /// closes it implicitly, and that line becomes ordinary content of the
+    /// enclosing (here, top-level) scope, in document order.
+    #[test]
+    fn scoped_if_without_end_is_closed_by_a_dedent() {
+        let def = dialogue_def(
+            "#flag seen\n\
+             #dialogue d\n\
+             \x20   Intro.\n\n\
+             \x20   #if seen\n\
+             \x20       Branch.\n\n\
+             \x20   Outro.",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        assert_eq!(segments.len(), 3);
+        assert!(matches!(&segments[0], SegmentDef::Plain(Entry::Line(s)) if s == "Intro."));
+        assert_eq!(
+            segments[1],
+            SegmentDef::If {
+                flag: "seen".into(),
+                negated: false,
+                then: DialogueDef::Plain(Entry::Line("Branch.".into())),
+                otherwise: None,
+                elifs: vec![],
+            },
+        );
+        assert!(matches!(&segments[2], SegmentDef::Plain(Entry::Line(s)) if s == "Outro."));
+    }
+
+    /// Scoped mode with an `#else` at the `#if`'s own depth, body ending
+    /// right after (no `#end`) — the end of the body closes it too.
+    #[test]
+    fn scoped_if_else_at_if_depth_closes_at_body_end() {
+        let def = dialogue_def(
+            "#flag seen\n\
+             #dialogue d\n\
+             \x20   #if seen\n\
+             \x20       After.\n\
+             \x20   #else\n\
+             \x20       Before.",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        assert_eq!(
+            segments[0],
+            SegmentDef::If {
+                flag: "seen".into(),
+                negated: false,
+                then: DialogueDef::Plain(Entry::Line("After.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("Before.".into()))),
+                elifs: vec![],
+            },
+        );
+    }
+
+    /// `#end` is still accepted in scoped mode, and produces exactly the
+    /// same [`DialogueDef`] as omitting it.
+    #[test]
+    fn scoped_if_end_is_still_accepted_and_equivalent() {
+        let with_end = dialogue_def(
+            "#flag seen\n#dialogue d\n    #if seen\n        After.\n    #end",
+        );
+        let without_end =
+            dialogue_def("#flag seen\n#dialogue d\n    #if seen\n        After.");
+        assert_eq!(with_end, without_end);
+    }
+
+    /// A nested `#if` two levels deep, inside the outer's `then` branch,
+    /// itself closed implicitly by the outer's `#else` dedenting past it —
+    /// proving a single line can close more than one open chain at once.
+    #[test]
+    fn nested_if_two_deep_in_then_branch() {
+        let def = dialogue_def(
+            "#flag a\n#flag b\n\
+             #dialogue d\n\
+             \x20   #if a\n\
+             \x20       outer then.\n\
+             \x20       #if b\n\
+             \x20           inner then.\n\
+             \x20       #else\n\
+             \x20           inner else.\n\
+             \x20   #else\n\
+             \x20       outer else.",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        assert_eq!(segments.len(), 1);
+        let SegmentDef::If { flag, then, otherwise, elifs, .. } = &segments[0] else {
+            panic!("expected an If segment");
+        };
+        assert_eq!(flag, "a");
+        assert!(elifs.is_empty());
+        let DialogueDef::Segments { segments: then_segments } = then else {
+            panic!("outer `then` should itself be segmented (plain run + nested if)");
+        };
+        assert!(matches!(&then_segments[0], SegmentDef::Plain(Entry::Line(s)) if s == "outer then."));
+        assert_eq!(
+            then_segments[1],
+            SegmentDef::If {
+                flag: "b".into(),
+                negated: false,
+                then: DialogueDef::Plain(Entry::Line("inner then.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("inner else.".into()))),
+                elifs: vec![],
+            },
+        );
+        assert_eq!(
+            otherwise,
+            &Some(DialogueDef::Plain(Entry::Line("outer else.".into())))
+        );
+    }
+
+    /// A nested, negated `#if` inside an `#elif` branch parses structurally
+    /// (resolution-level carrier assertions live in `crate::data::script::tests`).
+    #[test]
+    fn nested_if_not_inside_an_elif_branch() {
+        let def = dialogue_def(
+            "#flag a\n#flag b\n#flag c\n\
+             #dialogue d\n\
+             \x20   #if a\n\
+             \x20       A.\n\
+             \x20   #elif b\n\
+             \x20       #if not c\n\
+             \x20           not c.\n\
+             \x20       #else\n\
+             \x20           yes c.\n\
+             \x20   #else\n\
+             \x20       Else.",
+        );
+        let DialogueDef::Segments { segments } = def else {
+            panic!("expected segments");
+        };
+        let SegmentDef::If { elifs, .. } = &segments[0] else {
+            panic!("expected an If segment");
+        };
+        assert_eq!(elifs.len(), 1);
+        assert_eq!(elifs[0].flag, "b");
+        let DialogueDef::Segments { segments: elif_segments } = &elifs[0].then else {
+            panic!("elif's `then` should itself be segmented (nested if)");
+        };
+        assert_eq!(
+            elif_segments[0],
+            SegmentDef::If {
+                flag: "c".into(),
+                negated: true,
+                then: DialogueDef::Plain(Entry::Line("not c.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("yes c.".into()))),
+                elifs: vec![],
+            },
+        );
+    }
+
+    /// A line that dedents *past* an open flat-mode `#if`'s content depth
+    /// (shallower, but still indented — not shallow enough to be read as
+    /// closing anything, since flat mode has no implicit close) is a
+    /// line-pointed error rather than a silent misparse.
+    #[test]
+    fn flat_if_dedent_without_end_errors_at_the_line() {
+        // A blank line before the dedent forces it into its own message group
+        // (so it's individually depth-checked — a group's depth is only its
+        // *first* line's, since lines within one message aren't checked
+        // against each other, see the module doc).
+        let err = parse(
+            "#flag seen\n#dialogue d\n    #if seen\n    Flat content.\n\n  partial dedent\n    #end",
+        )
+        .unwrap_err();
+        assert_eq!(err.line, 6);
+    }
+
+    /// `#choice` doesn't open a depth-scope the way `#if` does: the corpus
+    /// style (`#option` deeper than `#choice`, `#set` deeper than its
+    /// `#option`) and the flat doc style (everything at one depth) parse to
+    /// the exact same content.
+    #[test]
+    fn choice_parses_identically_scoped_or_flat() {
+        let scoped = convo(
+            "#flag a\n#flag b\n#dialogue d\n\
+             \x20   Prompt?\n\
+             \x20   #choice\n\
+             \x20       #option A\n\
+             \x20           #set a true\n\
+             \x20       #option B\n\
+             \x20           #set b true",
+        );
+        let flat = convo(
+            "#flag a\n#flag b\n#dialogue d\n\
+             \x20   Prompt?\n\
+             \x20   #choice\n\
+             \x20   #option A\n\
+             \x20   #set a true\n\
+             \x20   #option B\n\
+             \x20   #set b true",
+        );
+        assert_eq!(scoped[0].content, flat[0].content);
     }
 }

@@ -97,12 +97,20 @@ pub enum DialogueDef {
 /// resolved here, by swapping a branch's `then`/`otherwise` when its carrier
 /// is built, so `TextContent::If` itself never needs to know about `not`.
 ///
-/// JSON: a plain [`Entry`], or `{ "if": "flag", "then": <entry>, "negated":
-/// bool, "elifs": [...], "else": <entry> }`. `negated`, `elifs` and `else`
-/// all default when absent, so the pre-`#elif` shape — `{ "if", "then",
-/// "else" }` — still deserializes unchanged, and the untagged-enum
-/// discrimination against [`Entry`] (by the presence of the `if` key) is
-/// untouched.
+/// Each branch (`then`, `otherwise`, and an [`ElifDef`]'s own `then`) is a
+/// full [`DialogueDef`] rather than a bare [`Entry`] — so a branch can itself
+/// contain further `#if` segments (the `.eggtext` parser's indentation rules
+/// let a *nested* `#if` open strictly inside another; see
+/// [`crate::data::script::eggtext`]'s module doc). A nested `If` inside a
+/// branch resolves through this exact same machinery, recursively — the
+/// dialogue box never needs to know a carrier came from a nested `#if`.
+///
+/// JSON: a plain [`Entry`], or `{ "if": "flag", "then": <entry-or-segments>,
+/// "negated": bool, "elifs": [...], "else": <entry-or-segments> }`.
+/// `negated`, `elifs` and `else` all default when absent, and `then`/`else`/
+/// an `ElifDef`'s `then` accept either shape (untagged, same as
+/// [`DialogueDef`] itself) — so the pre-nesting shape, where every branch was
+/// a plain [`Entry`], still deserializes completely unchanged.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum SegmentDef {
@@ -112,9 +120,9 @@ pub enum SegmentDef {
         flag: String,
         #[serde(default)]
         negated: bool,
-        then: Entry,
+        then: DialogueDef,
         #[serde(default, rename = "else")]
-        otherwise: Option<Entry>,
+        otherwise: Option<DialogueDef>,
         #[serde(default)]
         elifs: Vec<ElifDef>,
     },
@@ -123,13 +131,14 @@ pub enum SegmentDef {
 /// One `#elif [not] NAME` branch of a [`SegmentDef::If`] chain: its own
 /// condition (`flag`/`negated`) and the branch it guards, gathered flat
 /// alongside its `#if` (see [`SegmentDef`]'s doc for how the chain nests at
-/// resolution). JSON: `{ "flag": "name", "negated": bool, "then": <entry> }`.
+/// resolution, and for why `then` is a full [`DialogueDef`]). JSON: `{
+/// "flag": "name", "negated": bool, "then": <entry-or-segments> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ElifDef {
     pub flag: String,
     #[serde(default)]
     pub negated: bool,
-    pub then: Entry,
+    pub then: DialogueDef,
 }
 
 /// A dialogue entry: a single line, a sequence of manually-advanced pages, or a
@@ -755,11 +764,44 @@ mod tests {
             SegmentDef::If {
                 flag: "seen".into(),
                 negated: false,
-                then: Entry::Line("After.".into()),
-                otherwise: Some(Entry::Line("Before.".into())),
+                then: DialogueDef::Plain(Entry::Line("After.".into())),
+                otherwise: Some(DialogueDef::Plain(Entry::Line("Before.".into()))),
                 elifs: vec![],
             },
         );
+    }
+
+    /// The old flat shape — every branch a plain [`Entry`], no branch
+    /// containing a nested `#if` — resolves identically whether or not the
+    /// schema *supports* nesting: `then`/`else` becoming a full
+    /// [`DialogueDef`] (wave 4) doesn't change what a plain-`Entry` branch
+    /// resolves to, since `DialogueDef::Plain(entry).resolve(..)` is exactly
+    /// `entry.resolve(..)`.
+    #[test]
+    fn old_flat_json_shape_round_trips_through_resolve_unchanged() {
+        let json = r#"{
+            "dialogue": {
+                "d": { "segments": [
+                    { "if": "seen", "then": "After.", "else": "Before." }
+                ] }
+            },
+            "flags": ["seen"]
+        }"#;
+        let file: ScriptFile = serde_json::from_str(json).expect("old shape still deserializes");
+        let script = {
+            let mut script = Script::new();
+            script.set_base(file, &Portraits::builtin());
+            script
+        };
+        let convo = script.get_dialogue("d");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "seen");
+                assert_eq!(plain(then), "After.");
+                assert_eq!(plain(otherwise), "Before.");
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
     }
 
     #[test]
@@ -932,5 +974,124 @@ mod tests {
         let v3 = eggdata::parse("[portraits.other]\nspr_id = 5\noffset = [0, 0]\n").expect("parse");
         script.reresolve_portraits(&Portraits::from_data(&v3));
         assert_eq!(spr_id(&script), None, "a name the new registry drops resolves to None");
+    }
+
+    // --- wave 4: nested `#if` resolution ---
+
+    /// A nested, negated `#if` — inside the outer `#if`'s `then` branch —
+    /// resolves through the exact same carrier machinery one level deeper:
+    /// the inner carrier rides inside the outer's `then` messages, and
+    /// `negated` still swaps which resolved branch plays `then`/`otherwise`
+    /// at its own level, independent of the outer condition.
+    #[test]
+    fn nested_if_resolves_one_carrier_inside_another_level_by_level() {
+        let script = script(
+            "#flag outer\n#flag inner\n\
+             #dialogue d\n\
+             \x20   #if outer\n\
+             \x20       #if not inner\n\
+             \x20           Deep then.\n\
+             \x20       #else\n\
+             \x20           Deep else.\n\
+             \x20   #else\n\
+             \x20       Shallow.",
+        );
+        let convo = script.get_dialogue("d");
+        assert_eq!(convo.len(), 1, "the whole nested chain is one top-level carrier");
+        match &convo[0].content[..] {
+            [TextContent::If { flag, then, otherwise }] => {
+                assert_eq!(flag, "outer");
+                assert_eq!(plain(otherwise), "Shallow.");
+                assert_eq!(then.len(), 1, "outer's `then` holds exactly the inner carrier");
+                match &then[0].content[..] {
+                    [TextContent::If { flag, then, otherwise }] => {
+                        assert_eq!(flag, "inner");
+                        // `#if not inner`: negation swaps which resolved
+                        // branch plays which role.
+                        assert_eq!(plain(then), "Deep else.");
+                        assert_eq!(plain(otherwise), "Deep then.");
+                    }
+                    other => panic!("expected a nested If carrier, got {other:?}"),
+                }
+            }
+            other => panic!("expected a single If carrier, got {other:?}"),
+        }
+    }
+
+    /// `assets/script/en.eggtext`'s `debug_portrait2` is authored *scoped*
+    /// (branch content indented deeper than its `#if`/`#else`). Reflowing the
+    /// same conversation *flat* (content at the `#if`'s own depth) must
+    /// resolve to the exact same messages — proving the two authoring styles
+    /// are genuinely interchangeable, not just individually valid.
+    #[test]
+    fn debug_portrait2_style_scoped_and_flat_resolve_identically() {
+        let scoped = script(
+            "#flag INSULT\n\
+             #dialogue d\n\
+             \x20   #pic m_close\n\
+             \x20   ... Hmm...\n\n\
+             \x20   #if INSULT\n\
+             \x20       #pic m_narrow\n\
+             \x20       ... Low hanging fruit.\n\n\
+             \x20       #pic m_smug\n\
+             \x20       As expected from an insect like yourself.\n\
+             \x20   #else\n\
+             \x20       #pic m_normal\n\
+             \x20       Hey, it isn't all that bad.\n\n\
+             \x20       #pic m_smile\n\
+             \x20       ... At least you're not stuck in the floor like me.\n\
+             \x20   #end",
+        );
+        let flat = script(
+            "#flag INSULT\n\
+             #dialogue d\n\
+             \x20   #pic m_close\n\
+             \x20   ... Hmm...\n\n\
+             \x20   #if INSULT\n\
+             \x20   #pic m_narrow\n\
+             \x20   ... Low hanging fruit.\n\n\
+             \x20   #pic m_smug\n\
+             \x20   As expected from an insect like yourself.\n\
+             \x20   #else\n\
+             \x20   #pic m_normal\n\
+             \x20   Hey, it isn't all that bad.\n\n\
+             \x20   #pic m_smile\n\
+             \x20   ... At least you're not stuck in the floor like me.\n\
+             \x20   #end",
+        );
+        assert_eq!(
+            format!("{:#?}", scoped.get_dialogue("d")),
+            format!("{:#?}", flat.get_dialogue("d")),
+        );
+    }
+
+    /// The flip side of the previous test: `house_stairwell_painting` is
+    /// authored *flat*; reflowing it *scoped* must resolve identically.
+    #[test]
+    fn house_stairwell_painting_style_flat_and_scoped_resolve_identically() {
+        let flat = script(
+            "#flag house_stairwell_window_interacted\n\
+             #dialogue d\n\
+             \x20   #if house_stairwell_window_interacted\n\
+             \x20   A purple circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.\n\
+             \x20   #else\n\
+             \x20   \"Your uncle's magnum opus: \\\"Sunrise over town\\\". \"\n\
+             \x20   4x11 px, painted with a minimalist two-tone palette.#delay 30\n\
+             \x20   #end",
+        );
+        let scoped = script(
+            "#flag house_stairwell_window_interacted\n\
+             #dialogue d\n\
+             \x20   #if house_stairwell_window_interacted\n\
+             \x20       A purple circle hovers listlessly over a collection of purple lumps. You feel nothing in particular.\n\
+             \x20   #else\n\
+             \x20       \"Your uncle's magnum opus: \\\"Sunrise over town\\\". \"\n\
+             \x20       4x11 px, painted with a minimalist two-tone palette.#delay 30\n\
+             \x20   #end",
+        );
+        assert_eq!(
+            format!("{:#?}", flat.get_dialogue("d")),
+            format!("{:#?}", scoped.get_dialogue("d")),
+        );
     }
 }
