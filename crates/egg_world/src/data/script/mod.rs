@@ -40,7 +40,7 @@ pub mod eggtext;
 pub mod message;
 
 use crate::data::portraits::Portraits;
-use crate::data::script::message::{ChoiceOption, Message, TextContent};
+use crate::data::script::message::{ChoiceOption, Message, PortraitState, TextContent};
 use crate::data::sound;
 
 // --- on-disk schema (deserialized as-is, names not yet resolved) ---
@@ -142,14 +142,66 @@ pub enum Entry {
     Conversation { messages: Vec<MessageDef> },
 }
 
+/// A message's speaker portrait as authored: unspecified (`Keep`, the
+/// default — no `#pic` in this message, so it carries over whatever was
+/// showing before), explicitly cleared back to narration (`Clear`, `#pic
+/// none`), or switched to a named portrait (`Set`, `#pic NAME`). Distinct from
+/// `Option<Option<String>>` so "never mentioned" and "explicitly cleared"
+/// can't be confused — that's exactly the distinction that lets
+/// [`message::Message::portrait`](crate::data::script::message::Message::portrait)'s
+/// carry-over survive an `#if` branch (see its doc, and
+/// [`crate::data::script::eggtext`]'s module doc, for why carry-over can't
+/// just be resolved here at parse/deserialize time).
+///
+/// JSON: `"keep"` (also what an absent `portrait` field on [`MessageDef`]
+/// defaults to), `"clear"`, or `{"set": "y_oof"}`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortraitChange {
+    Keep,
+    Clear,
+    Set(String),
+}
+
+impl Default for PortraitChange {
+    fn default() -> Self {
+        Self::Keep
+    }
+}
+
+impl PortraitChange {
+    /// Resolve the authored name against `portraits`. An unresolvable name (a
+    /// `#pic` referencing a portrait that doesn't exist) warns and resolves to
+    /// [`PortraitState::Clear`] — mirrors [`resolve_portrait`]'s handling of
+    /// the same case for a mid-message portrait switch.
+    fn resolve(self, portraits: &Portraits) -> PortraitState {
+        match self {
+            PortraitChange::Keep => PortraitState::Keep,
+            PortraitChange::Clear => PortraitState::Clear,
+            PortraitChange::Set(name) => match portraits.get(&name) {
+                Some(portrait) => PortraitState::Set(portrait),
+                None => {
+                    log::warn!("dialogue references unknown portrait {name:?}");
+                    PortraitState::Clear
+                }
+            },
+        }
+    }
+}
+
 /// One "page" of a conversation under a single speaker.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MessageDef {
-    /// Portrait name, or absent for narration.
+    /// See [`PortraitChange`].
     #[serde(default)]
-    pub portrait: Option<String>,
+    pub portrait: PortraitChange,
+    /// This message's portrait side. `None` (the default) carries over
+    /// whatever side was in effect; `Some(bool)` pins one — mirrors
+    /// [`PortraitChange`]'s keep/set split, but as a bare `Option` since a
+    /// side is a bool axis, not a named payload (see
+    /// [`message::Message::flip_portrait`](crate::data::script::message::Message::flip_portrait)).
     #[serde(default)]
-    pub flip: bool,
+    pub flip: Option<bool>,
     /// Whether to wait for player input before the next message (default true).
     #[serde(default = "default_true")]
     pub pause: bool,
@@ -189,6 +241,10 @@ pub enum ContentDef {
     /// An interactive menu — the `#choice` block. JSON:
     /// `{"choice": [{"text": "Yes", "sets": [["flag", true]]}, ...]}`.
     Choice(Vec<ChoiceOptionDef>),
+    /// The `#speed N` directive: the typewriter's pace (frames held between
+    /// each revealed character) for all subsequent text in the dialogue.
+    /// JSON: `{"speed": 10}`.
+    Speed(u8),
 }
 
 /// One option of a [`ContentDef::Choice`]: its menu text and the flags it sets
@@ -233,6 +289,7 @@ impl ContentDef {
                     })
                     .collect(),
             ),
+            ContentDef::Speed(n) => TextContent::Speed(n),
         })
     }
 }
@@ -245,7 +302,7 @@ impl MessageDef {
                 .into_iter()
                 .filter_map(|c| c.resolve(portraits))
                 .collect(),
-            portrait: resolve_portrait(self.portrait, portraits),
+            portrait: self.portrait.resolve(portraits),
             flip_portrait: self.flip,
             pause_when_done: self.pause,
         }
@@ -849,15 +906,13 @@ mod tests {
     /// threaded through — and [`Script::reresolve_portraits`] re-bakes already
     /// installed dialogue against a *new* registry, since the portrait name was
     /// baked into the `Message` at install time. A name the new registry drops
-    /// entirely resolves to `None`: re-resolution is authoritative, not
-    /// last-good-wins per message.
+    /// entirely resolves to [`PortraitState::Clear`]: re-resolution is
+    /// authoritative, not last-good-wins per message.
     #[test]
     fn reresolve_portraits_rebakes_installed_dialogue() {
-        let spr_id = |script: &Script| {
-            script.get_dialogue("d")[0]
-                .portrait
-                .as_ref()
-                .map(|p| p.sprite.cells[0].spr_id)
+        let spr_id = |script: &Script| match &script.get_dialogue("d")[0].portrait {
+            PortraitState::Set(p) => Some(p.sprite.cells[0].spr_id),
+            _ => None,
         };
 
         let v1 = eggdata::parse("[portraits.p]\nspr_id = 1\noffset = [0, 0]\n").expect("parse");

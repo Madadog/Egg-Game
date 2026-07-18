@@ -2,10 +2,13 @@
 //
 // Top-level `key = "value"` lines are UI labels. `#list NAME` blocks are
 // ordered string lists. `#dialogue NAME` blocks are conversations: blank lines
-// split them into messages, `#pic`/`#sound`/`#flip` set the speaker, and a
-// trailing `#delay N` reveals text piece by piece. Within a dialogue body
-// `#set NAME true|false` toggles a save flag as it plays, and
-// `#if NAME` / `#else` / `#end` include whole messages only when a flag is set.
+// split them into messages (pages), `#pic`/`#sound`/`#flip` set the speaker
+// (a message with no `#pic`/`#flip` just carries over whoever was showing;
+// `#pic none` explicitly clears back to narration), a trailing `#delay N`
+// reveals text piece by piece, and `#speed N` sets the typewriter's pace for
+// the rest of the dialogue. Within a dialogue body `#set NAME true|false`
+// toggles a save flag as it plays, and `#if NAME` / `#else` / `#end` include
+// whole messages only when a flag is set.
 //
 // `#flag NAME` lines (all at the top, before the first entry) declare the
 // vocabulary `#set`/`#if` may name.
@@ -229,26 +232,9 @@ menu_music_test = "Music Test"
     It never looks as bad from outside.
 
 #dialogue town_wide
-    "T" #delay 10
-    "h" #delay 10
-    "i" #delay 10
-    "s" #delay 10
-    " " #delay 10
-    "l" #delay 10
-    "i" #delay 10
-    "n" #delay 10
-    "e" #delay 10
-    " " #delay 10
-    "i" #delay 10
-    "s" #delay 10
-    " " #delay 10
-    "s" #delay 10
-    "l" #delay 10
-    "o" #delay 10
-    "w" #delay 10
-    "." #delay 10
-    . #delay 10
-    . #delay 10
+    #speed 10
+    This line is slow...
+    #speed 0
     "\nT h i s   l i n e   i s   w i d e ." #delay 30
     "\nAnd this line goes from side to side." #delay 30
 
@@ -347,6 +333,7 @@ menu_music_test = "Music Test"
     "Hey! "
     "Heeeey! " #delay 30
     "Hi! " #delay 30
+
     ... Why are you so small?
     #choice
         #option Why are you so large?
@@ -606,8 +593,9 @@ menu_music_test = "Music Test"
     
     #pic y_close
     *Ahem*. I've been called here to introduce the portrait test.\n
+
     It's a debug thing that lets you look at all the dialogue portraits.
-    
+
     #pic y_wave
     I won't waste any more time, so without further ado...
 
@@ -620,8 +608,10 @@ menu_music_test = "Music Test"
     "W- "
     wait, you're opening on ME?\n #delay 30
     It's my turn already?!? #delay 30
+
     I'm not ready! Where- Where's my script? What are my lines?!
 
+    #pic none
     (Just act naturally!)
 
     #pic b_normal
@@ -685,6 +675,7 @@ menu_music_test = "Music Test"
     #pic y_frus
     #flip true
     Me.
+
     Your time's up.
 
     #pic m_smile

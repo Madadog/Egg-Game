@@ -51,22 +51,38 @@
 //! ## Inside a `#dialogue` block
 //!
 //! Indented lines form the body. **Blank lines split the body into messages**
-//! (one dialogue "page" / speaker turn each). Within a message, lines become
+//! (one dialogue "page" / speaker turn each — always exactly one page: within
+//! a message every text line *appends* onto the page that's already open,
+//! there is no more mid-message "fresh page"). Within a message, lines become
 //! content in order:
 //!
 //! * **Text lines** — `bare text` is stripped of surrounding whitespace;
 //!   `"quoted text"` is preserved verbatim between the quotes. A trailing
-//!   `#delay N` makes the text *appear after `N` frames, appended* to the
-//!   current message (a piecemeal reveal). The first text line of a message
-//!   opens its box (any `#delay` on it is ignored, as there is nothing to
-//!   append to yet); a later text line *without* `#delay` starts a fresh page.
+//!   `#delay N` holds for `N` frames before the text *appends*; `0` (or no
+//!   `#delay` at all) appends immediately. This now applies to a message's
+//!   very first text line too — a `#delay` there holds before the page's
+//!   first character appears, instead of being silently dropped.
 //! * **Directives** — one or more `#word [arg]` on a line:
-//!   * `#pic NAME` sets the speaker portrait. The first `#pic` is the message's
-//!     portrait; a later `#pic` switches it mid-message. `#pic none` clears it.
+//!   * `#pic NAME` sets the speaker portrait; a later `#pic` switches it
+//!     mid-message. `#pic none` explicitly clears it back to narration. A
+//!     message with *no* `#pic` at all doesn't touch the portrait — it just
+//!     carries over whatever was showing at the end of the previous message
+//!     (and its side with it), all the way back to wherever one was last set
+//!     in the conversation. Carry-over is resolved live, by the dialogue box,
+//!     as each message plays — not by the parser — because an `#if` branch
+//!     means the parser can't know what's "current" at a given point (see
+//!     [`crate::data::script::message::PortraitState`]).
 //!   * `#flip BOOL` chooses the portrait's side. Before any text it sets the
-//!     message's side; after text it flips mid-message.
+//!     message's side; after text it flips mid-message. Like the portrait
+//!     itself, a message that sets neither `#pic` nor `#flip` carries over
+//!     whatever side was in effect.
 //!   * `#sound NAME` plays a sound effect at that point.
 //!   * `#delay N` is a standalone `N`-frame pause.
+//!   * `#speed N` sets the typewriter's pace (frames held between each
+//!     revealed character) for all subsequent text in the dialogue — block
+//!     scope from where it appears onward, like `#autoflip`, persisting
+//!     across page breaks until another `#speed` changes it. `0` (the
+//!     default) is the ordinary, unthrottled per-tick reveal.
 //!   * `#nopause` flows straight on to the next message instead of waiting for
 //!     the player to advance.
 //!   * `#autoflip` (block scope, from where it appears onward) auto-alternates
@@ -133,7 +149,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    ChoiceOptionDef, ContentDef, DialogueDef, ElifDef, Entry, MessageDef, ScriptFile, SegmentDef,
+    ChoiceOptionDef, ContentDef, DialogueDef, ElifDef, Entry, MessageDef, PortraitChange,
+    ScriptFile, SegmentDef,
 };
 
 /// A parse failure, carrying the 1-based source line it occurred on.
@@ -444,13 +461,13 @@ impl AutoflipState {
         }
 
         if let Some(explicit) = parsed.flip {
-            def.flip = explicit;
-            if def.portrait.is_some() {
+            def.flip = Some(explicit);
+            if let PortraitChange::Set(portrait) = &def.portrait {
                 self.side = explicit;
-                self.last_portrait = def.portrait.clone();
+                self.last_portrait = Some(portrait.clone());
             }
         } else if self.autoflip
-            && let Some(portrait) = &def.portrait
+            && let PortraitChange::Set(portrait) = &def.portrait
         {
             if self
                 .last_portrait
@@ -459,7 +476,7 @@ impl AutoflipState {
             {
                 self.side = !self.side;
             }
-            def.flip = self.side;
+            def.flip = Some(self.side);
             self.last_portrait = Some(portrait.clone());
         }
 
@@ -652,8 +669,8 @@ fn parse_message(
     flags: &BTreeSet<String>,
 ) -> Result<ParsedMessage, ParseError> {
     let mut def = MessageDef {
-        portrait: None,
-        flip: false,
+        portrait: PortraitChange::Keep,
+        flip: None,
         pause: true,
         content: Vec::new(),
     };
@@ -710,14 +727,20 @@ fn parse_message(
             for (name, arg) in directive_segments(logical, line_no)? {
                 match name {
                     "pic" => {
-                        let portrait = match arg {
-                            None | Some("none") | Some("-") => None,
-                            Some(name) => Some(name.to_string()),
-                        };
                         if have_portrait {
+                            // Mid-message switch: unaffected by keep/clear —
+                            // there's no "keep" mid-message, only "clear" or
+                            // "set", exactly as before.
+                            let portrait = match arg {
+                                None | Some("none") | Some("-") => None,
+                                Some(name) => Some(name.to_string()),
+                            };
                             def.content.push(ContentDef::Portrait(portrait));
                         } else {
-                            def.portrait = portrait;
+                            def.portrait = match arg {
+                                None | Some("none") | Some("-") => PortraitChange::Clear,
+                                Some(name) => PortraitChange::Set(name.to_string()),
+                            };
                             have_portrait = true;
                         }
                     }
@@ -735,6 +758,7 @@ fn parse_message(
                         def.content.push(ContentDef::Sound(name.to_string()));
                     }
                     "delay" => def.content.push(ContentDef::Delay(parse_u8(arg, line_no)?)),
+                    "speed" => def.content.push(ContentDef::Speed(parse_u8(arg, line_no)?)),
                     "nopause" => {
                         if let Some(extra) = arg {
                             return Err(ParseError::new(
@@ -762,16 +786,15 @@ fn parse_message(
                 }
             }
         } else {
+            // Every text line — including a message's very first — appends
+            // onto the page (see the module doc): `#delay` just decides
+            // whether that append is immediate or held. No more special-
+            // casing the opening line.
             let (text, delay) = split_text(logical, line_no)?;
-            if !have_text {
-                // The opening text of a message; a `#delay` here has nothing to
-                // append to, so it is ignored.
-                def.content.push(ContentDef::Text(text));
-                have_text = true;
-            } else if let Some(delay) = delay {
-                def.content.push(ContentDef::Delayed(text, delay));
-            } else {
-                def.content.push(ContentDef::Text(text));
+            have_text = true;
+            match delay {
+                Some(delay) => def.content.push(ContentDef::Delayed(text, delay)),
+                None => def.content.push(ContentDef::Text(text)),
             }
         }
     }
@@ -854,9 +877,16 @@ fn strip_directive<'a>(logical: &'a str, word: &str) -> Option<&'a str> {
 }
 
 /// Drop mid-message `#flip`s that don't actually change the current side, so a
-/// defensive `#flip false` on an already-unflipped speaker emits nothing.
+/// defensive `#flip false` on an already-unflipped speaker emits nothing. Only
+/// possible when the message's own starting side is actually known
+/// (`def.flip` is `Some`, from an explicit `#flip` or `#autoflip`) — a message
+/// that carries over its side (`None`) can't have its mid-message flips
+/// checked for redundancy at parse time, since what the side actually *is*
+/// depends on playback, so they're all kept.
 fn drop_redundant_flips(def: &mut MessageDef) {
-    let mut side = def.flip;
+    let Some(mut side) = def.flip else {
+        return;
+    };
     def.content.retain(|content| match content {
         ContentDef::Flip(value) => {
             if *value == side {
@@ -871,14 +901,21 @@ fn drop_redundant_flips(def: &mut MessageDef) {
 }
 
 /// Collapse a parsed conversation to the simplest equivalent [`Entry`]. A
-/// message is "plain" when it is a lone unstyled line of text; an all-plain
-/// conversation is a [`Entry::Line`] (one message) or [`Entry::Pages`] (more).
+/// message is "plain" when it is a lone unstyled line of text — no portrait or
+/// flip mentioned (`Keep`/`None`, i.e. it doesn't touch either), waits for a
+/// manual advance; an all-plain conversation is a [`Entry::Line`] (one
+/// message) or [`Entry::Pages`] (more). `Keep`/`None` are exactly what a bare
+/// conversation's messages already resolve to (see
+/// [`message::Message::default`](crate::data::script::message::Message::default)),
+/// so this still round-trips unchanged.
 fn reduce_entry(messages: Vec<MessageDef>) -> Entry {
     let plain: Option<Vec<String>> = messages
         .iter()
         .map(|message| match message.content.as_slice() {
             [ContentDef::Text(text)]
-                if message.portrait.is_none() && !message.flip && message.pause =>
+                if message.portrait == PortraitChange::Keep
+                    && message.flip.is_none()
+                    && message.pause =>
             {
                 Some(text.clone())
             }
@@ -1194,15 +1231,63 @@ mod tests {
     }
 
     #[test]
-    fn first_text_ignores_delay_rest_append() {
-        // Mirrors `town_wide`: the opening segment is plain text, later ones are delayed.
+    fn every_text_line_keeps_its_own_delay() {
+        // Unlike the old model, a `#delay` on a message's very first text line
+        // is no longer dropped — it's meaningful now (a hold before the
+        // page's first character appears), just like on any later line.
         let messages = convo("#dialogue d\n    \"T\" #delay 10\n    \"h\" #delay 10");
         assert_eq!(
             messages[0].content,
             vec![
-                ContentDef::Text("T".into()),
+                ContentDef::Delayed("T".into(), 10),
                 ContentDef::Delayed("h".into(), 10)
             ],
+        );
+    }
+
+    /// Two bare lines in one message both land as plain (undelayed) `Text`
+    /// items, in order — at *playback* time these append onto the same page
+    /// (see `egg_ui::dialogue`'s tests), but structurally the parser treats
+    /// every text line the same regardless of position.
+    #[test]
+    fn consecutive_bare_lines_both_become_text_items() {
+        let messages = convo("#dialogue d\n    Hello\n    there.");
+        assert_eq!(
+            messages[0].content,
+            vec![ContentDef::Text("Hello".into()), ContentDef::Text("there.".into())],
+        );
+    }
+
+    /// A blank line always yields a new message, and — since it mentions no
+    /// `#pic` — that message's portrait is `Keep`, not narration: it carries
+    /// over whatever the previous message showed rather than clearing it.
+    #[test]
+    fn blank_line_yields_a_new_message_with_portrait_keep() {
+        let messages = convo("#dialogue d\n    #pic y_oof\n    Hi.\n\n    Bye.");
+        assert_eq!(messages[1].portrait, PortraitChange::Keep);
+        assert_eq!(messages[1].flip, None);
+    }
+
+    /// `#pic none` as a message's first `#pic` explicitly clears the
+    /// portrait — distinct from a message that never mentions `#pic` at all
+    /// (`Keep`).
+    #[test]
+    fn pic_none_yields_clear() {
+        let messages = convo("#dialogue d\n    #pic none\n    Hi.");
+        assert_eq!(messages[0].portrait, PortraitChange::Clear);
+    }
+
+    /// `#speed N` emits an inline `Speed` content item wherever it appears —
+    /// no special block-scope bookkeeping at parse time, since (like
+    /// `#sound`/`#set`) it's simply carried forward by the `Dialogue` widget
+    /// as playback reaches it (see `egg_ui::dialogue`'s tests for the actual
+    /// cross-page persistence).
+    #[test]
+    fn speed_emits_inline() {
+        let messages = convo("#dialogue d\n    #speed 10\n    Sloooow.");
+        assert_eq!(
+            messages[0].content,
+            vec![ContentDef::Speed(10), ContentDef::Text("Sloooow.".into())],
         );
     }
 
@@ -1258,9 +1343,11 @@ mod tests {
             \x20   #pic c #flip false\n\
             \x20   mid-switch",
         );
-        let flips: Vec<bool> = messages.iter().map(|m| m.flip).collect();
-        // a→false, b→toggles true, b again→stays true, a→toggles false.
-        assert_eq!(flips, vec![false, true, true, false]);
+        let flips: Vec<Option<bool>> = messages.iter().map(|m| m.flip).collect();
+        // a→false, b→toggles true, b again→stays true, a→toggles false. Every
+        // message here sets a portrait, so autoflip always resolves a side —
+        // none of these are `None` (carry-over).
+        assert_eq!(flips, vec![Some(false), Some(true), Some(true), Some(false)]);
         // The defensive `#flip false` matches the current side, so no Flip leaks
         // in; the portrait switch and the following text stay.
         assert_eq!(
@@ -1287,9 +1374,9 @@ mod tests {
             \x20   #pic d\n\
             \x20   four",
         );
-        let flips: Vec<bool> = messages.iter().map(|m| m.flip).collect();
+        let flips: Vec<Option<bool>> = messages.iter().map(|m| m.flip).collect();
         // a→false, b→true, c forced false (resets the side), d→toggles true.
-        assert_eq!(flips, vec![false, true, false, true]);
+        assert_eq!(flips, vec![Some(false), Some(true), Some(false), Some(true)]);
     }
 
     #[test]
@@ -1566,8 +1653,8 @@ mod tests {
         // `#pic y_oof #flip false` must keep working: each directive gets its
         // own single argument, split at the next `#`.
         let messages = convo("#dialogue d\n    #pic y_oof #flip false\n    Hi.");
-        assert_eq!(messages[0].portrait.as_deref(), Some("y_oof"));
-        assert!(!messages[0].flip);
+        assert_eq!(messages[0].portrait, PortraitChange::Set("y_oof".into()));
+        assert_eq!(messages[0].flip, Some(false));
     }
 
     #[test]

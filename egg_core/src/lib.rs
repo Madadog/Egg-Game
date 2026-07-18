@@ -659,6 +659,7 @@ mod tests {
     fn load_data_installs_portraits_and_rebakes_dialogue() {
         use crate::data::eggdata::DATA_PATH;
         use crate::data::script::eggtext;
+        use crate::data::script::message::PortraitState;
 
         let mut console = TestConsole::new();
         console.files.insert(
@@ -675,16 +676,18 @@ mod tests {
         );
         assert_eq!(
             state.script.get_dialogue("d")[0].portrait,
-            None,
+            PortraitState::Clear,
             "unknown against the built-in registry"
         );
 
         state.load_data(&mut console);
 
         let portrait = state.script.get_dialogue("d")[0].portrait.clone();
+        let PortraitState::Set(portrait) = portrait else {
+            panic!("expected the portrait to now resolve, got {portrait:?}");
+        };
         assert_eq!(
-            portrait.map(|p| p.sprite.cells[0].spr_id),
-            Some(42),
+            portrait.sprite.cells[0].spr_id, 42,
             "load_data re-baked the installed dialogue against the runtime portrait registry",
         );
     }

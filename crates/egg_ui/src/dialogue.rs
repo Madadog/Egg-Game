@@ -24,7 +24,7 @@ use egg_world::draw_state::{DrawState, LayerId};
 use egg_render::{Flip, Font, PrintOptions, SpriteOptions, print_to_with_font, text_width};
 
 use egg_world::data::portraits::Portrait;
-use egg_world::data::script::message::{ChoiceOption, Message, TextContent};
+use egg_world::data::script::message::{ChoiceOption, Message, PortraitState, TextContent};
 use egg_world::data::sound;
 
 /// The dialogue [`PrintOptions`]: defaults plus the caller's small-text setting
@@ -45,15 +45,22 @@ pub fn print_options(small_text: bool) -> PrintOptions {
 ///
 /// Per message: a message whose content is *exactly one* [`TextContent::If`]
 /// item is a branch carrier, not a real page — it pushes just that item, with
-/// no `Portrait`/`Flip` (those would visibly clobber the current speaker
-/// portrait the instant playback reaches it, even when the branch it resolves
-/// to turns out empty) and never a trailing `Pause` (that's decided where the
-/// branch is consumed — see the `If` arm — since it depends on what follows
-/// the `#end`, which this function alone can't see). It still counts as "a
-/// following message" for the *previous* message's own pause rule below, same
-/// as any other message would.
+/// no `Clear`/`Portrait`/`Flip` (those would visibly clobber the box the
+/// instant playback reaches it, even when the branch it resolves to turns out
+/// empty) and never a trailing `Pause` (that's decided where the branch is
+/// consumed — see the `If` arm — since it depends on what follows the `#end`,
+/// which this function alone can't see). It still counts as "a following
+/// message" for the *previous* message's own pause rule below, same as any
+/// other message would.
 ///
-/// Any other message: `Portrait`, `Flip`, its content, then a `Pause` if
+/// Any other message: a [`Clear`](TextContent::Clear) (the page-break — every
+/// message gets one, not just messages after the first, since it's what makes
+/// a page's opening text unambiguous regardless of that text's own `#delay`
+/// — see its doc), then a `Portrait`/`Flip` item *only* when this message
+/// actually sets one (`PortraitState::Clear`/`Set`, `flip_portrait: Some`) —
+/// a `Keep` portrait / `None` flip pushes neither, so the box's current
+/// portrait/side simply survives untouched, which is exactly what carries it
+/// across the page break. Then the message's content, then a `Pause` if
 /// `pause_when_done` and it isn't the last message. No pause follows the very
 /// last message — the caller (closing the box, or the `If` arm splicing more
 /// content after a branch) handles that.
@@ -65,14 +72,51 @@ fn lower_messages(messages: &[Message]) -> Vec<TextContent> {
             queue.extend(message.content.iter().cloned());
             continue;
         }
-        queue.push(TextContent::Portrait(message.portrait.clone()));
-        queue.push(TextContent::Flip(message.flip_portrait));
+        queue.push(TextContent::Clear);
+        match &message.portrait {
+            PortraitState::Keep => {}
+            PortraitState::Clear => queue.push(TextContent::Portrait(None)),
+            PortraitState::Set(portrait) => {
+                queue.push(TextContent::Portrait(Some(portrait.clone())))
+            }
+        }
+        if let Some(flip) = message.flip_portrait {
+            queue.push(TextContent::Flip(flip));
+        }
         queue.extend(message.content.iter().cloned());
         if message.pause_when_done && i != last {
             queue.push(TextContent::Pause);
         }
     }
     queue
+}
+
+/// The portrait/side actually shown for each of `messages`, folding every
+/// message's `Keep`/`Clear`/`Set` (and flip's `None`/`Some`) against whatever
+/// came before it — the same carry-over rule [`lower_messages`] bakes into
+/// the queue for a *live* [`Dialogue`] to apply as it plays. For a caller that
+/// instead browses a flat, already-resolved conversation by index without a
+/// live widget (the map editor's Dialog panel — see
+/// `egg_editor::map::step::resolve_if_carriers`, which flattens `#if`
+/// carriers first so every entry here is an ordinary message), this computes
+/// the same result eagerly, one `(portrait, flip)` pair per message.
+pub fn resolve_portrait_carry(messages: &[Message]) -> Vec<(Option<Portrait>, bool)> {
+    let mut portrait: Option<Portrait> = None;
+    let mut flip = false;
+    messages
+        .iter()
+        .map(|message| {
+            match &message.portrait {
+                PortraitState::Keep => {}
+                PortraitState::Clear => portrait = None,
+                PortraitState::Set(p) => portrait = Some(p.clone()),
+            }
+            if let Some(f) = message.flip_portrait {
+                flip = f;
+            }
+            (portrait.clone(), flip)
+        })
+        .collect()
 }
 
 /// A live [`TextContent::Choice`]: the options being offered and the highlighted
@@ -97,6 +141,12 @@ pub struct Dialogue {
     pub portrait: Option<Portrait>,
     pub dark_theme: bool,
     pub flip_portrait: bool,
+    /// The typewriter's pace: frames held between each revealed character —
+    /// the `#speed N` directive (`0` is the default, unthrottled per-tick
+    /// reveal). Persists across pages within one conversation; only another
+    /// `#speed` (or [`Dialogue::close`], which resets everything for a new
+    /// conversation) changes it — see [`TextContent::Speed`].
+    pub speed: u8,
     /// The open choice menu, if the box is currently awaiting a selection.
     pub choice: Option<ChoiceState>,
     /// A `#shake FRAMES [AMP]` playback just passed, waiting for the world's
@@ -118,6 +168,7 @@ impl Dialogue {
             portrait: None,
             dark_theme: false,
             flip_portrait: false,
+            speed: 0,
             choice: None,
             pending_shake: None,
         }
@@ -135,15 +186,6 @@ impl Dialogue {
         self.current_text = Some(self.fit_text(font, save.small_text_on, string));
         self.characters = 0;
         self.print_time = Some(0);
-    }
-    pub fn add_text(&mut self, font: &Font, save: &SaveData, string: String) -> bool {
-        if self.current_text.is_none() || self.is_line_done() {
-            self.set_current_text(font, save, &string);
-            true
-        } else {
-            self.next_text.push(TextContent::text(string));
-            false
-        }
     }
     pub fn maybe_add_text(&mut self, font: &Font, save: &SaveData, string: &'static str) {
         if self.current_text.is_none() {
@@ -198,22 +240,43 @@ impl Dialogue {
         manual_skip: bool,
     ) -> bool {
         match text_content {
-            // `delay > 0` appends to the current page after a beat; `delay == 0`
-            // starts a fresh page. See [`TextContent::Text`].
-            TextContent::Text { text, delay, .. } if delay > 0 => {
+            // Every text item appends onto the page that's already open — or,
+            // if this is the first text since the last `Clear`, opens it (see
+            // [`TextContent::Text`]). `delay` holds for that many frames
+            // first either way; a manual skip drops the hold, same as it
+            // always has for an append.
+            TextContent::Text { text, delay, .. } => {
                 let wrap_width = self.wrap_width();
                 if let Some(string) = &mut self.current_text {
                     string.push_str(&text);
                     *string = fit_default_paragraph(font, string, wrap_width, save.small_text_on);
-                    if !manual_skip {
-                        self.add_delay(delay.into());
-                    }
                 } else {
-                    self.add_text(font, save, text);
+                    self.set_current_text(font, save, &text);
+                }
+                if delay > 0 && !manual_skip {
+                    self.add_delay(delay.into());
                 }
                 true
             }
-            TextContent::Text { text, .. } => self.add_text(font, save, text),
+            // The page-break: blank the box's revealed text, but leave the
+            // portrait/side untouched so they carry into whatever comes next
+            // (see [`TextContent::Clear`]). Also drops any stale typewriter
+            // hold left over from the page that just ended, so it can't bleed
+            // into the next page's pacing.
+            TextContent::Clear => {
+                self.current_text = None;
+                self.characters = 0;
+                self.delay = 0;
+                self.print_time = None;
+                true
+            }
+            // `#speed N`: set the typewriter's pace for everything revealed
+            // from here on — persists until another `#speed` changes it (see
+            // [`TextContent::Speed`]).
+            TextContent::Speed(n) => {
+                self.speed = n;
+                true
+            }
             TextContent::Delay(x) => {
                 if !manual_skip {
                     self.add_delay(x.into());
@@ -341,7 +404,10 @@ impl Dialogue {
                 }
             }
             self.step_text(amount);
-            self.delay += 1;
+            // `#speed 0` (the default) preserves the ordinary one-frame gap
+            // between characters; `#speed N` holds for `N` frames instead —
+            // see [`TextContent::Speed`].
+            self.delay += self.speed.max(1) as usize;
         }
         if self.is_line_done() && self.can_autoadvance() {
             self.next_text(system, font, save, false);
@@ -753,6 +819,7 @@ impl Debug for Dialogue {
             .field("delay", &self.delay)
             .field("print_time", &self.print_time)
             .field("portrait", &self.portrait)
+            .field("speed", &self.speed)
             .field("choice", &self.choice)
             .finish()
     }
@@ -1118,6 +1185,135 @@ mod tests {
                 return true;
             }
         }
+    }
+
+    // --- text-flow + portrait carry-over (a message with no `#pic`/`#flip`
+    // carries whatever the box was already showing across the page break —
+    // see `TextContent::Clear` and `lower_messages`) ---
+
+    /// A message that never mentions `#pic` doesn't clear the portrait at the
+    /// page break — it carries over from the message before it.
+    #[test]
+    fn portrait_carries_across_a_keep_message() {
+        let messages = dialogue_from("#dialogue d\n    #pic y_normal\n    Hi.\n\n    Bye.", "d");
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.current_text.as_deref(), Some("Hi."));
+        assert!(d.portrait.is_some(), "the first message's #pic shows a portrait");
+        let first_portrait = d.portrait.clone();
+
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Bye."));
+        assert_eq!(
+            d.portrait, first_portrait,
+            "the second message mentions no #pic, so the portrait carries over"
+        );
+    }
+
+    /// `#pic none` explicitly clears the carried portrait back to narration —
+    /// distinct from a message that simply never mentions `#pic` (which would
+    /// carry it, per the test above).
+    #[test]
+    fn pic_none_clears_the_carried_portrait() {
+        let messages =
+            dialogue_from("#dialogue d\n    #pic y_normal\n    Hi.\n\n    #pic none\n    Bye.", "d");
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert!(d.portrait.is_some());
+
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Bye."));
+        assert!(d.portrait.is_none(), "#pic none explicitly clears back to narration");
+    }
+
+    /// The portrait's flip side carries over the same way the portrait itself
+    /// does: a message that mentions neither `#pic` nor `#flip` keeps
+    /// whatever side was already showing.
+    #[test]
+    fn flip_side_carries_across_a_keep_message() {
+        let messages = dialogue_from(
+            "#dialogue d\n    #pic y_normal\n    #flip true\n    Hi.\n\n    Bye.",
+            "d",
+        );
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert!(d.flip_portrait, "the first message's #flip true takes effect");
+
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Bye."));
+        assert!(
+            d.flip_portrait,
+            "the second message mentions neither #pic nor #flip, so the side carries over"
+        );
+    }
+
+    /// A message that re-declares the *same* portrait (no new `#flip`) is a
+    /// no-op transition, not a flicker back to narration and a fresh side —
+    /// portrait and flip are independent axes, so redeclaring one doesn't
+    /// reset the other.
+    #[test]
+    fn redeclaring_the_same_portrait_does_not_reset_the_flip_side() {
+        let messages = dialogue_from(
+            "#dialogue d\n    #pic y_normal\n    #flip true\n    Hi.\n\n    #pic y_normal\n    Bye.",
+            "d",
+        );
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert!(d.flip_portrait);
+        let first_portrait = d.portrait.clone();
+
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Bye."));
+        assert_eq!(
+            d.portrait, first_portrait,
+            "still the same portrait — no flicker to narration in between"
+        );
+        assert!(d.flip_portrait, "flip side survives a redundant #pic");
+    }
+
+    // --- `#speed N` typewriter pacing ---
+
+    /// `#speed N` holds `N` frames between each revealed character — slower
+    /// than the default pace — but a manual skip still completes the reveal
+    /// instantly regardless, same as it always has for `#delay`.
+    #[test]
+    fn speed_paces_reveal_and_skip_still_completes_instantly() {
+        let messages = dialogue_from("#dialogue d\n    #speed 5\n    Hi.", "d");
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.speed, 5, "the #speed directive set the widget's pace");
+        assert_eq!(d.characters, 0);
+
+        // 3 (of the 5 held) frames isn't enough to reveal the second
+        // character yet.
+        for _ in 0..3 {
+            d.tick(&mut console, &font, &mut save, 1);
+        }
+        assert_eq!(d.characters, 1, "still holding on the first character");
+
+        d.skip(&mut console, &font, &mut save);
+        assert!(d.is_line_done());
+        assert_eq!(d.characters, 2, "skip reveals the rest of the line instantly");
     }
 
     /// The motivating bug this whole runtime-`#if` change fixes (mirrors

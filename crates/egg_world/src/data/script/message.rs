@@ -29,10 +29,13 @@ pub enum TextContent {
     /// * `pause` — wait for a manual advance (keypress) before showing this
     ///   text. `false` flows it in automatically once the previous line is
     ///   done. (The old `AutoText` is just `pause: false`.)
-    /// * `delay` — frames to wait before the text appears. `0` starts a fresh
-    ///   page (clearing the box); `> 0` *appends* to the current page after the
-    ///   delay, so a sentence can build up clause by clause. (The old `Delayed`
-    ///   is just `delay > 0`.)
+    /// * `delay` — frames to hold before the text *appends* to the page
+    ///   that's already open — or, if this is the first text since the last
+    ///   [`Clear`](Self::Clear), *opens* it. `0` appends/opens at once; `> 0`
+    ///   holds first. Every text line within a message appends onto the same
+    ///   page — there is no more mid-message "fresh page" — and `delay` is now
+    ///   meaningful even on a page's very first line (it used to be silently
+    ///   dropped there, since there was nothing yet to append to).
     Text {
         text: String,
         pause: bool,
@@ -78,6 +81,21 @@ pub enum TextContent {
         then: Vec<Message>,
         otherwise: Vec<Message>,
     },
+    /// The page-break boundary: `lower_messages` (`egg_ui`) inserts one of
+    /// these before every real message, clearing the box's revealed text —
+    /// but *not* the portrait/side, which carry over (see [`Message::portrait`]
+    /// / [`Message::flip_portrait`]) — so a new page always starts blank
+    /// regardless of what the previous page showed, and any text after it is
+    /// unambiguously that new page's, not an append to the old one.
+    /// Synthesized at lowering time; never authored directly.
+    Clear,
+    /// The `#speed N` directive: sets the typewriter's pace (frames held
+    /// between each revealed character) for all subsequent text in this
+    /// dialogue — block-scoped from where it appears onward, like
+    /// `#autoflip`, and it persists across page breaks within the same
+    /// conversation until another `#speed` changes it. `0` is the default:
+    /// the ordinary, unthrottled per-tick reveal.
+    Speed(u8),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
@@ -92,7 +110,14 @@ impl TextContent {
         use TextContent::*;
         matches!(
             self,
-            Sound(_) | Portrait(_) | Flip(_) | SetFlag(..) | Shake { .. } | If { .. }
+            Sound(_)
+                | Portrait(_)
+                | Flip(_)
+                | SetFlag(..)
+                | Shake { .. }
+                | If { .. }
+                | Clear
+                | Speed(_)
         )
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).
@@ -121,6 +146,32 @@ impl TextContent {
     }
 }
 
+/// A message's speaker portrait at *playback* time — the runtime counterpart
+/// of [`PortraitChange`](crate::data::script::PortraitChange), which this
+/// resolves from (a name against a live [`Portraits`](crate::data::portraits::Portraits)
+/// registry instead of a bare `String`).
+///
+/// Three states rather than `Option<Portrait>` because "this message never
+/// mentioned a portrait" and "this message explicitly cleared it" mean
+/// different things once a message can no longer just flatten "whatever the
+/// portrait is right now" at parse time — an `#if` branch means the parser
+/// can't know what's current at a given point in the conversation (see
+/// [`crate::data::script::eggtext`]'s module doc). So carry-over is resolved
+/// live instead: the `Dialogue` widget (`egg_ui`) holds the actual current
+/// portrait/side across a conversation and folds each message's `Keep`/
+/// `Clear`/`Set` against it as playback reaches it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PortraitState {
+    /// No `#pic` in this message: carry over whatever portrait (and side) was
+    /// showing at the end of the previous message.
+    Keep,
+    /// `#pic none`: explicitly show no portrait (narration), regardless of
+    /// what was showing before.
+    Clear,
+    /// `#pic NAME`: switch to this portrait.
+    Set(Portrait),
+}
+
 /// A single "page" of dialogue: a run of text [`content`](Message::content)
 /// shown under one speaker (`portrait` + `flip_portrait`). `pause_when_done`
 /// controls whether the player must press to continue to the *next* message,
@@ -130,16 +181,25 @@ impl TextContent {
 #[derive(Debug, Clone)]
 pub struct Message {
     pub content: Vec<TextContent>,
-    pub portrait: Option<Portrait>,
-    pub flip_portrait: bool,
+    /// This message's speaker portrait — see [`PortraitState`]. `Keep` (the
+    /// default — no `#pic` in this message) carries over whatever was
+    /// showing; that carry-over is applied live, by the `Dialogue` widget,
+    /// not resolved here.
+    pub portrait: PortraitState,
+    /// This message's portrait side. `None` (the default) carries over
+    /// whatever side was in effect — mirrors [`PortraitState::Keep`], but as
+    /// a bare `Option` since a side is a bool axis, not a named payload.
+    /// `Some(bool)` pins one, from an explicit `#flip` or an `#autoflip`
+    /// resolution.
+    pub flip_portrait: Option<bool>,
     pub pause_when_done: bool,
 }
 impl Message {
     pub const fn default() -> Self {
         Self {
             content: Vec::new(),
-            portrait: None,
-            flip_portrait: false,
+            portrait: PortraitState::Keep,
+            flip_portrait: None,
             pause_when_done: true,
         }
     }
@@ -148,11 +208,11 @@ impl Message {
         self
     }
     pub fn with_portrait(mut self, portrait: Portrait) -> Self {
-        self.portrait = Some(portrait);
+        self.portrait = PortraitState::Set(portrait);
         self
     }
     pub fn with_flip(mut self, flip_portrait: bool) -> Self {
-        self.flip_portrait = flip_portrait;
+        self.flip_portrait = Some(flip_portrait);
         self
     }
     /// Don't pause after this message: auto-advance straight into the next one.

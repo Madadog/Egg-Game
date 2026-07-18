@@ -2546,9 +2546,10 @@ fn extract_pages(
     d.set_messages(console, font, &mut save, messages);
     let mut pages = Vec::new();
     while d.current_text.is_some() {
-        // A `#delay` reveal *appends* to the current box rather than opening a new
-        // one, so absorb every queued append into this box before snapshotting it —
-        // otherwise a piecemeal sentence would show as several stacked turns.
+        // A message's text always appends onto its own page (see
+        // `TextContent::Text`), so absorb every queued append into this box
+        // before snapshotting it — otherwise a piecemeal reveal would show as
+        // several stacked turns instead of one.
         while next_is_append(&d) {
             d.finish_line();
             if !advance_dialogue(&mut d, console, font, &mut save) {
@@ -2561,7 +2562,8 @@ fn extract_pages(
             flip: d.flip_portrait,
         });
         // Mark the page done so the next text opens a fresh box rather than
-        // appending (`add_text` only starts a new box once the current is finished).
+        // appending (mirrors `TextContent::Clear`, which is what actually
+        // clears the live widget's `current_text` between messages).
         d.finish_line();
         if !advance_dialogue(&mut d, console, font, &mut save) {
             break;
@@ -2570,20 +2572,27 @@ fn extract_pages(
     pages
 }
 
-/// Whether the next text the dialogue will display *appends* to the current box
-/// (a `#delay` reveal) rather than opening a fresh one. The queue holds play
-/// order reversed, so `rev()` walks it forwards; the first `Text` item decides —
-/// only a non-opening line carries `delay > 0` (the parser drops a message's
-/// first-line delay), so a positive delay unambiguously means "append".
+/// Whether the next text the dialogue will display *appends* to the current
+/// box rather than opening a fresh one — decided by whether a
+/// [`TextContent::Clear`] (the page-break `lower_messages` inserts before
+/// every message) sits between here and it, not by that text's own `#delay`
+/// (which no longer signals a page boundary — see the module doc of
+/// `egg_world::data::script::eggtext`). The queue holds play order reversed,
+/// so `rev()` walks it forwards; anything else in between (`Sound`/
+/// `Portrait`/`Flip`/`SetFlag`/`Shake`/`Speed`) fires silently and doesn't
+/// affect the answer. An unconsumed `If` carrier can't appear here in
+/// practice — `set_messages`/`advance_dialogue` always resolve straight
+/// through one via `next_text`'s `is_skip` recursion before returning — so,
+/// like the old delay-based version, this doesn't need to look inside one.
 fn next_is_append(d: &Dialogue) -> bool {
-    d.next_text
-        .iter()
-        .rev()
-        .find_map(|c| match c {
-            TextContent::Text { delay, .. } => Some(*delay > 0),
-            _ => None,
-        })
-        .unwrap_or(false)
+    for item in d.next_text.iter().rev() {
+        match item {
+            TextContent::Clear => return false,
+            TextContent::Text { .. } => return true,
+            _ => continue,
+        }
+    }
+    false
 }
 
 /// Scan a quoted string starting at the opening quote `start`, returning the byte

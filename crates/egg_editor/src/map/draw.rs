@@ -567,11 +567,21 @@ impl MapViewer {    /// Draw the dock resize bars (the inner-edge splitter band 
         if len == 0 {
             return;
         }
-        let message = &self.dialogue_preview[self.dialogue_msg.min(len - 1)];
+        let idx = self.dialogue_msg.min(len - 1);
+        let message = &self.dialogue_preview[idx];
         let small = self.dialogue_small_text;
+        // This panel pages through `dialogue_preview` by index rather than
+        // driving a live `Dialogue`, so a message's own `Keep`/`None`
+        // portrait/flip (carried from whatever came before it — see
+        // `Message::portrait`) has to be resolved explicitly here, the same
+        // way `lower_messages` would fold it into a live box's state.
+        let (portrait, flip_portrait) = egg_ui::dialogue::resolve_portrait_carry(&self.dialogue_preview)
+            .into_iter()
+            .nth(idx)
+            .unwrap_or_default();
         let dialogue = Dialogue {
-            portrait: message.portrait.clone(),
-            flip_portrait: message.flip_portrait,
+            portrait,
+            flip_portrait,
             ..Dialogue::default()
         };
         // Wrap to the box width exactly as in-game, then draw fully revealed. The
