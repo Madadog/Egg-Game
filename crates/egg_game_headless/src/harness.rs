@@ -532,12 +532,25 @@ fn load_script_file(root: &Path) -> Result<egg_core::data::script::ScriptFile, S
     egg_core::data::script::eggtext::parse(script_text).map_err(|e| format!("script parse: {e}"))
 }
 
-/// Read + parse `data/main.eggscene` under `root` into a [`SceneFile`].
+/// Read + parse `data/main.eggscene` under `root`, merged with its
+/// machine-owned counterpart `data/recorded.eggscene` (the path recorder's
+/// output — missing entirely until the first recording, which is not an
+/// error: it just contributes an empty source), into one [`SceneFile`].
 /// Shared by [`boot`] and `--check`, mirroring [`load_script_file`].
 fn load_scene_file(root: &Path) -> Result<egg_core::data::scene::SceneFile, String> {
-    let scene_bytes = read_asset(root, "data/main.eggscene").ok_or("missing assets/data/main.eggscene")?;
-    let scene_text = std::str::from_utf8(&scene_bytes).map_err(|e| format!("scenes utf8: {e}"))?;
-    egg_core::data::scene::parse(scene_text).map_err(|e| format!("scenes parse: {e}"))
+    use egg_core::data::scene::{self, MAIN_SCENE_PATH, RECORDED_SCENE_PATH, SceneFile};
+    let main_bytes = read_asset(root, MAIN_SCENE_PATH).ok_or("missing assets/data/main.eggscene")?;
+    let main_text = std::str::from_utf8(&main_bytes).map_err(|e| format!("scenes utf8: {e}"))?;
+    let main = scene::parse(main_text).map_err(|e| format!("scenes parse: {e}"))?;
+
+    let recorded = match read_asset(root, RECORDED_SCENE_PATH) {
+        None => SceneFile::default(),
+        Some(bytes) => {
+            let text = std::str::from_utf8(&bytes).map_err(|e| format!("recorded scenes utf8: {e}"))?;
+            scene::parse(text).map_err(|e| format!("recorded scenes parse: {e}"))?
+        }
+    };
+    main.merge(recorded)
 }
 
 /// Run [`egg_core::data::validate::check`] over the assets under `root`, then

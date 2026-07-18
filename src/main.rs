@@ -256,9 +256,17 @@ pub struct GameAssets {
     /// subset of these that loaded cleanly.
     pub map_names: Vec<String>,
     pub script: Handle<ScriptAsset>,
-    /// The cutscene registry (`data/main.eggscene`), loaded and installed
-    /// alongside the language script — a separate, language-independent file.
+    /// The hand-authored cutscene registry (`data/main.eggscene`), loaded and
+    /// installed alongside the language script — a separate, language-independent
+    /// file. Merged with [`Self::recorded_scenes`] at install time (see the
+    /// `.eggscene` module doc).
     pub scenes: Handle<SceneAsset>,
+    /// The path recorder's machine-owned counterpart (`data/recorded.eggscene`)
+    /// — merged into the same registry as [`Self::scenes`] at install time.
+    /// Deliberately NOT an essential asset ([`Self::essentials`]): the file may
+    /// not exist yet (no recording has ever been made), and that must not fail
+    /// boot the way a missing `main.eggscene` would.
+    pub recorded_scenes: Handle<SceneAsset>,
     /// The image-layer PNGs the loaded maps reference, collected in phase 2 once
     /// the maps have parsed. `None` until that phase runs (so its presence is the
     /// phase-2-done signal); empty `Some` when no map has an image layer.
@@ -278,7 +286,8 @@ impl GameAssets {
                 .collect(),
             map_names: names.to_vec(),
             script: assets.load("script/en.eggtext"),
-            scenes: assets.load("data/main.eggscene"),
+            scenes: assets.load(egg_core::data::scene::MAIN_SCENE_PATH),
+            recorded_scenes: assets.load(egg_core::data::scene::RECORDED_SCENE_PATH),
             map_images: None,
         }
     }
@@ -331,6 +340,15 @@ impl GameAssets {
                 .get_load_state(img.handle.id())
                 .is_some_and(|s| s.is_loaded() || s.is_failed())
         })
+    }
+    /// Whether `recorded_scenes` has *settled* (loaded or failed) — the same
+    /// never-wedge rule as maps/images. A missing `recorded.eggscene` settles as
+    /// failed (there's no bundled copy to fall back to — see the field doc), and
+    /// install treats a failed/not-yet-loaded handle as an empty source.
+    fn recorded_scenes_settled(&self, assets: &AssetServer) -> bool {
+        assets
+            .get_load_state(self.recorded_scenes.id())
+            .is_some_and(|s| s.is_loaded() || s.is_failed())
     }
 }
 
@@ -429,8 +447,9 @@ fn load_assets(
     }
 
     // Phase 2: install once those image handles have also settled (same
-    // never-wedge rule — a missing/failed PNG just leaves its layer pixel-less).
-    if !game_assets.images_settled(&assets) {
+    // never-wedge rule — a missing/failed PNG just leaves its layer pixel-less),
+    // and `recorded.eggscene` has settled too (it may not exist yet).
+    if !game_assets.images_settled(&assets) || !game_assets.recorded_scenes_settled(&assets) {
         return;
     }
     let (Some(font), Some(sheet)) = (
@@ -502,17 +521,34 @@ fn load_assets(
         s.script.set_base(file, &s.portraits);
     }
     // The cutscene registry installs alongside the dialogue (both are essentials,
-    // so they've settled by here).
-    let scene_file = prefer_override(
-        "data/main.eggscene",
+    // so they've settled by here), merged with its recorded-path counterpart
+    // (may not exist yet — see `GameAssets::recorded_scenes` — in which case it
+    // contributes an empty source via the same `prefer_override` seam).
+    let main_scenes = prefer_override(
+        egg_core::data::scene::MAIN_SCENE_PATH,
         scenes.get(&game_assets.scenes).map(|s| s.0.clone()),
         |b| {
             let text = std::str::from_utf8(b).map_err(|e| e.to_string())?;
             egg_core::data::scene::parse(text).map_err(|e| e.to_string())
         },
     );
-    if let Some(file) = scene_file {
-        state.state.set_scenes(file);
+    let recorded_scenes = prefer_override(
+        egg_core::data::scene::RECORDED_SCENE_PATH,
+        scenes.get(&game_assets.recorded_scenes).map(|s| s.0.clone()),
+        |b| {
+            let text = std::str::from_utf8(b).map_err(|e| e.to_string())?;
+            egg_core::data::scene::parse(text).map_err(|e| e.to_string())
+        },
+    )
+    .unwrap_or_default();
+    if let Some(main) = main_scenes {
+        match main.clone().merge(recorded_scenes) {
+            Ok(merged) => state.state.set_scenes(merged),
+            Err(e) => {
+                warn!("scene merge conflict (main.eggscene vs recorded.eggscene): {e} — ignoring recorded.eggscene");
+                state.state.set_scenes(main);
+            }
+        }
     }
     state.loaded = true;
     info!("Finished loading assets.");
@@ -763,7 +799,14 @@ fn step_state(
         }
         if let Some(source) = g.text_editor.pending_scene.take() {
             match egg_core::data::scene::parse(&source) {
-                Ok(file) => g.state.set_scenes(file),
+                Ok(file) => {
+                    crate::views::install_scenes(
+                        &mut g.system,
+                        &mut g.state,
+                        egg_core::data::scene::MAIN_SCENE_PATH,
+                        file,
+                    )
+                }
                 Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
             }
         }

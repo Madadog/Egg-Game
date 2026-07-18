@@ -589,7 +589,7 @@ impl WalkaroundState {
                 // The parent already advanced past its `load`; keep it below the
                 // sub-cutscene, which drives until it finishes and pops.
                 self.cutscene.push(top);
-                match ctx.scenes.get_cutscene(&name).cloned() {
+                match ctx.scenes.get_cutscene_resolved(&name) {
                     Some(def) => {
                         let sub = Cutscene::launch(&def, ctx, self);
                         self.cutscene.push(sub);
@@ -830,7 +830,7 @@ impl WalkaroundState {
                 // its actors) and push it onto the stack. An unknown name logs and
                 // does nothing (like a dangling warp target), so a typo can't
                 // crash or soft-lock.
-                match ctx.get_cutscene(name).cloned() {
+                match ctx.get_cutscene_resolved(name) {
                     Some(def) => {
                         let cutscene = Cutscene::launch(&def, ctx, self);
                         self.cutscene.push(cutscene);
@@ -982,7 +982,7 @@ impl WalkaroundState {
         else {
             unreachable!("position() only matched a cutscene interaction");
         };
-        let Some(def) = ctx.get_cutscene(&name).cloned() else {
+        let Some(def) = ctx.get_cutscene_resolved(&name) else {
             info!("launch_map_enter: unknown cutscene {name:?}");
             return false;
         };
@@ -1480,7 +1480,7 @@ impl WalkaroundState {
                 let body = Hitbox::new(hb.x + hb.w / 2 - sw / 2, hb.y + hb.h - sh, sw, sh);
                 interact_hitbox.touches(body)
             });
-            if pettable && let Some(def) = ctx.scenes.get_cutscene("pet_dog").cloned() {
+            if pettable && let Some(def) = ctx.scenes.get_cutscene_resolved("pet_dog") {
                 let cutscene = Cutscene::launch(&def, ctx, self);
                 self.cutscene.push(cutscene);
             }

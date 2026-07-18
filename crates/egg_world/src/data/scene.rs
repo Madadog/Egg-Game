@@ -47,6 +47,22 @@
 //!     interact ellie fido
 //! ```
 //!
+//! A `#path NAME` header (same column-0 convention) holds a standalone
+//! recorded path: whitespace-separated `DX DY FRAMES` run triples, wrapped
+//! across as many indented lines as needed (blank lines and `//` comments
+//! tolerated the same as a `#cutscene` body). A `path [noclip] NAME` motion
+//! (see below) plays it — the named counterpart to an inline `record`. Keeping
+//! it out of the scene body is what keeps a hand-authored cutscene legible: a
+//! recorded path is thousands of runs, machine-owned (the path recorder writes
+//! it to a *separate* source file, merged into the same registry — see
+//! [`SceneFile::merge`]), and inlining that much noise into a cutscene would
+//! bury the actual choreography.
+//!
+//! ```text
+//! #path house_entry_route
+//!     1 0 4  0 1 12  -1 0 4
+//! ```
+//!
 //! ## Init verbs (bind actor names; must precede content)
 //!
 //! | verb | meaning |
@@ -80,7 +96,8 @@
 //! timed motions. `in N` is the frame budget (the motion takes exactly N frames,
 //! speed inflated to suit); omitted ⇒ natural speed until done. Motions:
 //! `walk X Y`, `noclip X Y`, `to NAME`, `beside NAME [gap]`, `face NAME`,
-//! `face DX DY`, `teleport X Y`, `record [noclip] DX DY N …`.
+//! `face DX DY`, `teleport X Y`, `record [noclip] DX DY N …`,
+//! `path [noclip] NAME` (a `#path` block by name — see above).
 //!
 //! # What belongs where
 //!
@@ -255,6 +272,13 @@ impl Instruction {
     }
 }
 
+/// An RLE motion path: `(heading, frames-held)` runs, direction held for the
+/// given frame count each. What `record`/`#path` bodies parse to and
+/// [`Motion::Record`] carries — named so it doesn't read as "very complex" at
+/// every call site that threads it around ([`SceneFile::paths`],
+/// [`parse_path_body`]).
+pub type PathRuns = Vec<((i8, i8), u16)>;
+
 /// A single motion an actor performs. Entity-relative motions name another actor
 /// (re-read live each frame at play time).
 #[derive(Clone, Debug, PartialEq)]
@@ -278,22 +302,83 @@ pub enum Motion {
     /// frame counts, so it takes no `in N` budget: one is a parse-time error
     /// (rescaling playback to a budget is future work), and the emitter never
     /// writes one, so a recorded path round-trips.
-    Record {
-        runs: Vec<((i8, i8), u16)>,
-        noclip: bool,
-    },
+    Record { runs: PathRuns, noclip: bool },
+    /// `path [noclip] NAME` — a named RLE path, authored separately as a
+    /// `#path` block (see the module doc) instead of inline. Resolved against
+    /// the path registry at the runtime boundary
+    /// ([`SceneFile::inline_paths`]) into a [`Motion::Record`] before
+    /// execution or drawing code ever sees it, so — like `record` — it takes
+    /// no `in N` budget (rejected at parse time) and the emitter never writes
+    /// one.
+    Path { name: String, noclip: bool },
 }
 
-/// The parsed cutscene registry: every `#cutscene NAME` block by name.
+/// The hand-owned `.eggscene` source — cutscenes and paths an author writes
+/// directly (see the module doc's "What belongs where"). Named here so the
+/// handful of load/merge/install sites across the host and editor can't drift
+/// on the literal path.
+pub const MAIN_SCENE_PATH: &str = "data/main.eggscene";
+/// The machine-owned `.eggscene` source the live path recorder writes to (see
+/// [`ScrubRequest`] and the module doc's `#path` section) — merged into the
+/// same registry as [`MAIN_SCENE_PATH`] at every load site. Missing entirely
+/// until the first recording, and never shipped as a bundled asset.
+pub const RECORDED_SCENE_PATH: &str = "data/recorded.eggscene";
+
+/// The parsed cutscene registry: every `#cutscene NAME` block by name, plus
+/// every `#path NAME` block by name (a separate namespace — see the module
+/// doc).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneFile {
     pub cutscenes: HashMap<String, CutsceneDef>,
+    pub paths: HashMap<String, PathRuns>,
 }
 
 impl SceneFile {
-    /// A cutscene definition by name, or `None` if undefined.
+    /// A cutscene definition by name, or `None` if undefined. The RAW def —
+    /// any `Motion::Path` reference inside it is left unresolved; a caller
+    /// about to execute or draw it wants [`Self::get_cutscene_resolved`]
+    /// instead. This accessor stays raw because it's also what the emitter and
+    /// checker walk, and both need to see `Motion::Path` as authored.
     pub fn get_cutscene(&self, name: &str) -> Option<&CutsceneDef> {
         self.cutscenes.get(name)
+    }
+
+    /// A cutscene definition by name, with every `Motion::Path` reference
+    /// resolved against [`Self::paths`] (see [`Self::inline_paths`]) — what
+    /// every runtime execution site (`Cutscene::launch`, the scrubber) and the
+    /// editor's path-drawing overlay want, so `step_motion`/`snap_motion`/the
+    /// polyline drawer never have to know `Motion::Path` exists.
+    pub fn get_cutscene_resolved(&self, name: &str) -> Option<CutsceneDef> {
+        self.get_cutscene(name).map(|def| self.inline_paths(def))
+    }
+
+    /// Replace every `Motion::Path { name, noclip }` in a (cloned) `def` with
+    /// the [`Motion::Record`] it names, looked up in [`Self::paths`]. The
+    /// runtime boundary a named path reference is resolved at — see the
+    /// module doc. An unknown name logs and resolves to an empty (no-op)
+    /// record, so a dangling reference degrades gracefully rather than
+    /// panicking, matching an unknown dialogue key / sound / portrait
+    /// elsewhere in the data web.
+    pub fn inline_paths(&self, def: &CutsceneDef) -> CutsceneDef {
+        let mut def = def.clone();
+        for step in &mut def.content {
+            let CutsceneContent::Move(chains) = step else {
+                continue;
+            };
+            for chain in chains {
+                for ins in &mut chain.instructions {
+                    let Motion::Path { name, noclip } = &ins.motion else {
+                        continue;
+                    };
+                    let runs = self.paths.get(name).cloned().unwrap_or_else(|| {
+                        log::warn!("cutscene: unknown path `{name}` — playing as a no-op");
+                        Vec::new()
+                    });
+                    ins.motion = Motion::Record { runs, noclip: *noclip };
+                }
+            }
+        }
+        def
     }
 
     /// Every cutscene name, sorted — for pickers and listings (the registry is
@@ -304,19 +389,43 @@ impl SceneFile {
         names
     }
 
-    /// Every cutscene as `(name, def)`, name-sorted — pushed into the map editor
-    /// each focused frame so its Scenes panel can both list the scenes *and* draw
-    /// their movement paths (which need the whole [`CutsceneDef`], not just the
-    /// name). Mirrors `Presets::named_defs`; the registry is an unordered map, so
-    /// a stable order needs sorting.
+    /// Every cutscene as `(name, def)`, name-sorted, each def path-resolved
+    /// (see [`Self::get_cutscene_resolved`]) — pushed into the map editor each
+    /// focused frame so its Scenes panel can both list the scenes *and* draw
+    /// their movement paths (which walk the whole [`CutsceneDef`]'s motions,
+    /// so they must never see a bare `Motion::Path`). Mirrors
+    /// `Presets::named_defs`; the registry is an unordered map, so a stable
+    /// order needs sorting.
     pub fn named_defs(&self) -> Vec<(String, CutsceneDef)> {
         let mut defs: Vec<(String, CutsceneDef)> = self
             .cutscenes
             .iter()
-            .map(|(name, def)| (name.clone(), def.clone()))
+            .map(|(name, def)| (name.clone(), self.inline_paths(def)))
             .collect();
         defs.sort_by(|a, b| a.0.cmp(&b.0));
         defs
+    }
+
+    /// Merge `other` into `self`, erroring if a name is defined in both
+    /// **within the same kind** (two cutscenes, or two paths, sharing a
+    /// name) — an authoring conflict between the two `.eggscene` sources
+    /// (see [`MAIN_SCENE_PATH`] / [`RECORDED_SCENE_PATH`]) that must not
+    /// silently drop one side's content. Cutscenes and paths are separate
+    /// namespaces: a cutscene and a path may share a name without conflict.
+    pub fn merge(mut self, other: SceneFile) -> Result<SceneFile, String> {
+        for name in other.cutscenes.keys() {
+            if self.cutscenes.contains_key(name) {
+                return Err(format!("cutscene `{name}` is defined in more than one source"));
+            }
+        }
+        for name in other.paths.keys() {
+            if self.paths.contains_key(name) {
+                return Err(format!("path `{name}` is defined in more than one source"));
+            }
+        }
+        self.cutscenes.extend(other.cutscenes);
+        self.paths.extend(other.paths);
+        Ok(self)
     }
 }
 
@@ -341,36 +450,86 @@ pub fn parse(src: &str) -> Result<SceneFile, ParseError> {
             return Err(ParseError::new(line_no, "indented line is not inside a block"));
         }
         let Some(header) = logical.strip_prefix('#') else {
-            return Err(ParseError::new(line_no, "expected a block (`#cutscene name`)"));
-        };
-        let (kind, rest) = split_first_word(header);
-        if kind != "cutscene" {
             return Err(ParseError::new(
                 line_no,
-                format!("unknown block `#{kind}` (expected `#cutscene`)"),
+                "expected a block (`#cutscene name` or `#path name`)",
             ));
-        }
-        let (name, flags) = split_first_word(rest);
-        if name.is_empty() {
-            return Err(ParseError::new(line_no, "`#cutscene` needs a name"));
-        }
-        let interruptible = match flags.trim() {
-            "" => false,
-            "interruptible" => true,
-            other => {
+        };
+        let (kind, rest) = split_first_word(header);
+        match kind {
+            "cutscene" => {
+                let (name, flags) = split_first_word(rest);
+                if name.is_empty() {
+                    return Err(ParseError::new(line_no, "`#cutscene` needs a name"));
+                }
+                let interruptible = match flags.trim() {
+                    "" => false,
+                    "interruptible" => true,
+                    other => {
+                        return Err(ParseError::new(
+                            line_no,
+                            format!("unknown cutscene flag `{other}` (only `interruptible`)"),
+                        ));
+                    }
+                };
+                let body = collect_block(&mut lines);
+                let mut def = parse_cutscene(&body)?;
+                def.interruptible = interruptible;
+                file.cutscenes.insert(name.to_string(), def);
+            }
+            "path" => {
+                let (name, extra) = split_first_word(rest);
+                if name.is_empty() {
+                    return Err(ParseError::new(line_no, "`#path` needs a name"));
+                }
+                if !extra.trim().is_empty() {
+                    return Err(ParseError::new(line_no, "`#path` takes no flags"));
+                }
+                let body = collect_block(&mut lines);
+                let runs = parse_path_body(&body, line_no)?;
+                file.paths.insert(name.to_string(), runs);
+            }
+            _ => {
                 return Err(ParseError::new(
                     line_no,
-                    format!("unknown cutscene flag `{other}` (only `interruptible`)"),
+                    format!("unknown block `#{kind}` (expected `#cutscene` or `#path`)"),
                 ));
             }
-        };
-        let body = collect_block(&mut lines);
-        let mut def = parse_cutscene(&body)?;
-        def.interruptible = interruptible;
-        file.cutscenes.insert(name.to_string(), def);
+        }
     }
 
     Ok(file)
+}
+
+/// Parse a `#path` body: whitespace-separated `DX DY FRAMES` triples, tolerant
+/// of blank lines / `//` comments and wrapped across as many lines as needed
+/// (all lines concatenated into one flat token stream before chunking) — see
+/// the module doc. Each error points at the line the offending token actually
+/// sits on, not the block header. `header_line` is used only when the body
+/// carries no tokens at all.
+fn parse_path_body(body: &[(usize, &str)], header_line: usize) -> Result<PathRuns, ParseError> {
+    let mut tokens: Vec<(usize, &str)> = Vec::new();
+    for &(line_no, raw) in body {
+        let logical = raw.trim_start();
+        if logical.is_empty() || is_comment(logical) {
+            continue;
+        }
+        tokens.extend(logical.split_whitespace().map(|tok| (line_no, tok)));
+    }
+    if tokens.is_empty() || !tokens.len().is_multiple_of(3) {
+        let line = tokens.last().map_or(header_line, |&(l, _)| l);
+        return Err(ParseError::new(line, "`#path` needs `DX DY FRAMES` triples"));
+    }
+    let mut runs = Vec::with_capacity(tokens.len() / 3);
+    for triple in tokens.chunks_exact(3) {
+        let line_no = triple[0].0;
+        let err = || ParseError::new(line_no, "`#path` triples are `DX DY FRAMES` integers");
+        let dx = triple[0].1.parse().map_err(|_| err())?;
+        let dy = triple[1].1.parse().map_err(|_| err())?;
+        let frames = triple[2].1.parse().map_err(|_| err())?;
+        runs.push(((dx, dy), frames));
+    }
+    Ok(runs)
 }
 
 /// Parse a `#cutscene` body: init verbs first (until the first content verb),
@@ -652,14 +811,23 @@ fn parse_motion(segment: &str, line_no: usize) -> Result<Instruction, ParseError
         }
         "teleport" => Motion::Teleport(args_vec2(args, line_no, "teleport")?),
         "record" => parse_record(args, line_no)?,
+        "path" => parse_path_ref(args, line_no)?,
         other => return Err(ParseError::new(line_no, format!("unknown motion `{other}`"))),
     };
-    // A `record` replays at its own frame counts; an `in N` budget on it would be
-    // a silent no-op, so reject it at parse time (fail loud beats a dropped budget).
-    if time != 0 && matches!(motion, Motion::Record { .. }) {
+    // `record`/`path` both replay at their own recorded frame counts; an `in N`
+    // budget on either would be a silent no-op, so reject it at parse time
+    // (fail loud beats a dropped budget).
+    let recorded_verb = match &motion {
+        Motion::Record { .. } => Some("record"),
+        Motion::Path { .. } => Some("path"),
+        _ => None,
+    };
+    if time != 0
+        && let Some(verb) = recorded_verb
+    {
         return Err(ParseError::new(
             line_no,
-            "`record` takes no `in N` budget (it replays at its recorded frame counts)",
+            format!("`{verb}` takes no `in N` budget (it replays at its recorded frame counts)"),
         ));
     }
     Ok(Instruction {
@@ -667,6 +835,18 @@ fn parse_motion(segment: &str, line_no: usize) -> Result<Instruction, ParseError
         time,
         required,
     })
+}
+
+/// Parse a `path [noclip] NAME` motion: a reference to a `#path` block by
+/// name, resolved at the runtime boundary (see [`SceneFile::inline_paths`]).
+/// Mirrors [`parse_record`]'s `noclip` peel.
+fn parse_path_ref(args: &[&str], line_no: usize) -> Result<Motion, ParseError> {
+    let (noclip, rest) = match args.split_first() {
+        Some((&"noclip", rest)) => (true, rest),
+        _ => (false, args),
+    };
+    let name = args_name(rest, line_no, "path")?;
+    Ok(Motion::Path { name, noclip })
 }
 
 /// Parse a `record [noclip] DX DY N …` motion: a flat run of `(dx, dy, frames)`
@@ -749,18 +929,63 @@ fn parse_vec2(args: &str, line_no: usize, verb: &str) -> Result<Vec2, ParseError
 // --- emitting: the inverse of `parse` ---
 
 /// Emit a whole [`SceneFile`] back to `.eggscene` text that re-parses to the
-/// same registry. Cutscenes are emitted in sorted-name order. The inverse of
-/// [`parse`].
+/// same registry. Cutscenes are emitted first (name-sorted), then `#path`
+/// blocks (also name-sorted) — see the module doc. The inverse of [`parse`].
 pub fn emit_scene(file: &SceneFile) -> String {
     let mut names: Vec<&String> = file.cutscenes.keys().collect();
     names.sort();
+    let mut path_names: Vec<&String> = file.paths.keys().collect();
+    path_names.sort();
+
     let mut out = String::new();
-    for (i, name) in names.iter().enumerate() {
-        if i != 0 {
+    let mut first = true;
+    for name in &names {
+        if !first {
             out.push('\n');
         }
+        first = false;
         out.push_str(&emit_cutscene(name, &file.cutscenes[*name]));
         out.push('\n');
+    }
+    for name in &path_names {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        out.push_str(&emit_path(name, &file.paths[*name]));
+        out.push('\n');
+    }
+    out
+}
+
+/// Emit one `#path <name>` block, its run triples wrapped at roughly 80
+/// columns (a recorded path can run to thousands of runs — see the module
+/// doc). The returned string ends without a trailing newline, matching
+/// [`emit_cutscene`]. Shared by the emitter and the path recorder (which
+/// splices this same block into `recorded.eggscene`). The inverse of
+/// [`parse_path_body`].
+pub fn emit_path(name: &str, runs: &[((i8, i8), u16)]) -> String {
+    const WRAP_COL: usize = 80;
+    const INDENT: &str = "    ";
+    let mut out = format!("#path {name}");
+    let mut line = String::new();
+    for ((dx, dy), frames) in runs {
+        let triple = format!("{dx} {dy} {frames}");
+        if !line.is_empty() && INDENT.len() + line.len() + 1 + triple.len() > WRAP_COL {
+            out.push('\n');
+            out.push_str(INDENT);
+            out.push_str(&line);
+            line.clear();
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&triple);
+    }
+    if !line.is_empty() {
+        out.push('\n');
+        out.push_str(INDENT);
+        out.push_str(&line);
     }
     out
 }
@@ -862,9 +1087,9 @@ fn emit_chain(chain: &Chain) -> String {
             if ins.required {
                 m.push('?');
             }
-            // A `record` never carries an `in N` budget (parse rejects one), so
+            // `record`/`path` never carry an `in N` budget (parse rejects one), so
             // never emit one either — otherwise a re-parse of the output would fail.
-            if ins.time != 0 && !matches!(ins.motion, Motion::Record { .. }) {
+            if ins.time != 0 && !matches!(ins.motion, Motion::Record { .. } | Motion::Path { .. }) {
                 m.push_str(&format!(" in {}", ins.time));
             }
             m
@@ -897,6 +1122,13 @@ fn emit_motion(motion: &Motion) -> String {
                 out.push_str(&format!(" {dx} {dy} {frames}"));
             }
             out
+        }
+        Motion::Path { name, noclip } => {
+            if *noclip {
+                format!("path noclip {name}")
+            } else {
+                format!("path {name}")
+            }
         }
     }
 }
@@ -1155,6 +1387,205 @@ mod tests {
         );
     }
 
+    // --- #path blocks ---
+
+    #[test]
+    fn path_block_parses_a_single_line_body() {
+        let file = parse("#path p\n    1 0 4 0 1 12 -1 0 4").expect("parse");
+        assert_eq!(
+            file.paths.get("p"),
+            Some(&vec![((1, 0), 4), ((0, 1), 12), ((-1, 0), 4)])
+        );
+    }
+
+    /// A `#path` body wraps across as many indented lines as needed — all
+    /// lines concatenate into one flat run list.
+    #[test]
+    fn path_block_body_wraps_across_multiple_lines() {
+        let file = parse("#path p\n    1 0 4 0 1 12\n    -1 0 4 0 -1 6").expect("parse");
+        assert_eq!(
+            file.paths.get("p"),
+            Some(&vec![((1, 0), 4), ((0, 1), 12), ((-1, 0), 4), ((0, -1), 6)])
+        );
+    }
+
+    /// Blank lines and `//` comments inside a `#path` body are tolerated the
+    /// same as a `#cutscene` body.
+    #[test]
+    fn path_block_tolerates_comments_and_blank_lines() {
+        let file = parse(
+            "#path p\n\
+             \x20   // leading comment\n\
+             \x20   1 0 4\n\n\
+             \x20   0 1 12\n\
+             \x20   // trailing comment",
+        )
+        .expect("parse");
+        assert_eq!(file.paths.get("p"), Some(&vec![((1, 0), 4), ((0, 1), 12)]));
+    }
+
+    /// Paths and cutscenes are separate namespaces (only same-kind names
+    /// collide at merge time — see the merge tests below) and both parse from
+    /// the same source.
+    #[test]
+    fn path_and_cutscene_blocks_coexist() {
+        let file = parse("#cutscene c\n    wait 1\n#path p\n    1 0 4").expect("parse");
+        assert!(file.get_cutscene("c").is_some());
+        assert!(file.paths.contains_key("p"));
+    }
+
+    #[test]
+    fn path_block_needs_a_name() {
+        assert_eq!(parse("#path\n    1 0 4").unwrap_err().line, 1);
+    }
+
+    #[test]
+    fn path_block_rejects_flags() {
+        assert_eq!(parse("#path p extra\n    1 0 4").unwrap_err().line, 1);
+    }
+
+    /// An empty body has no line of its own to point at, so the error lands on
+    /// the header.
+    #[test]
+    fn path_block_needs_a_body() {
+        assert_eq!(parse("#path p").unwrap_err().line, 1);
+    }
+
+    /// A junk (non-integer) triplet errors at the line it actually sits on,
+    /// even though the body started earlier.
+    #[test]
+    fn path_block_junk_triplet_errors_at_its_line() {
+        assert_eq!(parse("#path p\n    1 0 4\n    x 0 4").unwrap_err().line, 3);
+    }
+
+    /// A triple count that isn't a multiple of 3 (a trailing partial triple)
+    /// is an error.
+    #[test]
+    fn path_block_incomplete_triplet_errors() {
+        assert_eq!(parse("#path p\n    1 0 4\n    1 0").unwrap_err().line, 3);
+    }
+
+    #[test]
+    fn path_motion_parses_with_and_without_noclip() {
+        let def = one("#cutscene c\n    move\n        a: path p; path noclip q");
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions,
+            vec![
+                Instruction::new(Motion::Path { name: "p".into(), noclip: false }, 0),
+                Instruction::new(Motion::Path { name: "q".into(), noclip: true }, 0),
+            ]
+        );
+    }
+
+    /// A `path` motion replays at its named path's recorded frame counts, so
+    /// (like `record`) an `in N` budget on it is a parse-time error.
+    #[test]
+    fn path_motion_rejects_an_in_budget() {
+        let err = parse("#cutscene c\n    move\n        a: path p in 5").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(
+            parse("#cutscene c\n    move\n        a: path p").is_ok(),
+            "a budget-free path still parses",
+        );
+    }
+
+    // --- merging multiple sources ---
+
+    #[test]
+    fn merge_combines_disjoint_sources() {
+        let a = parse("#cutscene a\n    wait 1\n#path pa\n    1 0 1").unwrap();
+        let b = parse("#cutscene b\n    wait 2\n#path pb\n    0 1 1").unwrap();
+        let merged = a.merge(b).expect("disjoint sources merge");
+        assert!(merged.get_cutscene("a").is_some());
+        assert!(merged.get_cutscene("b").is_some());
+        assert!(merged.paths.contains_key("pa"));
+        assert!(merged.paths.contains_key("pb"));
+    }
+
+    #[test]
+    fn merge_errors_on_a_duplicate_cutscene_name() {
+        let a = parse("#cutscene a\n    wait 1").unwrap();
+        let b = parse("#cutscene a\n    wait 2").unwrap();
+        assert!(a.merge(b).is_err());
+    }
+
+    #[test]
+    fn merge_errors_on_a_duplicate_path_name() {
+        let a = parse("#path p\n    1 0 1").unwrap();
+        let b = parse("#path p\n    0 1 1").unwrap();
+        assert!(a.merge(b).is_err());
+    }
+
+    /// Cutscenes and paths are separate namespaces: the same name in each
+    /// kind, across the two sources, is not a conflict.
+    #[test]
+    fn merge_allows_a_cutscene_and_a_path_to_share_a_name() {
+        let a = parse("#cutscene shared\n    wait 1").unwrap();
+        let b = parse("#path shared\n    1 0 1").unwrap();
+        let merged = a.merge(b).expect("cross-kind name reuse is fine");
+        assert!(merged.get_cutscene("shared").is_some());
+        assert!(merged.paths.contains_key("shared"));
+    }
+
+    // --- resolving `path` references ---
+
+    #[test]
+    fn inline_paths_resolves_runs_and_noclip() {
+        let file = parse("#cutscene c\n    move\n        a: path noclip p\n#path p\n    1 0 4 0 1 6")
+            .unwrap();
+        let def = file.get_cutscene("c").unwrap();
+        let resolved = file.inline_paths(def);
+        let CutsceneContent::Move(chains) = &resolved.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions[0].motion,
+            Motion::Record { runs: vec![((1, 0), 4), ((0, 1), 6)], noclip: true }
+        );
+    }
+
+    /// An unknown path name resolves to an empty (no-op) record rather than
+    /// panicking — degrades gracefully like a dangling dialogue key.
+    #[test]
+    fn inline_paths_unknown_name_resolves_to_an_empty_record() {
+        let file = parse("#cutscene c\n    move\n        a: path missing").unwrap();
+        let def = file.get_cutscene("c").unwrap();
+        let resolved = file.inline_paths(def);
+        let CutsceneContent::Move(chains) = &resolved.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions[0].motion,
+            Motion::Record { runs: vec![], noclip: false }
+        );
+    }
+
+    #[test]
+    fn get_cutscene_resolved_inlines_paths() {
+        let file = parse("#cutscene c\n    move\n        a: path p\n#path p\n    1 0 4").unwrap();
+        let def = file.get_cutscene_resolved("c").expect("resolved def");
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert!(matches!(chains[0].instructions[0].motion, Motion::Record { .. }));
+    }
+
+    /// `named_defs` (what feeds the editor's path-drawing overlay) hands back
+    /// already-resolved defs, so a bare `Motion::Path` never reaches it.
+    #[test]
+    fn named_defs_are_already_path_resolved() {
+        let file = parse("#cutscene c\n    move\n        a: path p\n#path p\n    1 0 4").unwrap();
+        let defs = file.named_defs();
+        let (_, def) = defs.iter().find(|(n, _)| n == "c").unwrap();
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert!(matches!(chains[0].instructions[0].motion, Motion::Record { .. }));
+    }
+
     // --- emitter ---
 
     fn round_trip(src: &str) -> (SceneFile, SceneFile) {
@@ -1196,6 +1627,42 @@ mod tests {
         assert!(!file.cutscenes.is_empty(), "expected shipped cutscenes");
         let reparsed = parse(&emit_scene(&file)).expect("re-parse emitted");
         assert_eq!(file, reparsed);
+    }
+
+    /// `#path` blocks and `path` motions round-trip through the emitter
+    /// (placed after the cutscenes — see `emit_scene`'s doc).
+    #[test]
+    fn emit_round_trips_a_path_block_and_motion() {
+        let (file, reparsed) = round_trip(
+            "#cutscene c\n\
+             \x20   move\n\
+             \x20       a: path noclip p\n\
+             #path p\n\
+             \x20   1 0 4 0 1 6 -1 0 4",
+        );
+        assert_eq!(file, reparsed);
+        assert!(file.paths.contains_key("p"));
+    }
+
+    /// A path long enough to force `emit_path`'s ~80-column wrap still
+    /// round-trips (all lines concatenate back into one run list).
+    #[test]
+    fn emit_wraps_a_long_path_and_round_trips() {
+        let mut src = String::from("#path long\n");
+        for i in 0..40 {
+            src.push_str(&format!("    1 0 {}\n", i + 1));
+        }
+        let file = parse(&src).expect("parse");
+        let runs = file.paths.get("long").expect("path defined");
+        assert_eq!(runs.len(), 40);
+
+        let emitted = emit_path("long", runs);
+        assert!(
+            emitted.lines().count() > 2,
+            "a 40-triple path should wrap across more than one body line: {emitted}"
+        );
+        let reparsed = parse(&emitted).expect("re-parse emitted");
+        assert_eq!(reparsed.paths.get("long"), Some(runs));
     }
 
     #[test]

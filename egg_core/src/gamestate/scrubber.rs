@@ -104,7 +104,7 @@ impl EggState {
     /// leaving any current session untouched. See [`open_scrubber_def`](Self::open_scrubber_def)
     /// for replaying a definition that isn't (yet) in the registry.
     pub fn open_scrubber(&mut self, name: &str) {
-        let Some(def) = self.scenes.get_cutscene(name).cloned() else {
+        let Some(def) = self.scenes.get_cutscene_resolved(name) else {
             log::info!("scrubber: unknown cutscene {name:?}");
             return;
         };

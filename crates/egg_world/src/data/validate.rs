@@ -22,7 +22,7 @@ use std::fmt;
 use crate::data::eggdata::Presets;
 use crate::data::portraits::Portraits;
 use crate::data::save::IS_NIGHT_FLAG;
-use crate::data::scene::{CutsceneContent, GetEntity, SceneFile};
+use crate::data::scene::{CutsceneContent, GetEntity, Motion, SceneFile};
 use crate::data::script::{
     ChoiceOptionDef, ContentDef, DialogueDef, ElifDef, Entry, MessageDef, PortraitChange, ScriptFile,
     SegmentDef,
@@ -82,6 +82,9 @@ pub enum Finding {
     /// A `#cutscene`'s `set FLAG BOOL` step names a flag the script never
     /// declares.
     SceneDanglingFlag { cutscene: String, flag: String },
+    /// A `#cutscene`'s `path [noclip] NAME` motion names no `#path` block in
+    /// the registry.
+    SceneDanglingPath { cutscene: String, name: String },
 
     /// A dialogue message's portrait switch (`#pic`, message-level or
     /// mid-message) names no portrait in the registry.
@@ -97,6 +100,9 @@ pub enum Finding {
 
     /// A dialogue entry no map, scene, or [`ENGINE_DIALOGUE_ROOTS`] reaches.
     UnreferencedDialogue { key: String },
+    /// A `#path` block no `path` motion in any scene references — likely a
+    /// stale recording (see the `.eggscene` module doc).
+    UnreferencedPath { name: String },
     /// A declared `#flag` nothing ever sets (whether or not anything reads
     /// it — see [`Finding::FlagNeverSet`] for the "read but not set" case).
     UnusedFlag { flag: String },
@@ -133,6 +139,7 @@ impl Finding {
         !matches!(
             self,
             Finding::UnreferencedDialogue { .. }
+                | Finding::UnreferencedPath { .. }
                 | Finding::UnusedFlag { .. }
                 | Finding::FlagNeverRead { .. }
                 | Finding::FlagNeverSet { .. }
@@ -173,6 +180,9 @@ impl fmt::Display for Finding {
             Finding::SceneDanglingFlag { cutscene, flag } => {
                 write!(f, "scene `{cutscene}`: flag {flag:?} is not declared with `#flag`")
             }
+            Finding::SceneDanglingPath { cutscene, name } => {
+                write!(f, "scene `{cutscene}`: `path {name}` names an unknown path")
+            }
             Finding::DanglingPortrait { key, name } => {
                 write!(f, "dialogue `{key}`: unknown portrait {name:?}")
             }
@@ -184,6 +194,9 @@ impl fmt::Display for Finding {
             }
             Finding::UnreferencedDialogue { key } => {
                 write!(f, "dialogue `{key}` is never referenced by any map, scene, or engine code path")
+            }
+            Finding::UnreferencedPath { name } => {
+                write!(f, "path `{name}` is never referenced by any scene")
             }
             Finding::UnusedFlag { flag } => {
                 write!(f, "flag `{flag}` is declared but never set")
@@ -294,6 +307,7 @@ pub fn check(
     let mut report = Report::default();
     let mut referenced_dialogue: BTreeSet<String> =
         dialogue_roots.iter().map(|s| s.to_string()).collect();
+    let mut referenced_paths: BTreeSet<String> = BTreeSet::new();
     let mut set_flags: BTreeSet<String> = BTreeSet::new();
     let mut read_flags: BTreeSet<String> = BTreeSet::new();
     // `is_night` is read and set directly by the engine (the day/night swap
@@ -304,7 +318,16 @@ pub fn check(
     read_flags.insert(IS_NIGHT_FLAG.to_string());
 
     check_maps(maps, script, scenes, &mut report, &mut referenced_dialogue, &mut set_flags, &mut read_flags);
-    check_scenes(scenes, script, maps, presets, &mut report, &mut referenced_dialogue, &mut set_flags);
+    check_scenes(
+        scenes,
+        script,
+        maps,
+        presets,
+        &mut report,
+        &mut referenced_dialogue,
+        &mut set_flags,
+        &mut referenced_paths,
+    );
     check_script(script, portraits, &mut report, &mut set_flags, &mut read_flags);
 
     let mut dialogue_keys: Vec<&String> = script.dialogue.keys().collect();
@@ -312,6 +335,13 @@ pub fn check(
     for key in dialogue_keys {
         if !referenced_dialogue.contains(key) {
             report.push(Finding::UnreferencedDialogue { key: key.clone() });
+        }
+    }
+    let mut path_names: Vec<&String> = scenes.paths.keys().collect();
+    path_names.sort();
+    for name in path_names {
+        if !referenced_paths.contains(name) {
+            report.push(Finding::UnreferencedPath { name: name.clone() });
         }
     }
     for flag in &script.flags {
@@ -411,8 +441,13 @@ fn check_maps(
 }
 
 /// The scene half of [`check`]: every `#cutscene`'s init map/presets and
-/// content steps' dialogue/load/sound/flag references, name-sorted for
+/// content steps' dialogue/load/sound/flag/path references, name-sorted for
 /// determinism (`SceneFile::cutscenes` is a `HashMap`).
+// Eight loosely-coupled accumulator sets (`report` + four cross-referenced
+// registries), each already threaded independently through `check`/
+// `check_maps`/`check_script` — bundling just this function's params into a
+// struct would obscure the sibling functions' shape rather than clarify it.
+#[allow(clippy::too_many_arguments)]
 fn check_scenes(
     scenes: &SceneFile,
     script: &ScriptFile,
@@ -421,6 +456,7 @@ fn check_scenes(
     report: &mut Report,
     referenced_dialogue: &mut BTreeSet<String>,
     set_flags: &mut BTreeSet<String>,
+    referenced_paths: &mut BTreeSet<String>,
 ) {
     let mut names: Vec<&String> = scenes.cutscenes.keys().collect();
     names.sort();
@@ -465,12 +501,27 @@ fn check_scenes(
                         report.push(Finding::SceneDanglingFlag { cutscene: name.clone(), flag: flag.clone() });
                     }
                 }
+                CutsceneContent::Move(chains) => {
+                    for chain in chains {
+                        for ins in &chain.instructions {
+                            let Motion::Path { name: path_name, .. } = &ins.motion else {
+                                continue;
+                            };
+                            referenced_paths.insert(path_name.clone());
+                            if !scenes.paths.contains_key(path_name) {
+                                report.push(Finding::SceneDanglingPath {
+                                    cutscene: name.clone(),
+                                    name: path_name.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
                 // `music` names are directory-scanned free-form at play time
                 // (no fixed vocabulary to check against — see `data/tiled.rs`'s
                 // `TiledMap::music` doc); actor names in `Move`/`Interact` are
                 // scene-local bindings, not a global registry.
                 CutsceneContent::Music(_)
-                | CutsceneContent::Move(_)
                 | CutsceneContent::Interact { .. }
                 | CutsceneContent::Wait(_)
                 | CutsceneContent::Camera(..)
@@ -1173,6 +1224,60 @@ mod tests {
             ENGINE_DIALOGUE_ROOTS,
         );
         assert_eq!(report.errors.len(), 5, "{:?}", report.errors);
+    }
+
+    /// A `path` motion naming an unknown `#path` block is an error; naming a
+    /// real one is clean and (whether or not it resolves) counts the path as
+    /// referenced, so a defined-and-referenced path never also shows up as
+    /// dead weight.
+    #[test]
+    fn scene_dangling_path_is_an_error() {
+        use crate::data::scene;
+        let scenes = scene::parse(
+            "#cutscene a\n\
+             \x20   move\n\
+             \x20       player: path real; path nope",
+        )
+        .expect("parse scene");
+        let mut scenes_with_path = scenes.clone();
+        scenes_with_path.paths.insert("real".to_string(), vec![((1, 0), 4)]);
+
+        let report = check(
+            &ScriptFile::default(),
+            &scenes_with_path,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(matches!(&report.errors[0], Finding::SceneDanglingPath { name, .. } if name == "nope"));
+        assert!(
+            report.warnings.iter().all(|w| !matches!(w, Finding::UnreferencedPath { .. })),
+            "the referenced `real` path must not also show up as dead weight: {:?}",
+            report.warnings,
+        );
+    }
+
+    /// A `#path` block no scene references is dead weight — a warning, not an
+    /// error.
+    #[test]
+    fn unreferenced_path_is_a_warning() {
+        use crate::data::scene;
+        let mut scenes = scene::SceneFile::default();
+        scenes.paths.insert("orphan".to_string(), vec![((1, 0), 4)]);
+
+        let report = check(
+            &ScriptFile::default(),
+            &scenes,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert!(report.is_clean(), "{:?}", report.errors);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(matches!(&report.warnings[0], Finding::UnreferencedPath { name } if name == "orphan"));
     }
 
     /// `Report`'s `Display` prints errors before warnings, one per line.

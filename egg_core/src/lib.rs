@@ -202,10 +202,18 @@ impl<S: ConsoleApi> Ctx<'_, S> {
     }
 
     /// A cutscene definition by name from the loaded registry, or `None` if
-    /// undefined (see [`SceneFile::get_cutscene`]). The walkaround builds a
-    /// playable cutscene from this when a `cutscene` map object fires.
+    /// undefined (see [`SceneFile::get_cutscene`]). RAW — a caller about to
+    /// launch it wants [`Self::get_cutscene_resolved`] instead.
     pub fn get_cutscene(&self, name: &str) -> Option<&CutsceneDef> {
         self.scenes.get_cutscene(name)
+    }
+
+    /// A cutscene definition by name, with every named-path reference
+    /// resolved (see [`SceneFile::get_cutscene_resolved`]) — what the
+    /// walkaround wants when it builds a playable cutscene from this on a
+    /// `cutscene` map object firing.
+    pub fn get_cutscene_resolved(&self, name: &str) -> Option<CutsceneDef> {
+        self.scenes.get_cutscene_resolved(name)
     }
 }
 

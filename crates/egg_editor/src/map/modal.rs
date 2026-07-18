@@ -543,14 +543,18 @@ impl MapViewer {
         }
     }
 
-    /// Save the recording as a one-actor cutscene (the chosen actor's chain), under
-    /// the recorder's name, merged into the on-disk `.eggscene` registry (so other
-    /// cutscenes survive) and recorded as one undoable [`EditAction::SceneEdit`],
-    /// then signal the host to re-parse + live-reload it. The editor writes the
-    /// file itself (it holds the console); only the install is host-deferred.
+    /// Save the recording under the recorder's name, into the machine-owned
+    /// [`SCENE_PATH`] (`recorded.eggscene`, merged into the same registry as
+    /// the hand-authored `main.eggscene` at every load site — see the
+    /// `.eggscene` module doc): a `#path` block per walked RLE run plus the
+    /// one-actor `#cutscene` block that plays them (referencing each by name,
+    /// with any clicked waypoints staying inline as `walk`), recorded as one
+    /// undoable [`EditAction::SceneEdit`], then signal the host to re-parse +
+    /// live-reload it. The editor writes the file itself (it holds the
+    /// console); only the install is host-deferred.
     pub(super) fn commit_path_recorder(&mut self, system: &mut impl ConsoleApi) {
-        // Read the on-disk registry as RAW TEXT and merge into it textually
-        // ([`merge_cutscene_source`]) — replacing just this scene's block and
+        // Read the on-disk source as RAW TEXT and merge into it textually
+        // ([`splice_scene_block`]) — replacing just the affected blocks and
         // leaving every other line verbatim. Parsing the file into a `SceneFile`
         // and re-emitting it would discard every hand-authored comment and blank
         // line, silently eating the file's documentation each time you record.
@@ -602,17 +606,62 @@ impl MapViewer {
                 name: actor.clone(),
             }]
         };
-        let chain = Chain {
-            actor,
+
+        // The scrub def (save-and-play) keeps every `Record` inlined — no
+        // registry lookup, so play-right-after-recording works without waiting
+        // for the on-disk `#path` block to round-trip through live-reload.
+        let scrub_chain = Chain {
+            actor: actor.clone(),
             instructions: pr.instructions.clone(),
         };
-        let def = CutsceneDef {
-            init,
-            content: vec![CutsceneContent::Move(vec![chain])],
+        let scrub_def = CutsceneDef {
+            init: init.clone(),
+            content: vec![CutsceneContent::Move(vec![scrub_chain])],
             ..Default::default()
         };
-        let block = scene::emit_cutscene(&pr.name, &def);
-        let merged = merge_cutscene_source(&raw, &pr.name, &block);
+
+        // The SAVED def extracts each walked `Record` run into its own `#path`
+        // block, replacing it with a `path` reference — a recording can run to
+        // thousands of RLE runs, and inlining that into `recorded.eggscene`
+        // would defeat the whole point of keeping it separate from the
+        // hand-authored source. Clicked waypoints (`walk X Y`) stay inline;
+        // they're already short. The common case (a pure dpad-driven
+        // recording, no waypoint clicks) yields exactly one `<name>_route`;
+        // a rarer walk/click/walk mix numbers the rest `_route2`, `_route3`, …
+        let mut saved_instructions = pr.instructions.clone();
+        let mut path_blocks: Vec<(String, scene::PathRuns)> = Vec::new();
+        for ins in &mut saved_instructions {
+            let Motion::Record { runs, noclip } = &ins.motion else {
+                continue;
+            };
+            let path_name = if path_blocks.is_empty() {
+                format!("{}_route", pr.name)
+            } else {
+                format!("{}_route{}", pr.name, path_blocks.len() + 1)
+            };
+            path_blocks.push((path_name.clone(), runs.clone()));
+            ins.motion = Motion::Path {
+                name: path_name,
+                noclip: *noclip,
+            };
+        }
+        let saved_chain = Chain {
+            actor,
+            instructions: saved_instructions,
+        };
+        let saved_def = CutsceneDef {
+            init,
+            content: vec![CutsceneContent::Move(vec![saved_chain])],
+            ..Default::default()
+        };
+
+        let mut merged = raw.clone();
+        for (name, runs) in &path_blocks {
+            let block = scene::emit_path(name, runs);
+            merged = splice_scene_block(&merged, "path", name, &block);
+        }
+        let cutscene_block = scene::emit_cutscene(&pr.name, &saved_def);
+        merged = splice_scene_block(&merged, "cutscene", &pr.name, &cutscene_block);
         debug_assert!(
             scene::parse(&merged).is_ok(),
             "merged source must re-parse: {merged}"
@@ -625,9 +674,9 @@ impl MapViewer {
             after: merged,
         });
         // Save-and-play: drop straight into the scrubber on what was just
-        // recorded — replayed directly from `def`, so it needn't wait for the
-        // on-disk scene to live-reload back into the registry.
-        self.pending_scrub = Some(ScrubRequest::Recorded(pr.name.clone(), def));
+        // recorded — replayed directly from `scrub_def`, so it needn't wait for
+        // the on-disk scene to live-reload back into the registry.
+        self.pending_scrub = Some(ScrubRequest::Recorded(pr.name.clone(), scrub_def));
     }
 
     /// Write an `.eggscene` source to disk and stage it for the host's live-reload
@@ -897,9 +946,11 @@ mod tests {
         assert_eq!(w.to, Vec2::new(50, 30), "cancel leaves the warp untouched");
     }
 
-    /// Committing a recording emits a one-actor `player` `Record` cutscene, merges
-    /// it into the on-disk registry (existing scenes survive), writes the file, and
-    /// stages the source for the host's live-reload.
+    /// Committing a recording emits a one-actor `player` cutscene referencing a
+    /// `#path` block by name (the walked runs live there, not inline — see the
+    /// `.eggscene` module doc), merges both into the on-disk source (existing
+    /// scenes survive), writes the file, and stages the source for the host's
+    /// live-reload.
     #[test]
     fn path_recorder_commit_emits_and_merges_a_record_cutscene() {
         use egg_platform::test_console::TestConsole;
@@ -929,9 +980,43 @@ mod tests {
         };
         assert_eq!(chains[0].actor, "player");
         assert!(matches!(
-            chains[0].instructions[0].motion,
-            Motion::Record { noclip: false, .. }
+            &chains[0].instructions[0].motion,
+            Motion::Path { name, noclip: false } if name == "town_path_route"
         ));
+        assert_eq!(
+            file.paths.get("town_path_route"),
+            Some(&vec![((1, 0), 5), ((0, 1), 3)]),
+            "the walked runs live in the named path block",
+        );
+    }
+
+    /// A Z-save writes both blocks to the machine-owned `recorded.eggscene`
+    /// (see [`SCENE_PATH`]) and leaves a coexisting hand-authored
+    /// `main.eggscene` completely untouched — the two `.eggscene` sources are
+    /// separate files on disk, merged only in the live registry.
+    #[test]
+    fn path_recorder_writes_recorded_eggscene_leaves_main_untouched() {
+        use egg_platform::test_console::TestConsole;
+        let mut ed = MapViewer::primary();
+        ed.path_recorder = Some(PathRecorder::test(vec![((1, 0), 5)], "town_path"));
+        let mut console = TestConsole::new();
+        let main_before = "#cutscene hand_authored\n    wait 1\n";
+        console.write_file(scene::MAIN_SCENE_PATH, main_before.as_bytes());
+
+        ed.commit_path_recorder(&mut console);
+
+        assert_eq!(
+            console.read_file(scene::MAIN_SCENE_PATH),
+            Some(main_before.as_bytes().to_vec()),
+            "main.eggscene is a separate file — untouched by the recorder",
+        );
+        assert_eq!(scene::MAIN_SCENE_PATH, "data/main.eggscene");
+        assert_eq!(SCENE_PATH, scene::RECORDED_SCENE_PATH, "the recorder targets recorded.eggscene");
+
+        let recorded = String::from_utf8(console.read_file(SCENE_PATH).unwrap()).unwrap();
+        let file = scene::parse(&recorded).expect("recorded.eggscene re-parses");
+        assert!(file.get_cutscene("town_path").is_some(), "the cutscene block landed");
+        assert!(file.paths.contains_key("town_path_route"), "the path block landed");
     }
 
     /// Saving merges textually, so hand-authored comments and other scenes in the
@@ -1035,8 +1120,8 @@ mod tests {
         assert!(ed.pending_scene.is_none(), "nothing recorded, nothing saved");
     }
 
-    /// A `main.eggscene` that exists but won't parse is left untouched (no silent
-    /// wipe of hand-authored cutscenes); the recording is kept to retry.
+    /// A `recorded.eggscene` that exists but won't parse is left untouched (no
+    /// silent wipe of previously recorded paths); the recording is kept to retry.
     #[test]
     fn path_recorder_does_not_clobber_an_unparseable_scene_file() {
         use egg_platform::test_console::TestConsole;
@@ -1073,10 +1158,14 @@ mod tests {
         let CutsceneContent::Move(chains) = &file.get_cutscene("p").unwrap().content[0] else {
             panic!("move");
         };
-        let Motion::Record { runs, .. } = &chains[0].instructions[0].motion else {
-            panic!("record");
+        let Motion::Path { name, .. } = &chains[0].instructions[0].motion else {
+            panic!("path");
         };
-        assert_eq!(runs, &vec![((1, 0), 5), ((0, 0), 4), ((0, 1), 3)]);
+        assert_eq!(
+            file.paths.get(name),
+            Some(&vec![((1, 0), 5), ((0, 0), 4), ((0, 1), 3)]),
+            "trimmed runs land in the named path block",
+        );
     }
 
     /// The move of a chosen map creature: the emitted scene binds it with a `find`
@@ -1243,12 +1332,24 @@ mod tests {
             .instructions
             .iter()
             .map(|i| match &i.motion {
-                Motion::Record { .. } => "record",
+                Motion::Path { .. } => "path",
                 Motion::MoveToPoint(_) => "walk",
                 _ => "other",
             })
             .collect();
-        assert_eq!(kinds, vec!["record", "walk", "record"]);
+        // Each walked run gets extracted into its own `#path` block (numbered
+        // `_route`, `_route2`, …), interleaved with the inline waypoint.
+        assert_eq!(kinds, vec!["path", "walk", "path"]);
+        assert_eq!(
+            file.paths.get("mix_path_route"),
+            Some(&vec![((1, 0), 3)]),
+            "first walked run"
+        );
+        assert_eq!(
+            file.paths.get("mix_path_route2"),
+            Some(&vec![((0, 1), 2)]),
+            "second walked run"
+        );
     }
 
     /// A canvas click through the modal step drops a waypoint at the clicked map

@@ -582,7 +582,7 @@ impl Cutscene {
                     // Chase the sub-scene so its lasting side effects still land,
                     // then drop its transient actors — all in place, so nothing is
                     // left running on the stack after the skip.
-                    if let Some(def) = ctx.scenes.get_cutscene(name).cloned() {
+                    if let Some(def) = ctx.scenes.get_cutscene_resolved(name) {
                         let mut sub = Self::launch(&def, ctx, walkaround);
                         sub.skip(ctx, walkaround);
                         sub.cleanup(walkaround);
@@ -744,6 +744,14 @@ fn step_motion<S: ConsoleApi>(
         }
         Motion::Record { runs, noclip } => {
             (replay_record(path, runs, *noclip, elapsed, ctx, walkaround), true)
+        }
+        // Resolved into a `Motion::Record` at the registry boundary (see
+        // `SceneFile::inline_paths`) before a def is ever launched — this arm
+        // exists only so the match stays exhaustive; a no-op fallback if it's
+        // somehow reached beats a panic mid-scene.
+        Motion::Path { name, .. } => {
+            log::warn!("cutscene: unresolved `path {name}` reached playback");
+            (true, true)
         }
     }
 }
@@ -951,6 +959,12 @@ fn snap_motion(
             }
             shell.animate_stop();
             shell.update_companions();
+        }
+        // Resolved into a `Motion::Record` before a def is ever launched (see
+        // `step_motion`'s matching arm) — a no-op fallback so the match stays
+        // exhaustive without special-casing the skip path.
+        Motion::Path { name, .. } => {
+            log::warn!("cutscene: unresolved `path {name}` reached the skip path");
         }
     }
 }

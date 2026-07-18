@@ -35,6 +35,25 @@ fn script_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/script")
 }
 
+fn data_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/data")
+}
+
+/// Read + parse `data/main.eggscene`, merged with its machine-owned
+/// counterpart `data/recorded.eggscene` (the path recorder's output — not
+/// shipped, so its absence is expected and contributes an empty source; see
+/// the `.eggscene` module doc) into one registry — the same multi-source load
+/// every other load site performs.
+fn load_scenes() -> scene::SceneFile {
+    let main_src = fs::read_to_string(data_dir().join("main.eggscene")).expect("read main.eggscene");
+    let main = scene::parse(&main_src).expect("parse main.eggscene");
+    let recorded = match fs::read_to_string(data_dir().join("recorded.eggscene")) {
+        Ok(src) => scene::parse(&src).expect("parse recorded.eggscene"),
+        Err(_) => scene::SceneFile::default(),
+    };
+    main.merge(recorded).expect("merge main.eggscene + recorded.eggscene")
+}
+
 /// Every `*.eggtext` language overlay under `assets/script` besides the base
 /// (`en.eggtext`), parsed and keyed by language name — mirrors
 /// `egg_game_headless::harness::script_overlay_stems`, so the CLI `--check`
@@ -85,7 +104,7 @@ fn load_maps() -> BTreeMap<String, Vec<MapObject>> {
 #[test]
 fn shipped_assets_have_no_dangling_references() {
     let script = eggtext::parse(include_str!("../../assets/script/en.eggtext")).expect("parse en.eggtext");
-    let scenes = scene::parse(include_str!("../../assets/data/main.eggscene")).expect("parse main.eggscene");
+    let scenes = load_scenes();
     let maps = load_maps();
 
     let mut report = validate::check(

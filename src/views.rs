@@ -399,6 +399,45 @@ pub fn view_hotkeys(
     }
 }
 
+/// Merge a just-changed `.eggscene` source (already written to disk by
+/// whichever editor owns it — see [`egg_core::data::scene::MAIN_SCENE_PATH`]
+/// / [`egg_core::data::scene::RECORDED_SCENE_PATH`] and the `.eggscene`
+/// module doc) with its multi-source counterpart, re-read fresh from the
+/// console, and install the merged registry. Shared by every `pending_scene`
+/// drain — the F2 editor edits only `main.eggscene`, the path recorder writes
+/// only `recorded.eggscene` — so a save from either side can't silently drop
+/// the other's content (a bare `set_scenes(changed)` would have done exactly
+/// that). A missing counterpart is an empty source (fine — one may not exist
+/// yet); a genuine merge conflict (both sources defining the same name) logs
+/// and keeps the previous registry rather than installing a broken merge.
+pub(crate) fn install_scenes(
+    system: &mut impl egg_core::platform::ConsoleApi,
+    state: &mut egg_core::EggState,
+    changed_path: &str,
+    changed: egg_core::data::scene::SceneFile,
+) {
+    use egg_core::data::scene::{MAIN_SCENE_PATH, RECORDED_SCENE_PATH};
+    let other_path = if changed_path == MAIN_SCENE_PATH {
+        RECORDED_SCENE_PATH
+    } else {
+        MAIN_SCENE_PATH
+    };
+    let other = system
+        .read_file(other_path)
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|s| egg_core::data::scene::parse(&s).ok())
+        .unwrap_or_default();
+    let (main, recorded) = if changed_path == MAIN_SCENE_PATH {
+        (changed, other)
+    } else {
+        (other, changed)
+    };
+    match main.merge(recorded) {
+        Ok(merged) => state.set_scenes(merged),
+        Err(e) => warn!("scene merge conflict installing {changed_path}: {e} — keeping the previous registry"),
+    }
+}
+
 /// Act on "edit in text editor" requests parked by the Dialog panel — on the
 /// primary map editor or any view's editor. Each routes *in place*: the primary
 /// panel's link switches the **primary** window to text mode; a view panel's link
@@ -427,19 +466,25 @@ pub fn poll_text_open(mut views: ResMut<ViewWindows>, mut game: ResMut<EggGame>)
         }
     }
 
-    // The map editor's path recorder writes `main.eggscene` itself, then asks the
-    // host to live-reload it (the editor never gets `&mut EggState`). Same shape as
-    // the text editor's `pending_scene` drain.
+    // The map editor's path recorder writes `recorded.eggscene` itself, then
+    // asks the host to live-reload it (the editor never gets `&mut EggState`).
+    // Same shape as the text editor's `pending_scene` drain.
     if let Some(src) = game.map_viewer.pending_scene.take() {
         match egg_core::data::scene::parse(&src) {
-            Ok(file) => game.state.set_scenes(file),
+            Ok(file) => {
+                let g = &mut *game;
+                install_scenes(&mut g.system, &mut g.state, egg_core::data::scene::RECORDED_SCENE_PATH, file);
+            }
             Err(e) => warn!("path recorder: invalid eggscene on save: {e}"),
         }
     }
     for i in 0..views.views.len() {
         if let Some(src) = views.views[i].editor.pending_scene.take() {
             match egg_core::data::scene::parse(&src) {
-                Ok(file) => game.state.set_scenes(file),
+                Ok(file) => {
+                    let g = &mut *game;
+                    install_scenes(&mut g.system, &mut g.state, egg_core::data::scene::RECORDED_SCENE_PATH, file);
+                }
                 Err(e) => warn!("path recorder: invalid eggscene on save: {e}"),
             }
         }
@@ -517,7 +562,9 @@ pub fn update_views(
             }
             if let Some(source) = view.text_editor.pending_scene.take() {
                 match egg_core::data::scene::parse(&source) {
-                    Ok(file) => g.state.set_scenes(file),
+                    Ok(file) => {
+                        install_scenes(&mut g.system, &mut g.state, egg_core::data::scene::MAIN_SCENE_PATH, file)
+                    }
                     Err(e) => warn!("text editor: invalid eggscene on save: {e}"),
                 }
             }

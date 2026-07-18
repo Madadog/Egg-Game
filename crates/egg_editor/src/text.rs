@@ -43,7 +43,10 @@ use egg_ui::dialogue::Dialogue;
 /// known files (matching the startup asset loads). No host directory enumeration
 /// exists, so the file switch (Ctrl+O) toggles between exactly these.
 const EGGTEXT_PATH: &str = "script/en.eggtext";
-const EGGSCENE_PATH: &str = "data/main.eggscene";
+/// The hand-authored `.eggscene` source (see [`scene::MAIN_SCENE_PATH`]) — the
+/// F2 editor never opens `recorded.eggscene` (the path recorder's
+/// machine-owned counterpart, merged in at every load site).
+const EGGSCENE_PATH: &str = scene::MAIN_SCENE_PATH;
 
 /// Row pitch / caret height in framebuffer px. The bitmap font is 8 px tall; 7
 /// keeps lines tight without glyphs touching.

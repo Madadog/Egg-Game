@@ -9,8 +9,14 @@
 //! What's watched (as the host names files, under `assets/`):
 //! * `script/en.eggtext` → [`egg_core::data::script::eggtext::parse`] +
 //!   `Script::set_base`;
-//! * `data/main.eggscene` → [`egg_core::data::scene::parse`] +
-//!   `EggState::set_scenes`;
+//! * `data/main.eggscene` **and** `data/recorded.eggscene` (the path
+//!   recorder's machine-owned counterpart — see the `.eggscene` module doc) →
+//!   both re-parsed with [`egg_core::data::scene::parse`], merged with
+//!   [`egg_core::data::scene::SceneFile::merge`], and installed via
+//!   `EggState::set_scenes`; either file changing re-parses and re-merges
+//!   both, so an edit to one can never wipe the other's content out of the
+//!   live registry. `recorded.eggscene` not existing yet is not an error — it
+//!   contributes an empty source;
 //! * `data/data.toml` → `EggState::reload_data` (item/preset/portrait
 //!   registries — a portrait reload also re-bakes any already-installed
 //!   dialogue via `Script::reresolve_portraits`);
@@ -112,7 +118,7 @@ pub enum ReloadKind {
 pub fn classify(engine_path: &str) -> Option<ReloadKind> {
     match engine_path {
         "script/en.eggtext" => Some(ReloadKind::Script),
-        "data/main.eggscene" => Some(ReloadKind::Scenes),
+        "data/main.eggscene" | "data/recorded.eggscene" => Some(ReloadKind::Scenes),
         // Kept in sync with `egg_core::data::eggdata::DATA_PATH` (asserted in tests).
         "data/data.toml" => Some(ReloadKind::Data),
         "sprites/sheet.png" => Some(ReloadKind::Sheet),
@@ -186,6 +192,7 @@ fn watch_paths(game: &EggGame) -> Vec<String> {
     let mut paths = vec![
         "script/en.eggtext".to_string(),
         "data/main.eggscene".to_string(),
+        "data/recorded.eggscene".to_string(),
         egg_core::data::eggdata::DATA_PATH.to_string(),
         "sprites/sheet.png".to_string(),
     ];
@@ -342,16 +349,51 @@ fn reload_script(game: &mut EggGame, path: &str) {
     }
 }
 
-/// Re-parse `main.eggscene` and install the cutscene registry (same seam as the
-/// F2 editor's `pending_scene` drain). Parse error: log and keep the last good.
+/// Re-parse **both** `main.eggscene` and `recorded.eggscene` and install the
+/// merged cutscene registry (same seam as the F2 editor's `pending_scene`
+/// drain) — `path` is whichever of the two just changed, but both are always
+/// re-read, since a stale copy of the other would otherwise silently drop out
+/// of the live registry (see the `.eggscene` module doc). A missing
+/// `recorded.eggscene` is not an error (it may not exist yet) and contributes
+/// an empty source; an unparseable file, or a merge conflict between the two,
+/// logs and keeps the last good registry.
 fn reload_scenes(game: &mut EggGame, path: &str) {
-    let Some(src) = read_text(path) else { return };
-    match egg_core::data::scene::parse(&src) {
-        Ok(file) => {
-            game.state.set_scenes(file);
+    let Some(changed_src) = read_text(path) else {
+        return;
+    };
+    let changed = match egg_core::data::scene::parse(&changed_src) {
+        Ok(file) => file,
+        Err(e) => {
+            warn!("Hot-reload: invalid eggscene in {path}: {e}");
+            return;
+        }
+    };
+    let other_path = if path == egg_core::data::scene::MAIN_SCENE_PATH {
+        egg_core::data::scene::RECORDED_SCENE_PATH
+    } else {
+        egg_core::data::scene::MAIN_SCENE_PATH
+    };
+    let other = match std::fs::read_to_string(asset_fs_path(other_path)) {
+        Ok(src) => match egg_core::data::scene::parse(&src) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!("Hot-reload: invalid eggscene in {other_path}: {e}");
+                return;
+            }
+        },
+        Err(_) => egg_core::data::scene::SceneFile::default(),
+    };
+    let (main, recorded) = if path == egg_core::data::scene::MAIN_SCENE_PATH {
+        (changed, other)
+    } else {
+        (other, changed)
+    };
+    match main.merge(recorded) {
+        Ok(merged) => {
+            game.state.set_scenes(merged);
             info!("Hot-reloaded {path}");
         }
-        Err(e) => warn!("Hot-reload: invalid eggscene in {path}: {e}"),
+        Err(e) => warn!("Hot-reload: scene merge conflict ({path} vs its counterpart): {e}"),
     }
 }
 
@@ -568,6 +610,16 @@ mod tests {
     fn classifies_known_assets() {
         assert_eq!(classify("script/en.eggtext"), Some(ReloadKind::Script));
         assert_eq!(classify("data/main.eggscene"), Some(ReloadKind::Scenes));
+        assert_eq!(classify("data/recorded.eggscene"), Some(ReloadKind::Scenes));
+        // Both scene-source arms must stay in step with the engine's constants.
+        assert_eq!(
+            classify(egg_core::data::scene::MAIN_SCENE_PATH),
+            Some(ReloadKind::Scenes)
+        );
+        assert_eq!(
+            classify(egg_core::data::scene::RECORDED_SCENE_PATH),
+            Some(ReloadKind::Scenes)
+        );
         assert_eq!(classify("data/data.toml"), Some(ReloadKind::Data));
         // The Data arm must stay in step with the engine's constant.
         assert_eq!(

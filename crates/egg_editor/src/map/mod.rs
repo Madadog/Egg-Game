@@ -268,11 +268,12 @@ enum EditAction {
         before: f64,
         after: f64,
     },
-    /// A cutscene block in `main.eggscene` was created / replaced / renamed by the
-    /// path recorder. The registry lives with the host, not the editor, and the
-    /// smallest thing the editor owns is the file's full source, so undo/redo swap
-    /// the whole `.eggscene` text (`before`/`after`) and re-install it (write +
-    /// live-reload) — the same seam the forward save uses.
+    /// A `#path`/`#cutscene` block pair in `recorded.eggscene` was created /
+    /// replaced / renamed by the path recorder. The registry lives with the
+    /// host, not the editor, and the smallest thing the editor owns is the
+    /// file's full source, so undo/redo swap the whole `.eggscene` text
+    /// (`before`/`after`) and re-install it (write + live-reload) — the same
+    /// seam the forward save uses.
     SceneEdit { before: String, after: String },
 }
 
@@ -566,9 +567,11 @@ struct WarpPreview {
     pan_anchor: Option<(Vec2, Vec2)>,
 }
 
-/// Where to write the cutscene registry (mirrors the private `EGGSCENE_PATH` the
-/// text editor uses).
-const SCENE_PATH: &str = "data/main.eggscene";
+/// Where the path recorder writes its recordings — the machine-owned source
+/// (see [`scene::RECORDED_SCENE_PATH`] and the `.eggscene` module doc), kept
+/// separate from the hand-authored [`scene::MAIN_SCENE_PATH`] the F2 text
+/// editor edits (mirrors its private `EGGSCENE_PATH` constant).
+const SCENE_PATH: &str = scene::RECORDED_SCENE_PATH;
 
 /// An open scene-picker session (fully modal): a list of cutscene names; pick
 /// one with ↑/↓ + Enter to replay it in the scrubber. Populated from the
@@ -583,8 +586,12 @@ struct ScenePicker {
 
 /// An open live path-recorder session (fully modal): drive a puppet actor with
 /// the dpad over the current map, capturing its per-frame heading as an RLE
-/// [`Motion::Record`], then save it as a one-actor cutscene to `main.eggscene`.
-/// The camera auto-follows the puppet, so the dpad is free to drive.
+/// [`Motion::Record`], then save it to the machine-owned
+/// [`scene::RECORDED_SCENE_PATH`] as a `#path` block (the recorded runs) plus
+/// a one-actor `#cutscene` block that plays it (`path [noclip] NAME`) — kept
+/// out of the hand-authored `main.eggscene` so a long recording never sits
+/// inline (see the `.eggscene` module doc). The camera auto-follows the
+/// puppet, so the dpad is free to drive.
 ///
 /// The recording is a single actor's chain built as an ordered mix of two kinds
 /// of segment: **walked** runs (the dpad, RLE — buffered live in [`runs`](Self::runs)
@@ -1398,6 +1405,12 @@ fn actor_spawn_pos(def: &CutsceneDef, actor: &str) -> Option<Vec2> {
 ///   ends and nothing anchors again until the next absolute motion;
 /// * `face` motions and non-`move` content don't move the actor.
 ///
+/// `def` is always the *resolved* form (every [`Motion::Path`] already inlined
+/// to a [`Motion::Record`] — see [`scene::SceneFile::named_defs`], which is
+/// what feeds [`MapViewer::scene_defs`](super::MapViewer::scene_defs)), so a
+/// bare `Motion::Path` never reaches this walk; its match arm is a defensive
+/// no-op rather than a panic.
+///
 /// Single-point polylines (a spawn with no motion) are kept — the overlay draws
 /// them as a marker dot. Collision isn't re-walked (a `walk` blocked in-game
 /// still draws its straight-line intent), hence "best-effort". Actors are walked
@@ -1486,6 +1499,9 @@ fn scene_paths(def: &CutsceneDef) -> Vec<Vec<Vec2>> {
                             pos = None;
                         }
                         Motion::FaceEntity(_) | Motion::FaceDir(_, _) => {}
+                        // Never reached in practice — `def` is always pre-resolved
+                        // (see the doc above); a no-op keeps this match exhaustive.
+                        Motion::Path { .. } => {}
                     }
                 }
             }
@@ -1495,22 +1511,32 @@ fn scene_paths(def: &CutsceneDef) -> Vec<Vec<Vec2>> {
     paths
 }
 
-/// Splice one emitted `#cutscene NAME …` block into raw `.eggscene` source,
-/// preserving every other line verbatim — comments, blank lines, and other
-/// scenes all survive (unlike a parse-then-re-emit, which discards them). If a
-/// block with the same `name` already exists it's replaced in place; otherwise
-/// the block is appended. Blocks are delimited by a `#cutscene NAME` header at
-/// column 0, running to the next such header or end of file.
-fn merge_cutscene_source(raw: &str, name: &str, block: &str) -> String {
-    // The name token of a `#cutscene` header line (col 0), else `None`.
-    fn header_name(line: &str) -> Option<&str> {
-        line.strip_prefix("#cutscene ")
-            .and_then(|r| r.split_whitespace().next())
+/// Splice one emitted `#KIND NAME …` block (`KIND` is `"cutscene"` or
+/// `"path"`) into raw `.eggscene` source, preserving every other line
+/// verbatim — comments, blank lines, and every other block (of either kind)
+/// survive (unlike a parse-then-re-emit, which discards them). If a block
+/// with the same `kind` + `name` already exists it's replaced in place;
+/// otherwise the block is appended. Blocks are delimited by a `#cutscene NAME`
+/// or `#path NAME` header at column 0, running to the next such header (of
+/// either kind) or end of file — a boundary check against the OTHER kind too
+/// is what lets a `#path` block sit right before a same-named `#cutscene`
+/// block without one's splice swallowing the other. Shared by the path
+/// recorder's Z-save, which writes both a `#path` (the recorded runs) and a
+/// `#cutscene` (the one-actor scene referencing it) block per recording.
+fn splice_scene_block(raw: &str, kind: &str, name: &str, block: &str) -> String {
+    // The (kind, name) of a column-0 `#cutscene`/`#path` header line, else `None`.
+    fn header(line: &str) -> Option<(&str, &str)> {
+        let rest = line.strip_prefix('#')?;
+        let (head_kind, rest) = rest.split_once(' ')?;
+        if head_kind != "cutscene" && head_kind != "path" {
+            return None;
+        }
+        Some((head_kind, rest.split_whitespace().next()?))
     }
     let block = block.trim_end();
     let lines: Vec<&str> = raw.lines().collect();
 
-    let Some(start) = lines.iter().position(|l| header_name(l) == Some(name)) else {
+    let Some(start) = lines.iter().position(|l| header(l) == Some((kind, name))) else {
         // Absent: append after the existing content, blank-line separated.
         let mut out = raw.trim_end().to_string();
         if !out.is_empty() {
@@ -1521,10 +1547,11 @@ fn merge_cutscene_source(raw: &str, name: &str, block: &str) -> String {
         return out;
     };
 
-    // Present: replace `start..end`, where `end` is the next header (or EOF).
+    // Present: replace `start..end`, where `end` is the next header (either
+    // kind) or EOF.
     let end = lines[start + 1..]
         .iter()
-        .position(|l| header_name(l).is_some())
+        .position(|l| header(l).is_some())
         .map_or(lines.len(), |i| start + 1 + i);
     let mut out = String::new();
     for l in &lines[..start] {
