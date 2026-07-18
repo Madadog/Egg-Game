@@ -158,6 +158,14 @@ pub struct Dialogue {
     /// takes it when it centres the camera. Overwritten (not stacked) if
     /// another fires first; ignored by camera-less hosts of the box.
     pub pending_shake: Option<(u32, i16)>,
+    /// `#cue NAME` beats that playback has passed, in the order it passed
+    /// them, waiting for the cutscene engine (wave 3) to
+    /// [`drain`](Self::take_cues) each tick. A `Vec`, not an `Option` like
+    /// [`pending_shake`](Self::pending_shake) — cues must not overwrite each
+    /// other, since the engine needs to see every one to fire its matching
+    /// `on NAME` handler. State-flavoured: banked even under a manual
+    /// fast-forward (see [`TextContent::Cue`]).
+    pub pending_cues: Vec<String>,
 }
 impl Dialogue {
     pub const fn default() -> Self {
@@ -175,6 +183,7 @@ impl Dialogue {
             speed_frames: 1,
             choice: None,
             pending_shake: None,
+            pending_cues: Vec::new(),
         }
     }
     pub fn with_width(self, width: usize) -> Self {
@@ -212,6 +221,10 @@ impl Dialogue {
         save: &mut SaveData,
         messages: &[Message],
     ) {
+        // A host may start a new conversation without calling `close()`
+        // first — stale cues from whatever played before must not leak into
+        // this one.
+        self.pending_cues.clear();
         self.next_text = lower_messages(messages).into_iter().rev().collect();
         self.next_text(system, font, save, false);
     }
@@ -310,6 +323,14 @@ impl Dialogue {
                 save.set_flag(&name, value);
                 true
             }
+            // Bank the cue for the cutscene engine to drain — state-flavoured
+            // like `SetFlag` above, unlike `Shake` below: no `manual_skip`
+            // guard, so a fast-forwarded cue is still banked. Skipping
+            // dialogue must not desynchronize scene choreography from it.
+            TextContent::Cue(name) => {
+                self.pending_cues.push(name);
+                true
+            }
             // Bank the shake for the camera driver — but, being time-flavoured
             // like a `Delay`, it is dropped on a manual fast-forward: skipping
             // a page shouldn't jolt the screen.
@@ -375,6 +396,12 @@ impl Dialogue {
             ..Self::default()
         };
         self.next_text.shrink_to_fit();
+    }
+    /// Drain every `#cue` playback has banked since the last drain — the
+    /// wave-3 cutscene engine calls this each tick while a dialogue step is
+    /// running, to fire whatever `on NAME` handlers those cues wake up.
+    pub fn take_cues(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_cues)
     }
     /// Characters (not bytes) in the current text. [`characters`](Self::characters)
     /// is a char index, so all typewriter bookkeeping uses this count.
@@ -957,6 +984,78 @@ mod tests {
         dialogue.pending_shake = None;
         dialogue.consume_text_content(&mut NullConsole::new(), &font, &mut save, shake, true);
         assert_eq!(dialogue.pending_shake, None);
+    }
+
+    /// A `#cue` is state-flavoured (unlike `#shake`, which is time-flavoured
+    /// — see the test above): a manual fast-forward still banks a cue it
+    /// skips past, because scene choreography must not desynchronize from
+    /// dialogue just because the player skipped through it.
+    #[test]
+    fn cue_still_banks_under_a_manual_skip_unlike_shake() {
+        let mut dialogue = Dialogue::default();
+        let mut save = SaveData::default();
+        let font = egg_render::Font::blank();
+
+        let cue = TextContent::Cue("arrived".to_string());
+        assert!(cue.is_skip(), "fires in place like a sound");
+
+        dialogue.consume_text_content(&mut NullConsole::new(), &font, &mut save, cue, true);
+        assert_eq!(
+            dialogue.pending_cues,
+            vec!["arrived".to_string()],
+            "banked despite the manual skip"
+        );
+
+        // Contrast: a shake reached the same way, in the same manually
+        // skipped content, is dropped instead.
+        let shake = TextContent::Shake { frames: 10, amplitude: 2 };
+        dialogue.consume_text_content(&mut NullConsole::new(), &font, &mut save, shake, true);
+        assert_eq!(
+            dialogue.pending_shake, None,
+            "shake is time-flavoured and dropped under a manual skip"
+        );
+    }
+
+    /// Cues bank in the order playback passes them (a `Vec`, not overwritten
+    /// like `pending_shake`); `take_cues` drains the bank and leaves it
+    /// empty for the next drain.
+    #[test]
+    fn cues_bank_in_order_and_take_cues_drains_them() {
+        let messages = dialogue_from(
+            "#dialogue d\n    #cue first\n    Hi.\n\n    #cue second\n    Bye.",
+            "d",
+        );
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert_eq!(d.current_text.as_deref(), Some("Hi."));
+        advance(&mut d, &mut console, &font, &mut save);
+        assert_eq!(d.current_text.as_deref(), Some("Bye."));
+
+        assert_eq!(d.take_cues(), vec!["first".to_string(), "second".to_string()]);
+        assert!(d.take_cues().is_empty(), "draining empties the bank");
+    }
+
+    /// A host may start a new conversation without calling `close()` first —
+    /// `set_messages` must clear any cues left banked from whatever played
+    /// before, or they'd leak into the new conversation's beats.
+    #[test]
+    fn set_messages_clears_stale_cues_from_a_previous_conversation() {
+        let mut console = NullConsole::new();
+        let font = Font::blank();
+        let mut save = SaveData::default();
+        let mut d = Dialogue::default();
+        d.pending_cues = vec!["stale".to_string()];
+
+        let messages = dialogue_from("#dialogue d\n    Hi.", "d");
+        d.set_messages(&mut console, &font, &mut save, &messages);
+        assert!(
+            d.pending_cues.is_empty(),
+            "stale cues from before must not leak into the new conversation"
+        );
     }
 
     /// A dialogue whose live line is `text`, bypassing the wrap/fit path

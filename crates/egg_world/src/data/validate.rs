@@ -680,6 +680,10 @@ fn walk_content(
                 }
             }
         }
+        // `Cue` names are free-form at parse time (unlike a `#flag`, which is
+        // declared): cross-referencing them against the scene file's `on`
+        // handlers is a wave-3 concern, once the cutscene engine exists to
+        // define what "unreferenced" or "dangling" even means for one.
         ContentDef::Text(_)
         | ContentDef::Auto(_)
         | ContentDef::Delayed(_, _)
@@ -688,7 +692,8 @@ fn walk_content(
         | ContentDef::Pause
         | ContentDef::Flip(_)
         | ContentDef::Shake(_, _)
-        | ContentDef::Speed(_, _) => {}
+        | ContentDef::Speed(_, _)
+        | ContentDef::Cue(_) => {}
     }
 }
 
@@ -955,6 +960,12 @@ fn skeleton_diff_content(base: &ContentDef, overlay: &ContentDef) -> Option<Stri
         (ContentDef::Speed(bc, bf), ContentDef::Speed(oc, of)) => {
             ((bc, bf) != (oc, of)).then(|| format!("#speed {bc}/{bf} vs {oc}/{of}"))
         }
+        // A cue is structure, not text: it's a beat name the scene
+        // choreography subscribes to by exact spelling, so a translation may
+        // not rename, drop, or reorder one.
+        (ContentDef::Cue(bn), ContentDef::Cue(on)) => {
+            (bn != on).then(|| format!("#cue {bn:?} vs {on:?}"))
+        }
         (ContentDef::Choice(bo), ContentDef::Choice(oo)) => skeleton_diff_choice(bo, oo),
         (b, o) => Some(format!("{} vs {}", content_kind(b), content_kind(o))),
     }
@@ -977,6 +988,7 @@ fn content_kind(c: &ContentDef) -> &'static str {
         ContentDef::Shake(..) => "#shake",
         ContentDef::Choice(_) => "#choice",
         ContentDef::Speed(..) => "#speed",
+        ContentDef::Cue(..) => "#cue",
     }
 }
 
@@ -1341,6 +1353,24 @@ mod tests {
             Finding::OverlaySkeletonMismatch { key, path, .. } => {
                 assert_eq!(key, "d");
                 assert!(path.contains("a_normal") && path.contains("b_open"), "{path}");
+            }
+            other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
+        }
+    }
+
+    /// A `#cue` is structure, not text: renaming it in a translation is a
+    /// skeleton mismatch, exactly like swapping a `#pic`'s portrait — the
+    /// scene choreography subscribes to the base's exact cue names.
+    #[test]
+    fn overlay_cue_rename_is_an_error() {
+        let base = script("#dialogue d\n    #cue arrive\n    Hi.");
+        let overlay = script("#dialogue d\n    #cue llegada\n    Hola.");
+        let report = check_overlay(&base, &overlay, "es");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        match &report.errors[0] {
+            Finding::OverlaySkeletonMismatch { key, path, .. } => {
+                assert_eq!(key, "d");
+                assert!(path.contains("arrive") && path.contains("llegada"), "{path}");
             }
             other => panic!("expected OverlaySkeletonMismatch, got {other:?}"),
         }

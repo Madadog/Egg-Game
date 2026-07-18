@@ -98,6 +98,17 @@ pub enum TextContent {
     /// triples it, `#speed 1/10` holds ten frames between characters. See
     /// [`crate::data::script::eggtext`] for the surface syntax.
     Speed { chars: u8, frames: u8 },
+    /// A named beat for scene choreography — the `#cue NAME` directive.
+    /// Fires like [`SetFlag`](Self::SetFlag): an `is_skip` item consumed in
+    /// place, banked (not overwritten) on the `Dialogue` widget's
+    /// `pending_cues` for the cutscene engine (wave 3) to drain as it steps
+    /// dialogue forward. State-flavoured, not time-flavoured — contrast with
+    /// [`Shake`](Self::Shake): a manual fast-forward still banks a cue that
+    /// gets skipped past, because scene choreography must not desynchronize
+    /// from dialogue just because the player mashed through it. No upfront
+    /// declaration (unlike a `#flag`); cross-validation against the scene
+    /// file's `on` handlers is a wave-3 concern.
+    Cue(String),
 }
 impl TextContent {
     pub fn is_auto(&self) -> bool {
@@ -120,6 +131,7 @@ impl TextContent {
                 | If { .. }
                 | Clear
                 | Speed { .. }
+                | Cue(_)
         )
     }
     /// Plain text (stops on a manual advance unless reached via auto-advance).

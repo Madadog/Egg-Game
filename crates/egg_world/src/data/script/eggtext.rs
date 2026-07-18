@@ -92,6 +92,13 @@
 //!     the portrait side whenever the speaker portrait changes, so two
 //!     characters trade left/right automatically. An explicit `#flip` still
 //!     overrides it for that message.
+//!   * `#cue NAME` marks a beat for scene choreography to subscribe to — the
+//!     `.eggscene` cutscene engine drains cues the dialogue box plays past
+//!     and fires whatever `on NAME` handler is waiting on them. Unlike
+//!     `#flag`, a cue name needs no upfront declaration; well-named cues
+//!     double as stage directions for translators. Structural under the
+//!     overlay skeleton lint (see "What belongs where" below) — a
+//!     translation may not drop, rename, or reorder one.
 //!
 //! ## Conditionals
 //!
@@ -204,12 +211,12 @@
 //!
 //! `.eggtext` owns *presentation*, and the save flags that presentation
 //! reads and writes: text, portraits/flips, sounds, pacing (`#delay`/
-//! `#speed`), shakes, `#choice`, `#set`, and the `#if`/`#elif`/`#else`
-//! branching that reads a flag back. It is authored **per language** — every
-//! key here is translated as a unit, and a translation is linted against the
-//! base script's *skeleton* (its directives, branches, and choices, with
-//! only text left free) rather than trusted by eye — see
-//! [`crate::data::validate::check_overlay`].
+//! `#speed`), shakes, `#choice`, `#set`, `#cue` beats, and the
+//! `#if`/`#elif`/`#else` branching that reads a flag back. It is authored
+//! **per language** — every key here is translated as a unit, and a
+//! translation is linted against the base script's *skeleton* (its
+//! directives, branches, and choices, with only text left free) rather than
+//! trusted by eye — see [`crate::data::validate::check_overlay`].
 //!
 //! [`.eggscene`](crate::data::scene) owns the *world*: entities, camera, map
 //! changes, inventory. It is language-independent — choreography is staged
@@ -1085,6 +1092,11 @@ fn parse_message(
                             arg.ok_or_else(|| ParseError::new(line_no, "`#sound` needs a name"))?;
                         def.content.push(ContentDef::Sound(name.to_string()));
                     }
+                    "cue" => {
+                        let name =
+                            arg.ok_or_else(|| ParseError::new(line_no, "`#cue` needs a name"))?;
+                        def.content.push(ContentDef::Cue(name.to_string()));
+                    }
                     "delay" => def.content.push(ContentDef::Delay(parse_u8(arg, line_no)?)),
                     "speed" => {
                         let (chars, frames) = parse_speed(arg, line_no)?;
@@ -1703,6 +1715,25 @@ mod tests {
         assert_eq!(parse("#dialogue d\n    #shake many").unwrap_err().line, 2);
         assert_eq!(parse("#dialogue d\n    #shake 30 x").unwrap_err().line, 2);
         assert_eq!(parse("#dialogue d\n    #shake 30 2 9").unwrap_err().line, 2);
+    }
+
+    /// `#cue NAME` fires in content order like `#sound`, needs exactly one
+    /// name token, and rejects misauthored forms with a line-pointed error.
+    #[test]
+    fn cue_parses_and_interleaves_with_text() {
+        let messages = convo("#dialogue d\n    Before.\n    #cue arrive\n    After.");
+        assert_eq!(
+            messages[0].content,
+            vec![
+                ContentDef::Text("Before.".into()),
+                ContentDef::Cue("arrive".into()),
+                ContentDef::Text("After.".into()),
+            ],
+        );
+
+        // Misauthored forms point at their line.
+        assert_eq!(parse("#dialogue d\n    #cue").unwrap_err().line, 2);
+        assert_eq!(parse("#dialogue d\n    #cue a b").unwrap_err().line, 2);
     }
 
     #[test]

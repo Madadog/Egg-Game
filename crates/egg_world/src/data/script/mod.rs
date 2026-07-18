@@ -220,7 +220,7 @@ pub struct MessageDef {
 /// A single content item within a message. Externally tagged, so JSON is
 /// `{"auto": "..."}`, `{"delayed": ["...", 30]}`, `{"sound": "gain"}`,
 /// `{"portrait": "y_oof"}`, `{"flip": true}`, `{"delay": 30}`,
-/// `{"set_flag": ["name", true]}`, or `"pause"`.
+/// `{"set_flag": ["name", true]}`, `{"cue": "name"}`, or `"pause"`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentDef {
@@ -255,6 +255,16 @@ pub enum ContentDef {
     /// subsequent text in the dialogue. Surface syntax `#speed 3` is `(3, 1)`,
     /// `#speed 1/10` is `(1, 10)`. JSON: `{"speed": [1, 10]}`.
     Speed(u8, u8),
+    /// A named beat, marking a point in the conversation for scene
+    /// choreography to subscribe to — the `#cue NAME` directive. JSON:
+    /// `{"cue": "name"}`. State-flavoured like [`SetFlag`](Self::SetFlag)
+    /// (fires even under a manual fast-forward — a skipped-past cue must
+    /// still be banked, or the cutscene engine desyncs from dialogue), not
+    /// time-flavoured like [`Shake`](Self::Shake). No upfront declaration
+    /// (unlike a `#flag`): cue names are free-form here, cross-validated
+    /// against the scene file's `on` handlers by the cutscene engine (see
+    /// `crate::data::script::message::TextContent::Cue`).
+    Cue(String),
 }
 
 /// One option of a [`ContentDef::Choice`]: its menu text and the flags it sets
@@ -300,6 +310,7 @@ impl ContentDef {
                     .collect(),
             ),
             ContentDef::Speed(chars, frames) => TextContent::Speed { chars, frames },
+            ContentDef::Cue(name) => TextContent::Cue(name),
         })
     }
 }
