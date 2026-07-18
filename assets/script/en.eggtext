@@ -704,6 +704,7 @@ menu_music_test = "Music Test"
     Right.
     
     #pic c_close
+    #flip false
     Left again.
     
     #pic c_normal
