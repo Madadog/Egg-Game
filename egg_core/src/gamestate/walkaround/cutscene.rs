@@ -930,15 +930,28 @@ impl Cutscene {
     /// after the first item, which contradicted this very doc's promise that
     /// lasting side effects still land on a skip. `#cue`s the drain surfaces
     /// fire (and snap) their `on` handlers exactly like a live-fired one —
-    /// see [`fire_and_snap_handlers`](Self::fire_and_snap_handlers).
+    /// see [`fire_and_snap_handlers`](Self::fire_and_snap_handlers). A
+    /// dialogue step whose box is already open mid-play is drained from
+    /// where it stands, not restarted — its consumed effects (including an
+    /// answered `#choice`) already happened live, exactly once.
     pub fn skip<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
+        // Whether the step the skip lands on already has its box open
+        // mid-play. Everything that box consumed so far — `#set`s, sounds, a
+        // `#choice` the player actually answered — happened live, exactly
+        // once; the drain below must pick up from the box as it stands, not
+        // `set_messages`-restart the conversation, or those effects would
+        // replay and an already-answered choice would be answered a *second*
+        // time, with its first option, on top of the player's real pick.
+        let mut live_box = matches!(self.state, StepState::Dialogue { opened: true, .. });
         while let Some(content) = self.content.get(self.step).cloned() {
             match &content {
                 CutsceneContent::Dialogue { key, handlers } => {
-                    let convo = ctx.get_dialogue(key);
-                    walkaround
-                        .dialogue
-                        .set_messages(ctx.system, ctx.font, ctx.save, &convo);
+                    if !live_box {
+                        let convo = ctx.get_dialogue(key);
+                        walkaround
+                            .dialogue
+                            .set_messages(ctx.system, ctx.font, ctx.save, &convo);
+                    }
                     loop {
                         if walkaround.dialogue.is_choosing() {
                             walkaround.dialogue.confirm_choice(ctx.system, ctx.font, ctx.save);
@@ -965,6 +978,9 @@ impl Cutscene {
                 other => self.skip_content(ctx, walkaround, other),
             }
             self.step += 1;
+            // Only the step that was mid-play when the skip began can own a
+            // live box; every later step's conversation starts from nothing.
+            live_box = false;
         }
         self.state = StepState::Done;
         self.handler_runs.clear();
@@ -2046,6 +2062,59 @@ mod tests {
              it was — not replayed from the start and not double-fired by the manual \
              drain rediscovering the same `go` cue",
         );
+    }
+
+    /// A skip that lands on a mid-play dialogue step drains the box from
+    /// where it stands — it must not `set_messages`-restart the
+    /// conversation. The observable stake: a `#choice` the player already
+    /// answered live would be answered a second time by the restarted
+    /// drain's deterministic first-option pick, firing the *first* option's
+    /// flags on top of the player's real pick.
+    #[test]
+    fn skip_keeps_a_live_answered_choice_and_drains_whats_left() {
+        let mut h = Harness::new();
+        install_script(
+            &mut h,
+            "#flag picked_a\n#flag picked_b\n#flag epilogue\n#dialogue ask\n\
+             \x20   .\n\
+             \x20   #choice\n\
+             \x20   #option A\n\
+             \x20   #set picked_a true\n\
+             \x20   #option B\n\
+             \x20   #set picked_b true\n\
+             \n\
+             \x20   #set epilogue true\n\
+             \x20   Done.",
+        );
+        let def = scene::parse("#cutscene t\n    dialogue ask")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.step(ctx, w)); // opens on "." (line-done at once)
+        h.input.controllers[0].a = [true, false];
+        h.frame(|ctx, w| cs.step(ctx, w)); // A: advance into the choice menu
+        assert!(h.walk.dialogue.is_choosing(), "the menu is open");
+        h.input.controllers[0].a = [false, true];
+        h.input.controllers[0].down = [true, false];
+        h.frame(|ctx, w| cs.step(ctx, w)); // highlight option B
+        h.input.controllers[0].down = [false, true];
+        h.input.controllers[0].a = [true, false];
+        h.frame(|ctx, w| cs.step(ctx, w)); // pick it, live
+        assert!(h.save.flag("picked_b"), "the player's live pick landed");
+        assert!(!h.save.flag("epilogue"), "message 2 not yet reached");
+
+        h.frame(|ctx, w| cs.skip(ctx, w));
+
+        assert!(
+            !h.save.flag("picked_a"),
+            "the answered choice was not re-answered with option A by a restarted drain"
+        );
+        assert!(h.save.flag("picked_b"), "the real pick still stands");
+        assert!(h.save.flag("epilogue"), "the not-yet-reached #set still landed");
+        assert!(!h.walk.dialogue.is_active(), "the box closed");
     }
 
     /// A dialogue box opened by a top-level `interact` step (not a
