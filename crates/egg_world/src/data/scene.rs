@@ -129,7 +129,17 @@
 //! speed inflated to suit); omitted ⇒ natural speed until done. Motions:
 //! `walk X Y`, `noclip X Y`, `to NAME`, `beside NAME [gap]`, `face NAME`,
 //! `face DX DY`, `teleport X Y`, `record [noclip] DX DY N …`,
-//! `path [noclip] NAME` (a `#path` block by name — see above).
+//! `path [noclip] NAME` (a `#path` block by name — see above), `pose NAME` /
+//! `pose none`. `pose`, like `face`, is instant (`in N` just holds the chain
+//! there for N frames) — but unlike every other motion, its effect *persists*
+//! on the actor past the instruction, past the whole step, even past a scene
+//! that's playing something else on top: it's standing choreography (a guy
+//! slumped against a wall) rather than a one-off action. It stays until
+//! another `pose` overwrites it, `pose none` clears it, or the owning scene's
+//! cleanup clears every pose it applied, same as it does spawned actors — so
+//! a pose can't outlive the scene that set it. A posed actor draws a named
+//! sprite strip off its preset instead of its walk sprite; a name the preset
+//! doesn't have logs a warning and falls back to the walk sprite.
 //!
 //! # What belongs where
 //!
@@ -370,6 +380,15 @@ pub enum Motion {
     /// no `in N` budget (rejected at parse time) and the emitter never writes
     /// one.
     Path { name: String, noclip: bool },
+    /// `pose NAME` / `pose none` — put (or clear) a named standing pose on
+    /// the actor: instant like [`FaceDir`](Self::FaceDir) (an `in N` budget
+    /// just holds the chain there for N frames), but unlike every other
+    /// motion its effect outlives the instruction — it persists on the actor
+    /// until another `pose`, a `pose none`, or the owning scene's cleanup
+    /// clears it (see the module doc). `None` is `pose none`. The named strip
+    /// is resolved against the actor's preset at draw time, not here — this
+    /// is just the choreography instruction.
+    Pose(Option<String>),
 }
 
 /// The hand-owned `.eggscene` source — cutscenes and paths an author writes
@@ -1032,6 +1051,10 @@ fn parse_motion(segment: &str, line_no: usize) -> Result<Instruction, ParseError
         "teleport" => Motion::Teleport(args_vec2(args, line_no, "teleport")?),
         "record" => parse_record(args, line_no)?,
         "path" => parse_path_ref(args, line_no)?,
+        "pose" => {
+            let name = args_name(args, line_no, "pose")?;
+            Motion::Pose(if name == "none" { None } else { Some(name) })
+        }
         other => return Err(ParseError::new(line_no, format!("unknown motion `{other}`"))),
     };
     // `record`/`path` both replay at their own recorded frame counts; an `in N`
@@ -1372,6 +1395,10 @@ fn emit_motion(motion: &Motion) -> String {
                 format!("path {name}")
             }
         }
+        Motion::Pose(name) => match name {
+            Some(name) => format!("pose {name}"),
+            None => "pose none".to_string(),
+        },
     }
 }
 
@@ -1463,7 +1490,7 @@ mod tests {
         let def = one(
             "#cutscene c\n\
              \x20   move\n\
-             \x20       a: walk 1 2; noclip 3 4; to b; beside b 5; face b; face 1 -1; teleport 7 8; record noclip 1 0 10",
+             \x20       a: walk 1 2; noclip 3 4; to b; beside b 5; face b; face 1 -1; teleport 7 8; record noclip 1 0 10; pose slump; pose none",
         );
         let CutsceneContent::Move(chains) = &def.content[0] else {
             panic!("move");
@@ -1479,7 +1506,30 @@ mod tests {
                 Instruction::new(Motion::FaceDir(1, -1), 0),
                 Instruction::new(Motion::Teleport(Vec2::new(7, 8)), 0),
                 Instruction::new(Motion::Record { runs: vec![((1, 0), 10)], noclip: true }, 0),
+                Instruction::new(Motion::Pose(Some("slump".into())), 0),
+                Instruction::new(Motion::Pose(None), 0),
             ]
+        );
+    }
+
+    /// `pose` takes the same `in N` budget as `face` (holds the chain there
+    /// for N frames rather than being rejected like `record`/`path`), and a
+    /// missing pose name is a parse-time error pointed at the line.
+    #[test]
+    fn pose_takes_an_in_budget_and_requires_a_name() {
+        let def = one("#cutscene c\n    move\n        a: pose slump in 30");
+        let CutsceneContent::Move(chains) = &def.content[0] else {
+            panic!("move");
+        };
+        assert_eq!(
+            chains[0].instructions,
+            vec![Instruction::new(Motion::Pose(Some("slump".into())), 30)]
+        );
+        assert_eq!(
+            parse("#cutscene c\n    move\n        a: pose")
+                .unwrap_err()
+                .line,
+            3
         );
     }
 
@@ -1844,8 +1894,8 @@ mod tests {
              \x20   spawn fido dog 1 2\n\
              \x20   bind ellie player\n\n\
              \x20   move\n\
-             \x20       ellie: walk 5 6 in 12; beside fido\n\
-             \x20       fido: to ellie\n\
+             \x20       ellie: walk 5 6 in 12; beside fido; pose slump\n\
+             \x20       fido: to ellie; pose none\n\
              \x20   camera fido\n\
              \x20   dialogue hello\n\
              \x20   camera 5 6\n\

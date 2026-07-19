@@ -21,7 +21,7 @@
 //! so map changes (a sub-cutscene's `init_map`) happen at cutscene boundaries
 //! with fresh requisition.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::Ctx;
 use crate::data::scene::{
@@ -32,7 +32,7 @@ use crate::data::sound::{self};
 use crate::geometry::Vec2;
 use crate::platform::{ConsoleApi, ConsoleHelper, dpad_delta, just_pressed, pressed};
 use crate::world::camera::Shake;
-use crate::world::player::{EntityId, MoveMode};
+use crate::world::player::{EntityId, MoveMode, Shell};
 
 use super::{EntityPath, WalkaroundState};
 
@@ -81,6 +81,15 @@ pub struct Cutscene {
     /// and ticked by [`advance_dialogue`](Self::advance_dialogue), cleared the
     /// moment that step completes. Empty outside a `dialogue` step.
     handler_runs: Vec<HandlerRun>,
+    /// Actors a `pose` motion (step or snap, top-level or in an `on` handler —
+    /// see [`crate::data::scene::Motion::Pose`]) has been applied to since this
+    /// scene launched. A pose is scene-scoped choreography, so [`cleanup`]
+    /// clears it from every actor recorded here — the same "undo what I did"
+    /// contract [`spawned`] gives the actors this scene created outright.
+    ///
+    /// [`cleanup`]: Self::cleanup
+    /// [`spawned`]: Self::spawned
+    posed: HashSet<EntityId>,
 }
 
 /// Progress of a `camera … over N` glide: the focus eases from `from` (the
@@ -238,6 +247,7 @@ impl Cutscene {
             glide: None,
             shake: None,
             handler_runs: Vec::new(),
+            posed: HashSet::new(),
         }
     }
 
@@ -480,6 +490,12 @@ impl Cutscene {
                 continue;
             }
             let ins = &chain.instructions[prog.instr];
+            // Record every actor a `pose` motion touches (top-level or inside a
+            // handler — both paths call this method) so `cleanup` can undo it;
+            // see the `posed` field doc.
+            if let Motion::Pose(_) = &ins.motion {
+                self.posed.insert(resolve_name(&chain.actor, &self.table));
+            }
             let (finished, progressed) = step_motion(
                 &chain.actor,
                 &ins.motion,
@@ -805,18 +821,23 @@ impl Cutscene {
         walkaround.inventory_ui.inventory = inventory;
     }
 
-    /// Remove this cutscene's transient `spawn`ed actors from the world — run
-    /// once, when it finishes or is skipped.
+    /// Remove this cutscene's transient `spawn`ed actors from the world and
+    /// clear every `pose` it applied — run once, when it finishes or is
+    /// skipped, so neither outlives the scene that created it.
     pub fn cleanup(&self, walkaround: &mut WalkaroundState) {
-        if self.spawned.is_empty() {
-            return;
+        if !self.spawned.is_empty() {
+            walkaround
+                .entities
+                .retain(|e| match &e.id {
+                    Some(id) => !self.spawned.contains(id),
+                    None => true,
+                });
         }
-        walkaround
-            .entities
-            .retain(|e| match &e.id {
-                Some(id) => !self.spawned.contains(id),
-                None => true,
-            });
+        for id in &self.posed {
+            if let Some(path) = walkaround.resolve_path(id) {
+                path.shell_mut(walkaround).pose = None;
+            }
+        }
     }
 
     /// Fast-forward one content step to its end state — the per-step body
@@ -837,6 +858,11 @@ impl Cutscene {
             CutsceneContent::Move(chains) => {
                 for chain in chains {
                     for ins in &chain.instructions {
+                        // Same bookkeeping as `advance_move_chains` — see the
+                        // `posed` field doc.
+                        if let Motion::Pose(_) = &ins.motion {
+                            self.posed.insert(resolve_name(&chain.actor, &self.table));
+                        }
                         snap_motion(&chain.actor, &ins.motion, &self.table, walkaround);
                     }
                 }
@@ -1063,6 +1089,21 @@ fn time_done(time: u16, elapsed: u16) -> bool {
     time == 0 || elapsed + 1 >= time
 }
 
+/// Apply a `pose` motion (step or snap — the shared core both
+/// [`step_motion`] and [`snap_motion`] call into): set `shell.pose` to
+/// `name`, or clear it for `pose none`. A `name` the shell's preset has no
+/// strip for is still set (`Shell::sprite_options` falls back to the walk
+/// sprite when it draws), but logs once here, at the moment it's applied,
+/// rather than every frame it's subsequently drawn.
+fn apply_pose(shell: &mut Shell, actor: &str, name: &Option<String>) {
+    if let Some(name) = name
+        && !shell.sprites.poses.contains_key(name)
+    {
+        log::warn!("cutscene: actor `{actor}` has no pose named `{name}`; drawing its walk sprite instead");
+    }
+    shell.pose = name.clone();
+}
+
 /// Execute one frame of `motion` for the named `actor`. Returns `(finished,
 /// progressed)` — `progressed` is `false` only when a move is blocked, which
 /// drives the required-motion abort. An unresolvable actor logs and is skipped.
@@ -1088,6 +1129,15 @@ fn step_motion<S: ConsoleApi>(
     match motion {
         Motion::FaceDir(dx, dy) => {
             path.shell_mut(walkaround).face((*dx, *dy));
+            (time_done(time, elapsed), true)
+        }
+        Motion::Pose(name) => {
+            // Apply once, on the instruction's first frame — an `in N` budget
+            // just holds the chain here afterward (like `FaceDir`); reapplying
+            // (and re-warning) every held frame would be redundant.
+            if elapsed == 0 {
+                apply_pose(path.shell_mut(walkaround), actor, name);
+            }
             (time_done(time, elapsed), true)
         }
         Motion::FaceEntity(name) => {
@@ -1299,6 +1349,7 @@ fn snap_motion(
         Motion::FaceDir(dx, dy) => {
             path.shell_mut(walkaround).face((*dx, *dy));
         }
+        Motion::Pose(name) => apply_pose(path.shell_mut(walkaround), actor, name),
         Motion::MoveToEntity(name) => {
             // Resolve the target's position before borrowing the actor mutably.
             if let Some(tp) = walkaround.resolve(&resolve_name(name, table)).map(|s| s.pos) {
@@ -2531,5 +2582,154 @@ mod tests {
             });
             assert_eq!(h.walk.camera.pos, rest, "spent shake leaves no offset");
         }
+    }
+
+    // --- wave 4: `pose` chain motion ---
+
+    /// A `pose` motion applies during its `move` step and stays on the actor
+    /// well past that step — standing choreography, not a one-off action like
+    /// every other motion.
+    #[test]
+    fn pose_applies_and_persists_after_its_step() {
+        let def = scene::parse("#cutscene t\n    spawn a critter 0 0\n    move\n        a: pose slump\n    wait 5")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let actor = cs.resolve_actor("a");
+        // One call chains the instantly-finished `pose` move straight into the
+        // `wait` that follows (see `step`'s doc) — the pose is already applied.
+        h.frame(|ctx, w| cs.step(ctx, w));
+        assert_eq!(h.walk.resolve(&actor).unwrap().pose.as_deref(), Some("slump"));
+        // Still there partway through the unrelated `wait` — it outlives the
+        // instruction, and the whole step, that set it.
+        for _ in 0..3 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        assert_eq!(
+            h.walk.resolve(&actor).unwrap().pose.as_deref(),
+            Some("slump"),
+            "the pose persists well past its own step",
+        );
+    }
+
+    /// `cleanup` — run once a scene finishes or is skipped — clears every
+    /// pose it applied, the same "undo what I did" contract it already gives
+    /// `spawn`ed actors: scene-scoped choreography can't outlive the scene.
+    #[test]
+    fn cleanup_clears_every_pose_the_scene_applied() {
+        let def = scene::parse("#cutscene t\n    move\n        player: pose slump")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+        assert!(matches!(outcome, Outcome::Finished));
+        assert_eq!(h.walk.player_ref().pose.as_deref(), Some("slump"), "pose landed");
+        cs.cleanup(&mut h.walk);
+        assert_eq!(h.walk.player_ref().pose, None, "cleanup cleared it");
+    }
+
+    /// Skipping (B) a scene that hasn't reached its `pose` step yet still
+    /// applies it — snapped, like every other lasting effect a skip fast-
+    /// forwards through.
+    #[test]
+    fn skip_snaps_a_not_yet_reached_pose() {
+        let def = scene::parse("#cutscene t\n    wait 50\n    move\n        player: pose slump")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        // Still on the `wait` — the `pose` step hasn't run at all yet.
+        h.frame(|ctx, w| cs.step(ctx, w));
+        assert_eq!(h.walk.player_ref().pose, None, "not reached yet");
+        h.frame(|ctx, w| cs.skip(ctx, w));
+        assert_eq!(
+            h.walk.player_ref().pose.as_deref(),
+            Some("slump"),
+            "skip snapped the not-yet-reached pose",
+        );
+    }
+
+    /// A `pose` inside an `on CUE` handler's `move` lands exactly like a
+    /// top-level one — handler bodies flow through the same
+    /// `advance_move_chains`/`skip_content` paths, so this is free, but it's
+    /// worth proving rather than assuming.
+    #[test]
+    fn pose_inside_a_handler_lands_when_its_cue_fires() {
+        let mut h = Harness::new();
+        install_script(&mut h, "#dialogue talk\n    #cue arrive\n    Hi there, this stays open.");
+        let def = scene::parse(
+            "#cutscene t\n\
+             \x20   dialogue talk\n\
+             \x20       on arrive\n\
+             \x20           move\n\
+             \x20               player: pose slump",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        for _ in 0..6 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        assert_eq!(
+            h.walk.player_ref().pose.as_deref(),
+            Some("slump"),
+            "a pose inside an `on` handler's move lands like a top-level one",
+        );
+    }
+
+    /// `pose none` mid-scene clears an earlier pose on the same actor.
+    #[test]
+    fn pose_none_clears_an_earlier_pose_mid_scene() {
+        let def = scene::parse(
+            "#cutscene t\n    move\n        player: pose slump\n    wait 3\n    move\n        player: pose none",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        // The first `pose` chains straight into the `wait`, which still has
+        // frames left — so this call lands squarely mid-`wait`, pose standing.
+        h.frame(|ctx, w| cs.step(ctx, w));
+        assert_eq!(h.walk.player_ref().pose.as_deref(), Some("slump"));
+        // The `wait` runs out and chains into `pose none`.
+        for _ in 0..2 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        assert_eq!(h.walk.player_ref().pose, None, "`pose none` cleared it mid-scene");
+    }
+
+    /// A pose naming a strip the actor's preset doesn't have (every built-in
+    /// preset, today — none ships one yet) still sets `Shell::pose`: the
+    /// fallback lives at draw time (`Shell::sprite_options`), not here. The
+    /// `log::warn!` this takes must not panic.
+    #[test]
+    fn missing_pose_name_warns_but_does_not_panic() {
+        let def = scene::parse("#cutscene t\n    move\n        player: pose nonexistent")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        let mut h = Harness::new();
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+        assert!(matches!(outcome, Outcome::Finished));
+        assert_eq!(
+            h.walk.player_ref().pose.as_deref(),
+            Some("nonexistent"),
+            "still set — the fallback is `Shell::sprite_options`, not motion application",
+        );
     }
 }

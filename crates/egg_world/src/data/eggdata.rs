@@ -305,8 +305,8 @@ pub fn splice_preset(src: &str, name: &str, emitted: &str) -> String {
 /// constructor in [`crate::world::player`].
 ///
 /// Field order matters for TOML serialisation: the scalar/array values
-/// (`hitbox`, `move_mode`) come before the sub-table fields (`others`, `walk`),
-/// since TOML forbids a bare key after a table within the same table.
+/// (`hitbox`, `move_mode`) come before the sub-table fields (`others`, `walk`,
+/// `poses`), since TOML forbids a bare key after a table within the same table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresetDef {
     /// `[x, y, w, h]` for [`Hitbox::new`] — the shell's local (un-offset) box.
@@ -321,6 +321,13 @@ pub struct PresetDef {
     /// The eight-heading walk grid, deserialised straight into the runtime
     /// [`WalkSprites`] — the nine cells and facing policy in full, no shorthand.
     pub walk: WalkSprites,
+    /// Named standing-pose sprite strips a cutscene's `pose NAME` motion (see
+    /// [`crate::data::scene::Motion::Pose`]) can put on a shell of this preset —
+    /// e.g. `poses.slump`. Absent by default (no preset ships one yet; the art
+    /// is a later, user-driven pass), so an existing `data.toml` with no
+    /// `poses` table parses *and* re-serialises byte-identically.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub poses: BTreeMap<String, SpriteSet>,
 }
 
 impl PresetDef {
@@ -331,11 +338,13 @@ impl PresetDef {
         Hitbox::new(x, y, w.max(1), h.max(1))
     }
     /// The full [`ShellSprites`] for this preset — the walk grid (cloned straight
-    /// from the deserialised [`WalkSprites`]) plus the `others` strip.
+    /// from the deserialised [`WalkSprites`]) plus the `others` strip and every
+    /// named `poses` strip, each built the same way.
     pub fn build_sprites(&self) -> ShellSprites {
         ShellSprites {
             walk: self.walk.clone(),
             others: vec![self.others.build()],
+            poses: self.poses.iter().map(|(name, set)| (name.clone(), set.build())).collect(),
         }
     }
     /// The [`MoveMode`] this preset spawns with.
@@ -445,6 +454,47 @@ mod tests {
         ));
         // An unknown id is a clean miss, not a panic.
         assert!(presets.spawn(&PresetId::new("nope")).is_none());
+    }
+
+    /// A preset's `poses` table builds into `ShellSprites.poses`, keyed by
+    /// name — what a `pose NAME` motion (see
+    /// [`crate::data::scene::Motion::Pose`]) resolves against at draw time.
+    /// No shipped preset has one yet, so it builds empty by default.
+    #[test]
+    fn preset_poses_build_into_shell_sprites() {
+        let file = parse(include_str!("../../../../assets/data/data.toml")).unwrap();
+        let mut def = file.presets["critter"].clone();
+        assert!(def.poses.is_empty(), "no shipped preset has poses yet");
+        def.poses.insert(
+            "slump".into(),
+            SpriteSet { ids: vec![500], w: 8, h: 8, flip: Flip::None },
+        );
+        let sprites = def.build_sprites();
+        assert_eq!(sprites.poses.len(), 1);
+        assert_eq!(sprites.poses["slump"].get_frame(0).id, 500);
+    }
+
+    /// `poses` is absent-by-default in TOML (`skip_serializing_if`): a preset
+    /// with none — every shipped one, today — emits with no `poses` key at
+    /// all, so the shipped file re-serialises unchanged; a preset that *does*
+    /// carry one round-trips through emit/splice/parse.
+    #[test]
+    fn preset_poses_serialise_only_when_present() {
+        let src = include_str!("../../../../assets/data/data.toml");
+        let file = parse(src).unwrap();
+        let bare = emit_preset("bro", &file.presets["bro"]).unwrap();
+        assert!(!bare.contains("poses"), "no poses ⇒ no `poses` key: {bare}");
+
+        let mut def = file.presets["bro"].clone();
+        def.poses.insert(
+            "slump".into(),
+            SpriteSet { ids: vec![500, 501], w: 8, h: 8, flip: Flip::Horizontal },
+        );
+        let emitted = emit_preset("bro", &def).unwrap();
+        assert!(emitted.contains("poses"), "poses present ⇒ `poses` key: {emitted}");
+        let out = splice_preset(src, "bro", &emitted);
+        let reparsed = parse(&out).unwrap();
+        assert_eq!(reparsed.presets["bro"], def, "poses round-trip through TOML");
     }
 
     /// The shipped `data.toml` (items + every built-in preset, walk grids in

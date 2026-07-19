@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along with
 // this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::BTreeMap;
 use std::mem;
 
 use serde::{Deserialize, Serialize};
@@ -262,7 +263,7 @@ pub enum MoveMode {
 /// or one of its companions by slot. Resolved against the entity tree by
 /// `WalkaroundState::resolve`.
 /// Replaces the old positional `cutscene_token`/`entities[0]` addressing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EntityId {
     /// A shell whose [`Shell::id`] matches (first match wins; ids should be
     /// unique per map).
@@ -325,12 +326,19 @@ impl From<&str> for PresetId {
 pub struct ShellSprites {
     pub walk: WalkSprites,
     pub others: Vec<SpriteAnimation>,
+    /// Named standing-pose strips this preset ships (see [`Shell::pose`] and
+    /// [`crate::data::scene::Motion::Pose`]), keyed by the name a `pose NAME`
+    /// motion names. Empty for every built-in/placeholder set and any preset
+    /// that hasn't authored one — [`Shell::sprite_options`] falls back to the
+    /// walk sprite when [`Shell::pose`] names an entry that's missing here.
+    pub poses: BTreeMap<String, SpriteAnimation>,
 }
 impl ShellSprites {
     fn new(walk: WalkSprites, other_ids: &[i32], w: i32, h: i32) -> Self {
         Self {
             walk,
             others: vec![SpriteAnimation::from_sprite_ids(other_ids, w, h)],
+            poses: BTreeMap::new(),
         }
     }
     pub fn egg() -> Self {
@@ -379,6 +387,16 @@ pub struct Shell {
     pub walktime: u16,
     pub flip_controls: Axis,
     pub pet_timer: Option<u8>,
+    /// A standing pose a cutscene's `pose NAME` motion put on this shell (see
+    /// [`crate::data::scene::Motion::Pose`]), naming an entry in
+    /// [`sprites.poses`](ShellSprites::poses) — `None` is the ordinary walk
+    /// sprite. Scene-scoped choreography: set by its step/snap handling,
+    /// cleared by the owning scene's cleanup. `#[serde(skip)]` — never part
+    /// of what a save records, like `sprites` — but *is* compared by the
+    /// hand-written `PartialEq` below (unlike `sprites`): a posed shell is a
+    /// visibly different shell from an unposed one, live-play effect or not.
+    #[serde(skip)]
+    pub pose: Option<String>,
     /// The archetype this shell is an instance of (its [`PresetId`]). The store
     /// key the *derived* `sprites` resolve from, and the handle entity
     /// persistence stores to rebuild a shell; an egg carries the preset it will
@@ -444,6 +462,10 @@ impl PartialEq for Shell {
             && self.walktime == other.walktime
             && self.flip_controls == other.flip_controls
             && self.pet_timer == other.pet_timer
+            // Unlike `sprites` (purely derived), a pose is live choreography —
+            // a posed shell isn't the same as an unposed one, even though
+            // neither state is persisted.
+            && self.pose == other.pose
             && self.preset == other.preset
             && self.move_mode == other.move_mode
             && self.outline == other.outline
@@ -494,6 +516,25 @@ impl Shell {
             // Mirror toward the petter's facing, composed with the strip's own
             // authored flip — so the dog's `others` (drawn when the player shell
             // is set to the dog) face the right way without inverting the player's.
+            let mirror = self.dir.0 <= 0;
+            sprite.flip = if sprite.flip.x() ^ mirror {
+                Flip::Horizontal
+            } else {
+                Flip::None
+            };
+            return (sprite, 0);
+        }
+        // standing pose (see `pose`) — draws its strip's frame 0 in place of the
+        // walk sprite until animated poses are worth the trouble. A pose naming a
+        // strip this shell's preset doesn't have falls through here to the walk
+        // sprite silently; the warning already fired when the pose was applied
+        // (see `cutscene::apply_pose`), not on every frame it's drawn.
+        if let Some(name) = &self.pose
+            && let Some(strip) = self.sprites.poses.get(name)
+        {
+            let mut sprite = strip.get_frame(0).clone();
+            // Same mirror rule as the pet block above: compose the shell's own
+            // facing with the strip's authored flip.
             let mirror = self.dir.0 <= 0;
             sprite.flip = if sprite.flip.x() ^ mirror {
                 Flip::Horizontal
@@ -786,6 +827,7 @@ impl Shell {
             walking: false,
             flip_controls: Axis::None,
             pet_timer: None,
+            pose: None,
             sprites,
             move_mode,
             outline: Some(1),
@@ -1303,6 +1345,60 @@ mod tests {
             format!("{:?}", back.sprites),
             format!("{:?}", spawn("dog").sprites),
             "not the hatched dog's sprites"
+        );
+    }
+
+    /// A shell with a `pose` naming a strip its (preset-built) `sprites.poses`
+    /// carries draws that strip's frame 0 instead of its walk sprite. No
+    /// shipped preset ships one yet (see `preset_poses_build_into_shell_sprites`
+    /// in `data::eggdata`), so the strip is injected directly here — the
+    /// machinery under test is `Shell::pose`/`sprite_options`, not the data
+    /// pipeline that builds `sprites.poses` (already covered there).
+    #[test]
+    fn posed_shell_draws_its_pose_strips_first_frame() {
+        let mut shell = spawn("critter");
+        shell
+            .sprites
+            .poses
+            .insert("slump".into(), SpriteAnimation::from_sprite_ids(&[900, 901], 8, 8));
+        shell.pose = Some("slump".into());
+        let (sprite, bob) = shell.sprite_options();
+        assert_eq!(sprite.id, 900, "frame 0 of the pose strip, not frame 1");
+        assert_eq!(bob, 0, "a pose doesn't bob like a walk cycle");
+    }
+
+    /// The petting animation is momentary and self-clearing; it still takes
+    /// precedence over a standing `pose` while it's running.
+    #[test]
+    fn pet_timer_beats_pose_while_it_runs() {
+        let mut shell = spawn("dog");
+        shell
+            .sprites
+            .poses
+            .insert("slump".into(), SpriteAnimation::from_sprite_ids(&[900], 8, 8));
+        shell.pose = Some("slump".into());
+        shell.pet_timer = Some(0);
+        let (sprite, _) = shell.sprite_options();
+        assert_eq!(
+            sprite.id, shell.sprites.others[0].get_frame(0).id,
+            "the pet frame wins over the pose while pet_timer is running"
+        );
+        assert_ne!(sprite.id, 900, "not the pose strip");
+    }
+
+    /// A `pose` naming a strip the shell's preset doesn't have falls back to
+    /// the ordinary walk sprite, silently (the warning fires once, at the
+    /// moment the cutscene engine applies the pose — see
+    /// `gamestate::walkaround::cutscene` — not on every frame it's drawn).
+    #[test]
+    fn missing_pose_falls_back_to_the_walk_sprite() {
+        let mut posed = spawn("critter");
+        posed.pose = Some("nope".into());
+        let unposed = spawn("critter");
+        assert_eq!(
+            posed.sprite_options().0.id,
+            unposed.sprite_options().0.id,
+            "an unresolvable pose draws exactly like no pose at all"
         );
     }
 

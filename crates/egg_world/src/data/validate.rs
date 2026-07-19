@@ -571,6 +571,10 @@ fn check_content_step(
         CutsceneContent::Move(chains) => {
             for chain in chains {
                 for ins in &chain.instructions {
+                    // `Motion::Pose` names live on presets, not this registry — and an
+                    // actor's preset can be rebound at runtime (`find`/`bind`), so a
+                    // pose name can't be cross-referenced statically. It falls through
+                    // this `else continue` unchecked, like every non-`Path` motion.
                     let Motion::Path { name: path_name, .. } = &ins.motion else {
                         continue;
                     };

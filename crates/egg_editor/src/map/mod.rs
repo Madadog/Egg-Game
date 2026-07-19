@@ -1403,7 +1403,7 @@ fn actor_spawn_pos(def: &CutsceneDef, actor: &str) -> Option<Vec2> {
 /// * `to` / `beside` ([`Motion::MoveToEntity`] / [`Motion::MoveBesideHorizontal`])
 ///   are entity-relative, so the actor's position becomes unknown: the polyline
 ///   ends and nothing anchors again until the next absolute motion;
-/// * `face` motions and non-`move` content don't move the actor.
+/// * `face` and `pose` motions and non-`move` content don't move the actor.
 ///
 /// `def` is always the *resolved* form (every [`Motion::Path`] already inlined
 /// to a [`Motion::Record`] — see [`scene::SceneFile::named_defs`], which is
@@ -1499,6 +1499,9 @@ fn scene_paths(def: &CutsceneDef) -> Vec<Vec<Vec2>> {
                             pos = None;
                         }
                         Motion::FaceEntity(_) | Motion::FaceDir(_, _) => {}
+                        // A pose doesn't move the actor — nothing to add to the
+                        // polyline.
+                        Motion::Pose(_) => {}
                         // Never reached in practice — `def` is always pre-resolved
                         // (see the doc above); a no-op keeps this match exhaustive.
                         Motion::Path { .. } => {}
