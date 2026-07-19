@@ -25,7 +25,7 @@ use std::collections::HashMap;
 
 use crate::Ctx;
 use crate::data::scene::{
-    CameraTarget, Chain, CutsceneContent, CutsceneDef, EntityRef, GetEntity, Motion,
+    CameraTarget, Chain, CueHandler, CutsceneContent, CutsceneDef, EntityRef, GetEntity, Motion,
 };
 use crate::data::sound::music::MusicTrack;
 use crate::data::sound::{self};
@@ -76,6 +76,11 @@ pub struct Cutscene {
     /// Ticked once per frame in [`step`](Self::step); transient — the camera is
     /// back on its focus when it runs out.
     shake: Option<Shake>,
+    /// Cue handlers currently running for the in-progress `dialogue` step (see
+    /// [`CutsceneContent::Dialogue`]'s `on NAME [wait]` handlers) — populated
+    /// and ticked by [`advance_dialogue`](Self::advance_dialogue), cleared the
+    /// moment that step completes. Empty outside a `dialogue` step.
+    handler_runs: Vec<HandlerRun>,
 }
 
 /// Progress of a `camera … over N` glide: the focus eases from `from` (the
@@ -110,8 +115,13 @@ enum StepState {
         chains: Vec<Chain>,
         progress: Vec<ChainProgress>,
     },
-    /// A dialogue box; `opened` latches the one-time open.
-    Dialogue { opened: bool },
+    /// A dialogue box; `opened` latches the one-time open. `close_pending` is
+    /// set when the widget phase (see
+    /// [`advance_dialogue`](Cutscene::advance_dialogue)) decided to close the
+    /// box but a running `wait` handler is holding it frozen — applied the
+    /// frame the freeze lifts, so the player never needs a second press for a
+    /// close they already entered.
+    Dialogue { opened: bool, close_pending: bool },
     /// Frames left to wait.
     Wait(u32),
     /// Finished — advance to the next step.
@@ -128,6 +138,27 @@ struct ChainProgress {
     /// Consecutive frames the current instruction made no progress (blocked).
     /// Trips [`STUCK_LIMIT`] for a required motion → the scene cancels.
     stuck: u16,
+}
+
+/// One running `on NAME [wait]` handler for the current `dialogue` step: which
+/// handler (by index into that step's [`CueHandler`] list), how far through
+/// its own content it's gotten, and its live [`StepState`] — never
+/// `Dialogue`: [`Cutscene::enter_content`]'s `Interact` arm treats a
+/// handler's `interact` as always-instant rather than tracking a box it might
+/// open (see that method's doc), and a literal `dialogue`/`load` step is
+/// rejected inside an `on` body at parse time. A run is created at most once
+/// per handler per dialogue step — its mere existence in
+/// [`Cutscene::handler_runs`] IS the fired-once dedupe, so there's no
+/// separate "already fired" set to keep in sync — and is never removed until
+/// the whole step completes (when [`Cutscene::handler_runs`] is cleared).
+#[derive(Clone, Debug)]
+struct HandlerRun {
+    /// Index into the current dialogue step's `handlers` list.
+    handler_index: usize,
+    /// The next content-step index in `handlers[handler_index].content` to
+    /// enter. `>= content.len()` means this run has finished.
+    step: usize,
+    state: StepState,
 }
 
 /// What one [`Cutscene::step`] asks the stack driver to do next.
@@ -206,6 +237,7 @@ impl Cutscene {
             camera: None,
             glide: None,
             shake: None,
+            handler_runs: Vec::new(),
         }
     }
 
@@ -273,87 +305,27 @@ impl Cutscene {
         Shake::tick(&mut self.shake);
         loop {
             if matches!(self.state, StepState::Pending) {
-                let Some(content) = self.content.get(self.step) else {
+                // Cloned so `enter_content` can freely take `&mut self`
+                // alongside it — see that method's doc.
+                let Some(content) = self.content.get(self.step).cloned() else {
                     return Outcome::Finished;
                 };
-                match content {
-                    CutsceneContent::Move(chains) => {
-                        let progress = chains
-                            .iter()
-                            .map(|_| ChainProgress {
-                                instr: 0,
-                                elapsed: 0,
-                                stuck: 0,
-                            })
-                            .collect();
-                        self.state = StepState::Move {
-                            chains: chains.clone(),
-                            progress,
-                        };
-                    }
-                    CutsceneContent::Dialogue(_) => {
-                        self.state = StepState::Dialogue { opened: false };
-                    }
-                    CutsceneContent::Wait(frames) => self.state = StepState::Wait(*frames),
-                    CutsceneContent::Interact { actor, target } => {
-                        self.fire_interact(ctx, walkaround, actor, target);
-                        // If the fired interaction opened a dialogue box, drive it
-                        // to completion (the walk loop's box handler is bypassed
-                        // while a cutscene plays); otherwise the step is done (an
-                        // instant effect like the dog's pet beat). `opened: true`
-                        // makes `advance_dialogue` skip its key-read, which would
-                        // mismatch the Interact content.
-                        self.state = if walkaround.dialogue.current_text.is_some() {
-                            StepState::Dialogue { opened: true }
-                        } else {
-                            StepState::Done
-                        };
-                    }
-                    CutsceneContent::Sound(name) => {
-                        if let Some(sfx) = sound::by_name(name) {
-                            ctx.system.play_sound(sfx);
-                        }
-                        self.state = StepState::Done;
-                    }
-                    CutsceneContent::Music(track) => {
-                        let track = track.as_deref().map(MusicTrack::named);
-                        ctx.system.music(track.as_ref());
-                        self.state = StepState::Done;
-                    }
-                    CutsceneContent::SetFlag(name, value) => {
-                        ctx.save.set_flag(name, *value);
-                        self.state = StepState::Done;
-                    }
-                    CutsceneContent::Camera(target, over) => {
-                        // Retarget the scene camera; the per-frame centring in
-                        // `play_cutscene` reads it back via `camera_focus`. A
-                        // glide starts from the focus that's actually on screen
-                        // (the camera's clamped position, uncentred), so a cut,
-                        // an earlier glide, or the player-follow default all
-                        // hand over without a snap. The instant retarget below
-                        // doesn't move the camera this frame: at t=0 the glide
-                        // holds `from` exactly.
-                        self.glide = over.filter(|frames| *frames > 0).map(|total| Glide {
-                            from: walkaround.camera.pos
-                                + Vec2::new(
-                                    ctx.system.width() as i16 / 2,
-                                    ctx.system.height() as i16 / 2,
-                                ),
-                            total,
-                            left: total,
-                        });
-                        self.camera = Some(target.clone());
-                        self.state = StepState::Done;
-                    }
-                    CutsceneContent::Shake { frames, amplitude } => {
-                        self.shake = Shake::begin(*frames, *amplitude);
-                        self.state = StepState::Done;
+                match &content {
+                    // Kept here rather than in `enter_content`: only the
+                    // top-level driver owns opening the box / pushing a
+                    // sub-cutscene (a handler can never contain either —
+                    // parse-rejected, see the module doc).
+                    CutsceneContent::Dialogue { .. } => {
+                        self.state = StepState::Dialogue { opened: false, close_pending: false };
                     }
                     CutsceneContent::Load(name) => {
                         let name = name.clone();
                         self.step += 1;
                         self.state = StepState::Pending;
                         return Outcome::Load(name);
+                    }
+                    _ => {
+                        self.state = self.enter_content(ctx, walkaround, &content, false);
                     }
                 }
             }
@@ -382,22 +354,127 @@ impl Cutscene {
         }
     }
 
-    /// Advance every chain of the current `move` step one frame; returns whether
-    /// all chains have run out of instructions.
-    fn advance_move<S: ConsoleApi>(
+    /// Enter a content step that isn't `Dialogue`/`Load` — the instant verbs
+    /// (`sound`/`music`/`set`/`camera`/`shake`), `interact`, `move`, and
+    /// `wait` — building its initial [`StepState`]. Shared by the main step
+    /// loop's Pending handling (which keeps `Dialogue`/`Load` for itself — a
+    /// `load` pushes a sub-cutscene, which only the top-level driver owns)
+    /// and [`tick_handler_run`](Self::tick_handler_run), where a raw
+    /// `Dialogue`/`Load` content step can never appear at all (rejected at
+    /// parse time — see the `.eggscene` module doc), so reaching either arm
+    /// here is a bug, not bad input.
+    ///
+    /// `in_handler` changes only the `Interact` arm: at the top level an
+    /// `interact` step only ever runs once any prior dialogue box has
+    /// already closed (steps are sequential), so "a box is showing
+    /// afterward" reliably means this interact just opened one — worth
+    /// tracking so the step waits for it. A handler runs *concurrently* with
+    /// its own dialogue step's already-open box, so that signal means
+    /// nothing there (the box is virtually always showing); a handler's
+    /// interact is instant instead, no matter what it fired. (A handler
+    /// `interact` that happens to target something whose interaction is
+    /// itself `Dialogue`/`Func`-returning-a-key silently overwrites the
+    /// parent box's content when it fires — an authoring hazard sharing one
+    /// widget between concurrent steps creates, which this wave doesn't try
+    /// to detect or prevent.)
+    fn enter_content<S: ConsoleApi>(
         &mut self,
         ctx: &mut Ctx<S>,
         walkaround: &mut WalkaroundState,
+        content: &CutsceneContent,
+        in_handler: bool,
+    ) -> StepState {
+        match content {
+            CutsceneContent::Move(chains) => {
+                let progress = chains
+                    .iter()
+                    .map(|_| ChainProgress {
+                        instr: 0,
+                        elapsed: 0,
+                        stuck: 0,
+                    })
+                    .collect();
+                StepState::Move {
+                    chains: chains.clone(),
+                    progress,
+                }
+            }
+            CutsceneContent::Wait(frames) => StepState::Wait(*frames),
+            CutsceneContent::Interact { actor, target } => {
+                self.fire_interact(ctx, walkaround, actor, target);
+                if !in_handler && walkaround.dialogue.current_text.is_some() {
+                    StepState::Dialogue { opened: true, close_pending: false }
+                } else {
+                    StepState::Done
+                }
+            }
+            CutsceneContent::Sound(name) => {
+                if let Some(sfx) = sound::by_name(name) {
+                    ctx.system.play_sound(sfx);
+                }
+                StepState::Done
+            }
+            CutsceneContent::Music(track) => {
+                let track = track.as_deref().map(MusicTrack::named);
+                ctx.system.music(track.as_ref());
+                StepState::Done
+            }
+            CutsceneContent::SetFlag(name, value) => {
+                ctx.save.set_flag(name, *value);
+                StepState::Done
+            }
+            CutsceneContent::Camera(target, over) => {
+                // Retarget the scene camera; the per-frame centring in
+                // `play_cutscene` reads it back via `camera_focus`. A
+                // glide starts from the focus that's actually on screen
+                // (the camera's clamped position, uncentred), so a cut,
+                // an earlier glide, or the player-follow default all
+                // hand over without a snap. The instant retarget below
+                // doesn't move the camera this frame: at t=0 the glide
+                // holds `from` exactly.
+                self.glide = over.filter(|frames| *frames > 0).map(|total| Glide {
+                    from: walkaround.camera.pos
+                        + Vec2::new(
+                            ctx.system.width() as i16 / 2,
+                            ctx.system.height() as i16 / 2,
+                        ),
+                    total,
+                    left: total,
+                });
+                self.camera = Some(target.clone());
+                StepState::Done
+            }
+            CutsceneContent::Shake { frames, amplitude } => {
+                self.shake = Shake::begin(*frames, *amplitude);
+                StepState::Done
+            }
+            CutsceneContent::Dialogue { .. } => unreachable!(
+                "Dialogue is handled by the caller: the main loop keeps it for \
+                 itself, and a handler body can never contain one (parse-rejected)"
+            ),
+            CutsceneContent::Load(_) => unreachable!(
+                "Load is handled by the caller: the main loop keeps it for \
+                 itself, and a handler body can never contain one (parse-rejected)"
+            ),
+        }
+    }
+
+    /// Advance one set of parallel chains (+ their progress) one frame — the
+    /// shared core [`advance_move`](Self::advance_move) (the main `Move`
+    /// state) and [`advance_handler_move`](Self::advance_handler_move) (a
+    /// handler's `Move` state) both drive, since both use the identical
+    /// lift-out/tick/put-back pattern their callers wrap. Returns whether
+    /// every chain has run out of instructions. Sets `self.aborted` when a
+    /// required (`?`) motion sticks — cancelling the whole scene, whether the
+    /// chains belong to the main step or a handler (handler side effects
+    /// apply to the parent scene exactly as top-level steps do).
+    fn advance_move_chains<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        chains: &[Chain],
+        progress: &mut [ChainProgress],
     ) -> bool {
-        // Lift the chains + progress out so motion code can borrow `self.table`
-        // (for resolution) alongside them.
-        let StepState::Move {
-            chains,
-            mut progress,
-        } = std::mem::replace(&mut self.state, StepState::Done)
-        else {
-            unreachable!("advance_move only runs on a Move state");
-        };
         for (chain, prog) in chains.iter().zip(progress.iter_mut()) {
             if prog.instr >= chain.instructions.len() {
                 continue;
@@ -428,75 +505,281 @@ impl Cutscene {
                 prog.stuck = 0;
             }
         }
-        let all_done = chains
+        chains
             .iter()
             .zip(progress.iter())
-            .all(|(c, p)| p.instr >= c.instructions.len());
+            .all(|(c, p)| p.instr >= c.instructions.len())
+    }
+
+    /// Advance every chain of the current `move` step one frame; returns whether
+    /// all chains have run out of instructions.
+    fn advance_move<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) -> bool {
+        // Lift the chains + progress out so motion code can borrow `self.table`
+        // (for resolution) alongside them.
+        let StepState::Move {
+            chains,
+            mut progress,
+        } = std::mem::replace(&mut self.state, StepState::Done)
+        else {
+            unreachable!("advance_move only runs on a Move state");
+        };
+        let all_done = self.advance_move_chains(ctx, walkaround, &chains, &mut progress);
         if !all_done {
             self.state = StepState::Move { chains, progress };
         }
         all_done
     }
 
-    /// Drive the dialogue box for the current `dialogue` step (the walk loop's
-    /// dialogue input is short-circuited while a cutscene plays). Opens the box
-    /// once, then ticks the typewriter and reads A/B; returns whether the box has
-    /// fully closed.
+    /// Advance handler run `i`'s `Move` state one frame — the handler-side
+    /// twin of [`advance_move`](Self::advance_move), same lift-out pattern,
+    /// against `self.handler_runs[i].state` instead of `self.state`.
+    fn advance_handler_move<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        i: usize,
+    ) -> bool {
+        let StepState::Move {
+            chains,
+            mut progress,
+        } = std::mem::replace(&mut self.handler_runs[i].state, StepState::Done)
+        else {
+            unreachable!("advance_handler_move only runs on a Move state");
+        };
+        let all_done = self.advance_move_chains(ctx, walkaround, &chains, &mut progress);
+        if !all_done {
+            self.handler_runs[i].state = StepState::Move { chains, progress };
+        }
+        all_done
+    }
+
+    /// The current dialogue step's `on` handlers, or `&[]` if the step isn't
+    /// `Dialogue` (defensive — only ever called while it is).
+    fn current_handlers(&self) -> &[CueHandler] {
+        match &self.content[self.step] {
+            CutsceneContent::Dialogue { handlers, .. } => handlers,
+            _ => &[],
+        }
+    }
+
+    /// Whether any running handler declared `wait` is unfinished — while
+    /// true, [`advance_dialogue`](Self::advance_dialogue) freezes the box.
+    fn any_wait_handler_running(&self) -> bool {
+        let handlers = self.current_handlers();
+        self.handler_runs
+            .iter()
+            .any(|run| handlers[run.handler_index].wait && run.step < handlers[run.handler_index].content.len())
+    }
+
+    /// Whether every fired handler for the current dialogue step has
+    /// finished (walked its `step` off the end of its own content list).
+    /// Vacuously true when nothing has fired.
+    fn handlers_finished(&self) -> bool {
+        let handlers = self.current_handlers();
+        self.handler_runs
+            .iter()
+            .all(|run| run.step >= handlers[run.handler_index].content.len())
+    }
+
+    /// Drain every `#cue` the box has banked since the last drain (see
+    /// [`Dialogue::take_cues`](egg_ui::dialogue::Dialogue::take_cues)),
+    /// starting a [`HandlerRun`] for each one that names an `on` handler on
+    /// the current dialogue step and hasn't already fired this step (a run
+    /// already existing for that handler IS the fired-once dedupe — a repeat
+    /// firing is logged and ignored; a cue naming no handler here is fine —
+    /// a stage direction, or a beat for another scene), then ticks every
+    /// running handler one frame. A no-op — not even a `take_cues` call —
+    /// when this dialogue step has no handlers at all (the common case):
+    /// nothing could ever be listening, so there's nothing to drain for, and
+    /// `self.handler_runs` is (and stays) empty.
+    fn drain_cues_and_tick_handlers<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+    ) {
+        let handlers = self.current_handlers();
+        if handlers.is_empty() {
+            return;
+        }
+        // Cloned so the tick loop below can freely call `&mut self` methods
+        // alongside it without borrowing `self.content`.
+        let handlers = handlers.to_vec();
+        for cue in walkaround.dialogue.take_cues() {
+            let Some(handler_index) = handlers.iter().position(|h| h.cue == cue) else {
+                continue;
+            };
+            if self.handler_runs.iter().any(|r| r.handler_index == handler_index) {
+                log::info!("cutscene: cue `{cue}` fired again — its handler already ran this step");
+                continue;
+            }
+            self.handler_runs.push(HandlerRun {
+                handler_index,
+                step: 0,
+                state: StepState::Pending,
+            });
+        }
+        for i in 0..self.handler_runs.len() {
+            self.tick_handler_run(ctx, walkaround, i, &handlers);
+        }
+    }
+
+    /// Tick handler run `i` one frame, through the same enter → advance →
+    /// maybe-finish sequence [`step`](Self::step)'s main loop drives,
+    /// against `handlers[run.handler_index]`'s own content list (`handlers`
+    /// is the caller's clone — see
+    /// [`drain_cues_and_tick_handlers`](Self::drain_cues_and_tick_handlers)
+    /// — so this can freely call `&mut self` methods alongside it). Chains
+    /// through as many instant steps as complete in one frame, same as the
+    /// main loop; stops at the first step that doesn't finish this frame, or
+    /// at the handler's end.
+    fn tick_handler_run<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        i: usize,
+        handlers: &[CueHandler],
+    ) {
+        let handler = &handlers[self.handler_runs[i].handler_index];
+        loop {
+            if self.handler_runs[i].step >= handler.content.len() {
+                return;
+            }
+            if matches!(self.handler_runs[i].state, StepState::Pending) {
+                let content = handler.content[self.handler_runs[i].step].clone();
+                self.handler_runs[i].state = self.enter_content(ctx, walkaround, &content, true);
+            }
+            let done = match &self.handler_runs[i].state {
+                StepState::Move { .. } => self.advance_handler_move(ctx, walkaround, i),
+                StepState::Wait(_) => {
+                    let StepState::Wait(frames) = &mut self.handler_runs[i].state else {
+                        unreachable!("just matched Wait above");
+                    };
+                    *frames = frames.saturating_sub(1);
+                    *frames == 0
+                }
+                StepState::Done => true,
+                StepState::Dialogue { .. } => unreachable!(
+                    "a handler run never enters Dialogue state — see `enter_content`'s doc"
+                ),
+                StepState::Pending => unreachable!("just entered above"),
+            };
+            if self.aborted {
+                return;
+            }
+            if done {
+                self.handler_runs[i].step += 1;
+                self.handler_runs[i].state = StepState::Pending;
+                continue;
+            }
+            return;
+        }
+    }
+
+    /// Drive the dialogue box for the current `dialogue` step (the walk
+    /// loop's dialogue input is short-circuited while a cutscene plays).
+    /// Opens the box once. After that, each frame: runs the widget phase
+    /// (choice input / typewriter tick / A-advance / B-skip) *unless* a
+    /// `wait` handler is running, in which case the box freezes — no tick,
+    /// no input, no close; drains any `#cue`s the widget phase banked and
+    /// ticks every running handler
+    /// ([`drain_cues_and_tick_handlers`](Self::drain_cues_and_tick_handlers));
+    /// then applies a close the widget phase decided it wanted, unless a
+    /// `wait` handler is (still) running, in which case the close is
+    /// remembered (`close_pending`) and applied the frame the freeze lifts
+    /// — so the player never needs a second press for a close they already
+    /// entered.
+    ///
+    /// Order matters: [`Dialogue::close`](egg_ui::dialogue::Dialogue::close)
+    /// resets the whole widget, wiping `pending_cues` — so the widget phase
+    /// only *decides* whether it wants to close, never calls `close`
+    /// itself; the drain always runs before any close does. This is what
+    /// lets a `#cue` on the very last content item still fire its handler
+    /// even though the same advance that surfaces it also ends the
+    /// conversation.
+    ///
+    /// The step is done only once the box has closed *and* every fired
+    /// handler has finished (a non-`wait` handler may keep running after the
+    /// box closes — the step just waits for it).
     fn advance_dialogue<S: ConsoleApi>(
         &mut self,
         ctx: &mut Ctx<S>,
         walkaround: &mut WalkaroundState,
     ) -> bool {
-        let StepState::Dialogue { opened } = &mut self.state else {
-            unreachable!("advance_dialogue only runs on a Dialogue state");
+        let (opened, close_pending) = match &self.state {
+            StepState::Dialogue { opened, close_pending } => (*opened, *close_pending),
+            _ => unreachable!("advance_dialogue only runs on a Dialogue state"),
         };
-        if !*opened {
-            let CutsceneContent::Dialogue(key) = &self.content[self.step] else {
+        if !opened {
+            let CutsceneContent::Dialogue { key, .. } = &self.content[self.step] else {
                 unreachable!("Dialogue state ⇒ Dialogue content");
             };
-            let convo = ctx.get_dialogue(key);
+            let key = key.clone();
+            let convo = ctx.get_dialogue(&key);
             walkaround
                 .dialogue
                 .set_messages(ctx.system, ctx.font, ctx.save, &convo);
-            *opened = true;
+            self.state = StepState::Dialogue { opened: true, close_pending: false };
+            self.drain_cues_and_tick_handlers(ctx, walkaround);
             return false;
         }
-        let pad = ctx.input.controller();
-        // A choice menu takes over input: up/down moves the highlight, A picks.
-        // Under the scrubber the dpad is neutral and A reads as a permanent
-        // rising edge, so this deterministically auto-picks the first option
-        // (the same auto-advance the scrubber relies on for plain dialogue).
-        if walkaround.dialogue.is_choosing() {
-            let (_, ddy) = dpad_delta(&pad, just_pressed);
-            if ddy != 0 {
-                walkaround.dialogue.move_choice(ddy as i32);
+
+        let mut want_close = close_pending;
+        if !self.any_wait_handler_running() {
+            let pad = ctx.input.controller();
+            // A choice menu takes over input: up/down moves the highlight, A
+            // picks. Under the scrubber the dpad is neutral and A reads as a
+            // permanent rising edge, so this deterministically auto-picks the
+            // first option (the same auto-advance the scrubber relies on for
+            // plain dialogue).
+            if walkaround.dialogue.is_choosing() {
+                let (_, ddy) = dpad_delta(&pad, just_pressed);
+                if ddy != 0 {
+                    walkaround.dialogue.move_choice(ddy as i32);
+                }
+                if just_pressed(pad.a) {
+                    let advanced = walkaround.dialogue.confirm_choice(ctx.system, ctx.font, ctx.save);
+                    if !advanced
+                        && !walkaround.dialogue.is_choosing()
+                        && walkaround.dialogue.current_text.is_some()
+                    {
+                        want_close = true;
+                    }
+                }
+            } else {
+                walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
+                if pressed(pad.a) {
+                    walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
+                }
+                if just_pressed(pad.b) {
+                    walkaround.dialogue.skip(ctx.system, ctx.font, ctx.save);
+                }
+                if just_pressed(pad.a) && walkaround.dialogue.is_line_done() {
+                    let advanced =
+                        walkaround.dialogue.next_text(ctx.system, ctx.font, ctx.save, false);
+                    if !advanced && walkaround.dialogue.current_text.is_some() {
+                        want_close = true;
+                    }
+                }
             }
-            if just_pressed(pad.a)
-                && !walkaround
-                    .dialogue
-                    .confirm_choice(ctx.system, ctx.font, ctx.save)
-                && !walkaround.dialogue.is_choosing()
-                && walkaround.dialogue.current_text.is_some()
-            {
-                walkaround.dialogue.close();
-            }
-            return !walkaround.dialogue.is_active();
         }
-        walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 1);
-        if pressed(pad.a) {
-            walkaround.dialogue.tick(ctx.system, ctx.font, ctx.save, 2);
-        }
-        if just_pressed(pad.b) {
-            walkaround.dialogue.skip(ctx.system, ctx.font, ctx.save);
-        }
-        if just_pressed(pad.a)
-            && walkaround.dialogue.is_line_done()
-            && !walkaround.dialogue.next_text(ctx.system, ctx.font, ctx.save, false)
-            && walkaround.dialogue.current_text.is_some()
-        {
+
+        self.drain_cues_and_tick_handlers(ctx, walkaround);
+
+        if want_close && !self.any_wait_handler_running() {
             walkaround.dialogue.close();
+            want_close = false;
         }
-        !walkaround.dialogue.is_active()
+        self.state = StepState::Dialogue { opened: true, close_pending: want_close };
+
+        let finished = !walkaround.dialogue.is_active() && self.handlers_finished();
+        if finished {
+            self.handler_runs.clear();
+        }
+        finished
     }
 
     /// Fire the `target` actor's intrinsic [`Shell::interaction`], with `actor`
@@ -536,6 +819,100 @@ impl Cutscene {
             });
     }
 
+    /// Fast-forward one content step to its end state — the per-step body
+    /// shared between the top-level [`skip`](Self::skip) loop and snapping a
+    /// handler's content (see
+    /// [`fire_and_snap_handlers`](Self::fire_and_snap_handlers)). Never
+    /// called with `Dialogue`/`Load`: [`skip`](Self::skip) handles both
+    /// itself (`Dialogue` needs the manual drain documented there; `Load`
+    /// needs to chase a whole sub-cutscene), and a handler body can't
+    /// contain either (parse-rejected — see the `.eggscene` module doc).
+    fn skip_content<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        content: &CutsceneContent,
+    ) {
+        match content {
+            CutsceneContent::Move(chains) => {
+                for chain in chains {
+                    for ins in &chain.instructions {
+                        snap_motion(&chain.actor, &ins.motion, &self.table, walkaround);
+                    }
+                }
+            }
+            CutsceneContent::SetFlag(name, value) => ctx.save.set_flag(name, *value),
+            CutsceneContent::Sound(name) => {
+                if let Some(sfx) = sound::by_name(name) {
+                    ctx.system.play_sound(sfx);
+                }
+            }
+            CutsceneContent::Music(track) => {
+                let track = track.as_deref().map(MusicTrack::named);
+                ctx.system.music(track.as_ref());
+            }
+            CutsceneContent::Interact { actor, target } => {
+                self.fire_interact(ctx, walkaround, actor, target)
+            }
+            // Apply camera steps in order so the scene's final camera target
+            // matches full playback — though when a whole scene is skipped it
+            // finishes and pops immediately, so `play_cutscene` re-derives the
+            // camera from what's left on the stack (the parent, or the player).
+            // A glide fast-forwards to landed (its end state), a shake to
+            // spent — both transients gone, exactly as full playback ends.
+            CutsceneContent::Camera(target, _) => {
+                self.camera = Some(target.clone());
+                self.glide = None;
+            }
+            CutsceneContent::Shake { .. } => self.shake = None,
+            // A wait has no lasting effect, so fast-forwarding past it is a no-op.
+            CutsceneContent::Wait(_) => {}
+            CutsceneContent::Dialogue { .. } | CutsceneContent::Load(_) => {
+                unreachable!("Dialogue/Load never reach skip_content — see this method's doc")
+            }
+        }
+    }
+
+    /// Snap wave-3 cue handlers during a scene skip. `handlers` is the
+    /// current dialogue step's `on` list; `cues` is every cue the manual
+    /// drain in [`skip`](Self::skip) surfaced (the *whole* conversation,
+    /// replayed from the start).
+    ///
+    /// Any handler already in flight from live play before the B press (an
+    /// existing [`HandlerRun`] in `self.handler_runs`) is snapped only from
+    /// its current `step` onward — the steps before that already ran live
+    /// and must not replay. Every other cue this drain surfaced that names a
+    /// handler and hasn't already fired live is snapped in full, from the
+    /// start (it never got to run at all). Either way each handler fires at
+    /// most once, matching live play's dedupe.
+    fn fire_and_snap_handlers<S: ConsoleApi>(
+        &mut self,
+        ctx: &mut Ctx<S>,
+        walkaround: &mut WalkaroundState,
+        handlers: &[CueHandler],
+        cues: &[String],
+    ) {
+        let in_flight = std::mem::take(&mut self.handler_runs);
+        let mut fired: std::collections::HashSet<usize> =
+            in_flight.iter().map(|r| r.handler_index).collect();
+        for run in in_flight {
+            for content in &handlers[run.handler_index].content[run.step..] {
+                self.skip_content(ctx, walkaround, content);
+            }
+        }
+        for cue in cues {
+            let Some(handler_index) = handlers.iter().position(|h| &h.cue == cue) else {
+                continue;
+            };
+            if !fired.insert(handler_index) {
+                continue;
+            }
+            for content in &handlers[handler_index].content {
+                self.skip_content(ctx, walkaround, content);
+            }
+        }
+    }
+
     /// Fast-forward to the end (the B-button abort): snap every remaining move to
     /// its end state and fire every remaining instant effect, so lasting side
     /// effects still land, then mark the cutscene finished. Each chain is snapped
@@ -544,39 +921,36 @@ impl Cutscene {
     /// chased — its sub-scene is launched, skipped, and cleaned up in place (never
     /// left on the stack) — so a skipped story scene can't silently drop a
     /// sub-scene's flags, sound/music, interacts, or map change.
+    ///
+    /// A `dialogue` step gets a full manual drain — `set_messages`, then
+    /// `next_text` repeated (auto-picking any `#choice`'s first option, the
+    /// same deterministic pick the scrubber's neutral input already relies
+    /// on) until nothing's left — rather than just displaying the first
+    /// page: previously this dropped every side effect (`#set`, `#cue`)
+    /// after the first item, which contradicted this very doc's promise that
+    /// lasting side effects still land on a skip. `#cue`s the drain surfaces
+    /// fire (and snap) their `on` handlers exactly like a live-fired one —
+    /// see [`fire_and_snap_handlers`](Self::fire_and_snap_handlers).
     pub fn skip<S: ConsoleApi>(&mut self, ctx: &mut Ctx<S>, walkaround: &mut WalkaroundState) {
-        // Close any live dialogue box first.
-        if matches!(self.state, StepState::Dialogue { opened: true }) {
-            walkaround.dialogue.close();
-        }
-        while let Some(content) = self.content.get(self.step) {
-            match content {
-                CutsceneContent::Move(chains) => {
-                    for chain in chains {
-                        for ins in &chain.instructions {
-                            snap_motion(&chain.actor, &ins.motion, &self.table, walkaround);
-                        }
-                    }
-                }
-                CutsceneContent::Dialogue(key) => {
+        while let Some(content) = self.content.get(self.step).cloned() {
+            match &content {
+                CutsceneContent::Dialogue { key, handlers } => {
                     let convo = ctx.get_dialogue(key);
                     walkaround
                         .dialogue
                         .set_messages(ctx.system, ctx.font, ctx.save, &convo);
-                    walkaround.dialogue.close();
-                }
-                CutsceneContent::SetFlag(name, value) => ctx.save.set_flag(name, *value),
-                CutsceneContent::Sound(name) => {
-                    if let Some(sfx) = sound::by_name(name) {
-                        ctx.system.play_sound(sfx);
+                    loop {
+                        if walkaround.dialogue.is_choosing() {
+                            walkaround.dialogue.confirm_choice(ctx.system, ctx.font, ctx.save);
+                            continue;
+                        }
+                        if !walkaround.dialogue.next_text(ctx.system, ctx.font, ctx.save, true) {
+                            break;
+                        }
                     }
-                }
-                CutsceneContent::Music(track) => {
-                    let track = track.as_deref().map(MusicTrack::named);
-                    ctx.system.music(track.as_ref());
-                }
-                CutsceneContent::Interact { actor, target } => {
-                    self.fire_interact(ctx, walkaround, actor, target)
+                    let cues = walkaround.dialogue.take_cues();
+                    walkaround.dialogue.close();
+                    self.fire_and_snap_handlers(ctx, walkaround, handlers, &cues);
                 }
                 CutsceneContent::Load(name) => {
                     // Chase the sub-scene so its lasting side effects still land,
@@ -588,23 +962,12 @@ impl Cutscene {
                         sub.cleanup(walkaround);
                     }
                 }
-                // Apply camera steps in order so the scene's final camera target
-                // matches full playback — though when a whole scene is skipped it
-                // finishes and pops immediately, so `play_cutscene` re-derives the
-                // camera from what's left on the stack (the parent, or the player).
-                // A glide fast-forwards to landed (its end state), a shake to
-                // spent — both transients gone, exactly as full playback ends.
-                CutsceneContent::Camera(target, _) => {
-                    self.camera = Some(target.clone());
-                    self.glide = None;
-                }
-                CutsceneContent::Shake { .. } => self.shake = None,
-                // A wait has no lasting effect, so fast-forwarding past it is a no-op.
-                CutsceneContent::Wait(_) => {}
+                other => self.skip_content(ctx, walkaround, other),
             }
             self.step += 1;
         }
         self.state = StepState::Done;
+        self.handler_runs.clear();
     }
 
     /// Whether the cutscene has played every content step.
@@ -1413,6 +1776,311 @@ mod tests {
         assert!(finished, "the dialogue choice cutscene ran to completion");
         assert!(h.save.flag("picked_a"), "auto-picked the first option");
         assert!(!h.save.flag("picked_b"));
+    }
+
+    // --- wave 3: `dialogue` `on NAME [wait]` handlers ---
+
+    /// Install `src` as the base script (against the built-in portraits) — the
+    /// wave-3 tests' shorthand for `h.script.set_base(...)`.
+    fn install_script(h: &mut Harness, src: &str) {
+        h.script.set_base(
+            crate::data::script::eggtext::parse(src).expect("parse eggtext"),
+            &Portraits::builtin(),
+        );
+    }
+
+    /// A `#cue` fires its `on` handler, and the handler's `move` completes
+    /// while the dialogue box is still open (never pressed A) — proving cues
+    /// and handlers tick independently of, and concurrently with, the box.
+    #[test]
+    fn cue_fires_handler_and_it_completes_while_box_stays_open() {
+        let mut h = Harness::new();
+        install_script(
+            &mut h,
+            "#dialogue talk\n    #cue arrive\n    Hi there, this stays open.",
+        );
+        let def = scene::parse(
+            "#cutscene t\n\
+             \x20   spawn guy critter 0 0\n\
+             \x20   dialogue talk\n\
+             \x20       on arrive\n\
+             \x20           move\n\
+             \x20               guy: walk 10 0 in 5",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let guy = cs.resolve_actor("guy");
+        // No A press at all — the box has nothing forcing it to advance.
+        for _ in 0..6 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        assert_eq!(
+            h.walk.resolve(&guy).unwrap().pos,
+            Vec2::new(10, 0),
+            "the handler's move completed",
+        );
+        assert!(
+            h.walk.dialogue.is_active(),
+            "the box is still open — nothing ever asked it to close",
+        );
+    }
+
+    /// While a `wait` handler is running, the box freezes: it doesn't close
+    /// even though the player holds A and the line is already fully shown
+    /// (a single-character line is line-done the instant it's set); once the
+    /// handler finishes, the box closes on its own, still without a fresh
+    /// press.
+    #[test]
+    fn wait_handler_freezes_the_box_then_releases_it() {
+        let mut h = Harness::new();
+        install_script(&mut h, "#dialogue talk\n    #cue meltdown\n    !");
+        let def = scene::parse(
+            "#cutscene t\n    dialogue talk\n        on meltdown wait\n            wait 3",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        // A permanent rising edge (held from frame one) — if the box were
+        // ever unfrozen with its line already done, it would close the very
+        // next frame.
+        h.input.controllers[0].a = [true, false];
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.step(ctx, w)); // frame 1: opens, cue fires, wait 3→2
+        assert!(h.walk.dialogue.is_active(), "just opened");
+
+        h.frame(|ctx, w| cs.step(ctx, w)); // frame 2: frozen, wait 2→1
+        assert!(h.walk.dialogue.is_active(), "still frozen: held despite A + line-done");
+        h.frame(|ctx, w| cs.step(ctx, w)); // frame 3: frozen, wait 1→0 (finishes this tick)
+        assert!(
+            h.walk.dialogue.is_active(),
+            "still frozen this frame — the freeze check reflects the PREVIOUS frame's state",
+        );
+
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w)); // frame 4: freeze lifted
+        assert!(
+            !h.walk.dialogue.is_active(),
+            "released the instant the handler finished, no extra press needed",
+        );
+        assert!(matches!(outcome, Outcome::Finished), "and the step (and scene) completed");
+    }
+
+    /// A non-`wait` handler doesn't freeze the box — it can close on schedule
+    /// — but the whole `dialogue` step only completes once the handler
+    /// itself finishes, even though the box closed several frames earlier.
+    #[test]
+    fn non_wait_handler_outlives_the_box_close() {
+        let mut h = Harness::new();
+        install_script(&mut h, "#dialogue talk\n    #cue go\n    !");
+        let def = scene::parse("#cutscene t\n    dialogue talk\n        on go\n            wait 5")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        h.input.controllers[0].a = [true, false]; // permanent rising edge
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.step(ctx, w)); // frame 1: opens, cue fires, handler wait 5→4
+
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w)); // frame 2: not frozen (non-wait) — box closes
+        assert!(matches!(outcome, Outcome::Running), "handler still running");
+        assert!(!h.walk.dialogue.is_active(), "the box closed on schedule");
+
+        for _ in 0..2 {
+            let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+            assert!(
+                matches!(outcome, Outcome::Running),
+                "step not done — the handler is still going after the box closed",
+            );
+        }
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w)); // handler's wait 5 finally runs out
+        assert!(matches!(outcome, Outcome::Finished), "step completes once the handler finishes");
+    }
+
+    /// The endgame case: a `#cue` on the very LAST content item, consumed by
+    /// the same advance that would otherwise close the box, must still fire
+    /// its handler — and if that handler is `wait`, the close is suppressed
+    /// and remembered (not dropped), landing the moment the handler finishes
+    /// without the player pressing A again.
+    #[test]
+    fn final_item_cue_still_fires_and_suppresses_the_close() {
+        let mut h = Harness::new();
+        // A single-character line is line-done the instant it's shown (no
+        // typewriter pacing to account for), so the frame the trailing cue
+        // is reached is pinned exactly: the very first non-opening frame.
+        install_script(&mut h, "#dialogue talk\n    !\n    #cue final");
+        let def = scene::parse(
+            "#cutscene t\n    dialogue talk\n        on final wait\n            wait 3",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        h.input.controllers[0].a = [true, false]; // permanent rising edge
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.step(ctx, w)); // opens, shows "!"
+        assert!(h.walk.dialogue.is_active());
+
+        // Next frame: the line is already done, so `tick`'s own auto-advance
+        // consumes the trailing `#cue final` (nothing left after it) and the
+        // widget phase decides to close — but the same drain fires `on
+        // final`, which freezes it before the close applies.
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w));
+        assert!(matches!(outcome, Outcome::Running));
+        assert!(
+            h.walk.dialogue.is_active(),
+            "the close was suppressed by the handler its own cue just started",
+        );
+        // Release A — the remembered close must not need it held or pressed
+        // again.
+        h.input.controllers[0].a = [false, false];
+
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w)); // handler's wait 3→2→1
+        assert!(matches!(outcome, Outcome::Running), "still frozen");
+        assert!(h.walk.dialogue.is_active(), "still frozen");
+
+        let outcome = h.frame(|ctx, w| cs.step(ctx, w)); // wait 1→0: handler finishes
+        assert!(
+            !h.walk.dialogue.is_active(),
+            "the remembered close finally landed, with no further input",
+        );
+        assert!(matches!(outcome, Outcome::Finished));
+    }
+
+    /// The same cue name fires twice in one `dialogue` step (two `#cue go`
+    /// beats in the same conversation) — the second firing is ignored: only
+    /// one [`HandlerRun`] is ever created for `on go`.
+    #[test]
+    fn duplicate_cue_firing_is_deduped() {
+        let mut h = Harness::new();
+        // Single-character messages are line-done the instant they're shown,
+        // so one permanently-held A press reliably advances one message per
+        // frame — no typewriter pacing to account for.
+        install_script(&mut h, "#dialogue talk\n    #cue go\n    .\n\n    #cue go\n    !");
+        let def = scene::parse("#cutscene t\n    dialogue talk\n        on go\n            wait 20")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+        h.input.controllers[0].a = [true, false]; // permanent rising edge
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        h.frame(|ctx, w| cs.step(ctx, w)); // opens on ".", first `go` fires
+        assert_eq!(cs.handler_runs.len(), 1, "one run after the first firing");
+
+        // One frame consumes the `Pause` between messages; the next actually
+        // crosses into "!" — the second `#cue go` bank + drain happens here;
+        // it must not add a second run for the same handler.
+        for _ in 0..2 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        assert_eq!(
+            h.walk.dialogue.current_text.as_deref(),
+            Some("!"),
+            "sanity check: message 2 (where the repeat `go` lives) was actually reached",
+        );
+        assert_eq!(cs.handler_runs.len(), 1, "the repeat firing was deduped, not a second run");
+    }
+
+    /// `skip()` (the B-button abort) mid-conversation: a `#set` after the
+    /// FIRST content item still lands (the bug this wave fixes — previously
+    /// only the first item's effects survived a skip), and a handler cue
+    /// mid-conversation is snapped — an already-in-flight run (some of it
+    /// already played live) only from where it left off, never replaying the
+    /// steps that already ran.
+    #[test]
+    fn skip_lands_mid_conversation_set_and_snaps_an_in_flight_handler() {
+        let mut h = Harness::new();
+        // A single-character first message is line-done at once — no
+        // typewriter pacing to account for before the advance into message 2
+        // (a page break still costs its own frame, to consume the `Pause`
+        // item between messages, before the next press actually crosses
+        // into it).
+        install_script(
+            &mut h,
+            "#flag landed\n#dialogue talk\n    .\n\n    #set landed true\n    #cue go\n    Second.",
+        );
+        let def = scene::parse(
+            "#cutscene t\n\
+             \x20   spawn guy critter 0 0\n\
+             \x20   dialogue talk\n\
+             \x20       on go\n\
+             \x20           move\n\
+             \x20               guy: record 1 0 3\n\
+             \x20           move\n\
+             \x20               guy: record 1 0 5",
+        )
+        .unwrap()
+        .get_cutscene("t")
+        .unwrap()
+        .clone();
+        h.input.controllers[0].a = [true, false]; // permanent rising edge
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let guy = cs.resolve_actor("guy");
+        h.frame(|ctx, w| cs.step(ctx, w)); // opens on "."
+        // One frame consumes the `Pause` between messages; the next crosses
+        // into message 2 — `landed` sets, `go` fires and gets its first live
+        // tick (the handler's first `record` step starts) — then a couple
+        // more frames let that first `record` step finish live and the
+        // second one get partway through, live.
+        for _ in 0..4 {
+            h.frame(|ctx, w| cs.step(ctx, w));
+        }
+        let mid = h.walk.resolve(&guy).unwrap().pos.x;
+        assert!(mid > 0, "the handler made live progress before the skip: x={mid}");
+
+        h.frame(|ctx, w| cs.skip(ctx, w));
+
+        assert!(h.save.flag("landed"), "the mid-conversation #set landed on skip");
+        assert_eq!(
+            h.walk.resolve(&guy).unwrap().pos.x,
+            9,
+            "first record (+3) ran once live, second (+5) snapped once from wherever \
+             it was — not replayed from the start and not double-fired by the manual \
+             drain rediscovering the same `go` cue",
+        );
+    }
+
+    /// A dialogue box opened by a top-level `interact` step (not a
+    /// `dialogue KEY` step) engages no handlers, even if the dialogue it
+    /// happens to show contains a `#cue` — there's no `on` list to check
+    /// cues against (the content is `Interact`, not `Dialogue`), so nothing
+    /// panics and no `HandlerRun` is ever created.
+    #[test]
+    fn interact_opened_dialogue_engages_no_handlers() {
+        let mut h = Harness::new();
+        install_script(&mut h, "#dialogue greet\n    #cue hello\n    Hi there.");
+        let def = scene::parse("#cutscene t\n    spawn npc critter 0 0\n    interact player npc")
+            .unwrap()
+            .get_cutscene("t")
+            .unwrap()
+            .clone();
+
+        let mut cs = h.frame(|ctx, w| Cutscene::launch(&def, ctx, w));
+        let npc = cs.resolve_actor("npc");
+        h.frame(|_, w| {
+            let path = w.resolve_path(&npc).unwrap();
+            path.shell_mut(w).interaction =
+                Some(crate::world::interact::Interaction::Dialogue("greet".into()));
+        });
+
+        h.input.controllers[0].a = [true, false]; // permanent rising edge
+        let mut finished = false;
+        for _ in 0..10 {
+            assert!(cs.handler_runs.is_empty(), "no handlers to engage from an Interact step");
+            if matches!(h.frame(|ctx, w| cs.step(ctx, w)), Outcome::Finished) {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "the interact-opened dialogue played to completion without panicking");
     }
 
     // --- camera verb ---

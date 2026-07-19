@@ -85,6 +85,12 @@ pub enum Finding {
     /// A `#cutscene`'s `path [noclip] NAME` motion names no `#path` block in
     /// the registry.
     SceneDanglingPath { cutscene: String, name: String },
+    /// A `#cutscene`'s `dialogue KEY` step has an `on NAME [wait]` handler
+    /// whose cue that dialogue never reaches with a matching `#cue NAME` —
+    /// dead choreography, the handler can never fire. The reverse — a
+    /// `#cue` no handler names — is not a finding (it may be a stage
+    /// direction, or a beat for a different scene).
+    SceneDanglingCue { cutscene: String, key: String, cue: String },
 
     /// A dialogue message's portrait switch (`#pic`, message-level or
     /// mid-message) names no portrait in the registry.
@@ -182,6 +188,12 @@ impl fmt::Display for Finding {
             }
             Finding::SceneDanglingPath { cutscene, name } => {
                 write!(f, "scene `{cutscene}`: `path {name}` names an unknown path")
+            }
+            Finding::SceneDanglingCue { cutscene, key, cue } => {
+                write!(
+                    f,
+                    "scene `{cutscene}`: `on {cue}` on `dialogue {key}` names a cue that dialogue never reaches"
+                )
             }
             Finding::DanglingPortrait { key, name } => {
                 write!(f, "dialogue `{key}`: unknown portrait {name:?}")
@@ -478,54 +490,157 @@ fn check_scenes(
             }
         }
         for step in &def.content {
-            match step {
-                CutsceneContent::Dialogue(key) => {
-                    referenced_dialogue.insert(key.clone());
-                    if !script.dialogue.contains_key(key) {
-                        report.push(Finding::SceneDanglingDialogue { cutscene: name.clone(), key: key.clone() });
-                    }
+            check_content_step(step, name, script, scenes, report, referenced_dialogue, set_flags, referenced_paths);
+        }
+    }
+}
+
+/// One cutscene content step's cross-references — the per-step body of
+/// [`check_scenes`]'s walk, factored out so it can also recurse into every
+/// `on` handler's own content steps: a handler body gets exactly the same
+/// checks as a top-level step (flags/sounds/loads/paths), plus — on the
+/// `Dialogue` arm — a check of its own, that each handler's cue is one the
+/// dialogue can actually reach (`Finding::SceneDanglingCue`). `Load` can't
+/// actually appear inside a handler (parse-rejected — see the `.eggscene`
+/// module doc), but this walker doesn't need to know that to stay correct.
+#[allow(clippy::too_many_arguments)]
+fn check_content_step(
+    step: &CutsceneContent,
+    cutscene: &str,
+    script: &ScriptFile,
+    scenes: &SceneFile,
+    report: &mut Report,
+    referenced_dialogue: &mut BTreeSet<String>,
+    set_flags: &mut BTreeSet<String>,
+    referenced_paths: &mut BTreeSet<String>,
+) {
+    match step {
+        CutsceneContent::Dialogue { key, handlers } => {
+            referenced_dialogue.insert(key.clone());
+            match script.dialogue.get(key) {
+                None => {
+                    report.push(Finding::SceneDanglingDialogue {
+                        cutscene: cutscene.to_string(),
+                        key: key.clone(),
+                    });
                 }
-                CutsceneContent::Load(target) => {
-                    if scenes.get_cutscene(target).is_none() {
-                        report.push(Finding::SceneDanglingLoad { cutscene: name.clone(), name: target.clone() });
-                    }
-                }
-                CutsceneContent::Sound(sfx) => {
-                    if sound::by_name(sfx).is_none() {
-                        report.push(Finding::SceneDanglingSound { cutscene: name.clone(), name: sfx.clone() });
-                    }
-                }
-                CutsceneContent::SetFlag(flag, _) => {
-                    set_flags.insert(flag.clone());
-                    if !script.flags.contains(flag) {
-                        report.push(Finding::SceneDanglingFlag { cutscene: name.clone(), flag: flag.clone() });
-                    }
-                }
-                CutsceneContent::Move(chains) => {
-                    for chain in chains {
-                        for ins in &chain.instructions {
-                            let Motion::Path { name: path_name, .. } = &ins.motion else {
-                                continue;
-                            };
-                            referenced_paths.insert(path_name.clone());
-                            if !scenes.paths.contains_key(path_name) {
-                                report.push(Finding::SceneDanglingPath {
-                                    cutscene: name.clone(),
-                                    name: path_name.clone(),
-                                });
-                            }
+                Some(def) => {
+                    let cues = dialogue_cues(def);
+                    for handler in handlers {
+                        if !cues.contains(&handler.cue) {
+                            report.push(Finding::SceneDanglingCue {
+                                cutscene: cutscene.to_string(),
+                                key: key.clone(),
+                                cue: handler.cue.clone(),
+                            });
                         }
                     }
                 }
-                // `music` names are directory-scanned free-form at play time
-                // (no fixed vocabulary to check against — see `data/tiled.rs`'s
-                // `TiledMap::music` doc); actor names in `Move`/`Interact` are
-                // scene-local bindings, not a global registry.
-                CutsceneContent::Music(_)
-                | CutsceneContent::Interact { .. }
-                | CutsceneContent::Wait(_)
-                | CutsceneContent::Camera(..)
-                | CutsceneContent::Shake { .. } => {}
+            }
+            for handler in handlers {
+                for sub in &handler.content {
+                    check_content_step(
+                        sub,
+                        cutscene,
+                        script,
+                        scenes,
+                        report,
+                        referenced_dialogue,
+                        set_flags,
+                        referenced_paths,
+                    );
+                }
+            }
+        }
+        CutsceneContent::Load(target) => {
+            if scenes.get_cutscene(target).is_none() {
+                report.push(Finding::SceneDanglingLoad { cutscene: cutscene.to_string(), name: target.clone() });
+            }
+        }
+        CutsceneContent::Sound(sfx) => {
+            if sound::by_name(sfx).is_none() {
+                report.push(Finding::SceneDanglingSound { cutscene: cutscene.to_string(), name: sfx.clone() });
+            }
+        }
+        CutsceneContent::SetFlag(flag, _) => {
+            set_flags.insert(flag.clone());
+            if !script.flags.contains(flag) {
+                report.push(Finding::SceneDanglingFlag { cutscene: cutscene.to_string(), flag: flag.clone() });
+            }
+        }
+        CutsceneContent::Move(chains) => {
+            for chain in chains {
+                for ins in &chain.instructions {
+                    let Motion::Path { name: path_name, .. } = &ins.motion else {
+                        continue;
+                    };
+                    referenced_paths.insert(path_name.clone());
+                    if !scenes.paths.contains_key(path_name) {
+                        report.push(Finding::SceneDanglingPath {
+                            cutscene: cutscene.to_string(),
+                            name: path_name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        // `music` names are directory-scanned free-form at play time
+        // (no fixed vocabulary to check against — see `data/tiled.rs`'s
+        // `TiledMap::music` doc); actor names in `Move`/`Interact` are
+        // scene-local bindings, not a global registry.
+        CutsceneContent::Music(_)
+        | CutsceneContent::Interact { .. }
+        | CutsceneContent::Wait(_)
+        | CutsceneContent::Camera(..)
+        | CutsceneContent::Shake { .. } => {}
+    }
+}
+
+/// Every `#cue NAME` a dialogue definition can reach, recursively through
+/// `#if`/`#elif`/`#else` branches (both sides — a cue behind an untaken
+/// branch is still a legitimate target: which branch runs depends on the
+/// live save at playback, not on anything static). What
+/// [`check_content_step`]'s `Dialogue` arm checks each `on` handler's cue
+/// against.
+fn dialogue_cues(def: &DialogueDef) -> BTreeSet<String> {
+    let mut cues = BTreeSet::new();
+    collect_cues_dialogue(def, &mut cues);
+    cues
+}
+
+fn collect_cues_dialogue(def: &DialogueDef, out: &mut BTreeSet<String>) {
+    match def {
+        DialogueDef::Plain(entry) => collect_cues_entry(entry, out),
+        DialogueDef::Segments { segments } => {
+            for seg in segments {
+                collect_cues_segment(seg, out);
+            }
+        }
+    }
+}
+
+fn collect_cues_segment(seg: &SegmentDef, out: &mut BTreeSet<String>) {
+    match seg {
+        SegmentDef::Plain(entry) => collect_cues_entry(entry, out),
+        SegmentDef::If { then, otherwise, elifs, .. } => {
+            collect_cues_dialogue(then, out);
+            if let Some(otherwise) = otherwise {
+                collect_cues_dialogue(otherwise, out);
+            }
+            for elif in elifs {
+                collect_cues_dialogue(&elif.then, out);
+            }
+        }
+    }
+}
+
+fn collect_cues_entry(entry: &Entry, out: &mut BTreeSet<String>) {
+    if let Entry::Conversation { messages } = entry {
+        for message in messages {
+            for content in &message.content {
+                if let ContentDef::Cue(name) = content {
+                    out.insert(name.clone());
+                }
             }
         }
     }
@@ -681,9 +796,11 @@ fn walk_content(
             }
         }
         // `Cue` names are free-form at parse time (unlike a `#flag`, which is
-        // declared): cross-referencing them against the scene file's `on`
-        // handlers is a wave-3 concern, once the cutscene engine exists to
-        // define what "unreferenced" or "dangling" even means for one.
+        // declared): cross-referencing them against a scene's `on` handlers
+        // happens from the scene side instead — see `check_content_step`'s
+        // `Dialogue` arm and `Finding::SceneDanglingCue`. A cue only means
+        // something in the context of the one dialogue step subscribing to
+        // it, which this per-dialogue-key walk has no visibility into.
         ContentDef::Text(_)
         | ContentDef::Auto(_)
         | ContentDef::Delayed(_, _)
@@ -1269,6 +1386,119 @@ mod tests {
             "the referenced `real` path must not also show up as dead weight: {:?}",
             report.warnings,
         );
+    }
+
+    /// A `dialogue` step's `on NAME [wait]` handler naming a cue its
+    /// dialogue never reaches (no `#cue NAME` anywhere in it) is an error.
+    #[test]
+    fn scene_dangling_cue_handler_is_an_error() {
+        use crate::data::scene;
+        let script = script("#dialogue talk\n    Hi.");
+        let scenes = scene::parse(
+            "#cutscene a\n\
+             \x20   dialogue talk\n\
+             \x20       on missing_cue\n\
+             \x20           wait 1",
+        )
+        .expect("parse scene");
+        let report = check(
+            &script,
+            &scenes,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(matches!(
+            &report.errors[0],
+            Finding::SceneDanglingCue { cue, key, .. } if cue == "missing_cue" && key == "talk"
+        ));
+    }
+
+    /// A handler's cue is clean as long as the dialogue reaches it
+    /// *anywhere* — including behind an `#if not` branch: which branch runs
+    /// depends on the live save at playback, not on anything static, so a
+    /// cue behind an untaken branch is still a legitimate target.
+    #[test]
+    fn scene_cue_reachable_inside_an_if_branch_is_not_dangling() {
+        use crate::data::scene;
+        let script = script(
+            "#flag seen\n\
+             #dialogue talk\n\
+             \x20   #if not seen\n\
+             \x20   #cue arrive\n\
+             \x20   Hi.\n\
+             \x20   #else\n\
+             \x20   Bye.\n\
+             \x20   #end",
+        );
+        let scenes = scene::parse(
+            "#cutscene a\n\
+             \x20   dialogue talk\n\
+             \x20       on arrive\n\
+             \x20           wait 1",
+        )
+        .expect("parse scene");
+        let report = check(
+            &script,
+            &scenes,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert!(report.is_clean(), "{:?}", report.errors);
+    }
+
+    /// A `#cue` no `on` handler names is fine — not a finding. It may be a
+    /// stage direction, or a beat for a different scene.
+    #[test]
+    fn unhandled_cue_is_not_a_finding() {
+        use crate::data::scene;
+        let script = script("#dialogue talk\n    #cue unhandled\n    Hi.");
+        let scenes = scene::parse("#cutscene a\n    dialogue talk").expect("parse scene");
+        let report = check(
+            &script,
+            &scenes,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert!(report.is_clean(), "{:?}", report.errors);
+        assert!(
+            report.warnings.is_empty(),
+            "an unhandled cue is not dead weight either: {:?}",
+            report.warnings,
+        );
+    }
+
+    /// A bad sound / undeclared flag inside a handler's own body is caught,
+    /// same as at the top level — the recursive walk reaches handler content.
+    #[test]
+    fn bad_sound_and_flag_inside_a_handler_body_is_caught() {
+        use crate::data::scene;
+        let script = script("#dialogue talk\n    #cue go\n    Hi.");
+        let scenes = scene::parse(
+            "#cutscene a\n\
+             \x20   dialogue talk\n\
+             \x20       on go\n\
+             \x20           sound nope\n\
+             \x20           set undeclared true",
+        )
+        .expect("parse scene");
+        let report = check(
+            &script,
+            &scenes,
+            &maps(vec![]),
+            &Portraits::builtin(),
+            &Presets::builtin(),
+            ENGINE_DIALOGUE_ROOTS,
+        );
+        assert_eq!(report.errors.len(), 2, "{:?}", report.errors);
+        assert!(report.errors.iter().any(|e| matches!(e, Finding::SceneDanglingSound { name, .. } if name == "nope")));
+        assert!(report.errors.iter().any(|e| matches!(e, Finding::SceneDanglingFlag { flag, .. } if flag == "undeclared")));
     }
 
     /// A `#path` block no scene references is dead weight — a warning, not an

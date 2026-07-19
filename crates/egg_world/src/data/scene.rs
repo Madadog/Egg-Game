@@ -81,7 +81,7 @@
 //! | verb | meaning |
 //! |------|---------|
 //! | `move` + indented chains | run the chains in parallel until all finish |
-//! | `dialogue KEY`           | play a dialogue block, done when its box closes |
+//! | `dialogue KEY` (+ `on` handlers) | play a dialogue block, done when its box closes and every fired handler has finished — see below |
 //! | `interact ACTOR TARGET`  | fire TARGET's intrinsic interaction |
 //! | `load NAME`              | push a sub-cutscene (popped on its finish) |
 //! | `wait N`                 | hold for N frames |
@@ -89,6 +89,38 @@
 //! | `camera … over N`        | same, but glide there over N frames (non-blocking — pair with `wait`) |
 //! | `shake N [AMP]`          | shake the camera for N frames, ±AMP px (default 2; non-blocking) |
 //! | `sound NAME` / `music [NAME]` / `set FLAG BOOL` | effects (carried over) |
+//!
+//! ### `dialogue` handlers: `on NAME [wait]`
+//!
+//! A `dialogue KEY` step may carry indented `on NAME [wait]` blocks, each
+//! holding its own indented step-list — ordinary content steps, `move`
+//! included, except `dialogue`, `load`, and a nested `on` are parse errors
+//! (a handler can't open another dialogue, push a sub-cutscene, or nest
+//! further; it also can't spawn — init verbs are scene-level only). While
+//! the dialogue plays, the cutscene engine drains the box's `#cue NAME`
+//! beats ([`.eggtext`](crate::data::script::eggtext)'s directive) and runs
+//! the matching handler's steps concurrently with the box: a handler fires
+//! at most once per `dialogue` step (a repeat firing of the same cue is
+//! ignored), and a cue with no matching handler is fine — it may be a stage
+//! direction, or a beat for a different scene. `wait` freezes the box (it
+//! can't advance or close) until every running `wait` handler has finished;
+//! a non-`wait` handler may keep running after the box closes. The whole
+//! step is done only once the box has closed *and* every fired handler has
+//! finished — a handler that never fires (its cue sat in an untaken `#if`
+//! branch, say) simply never runs and never blocks completion.
+//!
+//! ```text
+//! #cutscene confrontation
+//!     spawn guy guy_preset 40 5
+//!     dialogue marathon_speech
+//!         on arrive
+//!             guy path route1
+//!         on meltdown wait
+//!             guy face player
+//!             shake 30
+//!     move
+//!         player: walk 10 0
+//! ```
 //!
 //! ## Chains & motions
 //!
@@ -108,7 +140,13 @@
 //! language is active when the scene actually plays. A cutscene must never
 //! embed text or other per-language behaviour of its own; if it needs to say
 //! something, that something is a `#dialogue` block in
-//! [`.eggtext`](crate::data::script::eggtext), referenced by key.
+//! [`.eggtext`](crate::data::script::eggtext), referenced by key. A
+//! `dialogue` step's `on NAME [wait]` handlers are how choreography
+//! *subscribes* to that dialogue's `#cue` beats without embedding anything
+//! language-specific: the cue name is the only thing shared across the
+//! boundary, and `wait` pacing lives scene-side (not as a per-cue flag in
+//! `.eggtext`) so a translation can reword or reflow a conversation without
+//! ever being able to change how long the box holds.
 //!
 //! [`.eggtext`](crate::data::script::eggtext) owns *presentation* and the
 //! save flags presentation reads/writes: text, portraits, sounds, pacing,
@@ -182,8 +220,11 @@ pub enum EntityRef {
 pub enum CutsceneContent {
     /// Parallel actor chains; done when every chain finishes.
     Move(Vec<Chain>),
-    /// Play the `#dialogue` block named by this key; done when the box closes.
-    Dialogue(String),
+    /// Play the `#dialogue` block named by this key, with its `on NAME
+    /// [wait]` handlers (empty for a plain `dialogue KEY` line — the common
+    /// case). Done when the box closes AND every fired handler has finished
+    /// — see the module doc's `dialogue` handlers section.
+    Dialogue { key: String, handlers: Vec<CueHandler> },
     /// Fire TARGET's intrinsic interaction, with ACTOR as initiator.
     Interact { actor: String, target: String },
     /// Push a sub-cutscene by name onto the stack (popped on its finish).
@@ -210,6 +251,24 @@ pub enum CutsceneContent {
 /// The `shake` amplitude used when the author gives only a duration, in pixels.
 /// The serializer omits the amplitude at this value, keeping `shake N` canonical.
 pub const DEFAULT_SHAKE_AMPLITUDE: i16 = 2;
+
+/// One `on NAME [wait]` handler under a [`CutsceneContent::Dialogue`] step: a
+/// step-list run concurrently with the dialogue box once the engine drains a
+/// matching `#cue NAME` from it. See the module doc's `dialogue` handlers
+/// section for the full semantics (fired-once, `wait` freezes the box,
+/// what's allowed in the body).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CueHandler {
+    /// The `#cue` name this handler wakes up on.
+    pub cue: String,
+    /// The `wait` flag — while this handler is running, the dialogue box
+    /// can't advance or close.
+    pub wait: bool,
+    /// The handler's own step-list, in order — ordinary content steps, but
+    /// never `Dialogue`/`Load` (parse errors in an `on` body) or another
+    /// handler (there is no nested `on`).
+    pub content: Vec<CutsceneContent>,
+}
 
 /// A request to open the cutscene scrubber on a scene. The map editor *sets*
 /// one (parked on its `pending_scrub`), the engine — which owns the cutscene
@@ -358,27 +417,52 @@ impl SceneFile {
     /// module doc. An unknown name logs and resolves to an empty (no-op)
     /// record, so a dangling reference degrades gracefully rather than
     /// panicking, matching an unknown dialogue key / sound / portrait
-    /// elsewhere in the data web.
+    /// elsewhere in the data web. Recurses into every `on` handler's own
+    /// content too — a handler body can carry its own `move` steps (see the
+    /// module doc), which can reference a `#path` block exactly like a
+    /// top-level one.
     pub fn inline_paths(&self, def: &CutsceneDef) -> CutsceneDef {
         let mut def = def.clone();
         for step in &mut def.content {
-            let CutsceneContent::Move(chains) = step else {
-                continue;
-            };
-            for chain in chains {
-                for ins in &mut chain.instructions {
-                    let Motion::Path { name, noclip } = &ins.motion else {
-                        continue;
-                    };
-                    let runs = self.paths.get(name).cloned().unwrap_or_else(|| {
-                        log::warn!("cutscene: unknown path `{name}` — playing as a no-op");
-                        Vec::new()
-                    });
-                    ins.motion = Motion::Record { runs, noclip: *noclip };
-                }
-            }
+            self.inline_paths_step(step);
         }
         def
+    }
+
+    /// One content step's half of [`Self::inline_paths`], recursive over
+    /// `Dialogue`'s `on` handlers.
+    fn inline_paths_step(&self, step: &mut CutsceneContent) {
+        match step {
+            CutsceneContent::Move(chains) => {
+                for chain in chains {
+                    for ins in &mut chain.instructions {
+                        let Motion::Path { name, noclip } = &ins.motion else {
+                            continue;
+                        };
+                        let runs = self.paths.get(name).cloned().unwrap_or_else(|| {
+                            log::warn!("cutscene: unknown path `{name}` — playing as a no-op");
+                            Vec::new()
+                        });
+                        ins.motion = Motion::Record { runs, noclip: *noclip };
+                    }
+                }
+            }
+            CutsceneContent::Dialogue { handlers, .. } => {
+                for handler in handlers {
+                    for sub in &mut handler.content {
+                        self.inline_paths_step(sub);
+                    }
+                }
+            }
+            CutsceneContent::Interact { .. }
+            | CutsceneContent::Load(_)
+            | CutsceneContent::Wait(_)
+            | CutsceneContent::Sound(_)
+            | CutsceneContent::Music(_)
+            | CutsceneContent::SetFlag(..)
+            | CutsceneContent::Camera(..)
+            | CutsceneContent::Shake { .. } => {}
+        }
     }
 
     /// Every cutscene name, sorted — for pickers and listings (the registry is
@@ -556,34 +640,12 @@ fn parse_cutscene(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
                 }
                 i += 1;
             }
-            "move" => {
+            "move" | "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set"
+            | "camera" | "shake" => {
                 seen_content = true;
-                let block_indent = indent(raw);
-                let mut chains = Vec::new();
-                i += 1;
-                while i < body.len() {
-                    let (cl_no, craw) = body[i];
-                    let clog = craw.trim_start();
-                    if clog.is_empty() || is_comment(clog) {
-                        i += 1;
-                        continue;
-                    }
-                    if indent(craw) <= block_indent {
-                        break;
-                    }
-                    chains.push(parse_chain(clog, cl_no)?);
-                    i += 1;
-                }
-                if chains.is_empty() {
-                    return Err(ParseError::new(line_no, "`move` needs at least one chain"));
-                }
-                def.content.push(CutsceneContent::Move(chains));
-            }
-            "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set" | "camera"
-            | "shake" => {
-                seen_content = true;
-                def.content.push(parse_content(verb, args, line_no)?);
-                i += 1;
+                let (step, next_i) = parse_content_step(body, i, verb, args, line_no, false)?;
+                def.content.push(step);
+                i = next_i;
             }
             "map" | "spawn" | "bind" | "find" => {
                 return Err(ParseError::new(
@@ -595,6 +657,163 @@ fn parse_cutscene(body: &[(usize, &str)]) -> Result<CutsceneDef, ParseError> {
         }
     }
     Ok(def)
+}
+
+/// Parse one content step at `body[i]`: `move` consumes its own deeper-
+/// indented chain lines (as at the top level — see [`parse_cutscene`]);
+/// `dialogue` consumes its own deeper-indented `on` handler blocks (see
+/// [`parse_handlers`]); everything else is a single line, delegated to
+/// [`parse_content`]. Returns the step and the index of the first line after
+/// it — the caller (the top-level loop, or [`parse_content_block`] for a
+/// handler body) resumes from there. `in_handler` is true while parsing an
+/// `on` handler's own body: `dialogue` and `load` are parse errors there (a
+/// handler can't open another dialogue or push a sub-cutscene — see the
+/// module doc).
+fn parse_content_step(
+    body: &[(usize, &str)],
+    i: usize,
+    verb: &str,
+    args: &str,
+    line_no: usize,
+    in_handler: bool,
+) -> Result<(CutsceneContent, usize), ParseError> {
+    match verb {
+        "move" => {
+            let block_indent = indent(body[i].1);
+            let mut chains = Vec::new();
+            let mut j = i + 1;
+            while j < body.len() {
+                let (cl_no, craw) = body[j];
+                let clog = craw.trim_start();
+                if clog.is_empty() || is_comment(clog) {
+                    j += 1;
+                    continue;
+                }
+                if indent(craw) <= block_indent {
+                    break;
+                }
+                chains.push(parse_chain(clog, cl_no)?);
+                j += 1;
+            }
+            if chains.is_empty() {
+                return Err(ParseError::new(line_no, "`move` needs at least one chain"));
+            }
+            Ok((CutsceneContent::Move(chains), j))
+        }
+        "dialogue" if in_handler => {
+            Err(ParseError::new(line_no, "`dialogue` cannot nest inside an `on` handler"))
+        }
+        "dialogue" => {
+            let key = require_name(args, line_no, "`dialogue` needs a key")?;
+            let block_indent = indent(body[i].1);
+            let (handlers, next_i) = parse_handlers(body, i + 1, block_indent)?;
+            Ok((CutsceneContent::Dialogue { key, handlers }, next_i))
+        }
+        "load" if in_handler => {
+            Err(ParseError::new(line_no, "`load` cannot nest inside an `on` handler"))
+        }
+        _ => Ok((parse_content(verb, args, line_no)?, i + 1)),
+    }
+}
+
+/// Parse the `on NAME [wait]` handler blocks under a `dialogue` step,
+/// starting at `body[i]`, each more deeply indented than `dialogue_indent`
+/// (the `dialogue` line's own indent). Stops at the first line indented at or
+/// shallower than `dialogue_indent`, or at the end of `body`. Each header's
+/// body is parsed as ordinary content steps ([`parse_content_block`], nested
+/// — no `dialogue`/`load`/further `on`). Returns the handlers — empty for a
+/// plain `dialogue KEY` line with no `on` blocks, the common case — and the
+/// index of the first line not consumed.
+fn parse_handlers(
+    body: &[(usize, &str)],
+    mut i: usize,
+    dialogue_indent: usize,
+) -> Result<(Vec<CueHandler>, usize), ParseError> {
+    let mut handlers: Vec<CueHandler> = Vec::new();
+    while i < body.len() {
+        let (line_no, raw) = body[i];
+        let logical = raw.trim_start();
+        if logical.is_empty() || is_comment(logical) {
+            i += 1;
+            continue;
+        }
+        if indent(raw) <= dialogue_indent {
+            break;
+        }
+        let (head, rest) = split_first_word(logical);
+        if head != "on" {
+            return Err(ParseError::new(line_no, "expected an `on NAME [wait]` handler"));
+        }
+        let (cue, flags) = split_first_word(rest);
+        if cue.is_empty() {
+            return Err(ParseError::new(line_no, "`on` needs a cue name"));
+        }
+        let wait = match flags.trim() {
+            "" => false,
+            "wait" => true,
+            other => {
+                return Err(ParseError::new(
+                    line_no,
+                    format!("unknown `on` flag `{other}` (only `wait`)"),
+                ));
+            }
+        };
+        if handlers.iter().any(|h| h.cue == cue) {
+            return Err(ParseError::new(
+                line_no,
+                format!("duplicate `on {cue}` handler in this `dialogue` step"),
+            ));
+        }
+        let handler_indent = indent(raw);
+        i += 1;
+        let (content, next_i) = parse_content_block(body, i, handler_indent, true)?;
+        if content.is_empty() {
+            return Err(ParseError::new(line_no, format!("`on {cue}` needs at least one step")));
+        }
+        handlers.push(CueHandler {
+            cue: cue.to_string(),
+            wait,
+            content,
+        });
+        i = next_i;
+    }
+    Ok((handlers, i))
+}
+
+/// Parse a sequence of content steps (see [`parse_content_step`]) starting at
+/// `body[i]`, for as long as each is indented deeper than `min_indent` — an
+/// `on` handler's body. `in_handler` is threaded to each step.
+fn parse_content_block(
+    body: &[(usize, &str)],
+    mut i: usize,
+    min_indent: usize,
+    in_handler: bool,
+) -> Result<(Vec<CutsceneContent>, usize), ParseError> {
+    let mut steps = Vec::new();
+    while i < body.len() {
+        let (line_no, raw) = body[i];
+        let logical = raw.trim_start();
+        if logical.is_empty() || is_comment(logical) {
+            i += 1;
+            continue;
+        }
+        if indent(raw) <= min_indent {
+            break;
+        }
+        let (verb, args) = split_first_word(logical);
+        let known = matches!(
+            verb,
+            "move" | "dialogue" | "interact" | "load" | "wait" | "sound" | "music" | "set"
+                | "camera" | "shake"
+        );
+        if !known {
+            return Err(ParseError::new(line_no, format!("unknown verb `{verb}`")));
+        }
+        let (step, next_i) = parse_content_step(body, i, verb, args, line_no, in_handler)?;
+        steps.push(step);
+        i = next_i;
+    }
+    Ok((steps, i))
 }
 
 /// Parse a `spawn`/`bind`/`find` init verb into a [`GetEntity`].
@@ -643,10 +862,11 @@ fn parse_init(verb: &str, args: &str, line_no: usize) -> Result<GetEntity, Parse
     }
 }
 
-/// Parse a non-`move` content verb into a [`CutsceneContent`].
+/// Parse a non-`move`, non-`dialogue` content verb into a [`CutsceneContent`]
+/// (`dialogue` is [`parse_content_step`]'s own arm, since it needs the raw
+/// `body`/`i` to parse its `on` handlers).
 fn parse_content(verb: &str, args: &str, line_no: usize) -> Result<CutsceneContent, ParseError> {
     Ok(match verb {
-        "dialogue" => CutsceneContent::Dialogue(require_name(args, line_no, "`dialogue` needs a key")?),
         "load" => CutsceneContent::Load(require_name(args, line_no, "`load` needs a name")?),
         "wait" => CutsceneContent::Wait(parse_u32(args, line_no, "`wait` needs a frame count")?),
         "sound" => CutsceneContent::Sound(require_name(args, line_no, "`sound` needs a name")?),
@@ -1008,7 +1228,7 @@ pub fn emit_cutscene(name: &str, def: &CutsceneDef) -> String {
         out.push('\n');
     }
     for step in &def.content {
-        out.push_str(&emit_content(step));
+        out.push_str(&emit_content(step, 1));
     }
     while out.ends_with('\n') {
         out.pop();
@@ -1036,43 +1256,65 @@ fn emit_init(entity: &GetEntity) -> String {
     }
 }
 
-/// Emit one content step, including its trailing newline(s).
-fn emit_content(step: &CutsceneContent) -> String {
+/// Emit one content step, including its trailing newline(s), indented
+/// `depth` levels deep (4 spaces per level — 1 at the top of a `#cutscene`
+/// body, one more for each nesting: a `move`'s chains, an `on` handler
+/// header, and that handler's own steps, recursively through this same
+/// function). The inverse of [`parse_content_step`].
+fn emit_content(step: &CutsceneContent, depth: usize) -> String {
+    let ind = "    ".repeat(depth);
     match step {
         CutsceneContent::Move(chains) => {
-            let mut out = String::from("    move\n");
+            let mut out = format!("{ind}move\n");
+            let chain_ind = "    ".repeat(depth + 1);
             for chain in chains {
-                out.push_str("        ");
+                out.push_str(&chain_ind);
                 out.push_str(&emit_chain(chain));
                 out.push('\n');
             }
             out
         }
-        CutsceneContent::Dialogue(key) => format!("    dialogue {key}\n"),
-        CutsceneContent::Interact { actor, target } => {
-            format!("    interact {actor} {target}\n")
+        CutsceneContent::Dialogue { key, handlers } => {
+            let mut out = format!("{ind}dialogue {key}\n");
+            let handler_ind = "    ".repeat(depth + 1);
+            for handler in handlers {
+                out.push_str(&handler_ind);
+                out.push_str("on ");
+                out.push_str(&handler.cue);
+                if handler.wait {
+                    out.push_str(" wait");
+                }
+                out.push('\n');
+                for sub in &handler.content {
+                    out.push_str(&emit_content(sub, depth + 2));
+                }
+            }
+            out
         }
-        CutsceneContent::Load(name) => format!("    load {name}\n"),
-        CutsceneContent::Wait(frames) => format!("    wait {frames}\n"),
-        CutsceneContent::Sound(name) => format!("    sound {name}\n"),
-        CutsceneContent::Music(Some(track)) => format!("    music {track}\n"),
-        CutsceneContent::Music(None) => "    music\n".to_string(),
-        CutsceneContent::SetFlag(name, value) => format!("    set {name} {value}\n"),
+        CutsceneContent::Interact { actor, target } => {
+            format!("{ind}interact {actor} {target}\n")
+        }
+        CutsceneContent::Load(name) => format!("{ind}load {name}\n"),
+        CutsceneContent::Wait(frames) => format!("{ind}wait {frames}\n"),
+        CutsceneContent::Sound(name) => format!("{ind}sound {name}\n"),
+        CutsceneContent::Music(Some(track)) => format!("{ind}music {track}\n"),
+        CutsceneContent::Music(None) => format!("{ind}music\n"),
+        CutsceneContent::SetFlag(name, value) => format!("{ind}set {name} {value}\n"),
         CutsceneContent::Camera(target, over) => {
             let target = match target {
                 CameraTarget::Actor(name) => name.clone(),
                 CameraTarget::Point(p) => format!("{} {}", p.x, p.y),
             };
             match over {
-                Some(frames) => format!("    camera {target} over {frames}\n"),
-                None => format!("    camera {target}\n"),
+                Some(frames) => format!("{ind}camera {target} over {frames}\n"),
+                None => format!("{ind}camera {target}\n"),
             }
         }
         CutsceneContent::Shake { frames, amplitude } => {
             if *amplitude == DEFAULT_SHAKE_AMPLITUDE {
-                format!("    shake {frames}\n")
+                format!("{ind}shake {frames}\n")
             } else {
-                format!("    shake {frames} {amplitude}\n")
+                format!("{ind}shake {frames} {amplitude}\n")
             }
         }
     }
@@ -1618,6 +1860,156 @@ mod tests {
              \x20   set done true",
         );
         assert_eq!(file, reparsed);
+    }
+
+    /// A `dialogue` step's `on NAME [wait]` handlers — including a `move`
+    /// chain nested inside one — round-trip through the emitter, indented
+    /// one level deeper each nesting.
+    #[test]
+    fn emit_round_trips_dialogue_handlers() {
+        let (file, reparsed) = round_trip(
+            "#cutscene c\n\
+             \x20   spawn guy critter 40 5\n\
+             \x20   dialogue marathon_speech\n\
+             \x20       on arrive\n\
+             \x20           move\n\
+             \x20               guy: to player\n\
+             \x20       on meltdown wait\n\
+             \x20           wait 5\n\
+             \x20           shake 30\n\
+             \x20   wait 1",
+        );
+        assert_eq!(file, reparsed);
+        let def = file.get_cutscene("c").unwrap();
+        let CutsceneContent::Dialogue { key, handlers } = &def.content[0] else {
+            panic!("dialogue step");
+        };
+        assert_eq!(key, "marathon_speech");
+        assert_eq!(handlers.len(), 2);
+        assert_eq!(handlers[0].cue, "arrive");
+        assert!(!handlers[0].wait);
+        assert!(matches!(handlers[0].content[..], [CutsceneContent::Move(_)]));
+        assert_eq!(handlers[1].cue, "meltdown");
+        assert!(handlers[1].wait);
+        assert_eq!(handlers[1].content, vec![CutsceneContent::Wait(5), CutsceneContent::Shake {
+            frames: 30,
+            amplitude: DEFAULT_SHAKE_AMPLITUDE,
+        }]);
+    }
+
+    /// A plain `dialogue KEY` line (no `on` blocks) parses to an empty
+    /// handler list and emits back exactly as authored — the common case
+    /// must not grow any extra ceremony.
+    #[test]
+    fn dialogue_without_handlers_emits_as_a_plain_line() {
+        let def = one("#cutscene c\n    dialogue hello");
+        let CutsceneContent::Dialogue { key, handlers } = &def.content[0] else {
+            panic!("dialogue step");
+        };
+        assert_eq!(key, "hello");
+        assert!(handlers.is_empty());
+        assert_eq!(emit_cutscene("c", &def), "#cutscene c\n    dialogue hello");
+    }
+
+    /// `on` handler grammar errors: a bare `on`, an `on` with an unknown
+    /// trailing flag, an empty handler body, and a duplicate cue name within
+    /// one `dialogue` step.
+    #[test]
+    fn on_handler_errors_point_at_the_line() {
+        assert_eq!(
+            parse("#cutscene c\n    dialogue d\n        on")
+                .unwrap_err()
+                .line,
+            3
+        );
+        assert_eq!(
+            parse("#cutscene c\n    dialogue d\n        on arrive nonsense")
+                .unwrap_err()
+                .line,
+            3
+        );
+        assert_eq!(
+            parse("#cutscene c\n    dialogue d\n        on arrive")
+                .unwrap_err()
+                .line,
+            3,
+            "an `on` with no body is an error"
+        );
+        assert_eq!(
+            parse(
+                "#cutscene c\n\
+                 \x20   dialogue d\n\
+                 \x20       on arrive\n\
+                 \x20           wait 1\n\
+                 \x20       on arrive\n\
+                 \x20           wait 2"
+            )
+            .unwrap_err()
+            .line,
+            5,
+            "a duplicate cue name in the same dialogue step is an error"
+        );
+    }
+
+    /// A handler body can't contain `dialogue`, `load`, or another `on` — all
+    /// parse errors pointed at the offending line.
+    #[test]
+    fn on_handler_body_rejects_dialogue_load_and_nested_on() {
+        assert_eq!(
+            parse(
+                "#cutscene c\n\
+                 \x20   dialogue d\n\
+                 \x20       on arrive\n\
+                 \x20           dialogue other"
+            )
+            .unwrap_err()
+            .line,
+            4
+        );
+        assert_eq!(
+            parse(
+                "#cutscene c\n\
+                 \x20   dialogue d\n\
+                 \x20       on arrive\n\
+                 \x20           load other"
+            )
+            .unwrap_err()
+            .line,
+            4
+        );
+        assert_eq!(
+            parse(
+                "#cutscene c\n\
+                 \x20   dialogue d\n\
+                 \x20       on arrive\n\
+                 \x20           on nested\n\
+                 \x20               wait 1"
+            )
+            .unwrap_err()
+            .line,
+            4,
+            "an unknown verb `on` inside a handler body is a parse error"
+        );
+    }
+
+    /// A handler body's `move` chains, indented deeper still, parse like a
+    /// top-level `move` step.
+    #[test]
+    fn on_handler_body_allows_move() {
+        let def = one(
+            "#cutscene c\n\
+             \x20   dialogue d\n\
+             \x20       on arrive\n\
+             \x20           move\n\
+             \x20               guy: walk 1 2\n\
+             \x20           sound pop",
+        );
+        let CutsceneContent::Dialogue { handlers, .. } = &def.content[0] else {
+            panic!("dialogue step");
+        };
+        assert_eq!(handlers[0].content.len(), 2, "{:?}", handlers[0].content);
+        assert!(matches!(handlers[0].content[0], CutsceneContent::Move(_)));
+        assert_eq!(handlers[0].content[1], CutsceneContent::Sound("pop".into()));
     }
 
     /// The strongest guarantee: the shipped `.eggscene` round-trips.
