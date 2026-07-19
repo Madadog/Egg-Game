@@ -387,7 +387,7 @@
             {
               "name": "description",
               "type": "string",
-              "value": "new_key"
+              "value": "default"
             },
             {
               "name": "anim",
